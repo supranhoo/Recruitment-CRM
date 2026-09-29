@@ -860,6 +860,17 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
+- New page (all users; leads see every department, a recruiter their own positions), period last 30 / 90 / 180 days or custom, from records already kept:
+  - **CV feedback time**: a card's time at "Shared with department" (Stage_History) until the department confirms or the card is rejected, put on hold or withdrawn; average, median, number over the 24 h policy (Appendix A step 3); CVs waiting now with the oldest.
+  - **JD / screening-question validation**: each version's shared date to the department's reply (Position_Docs); average reply, versions awaiting now.
+  - **Positions: time to final JD and questions**, split into recruiter time (before sharing, revising) and department time (awaiting reply), with rounds; "only delayed" filter (over 3 days or TAT lost).
+  - **Days waiting on departments** per position (overlapping waits count once), **TAT lost** = time beyond the norms (24 h CV feedback, 1 day JD / questions reply), share of the period's TAT days; per department (worst first, with HOD and past-TAT count) and per recruiter ("recruiter time lost waiting").
+  - **Waiting on departments now**: every CV and JD / question version awaiting a reply, and since when.
+  - Click a department to filter its positions; click a position to open it; Download CSV on every table.
+- Limits: sharing logged only as daily counts (not by moving cards) cannot be timed; migrated history rows are skipped as their share time is unknown.
+- E2E: D19b checks the report's shape.
+
 **Unreleased — Overview pipeline alerts: full details and honest risk** (no schema change)
 - *Joiners at risk* no longer depends only on a risk picked at a check-in: it also lists joiners whose expected joining date has passed with no joining recorded (Red), whose offer is not accepted 7 days after the letter (`OFFER_ACCEPT_RISK_DAYS_`, Amber), and whose joining is recorded on the position while the card was not moved to Joined (Amber). Each item says why. The box states how many joiners have never been checked on (risk not known).
 - `pipelineAlerts_` returns every item with its detail: candidate and mobile, position, MRF, grade, department, recruiter, stage and since when, offer / acceptance / expected joining dates, last check-in (date, mode, risk, response, note, by) and number of check-ins, next check-in, what is pending and for how many days; HOD for department feedback. Sorted longest pending first.

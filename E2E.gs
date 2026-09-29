@@ -112,6 +112,7 @@ function e2eRun_(trash) {
   t('D16 offer letter upload and view', function () { const r = apiUploadDoc('APP', A, 'Offer_Letter_File', 'offer.pdf', 'application/pdf', pdf); trash.push(fid(r.url || r)); return apiGetDoc('APP', A, 'Offer_Letter_File').b64.length > 10; });
   mv('D17 offer accepted, pre-joining', 'Prejoin', { acceptedOn: today });
   t('D18 follow-up logged with risk', function () { const p = apiAddFollowup(A, { date: today, mode: 'Call', response: 'Confirmed', risk: 'Amber', next: today, note: 'E2E' }); const a = p.apps[0]; return a.Risk === 'Amber' && a.followups.length === 1; });
+  t('D19b department delays report', function () { _tables = {}; const r = apiDeptDelays({}); return Array.isArray(r.depts) && Array.isArray(r.positions) && r.totals && r.norms.cvH === 24 ? r.depts.length + ' departments' : false; });
   t('D19 joiner-at-risk alert', function () { _tables = {}; return apiPipelineAlerts().atRisk.some(function (x) { return x.app === A && x.level === 'Amber' && /Marked Amber/.test(x.why.join(' ')); }); });
   err('D20 backout needs reason', function () { apiSetAppStatus(A, 'Withdrawn', ''); }, /reason/);
   const cB = apiSaveCandidate({ Name: 'E2E Candidate Two', Mobile: '9111122224', Line_ID: L1.Line_ID, Position: 'E2E TEST POSITION', Dept: L1.Dept }, true).saved;
