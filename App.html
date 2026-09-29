@@ -43,7 +43,7 @@ function apiCall(fn, args) {
     run[fn](...args);
   });
 }
-const SK_HEADS = {"jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
+const SK_HEADS = {"depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
 function skb(w, h, x) { return `<span class="sk" style="width:${w};height:${h}px;${x || ''}"></span>`; }
 function skw(a, b) { return (a + Math.floor(Math.random() * (b - a + 1))) + '%'; }
 function skHead(view, right) {
@@ -150,6 +150,7 @@ const NAV_ICON = {
   candidates: '<circle cx="9" cy="8" r="3.5"/><path d="M2.8 20a6.2 6.2 0 0 1 12.4 0"/><path d="M15.5 4.6a3.5 3.5 0 0 1 0 6.8M17.8 14.2A5.6 5.6 0 0 1 21.2 20"/>',
   daily: '<path d="M4 20h4.2L19 9.2 14.8 5 4 15.8z"/><path d="m13 6.8 4.2 4.2"/>',
   kpi: '<path d="M3.5 20.5h17"/><rect x="5" y="11" width="3" height="7" rx=".8"/><rect x="10.5" y="6" width="3" height="12" rx=".8"/><rect x="16" y="13.5" width="3" height="4.5" rx=".8"/>',
+  depts: '<path d="M4 20V9l4-3v14M10 20V4l5 3v13M17 20v-8l3 2v6"/><path d="M3 20.5h18"/>',
   compliance: '<path d="M12 3 4.5 6v5.6c0 4.6 3.1 7.8 7.5 9.4 4.4-1.6 7.5-4.8 7.5-9.4V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
   panel: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h3"/>',
   jdm: '<path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14.5 3.5V8H19"/><path d="M10 12h6M10 15.5h6M10 19h3.5"/><path d="M4.5 7v14h11"/>',
@@ -160,7 +161,7 @@ function buildRail(user) {
   const lead = (user.perms || []).includes('lead');
   const groups = [
     ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], ['daily', 'Daily log']]],
-    ['Reports', [['kpi', 'KPI scorecard'], ['compliance', 'Compliance']]],
+    ['Reports', [['kpi', 'KPI scorecard'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
     ['Setup', [['panel', 'Interview panel'], ['jdm', 'JD Master'], lead && ['admin', 'Admin']]]];
   const initials = String(user.name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
   $('#rail').innerHTML = `<div class="rail-head"><div class="brand" aria-label="BFCL Recruitment"><span class="brand-mark" aria-hidden="true"></span><span class="lbl brand-text" aria-hidden="true"><b>BFCL</b><small>Recruitment</small></span></div>
@@ -181,7 +182,7 @@ function setRail(mini, save) {
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
-const VIEWS = { reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin };
+const VIEWS = { depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
   S.view = view; S.candStale = true;
@@ -3640,6 +3641,91 @@ function alertsDialog(a, tab) {
   };
   draw();
   if (!d.open) d.showModal();
+}
+
+/* ---------------- Department delays (Reports) ---------------- */
+function csvSave(name, head, rows) {
+  const cell = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
+  saveBlob(new Blob(['﻿' + [head].concat(rows).map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);
+}
+async function viewDepts(v) {
+  const f = S.deptF = S.deptF || { days: '90', from: daysAgo(90), to: today(), dept: '', delayed: false };
+  v.innerHTML = `<div class="page-head"><div><h1>Department delays</h1><p>${esc(SK_HEADS.depts[1])} Recruitment closure depends on departments as much as on recruiters.</p></div></div>
+    <div class="filters"><div class="field"><label for="dpDays">Period</label><select id="dpDays">${opts([['30', 'Last 30 days'], ['90', 'Last 90 days'], ['180', 'Last 180 days'], ['custom', 'Custom']], f.days, false)}</select></div>
+      <div class="field"><label for="dpFrom">From</label><input id="dpFrom" type="date" value="${f.from}" max="${today()}"></div>
+      <div class="field"><label for="dpTo">To</label><input id="dpTo" type="date" value="${f.to}" max="${today()}"></div></div>
+    <div id="dpBody">${skKpis(6)}${skRows(8, 6)}</div>`;
+  const load = async () => {
+    $('#dpBody').innerHTML = skKpis(6) + skRows(8, 6);
+    let r; try { r = await api('apiDeptDelays', { from: f.from, to: f.to }); } catch (e) { $('#dpBody').innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+    if (!$('#dpBody')) return;
+    draw(r);
+  };
+  const setDays = () => { if (f.days !== 'custom') { f.from = daysAgo(+f.days); f.to = today(); $('#dpFrom').value = f.from; $('#dpTo').value = f.to; } };
+  $('#dpDays').onchange = e => { f.days = e.target.value; setDays(); load(); };
+  $('#dpFrom').onchange = e => { f.from = e.target.value; f.days = 'custom'; $('#dpDays').value = 'custom'; load(); };
+  $('#dpTo').onchange = e => { f.to = e.target.value; f.days = 'custom'; $('#dpDays').value = 'custom'; load(); };
+  const n = x => x == null ? '—' : x;
+  const h = x => x == null ? '—' : x < 48 ? x + ' h' : (x / 24).toFixed(1) + ' d';
+  const phaseTxt = ph => ph ? `${ph.total} d${ph.final ? '' : ' so far'}` : '—';
+  const phaseSub = ph => ph ? `recruiter ${ph.recruiter} d · department ${ph.dept} d · ${ph.rounds} round${ph.rounds === 1 ? '' : 's'}` : '';
+  const draw = r => {
+    const t = r.totals, depts = r.depts;
+    const shown = r.positions.filter(p => (!f.dept || p.dept === f.dept) && (!f.delayed || (p.jd && p.jd.total > 3) || (p.sq && p.sq.total > 3) || p.lossDays > 0));
+    const pend = [].concat(...r.positions.filter(p => !f.dept || p.dept === f.dept).map(p => p.cvPending.map(c => ({ what: 'CV: ' + c.name, since: c.since, wait: h(c.hours), sortH: c.hours, p }))
+      .concat(p.docPending.map(d => ({ what: (d.type === 'SQ' ? 'Screening questions' : 'JD') + ' v' + d.version + (d.with ? ' · with ' + d.with : ''), since: d.since, wait: d.days + ' d', sortH: d.days * 24, p })))))
+      .sort((a, b) => b.sortH - a.sortH);
+    $('#dpBody').innerHTML = `
+      <div class="kpis">
+        <div class="kpi ${t.cvAvgH > r.norms.cvH ? 'alert' : ''}"><div class="v">${h(t.cvAvgH)}</div><div class="l">Average HOD feedback on CVs (policy ${r.norms.cvH} h) · ${t.cvN} CVs, ${t.cvOver} late</div></div>
+        <div class="kpi ${t.cvPending ? 'alert' : ''}"><div class="v">${t.cvPending}</div><div class="l">CVs waiting for department feedback now</div></div>
+        <div class="kpi ${t.docAvgD > r.norms.docD ? 'alert' : ''}"><div class="v">${t.docAvgD == null ? '—' : t.docAvgD + ' d'}</div><div class="l">Average JD / questions reply (policy ${r.norms.docD} day) · ${t.docN} replies</div></div>
+        <div class="kpi ${t.docPending ? 'alert' : ''}"><div class="v">${t.docPending}</div><div class="l">JD / question versions awaiting the department</div></div>
+        <div class="kpi"><div class="v">${t.waitDays}</div><div class="l">Position-days waiting on departments (${t.share == null ? '—' : t.share + '%'} of TAT days)</div></div>
+        <div class="kpi ${t.lossDays ? 'alert' : ''}"><div class="v">${t.lossDays}</div><div class="l">Days of TAT lost beyond the policy norms</div></div>
+      </div>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>By department</h2><span class="hint">Worst first. Click a department to see its positions below.</span><button class="btn sm" id="dpCsvD">Download CSV</button></div>
+        ${depts.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Department</th><th class="num">Positions</th><th>CV feedback (avg · median)</th><th class="num">CVs late (&gt;${r.norms.cvH} h)</th><th>CVs waiting now</th><th>JD / questions reply</th><th>Awaiting now</th><th class="num">Days waiting</th><th class="num">TAT lost</th><th class="num">Share of TAT</th><th class="num">Past TAT</th></tr></thead><tbody>
+          ${depts.map(d => `<tr data-dept="${esc(d.dept)}" class="${f.dept === d.dept ? 'sel' : ''}"><td><b>${esc(d.dept)}</b><span class="sub">${esc(d.hod || 'HOD not set')}</span></td><td class="num">${d.positions}</td>
+            <td>${d.cvN ? `<b class="${d.cvAvgH > r.norms.cvH ? 'miss' : ''}">${h(d.cvAvgH)}</b> · ${h(d.cvMedH)}<span class="sub">${d.cvN} CV${d.cvN === 1 ? '' : 's'}</span>` : '—'}</td><td class="num">${d.cvOver || ''}</td>
+            <td>${d.cvPending ? `<b class="miss">${d.cvPending}</b><span class="sub">oldest ${h(d.cvOldestH)}</span>` : ''}</td>
+            <td>${d.docN ? `<b class="${d.docAvgD > r.norms.docD ? 'miss' : ''}">${d.docAvgD} d</b><span class="sub">${d.docN} repl${d.docN === 1 ? 'y' : 'ies'}</span>` : '—'}</td>
+            <td>${d.docPending ? `<b class="miss">${d.docPending}</b><span class="sub">oldest ${d.docOldestD} d</span>` : ''}</td>
+            <td class="num">${d.waitDays}</td><td class="num"><b class="${d.lossDays ? 'miss' : ''}">${d.lossDays}</b></td><td class="num">${n(d.share)}${d.share == null ? '' : '%'}</td><td class="num">${d.pastTat || ''}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="empty">No positions in this period.</div>'}</section>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Positions: time to final JD and questions${f.dept ? ' · ' + esc(f.dept) + ' <button class="linklike" id="dpAll">show all departments</button>' : ''}</h2>
+        <label class="hint"><input type="checkbox" id="dpDelayed" ${f.delayed ? 'checked' : ''}> Only delayed (over 3 days, or TAT lost)</label><button class="btn sm" id="dpCsvP">Download CSV</button></div>
+        ${shown.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Position</th><th>Recruiter</th><th>Assigned</th><th>To final JD</th><th>To final questions</th><th>CV feedback</th><th class="num">Days waiting on dept</th><th class="num">TAT lost</th><th>TAT</th></tr></thead><tbody>
+          ${shown.map(p => `<tr data-line="${esc(p.line)}"><td>${esc(p.position)}<span class="sub">${esc(p.mrf)} · ${esc(p.dept)} · ${esc(p.status)}</span></td><td>${esc(p.recruiter)}</td><td class="nw">${fmtDate(p.assigned)}</td>
+            <td><b class="${p.jd && p.jd.total > 3 ? 'miss' : ''}">${phaseTxt(p.jd)}</b><span class="sub">${phaseSub(p.jd)}</span></td>
+            <td><b class="${p.sq && p.sq.total > 3 ? 'miss' : ''}">${phaseTxt(p.sq)}</b><span class="sub">${p.sq ? phaseSub(p.sq) : p.jd && !p.jd.final ? 'after the JD is final' : ''}</span></td>
+            <td>${p.cvDone.length ? p.cvDone.length + ' reviewed, avg ' + h(Math.round(p.cvDone.reduce((s, c) => s + c.hours, 0) / p.cvDone.length)) : ''}${p.cvPending.length ? `<span class="sub miss">${p.cvPending.length} waiting</span>` : ''}</td>
+            <td class="num">${p.waitDays}</td><td class="num"><b class="${p.lossDays ? 'miss' : ''}">${p.lossDays}</b></td><td class="nw">${esc(p.tatResult || '—')}<span class="sub">${p.daysTaken} / ${p.finalTat} d</span></td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="empty">No positions match.</div>'}</section>
+      <div class="two" style="margin-top:18px">
+        <section class="panel"><div class="dp-h"><h2>Waiting on departments now</h2><button class="btn sm" id="dpCsvW">Download CSV</button></div>
+          ${pend.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Waiting for</th><th>Position</th><th>Recruiter</th><th>Since</th><th class="num">Waiting</th></tr></thead><tbody>
+            ${pend.map(x => `<tr data-line="${esc(x.p.line)}"><td>${esc(x.what)}</td><td>${esc(x.p.position)}<span class="sub">${esc(x.p.mrf)} · ${esc(x.p.dept)}</span></td><td>${esc(x.p.recruiter)}</td><td class="nw">${fmtDate(x.since)}</td><td class="num"><b class="miss">${x.wait}</b></td></tr>`).join('')}
+          </tbody></table></div>` : '<div class="empty">Nothing is waiting on a department.</div>'}</section>
+        <section class="panel"><div class="dp-h"><h2>Recruiter time lost waiting</h2><button class="btn sm" id="dpCsvR">Download CSV</button></div>
+          ${r.recruiters.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Recruiter</th><th class="num">Positions</th><th class="num">Days waiting on depts</th><th class="num">Beyond norms</th><th class="num">Share of TAT</th><th class="num">Waiting now</th></tr></thead><tbody>
+            ${r.recruiters.map(x => `<tr style="cursor:default"><td>${esc(x.recruiter)}</td><td class="num">${x.positions}</td><td class="num">${x.waitDays}</td><td class="num">${x.lossDays}</td><td class="num">${n(x.share)}${x.share == null ? '' : '%'}</td><td class="num">${x.cvPending + x.docPending || ''}</td></tr>`).join('')}
+          </tbody></table></div>` : '<div class="empty">No positions in this period.</div>'}</section>
+      </div>
+      <p class="legend">How it is counted: CV feedback runs from the move to “Shared with department” until the department confirms or the card is rejected, put on hold or withdrawn. JD and questions run from the date shared to the department’s reply. Waits on the same days for one position count once. TAT lost is the time beyond the policy norm (CV feedback ${r.norms.cvH} h, JD or questions reply ${r.norms.docD} day). Sharing that is only logged as daily counts, not by moving cards, cannot be timed.</p>`;
+    $$('tr[data-dept]', v).forEach(tr => tr.onclick = () => { f.dept = f.dept === tr.dataset.dept ? '' : tr.dataset.dept; draw(r); $('#dpCsvP').scrollIntoView({ block: 'center' }); });
+    if ($('#dpAll')) $('#dpAll').onclick = () => { f.dept = ''; draw(r); };
+    $('#dpDelayed').onchange = e => { f.delayed = e.target.checked; draw(r); };
+    $$('tr[data-line]', v).forEach(tr => tr.onclick = async () => { try { await loadPositions(); const l = lineById(tr.dataset.line); if (l) positionDrawer(l); } catch (e) { toast(e, true); } });
+    const tag = `${r.from}-to-${r.to}`;
+    $('#dpCsvD').onclick = () => csvSave(`department-delays-${tag}.csv`, ['Department', 'HOD', 'Positions', 'CV feedback avg h', 'CV feedback median h', 'CVs reviewed', 'CVs late', 'CVs waiting now', 'Oldest CV waiting h', 'JD/questions reply avg days', 'Replies', 'Awaiting now', 'Oldest awaiting days', 'Days waiting', 'TAT lost days', 'Share of TAT %', 'Past TAT'],
+      depts.map(d => [d.dept, d.hod, d.positions, d.cvAvgH, d.cvMedH, d.cvN, d.cvOver, d.cvPending, d.cvOldestH, d.docAvgD, d.docN, d.docPending, d.docOldestD, d.waitDays, d.lossDays, d.share, d.pastTat]));
+    $('#dpCsvP').onclick = () => csvSave(`department-delays-positions-${tag}.csv`, ['MRF', 'Position', 'Department', 'Recruiter', 'Status', 'Assigned', 'Days to final JD', 'JD recruiter days', 'JD department days', 'JD rounds', 'JD final', 'Days to final questions', 'Questions recruiter days', 'Questions department days', 'Question rounds', 'CVs reviewed', 'CVs waiting', 'Days waiting on dept', 'TAT lost days', 'TAT result', 'Days taken', 'Final TAT'],
+      shown.map(p => [p.mrf, p.position, p.dept, p.recruiter, p.status, p.assigned].concat(p.jd ? [p.jd.total, p.jd.recruiter, p.jd.dept, p.jd.rounds, p.jd.final ? 'Yes' : 'No'] : ['', '', '', '', ''], p.sq ? [p.sq.total, p.sq.recruiter, p.sq.dept, p.sq.rounds] : ['', '', '', ''], [p.cvDone.length, p.cvPending.length, p.waitDays, p.lossDays, p.tatResult, p.daysTaken, p.finalTat])));
+    $('#dpCsvW').onclick = () => csvSave(`waiting-on-departments-${today()}.csv`, ['Waiting for', 'MRF', 'Position', 'Department', 'Recruiter', 'Since', 'Waiting'], pend.map(x => [x.what, x.p.mrf, x.p.position, x.p.dept, x.p.recruiter, x.since, x.wait]));
+    $('#dpCsvR').onclick = () => csvSave(`recruiter-time-waiting-${tag}.csv`, ['Recruiter', 'Positions', 'Days waiting on departments', 'Beyond norms', 'Share of TAT %', 'Waiting now'], r.recruiters.map(x => [x.recruiter, x.positions, x.waitDays, x.lossDays, x.share, x.cvPending + x.docPending]));
+  };
+  await load();
 }
 
 async function viewPipeline(v) {

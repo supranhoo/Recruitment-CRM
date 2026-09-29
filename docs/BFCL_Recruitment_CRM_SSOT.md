@@ -860,6 +860,16 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
+- New page (all users; leads see every department, a recruiter their own positions), period last 30 / 90 / 180 days or custom, from records already kept:
+  - **CV feedback time**: a card's time at "Shared with department" (Stage_History) until the department confirms or the card is rejected, put on hold or withdrawn; average, median, number over the 24 h policy (Appendix A step 3); CVs waiting now with the oldest.
+  - **JD / screening-question validation**: each version's shared date to the department's reply (Position_Docs); average reply, versions awaiting now.
+  - **Positions: time to final JD and questions**, split into recruiter time (before sharing, revising) and department time (awaiting reply), with rounds; "only delayed" filter (over 3 days or TAT lost).
+  - **Days waiting on departments** per position (overlapping waits count once), **TAT lost** = time beyond the norms (24 h CV feedback, 1 day JD / questions reply), share of the period's TAT days; per department (worst first, with HOD and past-TAT count) and per recruiter ("recruiter time lost waiting").
+  - **Waiting on departments now**: every CV and JD / question version awaiting a reply, and since when.
+  - Click a department to filter its positions; click a position to open it; Download CSV on every table.
+- Limits: sharing logged only as daily counts (not by moving cards) cannot be timed; migrated history rows are skipped as their share time is unknown.
+- E2E: D19b checks the report's shape.
 **Unreleased — More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
 Measured in a browser harness at 1780×900 (1366×768 in brackets), before → after:
 - Candidate card (Pipeline): 1000 px wide, 1.78 screens tall → up to 1680 px (97% of the screen), **1.12** screens (2.10 → 1.71). Three columns: next step and joining follow-ups | interviews and other actions | screening, documents, offer, onboarding and history. Short form fields sit two to a row.
