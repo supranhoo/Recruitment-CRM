@@ -384,30 +384,73 @@ function apiSaveJobPost(data) {
 }
 
 /** Alerts across all positions: HOD feedback overdue, joiners at risk, follow-ups due, stage counts. */
+/** Days after the offer letter with no acceptance before a joiner counts as at risk. */
+const OFFER_ACCEPT_RISK_DAYS_ = 7;
+/**
+ * Pipeline alerts for the Overview and the weekly email, with the full detail the Overview's pop-up lists.
+ * - hodOverdue: cards at "Shared with department" for over 24 hours (the stage time is stamped on every move).
+ * - atRisk: joiners (Offer / Pre-joining) the recruiter marked Amber or Red at their last check-in, plus two facts that
+ *   need no input: the expected joining date has passed without a joining, or the offer is not accepted after
+ *   OFFER_ACCEPT_RISK_DAYS_ days. Each item says why it is listed.
+ * - dueToday: joining follow-ups whose next check-in date has come, and pre-joining candidates with none scheduled.
+ * - unassessed: joiners with no check-in ever recorded, so their risk is not known.
+ */
 function pipelineAlerts_(onlyRecruiter) {
-  const today = ymd_(new Date());
+  const now = Date.now(), today = ymd_(new Date()), DAY = 86400000;
   const cands = {};
   readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
   const lines = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
-  const out = { hodOverdue: [], atRisk: [], dueToday: [], counts: {} };
+  const hods = {};
+  readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = { name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '') }; });
+  const fus = {};
+  readTable_(T.FU.name).rows.forEach(function (f) {
+    const o = fus[f.App_ID] = fus[f.App_ID] || { n: 0, last: null };
+    o.n++;
+    const d = ymd_(f.FU_Date), at = f.Created_At instanceof Date ? f.Created_At.getTime() : 0;
+    if (!o.last || d > o.last.date || (d === o.last.date && at > o.last.at)) {
+      o.last = { date: d, mode: String(f.Mode || ''), response: String(f.Response || ''), risk: String(f.Risk || ''), note: String(f.Note || ''), by: String(f.By || ''), at: at };
+    }
+  });
+  const daysFrom = function (d) { return d ? Math.round((parseYmd_(today).getTime() - parseYmd_(d).getTime()) / DAY) : null; };
+  const dd = function (d) { return d ? fmt_(parseYmd_(d), TZ, 'd MMM yyyy') : ''; };
+  const out = { today: today, hodOverdue: [], atRisk: [], dueToday: [], unassessed: 0, counts: {} };
   STAGES.forEach(function (s) { out.counts[s] = 0; });
   readTable_(T.APP.name).rows.forEach(function (a) {
     if (String(a.Status) !== 'Active') return;
     if (onlyRecruiter && String(a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
     out.counts[a.Stage] = (out.counts[a.Stage] || 0) + 1;
-    const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {};
-    const brief = { app: a.App_ID, line: a.Line_ID, name: String(c.Name || a.Candidate_ID), position: String(l.Position || ''), recruiter: String(a.Recruiter),
-      stage: String(a.Stage), risk: String(a.Risk || ''), next: ymd_(a.Next_Followup) };
-    const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0;
-    if (a.Stage === 'Shared' && since && Date.now() - since > 24 * 3600000) { brief.hours = Math.round((Date.now() - since) / 3600000); out.hodOverdue.push(brief); }
-    if (['Offer', 'Prejoin'].indexOf(String(a.Stage)) >= 0) {
-      if (/Amber|Red/.test(String(a.Risk))) out.atRisk.push(brief);
-      if (brief.next && brief.next <= today) out.dueToday.push(brief);
-      if (a.Stage === 'Prejoin' && !brief.next) out.dueToday.push(Object.assign({ missing: true }, brief));
+    const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {}, st = String(a.Stage);
+    const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0, fu = fus[a.App_ID] || { n: 0, last: null };
+    const edoj = ymd_(a.EDOJ) || ymd_(l.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
+    const brief = { app: a.App_ID, line: a.Line_ID, cand: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
+      position: String(l.Position || ''), mrf: String(l.MRF_No || a.MRF_No || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''),
+      recruiter: String(a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
+      daysInStage: since ? Math.floor((now - since) / DAY) : null, risk: String(a.Risk || ''), next: ymd_(a.Next_Followup),
+      offer: offer, accepted: accepted, edoj: edoj, edojIn: edoj ? -daysFrom(edoj) : null, fuCount: fu.n, last: fu.last };
+    if (brief.last) delete brief.last.at;
+    if (st === 'Shared' && since && now - since > 24 * 3600000) {
+      const h = hods[String(l.Dept || '').trim()] || {};
+      out.hodOverdue.push(Object.assign({}, brief, { hours: Math.round((now - since) / 3600000), hod: String(h.name || ''), hodEmail: String(h.email || ''),
+        pending: 'Department feedback on the shared CV' + (h.name ? ' from ' + h.name : '') }));
     }
+    if (['Offer', 'Prejoin'].indexOf(st) < 0) return;
+    if (!fu.n) out.unassessed++;
+    const why = [];
+    if (/Amber|Red/.test(brief.risk)) why.push('Marked ' + brief.risk + ' by the recruiter' + (fu.last ? ' at the check-in on ' + dd(fu.last.date) : ''));
+    if (edoj && edoj < today && !l.Actual_DOJ) why.push('Expected joining ' + dd(edoj) + ' has passed (' + daysFrom(edoj) + ' days ago) with no joining recorded');
+    if (l.Actual_DOJ) why.push('Joining ' + dd(ymd_(l.Actual_DOJ)) + ' is recorded on the position, but this card was not moved to Joined');
+    if (st === 'Offer' && !accepted && offer && daysFrom(offer) >= OFFER_ACCEPT_RISK_DAYS_) why.push('Offer not accepted ' + daysFrom(offer) + ' days after the offer letter');
+    if (why.length) out.atRisk.push(Object.assign({}, brief, { why: why, level: brief.risk === 'Red' || (edoj && edoj < today && !l.Actual_DOJ) ? 'Red' : 'Amber' }));
+    const pend = [];
+    if (brief.next && brief.next <= today) pend.push('Check-in due ' + dd(brief.next) + (brief.next < today ? ' (' + daysFrom(brief.next) + ' days overdue)' : ' (today)'));
+    else if (st === 'Prejoin' && !brief.next) pend.push(fu.n ? 'No next check-in scheduled after the last one on ' + dd(fu.last.date) : 'No check-in recorded or scheduled since the offer was accepted' + (accepted ? ' on ' + dd(accepted) : ''));
+    if (pend.length) out.dueToday.push(Object.assign({}, brief, { missing: !brief.next, pending: pend.join('; '),
+      waitDays: brief.next ? daysFrom(brief.next) : daysFrom(fu.last ? fu.last.date : accepted || offer || (since ? ymd_(new Date(since)) : '')) }));
   });
   out.hodOverdue.sort(function (a, b) { return b.hours - a.hours; });
+  out.atRisk.sort(function (a, b) { return (a.level === b.level ? 0 : a.level === 'Red' ? -1 : 1) || String(a.edoj || '9').localeCompare(String(b.edoj || '9')); });
+  out.dueToday.sort(function (a, b) { return (b.waitDays || 0) - (a.waitDays || 0); });
   return out;
 }
 
