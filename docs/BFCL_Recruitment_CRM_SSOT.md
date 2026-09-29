@@ -854,6 +854,18 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-29
 
+**Unreleased — UI speed and stability** (no schema change; `App.html`, `Styles.html` only)
+- Screens no longer re-ask the server for the positions list on every menu click: the list in memory is shown at once and checked in the background (at most every 15 s, or on the next screen after any server action); if it changed, the list is swapped and the Positions screen redraws. After a save the next load still waits for the server as before. The list is prefetched 1.5 s after the first page, and simultaneous requests share one call.
+- A position drawer opened from memory re-reads that position: untouched, it redraws with the newer values; once typed in, it warns so a colleague's change is not overwritten.
+- Overview: to-do counts and pipeline alerts are requested together with the dashboard, and their space is reserved, so the page no longer jumps (layout shift 0.18 → 0 in the browser harness). Daily log reserves its tasks strip; the switch-over banner and a position's open tasks are drawn from the last answer on later visits.
+- Pipeline: the board and its tasks are requested together and drawn once (about 1.9 s → 0.85 s at 700 ms per server call).
+- Loading placeholders appear only when a page is not ready by the next frame, with no 250 ms blank before and no 400 ms minimum after; they fade out.
+- Searches wait 150–200 ms after typing (Positions, Interview panel, JD Master, departments, Users, JD picker); JD Master shows the first 150 profiles with "Show all", and its filter chips no longer reload the library from the server.
+- The side menu collapses without animating the page grid (which re-laid out the whole page every frame).
+- Set `localStorage['bfcl.perf'] = '1'` in the browser console to log every server call and page time.
+- Server: the to-do list is cached in chunks (`cacheBigPut_`), so a list over the 100 KB single-entry limit is cached instead of being rebuilt from about ten sheets on every call; chunks are now 30,000 characters so multi-byte text cannot overflow an entry.
+- Server slow-step log: sheet reads and to-do rebuilds taking 400 ms or more are written to the execution log as `[perf] …` (Apps Script → Executions).
+
 **v61 — 23:45 — Create JD save hotfix** (no schema change)
 - Fixed the Create JD save/download error caused by duplicate `jmWork` IDs after the wide responsibility editor release. The responsibility editor now uses its own container and the working-conditions textarea is read safely.
 - Tests: source syntax and full local harness unchanged at 91/109 because existing v58 legacy defects remain.

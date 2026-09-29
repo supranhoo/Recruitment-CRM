@@ -85,13 +85,23 @@ function readTable_(name, fresh) {
   if (_tables[name] && !fresh) return _tables[name];
   const cacheable = CACHED_TABLES_.indexOf(name) >= 0;
   if (cacheable && !fresh) { const c = tableFromCache_(name); if (c) return (_tables[name] = c); }
-  const sh = sheet_(name);
+  const t0 = Date.now(), sh = sheet_(name);
   const values = sh.getDataRange().getValues();
   const headers = values.shift().map(String);
   const rows = rowsFromValues_(headers, values, 2);
   jdmUndate_(name, headers, rows);
   if (cacheable) tableToCache_(name, headers, rows);
+  perfNote_('read ' + name, t0, rows.length + ' rows');
   return (_tables[name] = { headers: headers, rows: rows, sheet: sh });
+}
+/**
+ * Slow-step log: anything over PERF_LOG_MS_ is written to the execution log (Apps Script editor → Executions, or
+ * Cloud Logging), so the slowest sheet reads and computations can be found from real use rather than guessed.
+ */
+const PERF_LOG_MS_ = 400;
+function perfNote_(what, t0, extra) {
+  const ms = Date.now() - t0;
+  if (ms >= PERF_LOG_MS_) console.log('[perf] ' + what + ' ' + ms + ' ms' + (extra ? ' (' + extra + ')' : ''));
 }
 
 /**
@@ -115,7 +125,8 @@ function readTableFrom_(name, dateField, from) {
   let first = -1;
   for (let i = 0; i < col.length; i++) { const v = col[i][0]; if (v && ymd_(v) >= from) { first = i; break; } }
   if (first < 0) return (_tables[key] = { headers: headers, rows: [], sheet: sh });
-  const values = sh.getRange(first + 2, 1, last - 1 - first, lc).getValues();
+  const t0 = Date.now(), values = sh.getRange(first + 2, 1, last - 1 - first, lc).getValues();
+  perfNote_('read ' + name + ' from ' + from, t0, values.length + ' rows');
   return (_tables[key] = { headers: headers, rows: rowsFromValues_(headers, values, first + 2), sheet: sh });
 }
 
