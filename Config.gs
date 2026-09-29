@@ -12,7 +12,7 @@ const T = {
     name: 'MRF', id: 'Line_ID', prefix: 'MRL-', width: 5,
     dates: ['Receipt_Date', 'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'TAT_End_Date',
       'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'JD_Confirmed_Date', 'SQ_Confirmed_Date', 'Approved_On', 'Assigned_On', 'Replaced_On', 'TAT_Start_From', 'Reconciled_On'],
-    editable: ['MRF_No', 'Receipt_Date', 'Position', 'Grade', 'Dept', 'Recruiter', 'No_Of_Positions', 'Approval_Status',
+    editable: ['MRF_No', 'Receipt_Date', 'Position', 'Designation', 'Grade', 'Dept', 'Recruiter', 'No_Of_Positions', 'Approval_Status',
       'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Sent', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date',
       'Notice_Period_Days', 'Remarks', 'Candidate_ID', 'BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks',
       'Tech_Panel', 'Final_Panel', 'JD_Text', 'Justification', 'Budget_CTC', 'Vacancy_Reason', 'Screening_Questions',

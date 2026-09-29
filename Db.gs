@@ -14,7 +14,7 @@ function sheet_(name) {
 }
 
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
-const CACHED_TABLES_ = ['Settings', 'M_Grades', 'TAT_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'KPI_Targets', 'M_Panel_Members', 'Users'];
+const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'TAT_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'KPI_Targets', 'M_Panel_Members', 'Users'];
 const TABLE_CACHE_SECONDS_ = 600;
 function tableCacheKey_(name) { return 'tbl3_' + name; }
 function dropTableCache_(name) {

@@ -46,12 +46,17 @@ function e2eRun_(trash) {
 
   const rec = (boot && boot.recruiters[0] && (boot.recruiters[0].Recruiter || boot.recruiters[0])) || 'Tanaaz';
   const dept = (lines.filter(function (l) { return l.Dept; })[0] || {}).Dept || 'HR-HUMAN RESOURCES';
+  const m5 = ((boot && boot.grades || []).filter(function (g) { return g.grade === 'M5'; })[0] || {}).designations || [];
   const newLines = t('B1 add MRF with 2 positions', function () {
-    const r = apiAddPositionLines({ Position: 'E2E TEST POSITION', Grade: 'M5', Dept: dept, Receipt_Date: today, Recruiter: String(rec), Approval_Status: 'Approved',
+    const r = apiAddPositionLines({ Position: 'E2E TEST POSITION', Designation: m5[0] || '', Grade: 'M5', Dept: dept, Receipt_Date: today, Recruiter: String(rec), Approval_Status: 'Approved',
       Offer_Sent: 'No', MRF_No: 'E2E-1', Tech_Panel: 'Jaspal Bhanker', Final_Panel: 'Gaurav Budhia', JD_Text: 'Test JD', Vacancy_Reason: 'Replacement', Budget_CTC: '6-8 LPA' }, 2);
     return r.length === 2 && r[0].Position_Status === 'Open' && Number(r[0].Final_TAT) === 50 ? r : false;
   }) || [];
   const L1 = newLines[0] || {}, L2 = newLines[1] || {};
+  t('B1a designation saved on the position', function () { return m5.length ? String(L1.Designation) === m5[0] : 'M5 has no designations'; });
+  if (m5.length) err('B1b new position needs a designation', function () { apiSavePosition({ Position: 'X', Grade: 'M5', Dept: dept, Receipt_Date: today }); }, /designation/);
+  err('B1c designation must belong to the grade', function () { apiSavePosition({ Position: 'X', Grade: 'M5', Designation: 'E2E Not A Title', Dept: dept, Receipt_Date: today }); }, /not a designation/);
+  t('B1d grade setup lists grades and designations', function () { const g = apiGradeSetup(); return g.grades.length >= 10 && g.desigs.length > 0 ? g.desigs.length + ' designations' : false; });
   err('B2 position needs grade', function () { apiSavePosition({ Position: 'X', Dept: dept, Receipt_Date: today }); }, /required/);
   err('B3 joining needs offer first', function () { apiSavePosition(Object.assign({}, L2, { Actual_DOJ: today, Offer_Sent: 'No' })); }, /Offer sent/);
   t('B4 edit position', function () { return apiSavePosition(Object.assign({}, L2, { Remarks: 'E2E edited' })).Remarks === 'E2E edited'; });

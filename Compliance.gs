@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '26';
+const SCHEMA_VERSION = '27';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -38,6 +38,7 @@ function ensureSchema_() {
     pdocSchema_();
     scrSchema_();
     gradeDesigMigrate_();
+    gradeDesigSchema_();
     dayStatusSchema_();
     addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
       'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);

@@ -831,7 +831,7 @@ function apiJdmDraftForLine(lineId, templateId) {
   const qual = q ? String(q[band] || '') : '';
   if (qual && !tpl) flags.push({ level: 'info', text: 'Qualification norm taken from the ' + family + ' job family, the usual family for ' + compDept + '.' });
   if (!qual) flags.push({ level: 'warn', text: 'No qualification norm could be found: enter the minimum qualification with the HOD.' });
-  const pol = jdmPolicyExp_(gk, line.Position), stated = useDuties && String(tpl.Grade) === gk && tpl.Min_Total_Exp !== '' ? Number(tpl.Min_Total_Exp) : null;
+  const pol = jdmPolicyExp_(gk, lineTitle_(line)), stated = useDuties && String(tpl.Grade) === gk && tpl.Min_Total_Exp !== '' ? Number(tpl.Min_Total_Exp) : null;
   let expMin, expNote;
   if (pol) { expMin = Math.max(pol.degree, stated == null ? 0 : stated); expNote = stated != null && stated < pol.degree ? 'Recruitment Policy Appendix F minimum; supersedes the ' + stated + ' yrs in profile ' + tpl.JD_ID + '.' : 'Recruitment Policy Appendix F (' + pol.rule + ').'; }
   else { const low = jdmRecLow_(gb.rec); expMin = stated != null ? stated : low; expNote = stated != null ? 'From profile ' + tpl.JD_ID + '.' : 'Grade norm for ' + gk + ' (' + gb.rec + ' yrs).'; }
@@ -840,7 +840,7 @@ function apiJdmDraftForLine(lineId, templateId) {
   const prev = readTable_('JDM_Drafts').rows.filter(function (r) { return String(r.Line_ID) === String(lineId); }).length;
   return {
     lineId: String(line.Line_ID), jdRef: String(line.MRF_No || line.Line_ID), version: (prev + 1) + '.0', canSave: canEditLine_(u, line), recruiter: String(line.Recruiter || ''),
-    designation: String(line.Position), grade: g, band: band, gradeDesc: gb.desc, category: workman ? 'Workman' : gk === 'T' ? 'Trainee' : /^W[12]$/.test(gk) ? 'Supervisory' : 'Staff',
+    designation: String(line.Position), grade: g, band: band, gradeTitle: String(line.Designation || ''), category: workman ? 'Workman' : gk === 'T' ? 'Trainee' : /^W[12]$/.test(gk) ? 'Supervisory' : 'Staff',
     fn: tpl ? String(tpl.Function) : '', family: family, dept: String(line.Dept), unit: tpl ? String(tpl.Unit) : '', reportsTo: tpl && useDuties ? String(tpl.Reports_To) : '', reportees: tpl && useDuties ? String(tpl.Reportees) : '',
     compDept: compDept || '', summary: useDuties ? String(tpl.Role_Summary || '') : '', groups: groups, bandKras: bandKras, comps: comps, skills: skills,
     qualification: qual, qualNote: qual ? 'Norm for ' + family + ', ' + band + '.' : '', expMin: expMin == null ? '' : expMin, expIti: pol && pol.iti ? pol.iti : '', expNote: expNote,
