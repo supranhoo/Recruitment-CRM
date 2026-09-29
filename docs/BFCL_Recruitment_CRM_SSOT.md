@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.14 (adds v59: Dynamic Create JD responsibility editing) |
-| **Describes app version** | **v59** (Apps Script deployment version 59, published 29 Sep 2026) |
+| **Document version** | 1.14 (adds v59 candidate: Dynamic Create JD responsibility editing) |
+| **Describes app version** | **v58** (Apps Script deployment version 58, published 28 Sep 2026, 12:04 IST) |
 | **Database schema version** | **26** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -852,12 +852,12 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
-### 2026-09-29
+### Unreleased v59 candidate
 
-**v59 — Dynamic Create JD responsibility editing** (no schema change)
+**Dynamic Create JD responsibility editing** (no schema change)
 - Create JD now uses a local working copy for responsibilities: users can add categories, add/edit/reorder/remove responsibilities and immediately download or save the generated Word JD from that working copy without database calls on every edit.
 - Reusable library saves are explicit and restricted to `jd_manage`; the batch save writes app-added responsibilities into `JDM_Statements`, adds new KRA categories into `JDM_KRA_Categories`, retires removed profile responsibilities, preserves audit history and reloads the refreshed JD Master draft.
-- Tests: source syntax and full local harness unchanged at 91/109 because existing v58 legacy defects remain; focused batch-responsibility API smoke passed.
+- Tests: source syntax and full local harness unchanged at 91/109 because existing v58 legacy defects remain; focused batch-responsibility API smoke passed. Not yet deployed because the logged-in clasp account must enable the Apps Script API.
 
 ### 2026-09-28
 
