@@ -627,6 +627,107 @@ function apiJdmSaveItem(kind, d) {
   const rec = insert_(def, Object.assign({ JD_ID: tpl.JD_ID, Seq: seq, Source: 'App', KRA_Area: patch.KRA_Area || patch.KRA_Category || '' }, patch), u);
   return { id: rec[idc] };
 }
+function apiJdmSaveResponsibilityChanges(jdId, payload) {
+  const u = currentUser_(); jdmManage_(u); ensureSchema_();
+  jdId = String(jdId || '');
+  const tpl = readTable_('JDM_Templates').rows.filter(function (x) { return String(x.JD_ID) === jdId; })[0];
+  if (!tpl) throw new Error('Job profile ' + jdId + ' was not found.');
+  payload = payload || {};
+  const addedCats = payload.addedCategories || [], modifiedCats = payload.modifiedCategories || [];
+  const added = payload.addedResponsibilities || [], modified = payload.modifiedResponsibilities || [];
+  const deleted = payload.deletedResponsibilities || [], reordered = payload.reorderedResponsibilities || [];
+  function normCat(v) {
+    const s = clean_(String(v || '')).replace(/\s+/g, ' ').trim();
+    if (!s) throw new Error('Write the responsibility category.');
+    if (s.length > 120) throw new Error('Keep category names under 120 characters.');
+    return s;
+  }
+  function normText(v) {
+    const s = clean_(String(v || '')).replace(/\s+/g, ' ').trim();
+    if (!s) throw new Error('Write the responsibility.');
+    if (s.length > 600) throw new Error('Keep responsibilities under 600 characters.');
+    return s;
+  }
+  return withLock_(function () {
+    const catT = readTable_('JDM_KRA_Categories', true);
+    const catSet = {};
+    catT.rows.forEach(function (c) { catSet[String(c.Category)] = c; });
+    const catAudit = [], now = new Date(), catAdds = [];
+    addedCats.forEach(function (c) {
+      const name = normCat(c.name || c.Category);
+      if (!catSet[name]) {
+        catAdds.push({ Category: name, Covers: clean_(String(c.description || c.Covers || '')).slice(0, 500), Area_Names: name });
+        catSet[name] = { Category: name };
+        catAudit.push([now, u.email, 'JDM_KRA_Categories', name, 'Create', 'Category', '', name]);
+      }
+    });
+    if (catAdds.length) catT.sheet.getRange(catT.sheet.getLastRow() + 1, 1, catAdds.length, catT.headers.length).setValues(catAdds.map(function (c) {
+      return catT.headers.map(function (h) { return c[h] === undefined ? '' : jdmSafeText_(c[h]); });
+    }));
+    const rename = {};
+    modifiedCats.forEach(function (c) {
+      const oldName = normCat(c.id || c.oldName || c.Category);
+      const newName = normCat(c.name || c.newName);
+      if (oldName === newName) return;
+      if (catSet[newName] && oldName !== newName) throw new Error('Category ' + newName + ' already exists.');
+      const row = catSet[oldName];
+      if (!row) throw new Error('Category ' + oldName + ' was not found.');
+      row.Category = newName; row.Area_Names = row.Area_Names || newName;
+      catT.sheet.getRange(row._row, 1, 1, catT.headers.length).setValues([catT.headers.map(function (h) { return row[h] === undefined ? '' : jdmSafeText_(row[h]); })]);
+      delete catSet[oldName]; catSet[newName] = row; rename[oldName] = newName;
+      catAudit.push([now, u.email, 'JDM_KRA_Categories', oldName, 'Update', 'Category', oldName, newName]);
+    });
+    if (catAudit.length) { const a = sheet_('Audit_Log'); a.getRange(a.getLastRow() + 1, 1, catAudit.length, 8).setValues(catAudit); }
+    dropStale_('JDM_KRA_Categories');
+    const rows = readTable_('JDM_Statements', true).rows;
+    const byId = {}; rows.forEach(function (r) { byId[String(r.Stmt_ID)] = r; });
+    function validCat(v) {
+      const c = normCat(rename[String(v)] || v);
+      if (!catSet[c]) throw new Error('Pick the KRA category.');
+      return c;
+    }
+    const activeText = {};
+    rows.forEach(function (r) {
+      if (String(r.JD_ID) === jdId && String(r.Status) === 'Active') activeText[jdmTextKey_(r.Text)] = String(r.Stmt_ID);
+    });
+    function ensureUnique(text, id) {
+      const k = jdmTextKey_(text), other = activeText[k];
+      if (other && other !== String(id || '')) throw new Error('This job profile already has that responsibility (' + other + ').');
+      activeText[k] = String(id || k);
+    }
+    const updateIds = [], patches = {};
+    modified.forEach(function (r) {
+      const id = String(r.id || r.Stmt_ID || ''), cur = byId[id];
+      if (!cur || String(cur.JD_ID) !== jdId) throw new Error('Responsibility ' + id + ' was not found in ' + jdId + '.');
+      const text = normText(r.text || r.Text), cat = validCat(r.category || r.KRA_Category || cur.KRA_Category);
+      if (jdmTextKey_(text) !== jdmTextKey_(cur.Text)) delete activeText[jdmTextKey_(cur.Text)];
+      ensureUnique(text, id);
+      updateIds.push(id); patches[id] = { Text: text, Seq: Number(r.seq || r.Seq) || Number(cur.Seq) || 1, KRA_Category: cat, KRA_Area: clean_(String(r.area || r.KRA_Area || cat)).slice(0, 300), Status: 'Active' };
+    });
+    deleted.forEach(function (r) {
+      const id = String(r.id || r.Stmt_ID || ''), cur = byId[id];
+      if (!cur || String(cur.JD_ID) !== jdId) throw new Error('Responsibility ' + id + ' was not found in ' + jdId + '.');
+      delete activeText[jdmTextKey_(cur.Text)];
+      updateIds.push(id); patches[id] = Object.assign(patches[id] || {}, { Status: 'Retired' });
+    });
+    reordered.forEach(function (r) {
+      const id = String(r.id || r.Stmt_ID || ''), cur = byId[id];
+      if (!cur || String(cur.JD_ID) !== jdId) return;
+      updateIds.push(id); patches[id] = Object.assign(patches[id] || {}, { Seq: Number(r.seq || r.Seq) || Number(cur.Seq) || 1, KRA_Category: validCat(r.category || r.KRA_Category || cur.KRA_Category), KRA_Area: clean_(String(r.area || r.KRA_Area || r.category || cur.KRA_Area || cur.KRA_Category || '')).slice(0, 300) });
+    });
+    if (updateIds.length) jdmBulk_('JDM_Statements', 'Stmt_ID', updateIds, function (row) { return patches[String(row.Stmt_ID)]; }, u);
+    let nextSeq = rows.filter(function (r) { return String(r.JD_ID) === jdId; }).reduce(function (m, r) { return Math.max(m, Number(r.Seq) || 0); }, 0) + 1;
+    added.forEach(function (r) {
+      const text = normText(r.text || r.Text), cat = validCat(r.category || r.KRA_Category);
+      ensureUnique(text, '');
+      insert_(T.JDMS, { JD_ID: jdId, Seq: Number(r.seq || r.Seq) || nextSeq++, KRA_Area: clean_(String(r.area || r.KRA_Area || cat)).slice(0, 300),
+        KRA_Category: cat, Text: text, Source: 'App', Status: 'Active' }, u);
+    });
+    dropStale_('JDM_Statements');
+    audit_(u, 'JDM_Statements', jdId, 'Update', 'responsibilities', '', 'Batch save: +' + added.length + ', edited ' + modified.length + ', retired ' + deleted.length + ', reordered ' + reordered.length);
+    return { saved: true, counts: { addedCategories: catAdds.length, modifiedCategories: modifiedCats.length, addedResponsibilities: added.length, modifiedResponsibilities: modified.length, deletedResponsibilities: deleted.length, reorderedResponsibilities: reordered.length } };
+  });
+}
 function apiJdmSaveDeptMap(d) {
   const u = currentUser_(); jdmManage_(u); d = d || {};
   const r = readTable_('JDM_Dept_Map', true).rows.filter(function (x) { return String(x.CRM_Dept) === String(d.dept); })[0];

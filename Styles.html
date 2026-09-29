@@ -393,6 +393,16 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .jm-grp{margin:6px 0 10px}.jm-grp .sub{display:block;margin-bottom:4px}
 .jm-it{display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:3px 0}.jm-it input{margin-top:3px}
 #jmTpl{width:100%;max-width:100%;min-width:0;text-overflow:ellipsis}
+.jm-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px}
+.jm-edit{display:flex;flex-direction:column;gap:8px}
+.jm-card{border:1px solid var(--line);border-radius:var(--r-md);background:#fff;padding:9px 10px}
+.jm-card-h{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.jm-cat-name{flex:1;min-width:180px;font-weight:700;color:var(--navy)}
+.jm-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:start;padding:5px 0;border-top:1px solid var(--line-2)}
+.jm-row:first-of-type{border-top:0}.jm-row textarea{width:100%;font-size:12.5px;line-height:1.35;resize:vertical}
+.jm-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;font-size:12px}
+.jmc-head{font-weight:700;margin:8px 0 3px;color:var(--navy)}
+@media (max-width:640px){.jm-row{grid-template-columns:22px minmax(0,1fr)}.jm-row-actions{grid-column:2;justify-content:flex-start}.jm-card-h{align-items:flex-start;flex-direction:column}.jm-cat-name{width:100%}}
 .rstep .rview{display:block;margin-top:2px;font-size:12px}
 .linkbtn{background:none;border:0;padding:0;color:var(--navy);text-decoration:underline;cursor:pointer;font:inherit}
 .jd-text{white-space:pre-wrap;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);padding:12px;font-size:13px;line-height:1.5}

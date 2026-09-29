@@ -1966,12 +1966,57 @@ function jdmDocx(dr) {
     sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1000, bottom: 700, left: 500, right: 500, header: 300, footer: 300 } } }, headers: { default: header }, footers: { default: footer }, children: kids }] });
 }
 
+function jmWorkFromDraft(dr) {
+  let n = 1;
+  return { templateId: dr.template && dr.template.used ? dr.template.id : '', dirty: false, groups: (dr.groups || []).map((g, gi) => ({
+    id: 'g' + gi, name: g.cat, baseName: g.cat, changeType: '', active: true,
+    items: (g.items || []).map((it, ii) => ({ id: it.id || '', localId: 'i' + n++, text: it.text || '', baseText: it.text || '', baseCategory: g.cat, seq: ii + 1, baseSeq: ii + 1, active: true, source: it.id ? 'Library' : 'Draft', changeType: '' }))
+  })) };
+}
+function jmPayload(w) {
+  const p = { addedCategories: [], modifiedCategories: [], deletedCategories: [], addedResponsibilities: [], modifiedResponsibilities: [], deletedResponsibilities: [], reorderedResponsibilities: [] };
+  let seq = 1;
+  w.groups.forEach(g => {
+    if (g.active && !g.baseName) p.addedCategories.push({ name: g.name });
+    if (g.active && g.baseName && g.name !== g.baseName) p.modifiedCategories.push({ id: g.baseName, name: g.name });
+    g.items.forEach(it => {
+      const row = { id: it.id, text: it.text, category: g.name, seq: seq++ };
+      if (!it.active && it.id) p.deletedResponsibilities.push(row);
+      else if (it.active && !it.id) p.addedResponsibilities.push(row);
+      else if (it.active && it.id && (it.text !== it.baseText || g.name !== it.baseCategory)) p.modifiedResponsibilities.push(row);
+      else if (it.active && it.id && (row.seq !== it.baseSeq || g.name !== it.baseCategory)) p.reorderedResponsibilities.push(row);
+    });
+  });
+  return p;
+}
+function jmPayloadCount(p) { return Object.keys(p).reduce((n, k) => n + p[k].length, 0); }
+function jmSummary(p) {
+  const line = (title, rows, f) => rows.length ? `<p class="jmc-head">${title}</p><ul>${rows.map(f).map(esc).map(x => `<li>${x}</li>`).join('')}</ul>` : '';
+  return line('Added categories', p.addedCategories, x => x.name)
+    + line('Renamed categories', p.modifiedCategories, x => x.id + ' -> ' + x.name)
+    + line('Added responsibilities', p.addedResponsibilities, x => x.category + ': ' + x.text)
+    + line('Modified responsibilities', p.modifiedResponsibilities, x => x.category + ': ' + x.text)
+    + line('Retired responsibilities', p.deletedResponsibilities, x => x.text)
+    + line('Reordered responsibilities', p.reorderedResponsibilities, x => x.category + ': ' + x.text);
+}
+function jmEditorHtml(w, canManage) {
+  const activeGroups = w.groups.filter(g => g.active);
+  return `<div class="jm-toolbar"><button class="btn" id="jmAddCat" type="button">+ Add Responsibility Category</button>${canManage && w.templateId ? '<button class="btn" id="jmMasterSave" type="button">Save reusable changes</button>' : ''}<span class="sub">${w.dirty ? 'Unsaved working-copy changes' : 'No working-copy changes yet'}</span></div>
+    <div class="jm-edit">${activeGroups.map((g, gi) => `<div class="jm-card" data-g="${w.groups.indexOf(g)}">
+      <div class="jm-card-h"><input class="jm-cat-name" value="${esc(g.name)}" aria-label="Responsibility category"><button class="linklike" data-gact="add">+ Add Responsibility</button><button class="linklike" data-gact="remove">Remove category</button></div>
+      ${g.items.filter(it => it.active).map(it => `<div class="jm-row" data-i="${esc(it.localId)}"><input type="checkbox" class="jm-on" checked aria-label="Include responsibility"><textarea class="jm-txt" rows="2">${esc(it.text)}</textarea>
+        <div class="jm-row-actions"><button class="linklike" data-iact="up">Up</button><button class="linklike" data-iact="down">Down</button><button class="linklike" data-iact="remove">Remove</button></div></div>`).join('') || '<p class="hint">No responsibilities in this category.</p>'}
+    </div>`).join('') || '<p class="hint">No responsibility categories selected.</p>'}</div>`;
+}
 async function openJdMaker(lineId, templateId, after) {
   const body = openDrawer('Create JD', '<p class="muted">Composing the JD from the JD Master\u2026</p>');
   let dr;
   try { dr = await api('apiJdmDraftForLine', lineId, templateId || ''); } catch (e) { body.innerHTML = `<p class="miss">${esc(e)}</p>`; return; }
   const lvCount = {}; dr.comps.forEach(c => { lvCount[c.level] = (lvCount[c.level] || 0) + 1; });
   const trade = /Workman|Supervisory/.test(dr.category);
+  const work = jmWorkFromDraft(dr);
+  let localSeq = 1000;
+  const mark = () => { work.dirty = true; };
   body.innerHTML = `
     <p class="hint" style="margin-top:0">${esc(dr.jdRef)} \u00b7 <b>${esc(dr.designation)}</b> \u00b7 ${esc(dr.grade)} (${esc(dr.band)}) \u00b7 ${esc(dr.dept)} \u00b7 version ${esc(dr.version)}</p>
     ${dr.flags.map(f => `<div class="note ${f.level === 'warn' ? 'warn-note' : ''}" style="margin:6px 0">${esc(f.text)}</div>`).join('')}
@@ -1981,19 +2026,53 @@ async function openJdMaker(lineId, templateId, after) {
       <option value="none" ${dr.template ? '' : 'selected'}>No profile: grade-band standards and framework competencies only</option></select>
       <span class="sub">Ranked by competency department, designation and grade. Workman roles use a profile only for the same department and trade.</span></div>
     <div class="field wide"><label for="jmSum">Role purpose</label><textarea id="jmSum" rows="3" placeholder="Two or three sentences on why the role exists (with the HOD)">${esc(dr.summary)}</textarea></div>
-    <h4 style="margin:14px 0 6px">Responsibilities ${dr.groups.length ? '<span class="sub">untick any that do not fit this position</span>' : ''}</h4>
-    ${dr.groups.length ? dr.groups.map((g, gi) => `<div class="jm-grp"><b class="sub">${esc(g.cat)}</b>${g.items.map((it, ii) => `<label class="jm-it"><input type="checkbox" data-g="${gi}" data-i="${ii}" checked> ${esc(it.text)}</label>`).join('')}</div>`).join('')
-      : `<p class="hint">The ${esc(dr.band)} standard duties will be used: ${dr.bandKras.map(esc).join(' \u00b7 ')}</p>`}
+    <h4 style="margin:14px 0 6px">Responsibilities <span class="sub">edit locally; save reusable changes only after review</span></h4>
+    <div id="jmWork"></div>
     <div class="field wide"><label for="jmAdd">${trade ? 'Trade duties' : 'Additional duties'} (one per line)</label><textarea id="jmAdd" rows="3" placeholder="${trade ? 'e.g. Carry out preventive maintenance of LT motors as per schedule' : 'Optional: duties specific to this position'}"></textarea></div>
     <div class="field-grid"><div class="field"><label for="jmPref">Preferred experience</label><input id="jmPref" placeholder="Optional"></div>
       <div class="field"><label for="jmWork">Working conditions and safety</label><textarea id="jmWork" rows="2" placeholder="Shifts, location, PPE, fitness (with the HOD)"></textarea></div></div>
     <p class="hint">Also included: ${dr.bandKras.length} ${esc(dr.band)} standards \u00b7 ${dr.comps.length} competencies at ${esc(dr.grade)} (${[5, 4, 3, 2, 1].filter(k => lvCount[k]).map(k => lvCount[k] + ' at L' + k).join(', ')}) \u00b7 qualification: ${esc(dr.qualification || 'to be confirmed')} \u00b7 experience: ${dr.expMin === '' ? 'to be confirmed' : esc(dr.expMin) + '+ yrs'}</p>
     <div class="drawer-actions"><button class="btn" id="jmDl">Download Word</button>${dr.canSave ? '<button class="btn primary" id="jmSave">Save to JD folder and attach</button>' : ''}</div>`;
   $('#jmTpl', body).onchange = e => openJdMaker(lineId, e.target.value, after);
+  const bindWork = () => {
+    $('#jmWork', body).innerHTML = jmEditorHtml(work, can('jd_manage'));
+    $$('.jm-card', body).forEach(card => {
+      const g = work.groups[Number(card.dataset.g)];
+      $('.jm-cat-name', card).oninput = e => { g.name = e.target.value.trim(); mark(); };
+      $('.jm-cat-name', card).onchange = () => bindWork();
+      $$('[data-gact]', card).forEach(b => b.onclick = () => {
+        if (b.dataset.gact === 'add') { g.items.push({ id: '', localId: 'i' + localSeq++, text: '', baseText: '', baseCategory: g.name, seq: g.items.length + 1, baseSeq: 0, active: true, source: 'Draft', changeType: 'Added' }); mark(); bindWork(); }
+        if (b.dataset.gact === 'remove') { g.active = false; g.items.forEach(it => { it.active = false; }); mark(); bindWork(); }
+      });
+      $$('.jm-row', card).forEach(rowEl => {
+        const it = g.items.find(x => x.localId === rowEl.dataset.i);
+        $('.jm-on', rowEl).onchange = e => { it.active = e.target.checked; mark(); bindWork(); };
+        $('.jm-txt', rowEl).oninput = e => { it.text = e.target.value.trim(); mark(); };
+        $$('[data-iact]', rowEl).forEach(b => b.onclick = () => {
+          const live = g.items.filter(x => x.active), idx = live.indexOf(it), allIdx = g.items.indexOf(it);
+          if (b.dataset.iact === 'remove') it.active = false;
+          if (b.dataset.iact === 'up' && idx > 0) { const other = live[idx - 1], oi = g.items.indexOf(other); g.items[oi] = it; g.items[allIdx] = other; }
+          if (b.dataset.iact === 'down' && idx < live.length - 1) { const other = live[idx + 1], oi = g.items.indexOf(other); g.items[oi] = it; g.items[allIdx] = other; }
+          mark(); bindWork();
+        });
+      });
+    });
+    if ($('#jmAddCat', body)) $('#jmAddCat', body).onclick = () => { work.groups.push({ id: 'g' + localSeq++, name: 'New category', baseName: '', active: true, changeType: 'Added', items: [] }); mark(); bindWork(); };
+    if ($('#jmMasterSave', body)) $('#jmMasterSave', body).onclick = async () => {
+      const p = jmPayload(work), n = jmPayloadCount(p), html = jmSummary(p);
+      if (!n) { toast('No reusable changes to save.'); return; }
+      const ok = window.confirm('Save these reusable JD Master changes?\n\n' + html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1400));
+      if (!ok) return;
+      const btn = $('#jmMasterSave', body); busy(btn, true, 'Saving\u2026');
+      try { await api('apiJdmSaveResponsibilityChanges', work.templateId, p); toast('Reusable responsibilities saved to JD Master.'); openJdMaker(lineId, work.templateId, after); }
+      catch (e) { toast(e, true); busy(btn, false, 'Save reusable changes'); }
+    };
+  };
+  bindWork();
   const collect = () => {
     const d = JSON.parse(JSON.stringify(dr));
     d.summary = $('#jmSum', body).value.trim();
-    d.groups = dr.groups.map((g, gi) => ({ cat: g.cat, items: g.items.filter((it, ii) => { const cb = body.querySelector(`input[data-g="${gi}"][data-i="${ii}"]`); return !cb || cb.checked; }) }));
+    d.groups = work.groups.filter(g => g.active).map(g => ({ cat: g.name, items: g.items.filter(it => it.active && it.text.trim()).map(it => ({ id: it.id, text: it.text.trim() })) })).filter(g => g.items.length);
     const add = $('#jmAdd', body).value.split(/\n/).map(s => s.trim()).filter(Boolean);
     if (add.length) {
       if (!d.groups.some(g => g.items.length)) d.groups = [{ cat: 'Standard duties (' + d.band + ')', items: d.bandKras.map(s => ({ text: s })) }];
