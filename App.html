@@ -309,7 +309,7 @@ function form(fields, data, readonly) {
     return `<div class="field ${f.wide ? 'wide' : ''}"><label for="${id}">${esc(f.l)}${f.req ? ' *' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
   }).join('');
 }
-function wrapForm(html) { return `<fieldset><div class="grid">${html}</div></fieldset>`.replace('<fieldset><div class="grid"></div></fieldset>', ''); }
+function wrapForm(html) { return `<div class="form-flow">${`<fieldset><div class="grid">${html}</div></fieldset>`.replace('<fieldset><div class="grid"></div></fieldset>', '')}</div>`; }
 function readForm(root) {
   const o = {};
   $$('[name]', root).forEach(el => { o[el.name] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value; });
@@ -839,7 +839,7 @@ async function viewOverview(v, fresh) {
           <td>${esc(p.Recruiter)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">No open positions. New MRFs appear here once entered.</div>'}
       </section>
-      <div style="display:grid;gap:20px">
+      <div style="display:grid;gap:20px;grid-template-columns:minmax(0,1fr)">
         <section class="panel"><h2>Funnel, last 30 days</h2><div class="funnel">
           ${METRICS.map(([key, label]) => `<div class="frow"><span>${label}</span><div class="fbar"><span style="width:${100 * (d.funnel[key] || 0) / maxF}%"></span></div><span class="num">${d.funnel[key] || 0}</span></div>`).join('')}
         </div></section>
@@ -1744,7 +1744,7 @@ function initMulti(root) {
 }
 function openPanelDialog(m, onSaved) {
   let dlg = $('#pmDialog');
-  if (!dlg) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pmDialog" class="pm-dialog" aria-labelledby="pmTitle"></dialog>'); dlg = $('#pmDialog'); }
+  if (!dlg) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pmDialog" class="pm-dialog mid" aria-labelledby="pmTitle"></dialog>'); dlg = $('#pmDialog'); }
   const edit = !!m; const d = m || { roles: 'Technical', active: 'Yes' };
   const roles = String(d.roles || '');
   dlg.innerHTML = `<form method="dialog" id="pmForm"><h2 id="pmTitle">${edit ? 'Edit panel member' : 'New panel member'}</h2>
@@ -3774,7 +3774,7 @@ async function viewPipeline(v) {
       <div id="pTasks"></div>
       <div class="board" role="list">${P_STAGES.map(s => {
         const cards = shown.filter(a => a.Stage === s);
-        return `<section class="col" role="listitem" aria-label="${P_NAMES[s]}"><header><span>${P_NAMES[s]}</span><span class="pcount">${cards.length}</span></header>
+        return `<section class="col${cards.length ? '' : ' empty'}" role="listitem" aria-label="${P_NAMES[s]}${cards.length ? '' : ', no candidates'}" title="${P_NAMES[s]}"><header><span>${P_NAMES[s]}</span><span class="pcount">${cards.length}</span></header>
           ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
             <b>${esc(a.cand.name || a.Candidate_ID)}</b>
             <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
@@ -3793,7 +3793,7 @@ async function viewPipeline(v) {
       else if (k === 'qs') {
         const d = dlg(`<h2 id="pdTitle">Screening questions</h2><p class="hint">${esc(L.Position || '')} \u00b7 ${L.SQ_Confirmed_Date ? 'confirmed by the department on ' + fmtDate(L.SQ_Confirmed_Date) : 'not confirmed by the department yet'}</p>
           <ol class="qlist qview">${P.questions.map(q => `<li><span>${esc(q)}</span></li>`).join('')}</ol>
-          <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button>${canEdit ? '<button class="btn primary" id="qEditGo">Edit questions</button>' : ''}</div>`);
+          <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button>${canEdit ? '<button class="btn primary" id="qEditGo">Edit questions</button>' : ''}</div>`, 'mid');
         if ($('#qEditGo', d)) $('#qEditGo', d).onclick = () => questionsDialog();
       }
     });
@@ -3817,7 +3817,7 @@ async function viewPipeline(v) {
   const dlg = (html, wide) => {
     let d = $('#pDialog');
     if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pDialog" class="pm-dialog" aria-labelledby="pdTitle"></dialog>'); d = $('#pDialog'); }
-    d.className = 'pm-dialog' + (wide ? ' wide' : '');
+    d.className = 'pm-dialog' + (wide ? ' wide' : '') + (typeof wide === 'string' ? ' ' + wide : '');
     d.innerHTML = html; if (!d.open) d.showModal();
     $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
     return d;
@@ -3826,7 +3826,7 @@ async function viewPipeline(v) {
     const d = dlg(`<h2 id="pdTitle">Add a candidate to ${esc(P.line.Position)}</h2>
       <div class="field"><label for="pcSearch">Find an existing candidate</label><input id="pcSearch" type="search" placeholder="Name, mobile or email"></div>
       <div id="pcResults" class="pc-results"><p class="hint">Type at least 3 characters.</p></div>
-      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn primary" id="pcNew">New candidate</button></div>`);
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn primary" id="pcNew">New candidate</button></div>`, 'mid');
     $('#pcNew').onclick = () => { d.close(); const L = P.line; candidateDrawer(null, { Line_ID: L.Line_ID, Position: L.Position, Dept: L.Dept }); };
     $('#pcSearch').focus();
     let pcSeq = 0, pcTimer = null;
@@ -3848,7 +3848,7 @@ async function viewPipeline(v) {
     const d = dlg(`<h2 id="pdTitle">Screening questions</h2><p class="hint">Asked by the recruiter at screening; answers are saved with each candidate.</p>
       <ol id="qList" class="qlist"></ol><div class="task-add"><input id="qNew" placeholder="Add a question and press Enter" aria-label="New question"><button class="btn" id="qAdd">Add</button></div>
       <p class="hint" style="margin-top:12px">${P.docs.jdFinal ? 'Saving creates a new version to share with the department in <b>JD &amp; questions</b>.' : '<b>The JD is not final yet.</b> Questions are written once the department has validated the JD.'}</p>
-      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button><button class="btn primary" id="qSave">Save questions</button></div>`);
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button><button class="btn primary" id="qSave">Save questions</button></div>`, 'mid');
     const draw = () => { $('#qList').innerHTML = qs.map((q, i) => `<li><span>${esc(q)}</span><button class="icon-btn" data-i="${i}" aria-label="Remove question">\u00d7</button></li>`).join('') || '<li class="hint">No questions yet.</li>'; $$('#qList [data-i]').forEach(b => b.onclick = () => { qs.splice(+b.dataset.i, 1); draw(); }); };
     const add = () => { const t = $('#qNew').value.trim(); if (t) { qs.push(t); $('#qNew').value = ''; draw(); } };
     $('#qAdd').onclick = add; $('#qNew').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
@@ -3937,12 +3937,20 @@ async function viewPipeline(v) {
     const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
       <ol class="track">${P_STAGES.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${P_NAMES[s]}</span><small>${esc(reached[s] || '')}</small></li>`).join('')}</ol>
-      <div class="two app-grid">
+      <div class="app-grid3">
         <div>
           ${canEdit && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${P_NAMES[next]}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apScreen">${a.screen ? 'Continue screening' : 'Record screening'}</button></div></section>` : ''}
           ${canEdit && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${P_NAMES[next]}</h3><div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">Move to ${P_NAMES[next]}</button></div></section>` : ''}
+          ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
+            ${a.followups.length ? `<ul class="work">${a.followups.map(x => `<li><b>${fmtDate(x.date)}</b> ${esc(x.mode)} \u00b7 <span class="risk r-${esc(x.risk)}">${esc(x.risk)}</span> ${esc(x.response)}${x.note ? ` \u2014 ${esc(x.note)}` : ''}${x.next ? ` \u00b7 next ${fmtDate(x.next)}` : ''}</li>`).join('')}</ul>` : '<p class="hint">No check-ins logged yet.</p>'}
+            ${canEdit && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
+              { k: 'response', l: 'What the candidate said', wide: true }, { k: 'risk', l: 'Risk of not joining', t: 'select', opts: ['Green', 'Amber', 'Red'], noBlank: true },
+              { k: 'next', l: 'Next check-in', t: 'date' }, { k: 'note', l: 'Note', wide: true }], { date: today(), mode: 'Call', risk: a.Risk || 'Green', next: daysAhead(3) }))}</div>
+              <div class="drawer-actions" style="position:static"><button class="btn" id="apFuSave">Log check-in</button></div>` : ''}</section>` : ''}
+        </div>
+        <div>
           ${interviewSecHtml(a, canEdit && active)}
           ${canEdit ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
             ${active && ['Offer', 'Prejoin'].includes(a.Stage) ? `<div class="field" style="margin-top:8px"><label for="apBoDate">Backout date</label><input id="apBoDate" type="date" value="${today()}" max="${today()}"></div>
@@ -3950,12 +3958,6 @@ async function viewPipeline(v) {
             ${isLead() ? `<details class="rc-keep" style="margin-top:10px"><summary>Linked in error? (head and admin)</summary><div class="rc-act"><input id="apUnlinkWhy" placeholder="Reason for the correction (required)" aria-label="Reason"><button class="btn sm" id="apUnlink">Remove this card</button></div><p class="hint">Removes the card without recording a backout, and sends the position back to the switch-over check so the right candidate can be linked. The history is kept.</p></details>` : ''}
             <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
             ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section>` : ''}
-          ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
-            ${a.followups.length ? `<ul class="work">${a.followups.map(x => `<li><b>${fmtDate(x.date)}</b> ${esc(x.mode)} \u00b7 <span class="risk r-${esc(x.risk)}">${esc(x.risk)}</span> ${esc(x.response)}${x.note ? ` \u2014 ${esc(x.note)}` : ''}${x.next ? ` \u00b7 next ${fmtDate(x.next)}` : ''}</li>`).join('')}</ul>` : '<p class="hint">No check-ins logged yet.</p>'}
-            ${canEdit && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
-              { k: 'response', l: 'What the candidate said', wide: true }, { k: 'risk', l: 'Risk of not joining', t: 'select', opts: ['Green', 'Amber', 'Red'], noBlank: true },
-              { k: 'next', l: 'Next check-in', t: 'date' }, { k: 'note', l: 'Note', wide: true }], { date: today(), mode: 'Call', risk: a.Risk || 'Green', next: daysAhead(3) }))}</div>
-              <div class="drawer-actions" style="position:static"><button class="btn" id="apFuSave">Log check-in</button></div>` : ''}</section>` : ''}
         </div>
         <div>
           ${a.screen ? `<section class="app-sec scr-card"><h3>Screening ${fitChip(a.screen.band)}</h3><p class="scr-cnt"><b>${a.screen.met}</b> of ${a.screen.total} met \u00b7 <b>${a.screen.partly}</b> partly \u00b7 <b>${a.screen.gaps}</b> gaps${a.screen.koFailed.length ? ' \u00b7 <b class="miss">knock-out not met</b>' : ''}</p>
@@ -3968,7 +3970,7 @@ async function viewPipeline(v) {
           ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
           <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.by)}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
         </div></div>
-      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, true);
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');
     initMulti(d);
     bindInterviewSec(d, a);
     if ($('#apUnlink', d)) $('#apUnlink', d).onclick = async () => {
