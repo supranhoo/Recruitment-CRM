@@ -272,14 +272,14 @@ function readForm(root) {
   return o;
 }
 
-function openDrawer(title, html) {
+function openDrawer(title, html, cls) {
   hideCv();
   $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html;
-  $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
+  $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
   setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
   return $('#drawerBody');
 }
-function closeDrawer() { hideCv(); $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').hidden = true; }
+function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').hidden = true; }
 
 const MS_BASE = 'https:' + '\/\/';
 function istEnd(startIso, minutes) {
@@ -2009,7 +2009,7 @@ function jmEditorHtml(w, canManage) {
     </div>`).join('') || '<p class="hint">No responsibility categories selected.</p>'}</div>`;
 }
 async function openJdMaker(lineId, templateId, after) {
-  const body = openDrawer('Create JD', '<p class="muted">Composing the JD from the JD Master\u2026</p>');
+  const body = openDrawer('Create JD', '<p class="muted">Composing the JD from the JD Master\u2026</p>', 'jd-maker-drawer');
   let dr;
   try { dr = await api('apiJdmDraftForLine', lineId, templateId || ''); } catch (e) { body.innerHTML = `<p class="miss">${esc(e)}</p>`; return; }
   const lvCount = {}; dr.comps.forEach(c => { lvCount[c.level] = (lvCount[c.level] || 0) + 1; });

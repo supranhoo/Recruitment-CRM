@@ -162,6 +162,7 @@ td .sub{display:block;color:var(--muted);font-size:13px}
 body.cv-open{--drawer-w:min(640px,100vw)}
 .drawer{position:fixed;top:0;right:0;height:100vh;width:var(--drawer-w);background:#fff;border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(24,34,47,.12);transform:translateX(100%);visibility:hidden;transition:transform .22s ease,visibility 0s .22s;z-index:20;display:flex;flex-direction:column}
 .drawer.open{transform:none;visibility:visible;transition:transform .22s ease}
+.drawer.jd-maker-drawer{width:min(1420px,calc(100vw - 240px))}
 .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line)}
 .drawer-head h2{margin:0;font-size:19px;font-weight:600}
 .drawer-body{overflow:auto;padding:4px 20px 0;flex:1}
@@ -398,10 +399,12 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .jm-card{border:1px solid var(--line);border-radius:var(--r-md);background:#fff;padding:9px 10px}
 .jm-card-h{display:flex;align-items:center;gap:8px;margin-bottom:7px}
 .jm-cat-name{flex:1;min-width:180px;font-weight:700;color:var(--navy)}
-.jm-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:start;padding:5px 0;border-top:1px solid var(--line-2)}
+.jd-maker-drawer .drawer-body{padding-left:28px;padding-right:28px}
+.jm-row{display:grid;grid-template-columns:22px minmax(0,1fr) 150px;gap:8px;align-items:start;padding:5px 0;border-top:1px solid var(--line-2)}
 .jm-row:first-of-type{border-top:0}.jm-row textarea{width:100%;font-size:12.5px;line-height:1.35;resize:vertical}
 .jm-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;font-size:12px}
 .jmc-head{font-weight:700;margin:8px 0 3px;color:var(--navy)}
+@media (max-width:1200px){.drawer.jd-maker-drawer{width:96vw}.jd-maker-drawer .drawer-body{padding-left:20px;padding-right:20px}}
 @media (max-width:640px){.jm-row{grid-template-columns:22px minmax(0,1fr)}.jm-row-actions{grid-column:2;justify-content:flex-start}.jm-card-h{align-items:flex-start;flex-direction:column}.jm-cat-name{width:100%}}
 .rstep .rview{display:block;margin-top:2px;font-size:12px}
 .linkbtn{background:none;border:0;padding:0;color:var(--navy);text-decoration:underline;cursor:pointer;font:inherit}

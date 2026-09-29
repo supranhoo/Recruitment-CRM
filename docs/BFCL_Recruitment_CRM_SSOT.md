@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.14 (adds v59: Dynamic Create JD responsibility editing) |
-| **Describes app version** | **v59** (Apps Script deployment version 59, published 29 Sep 2026, 23:12 IST) |
+| **Document version** | 1.15 (adds v60: wider Create JD workspace) |
+| **Describes app version** | **v60** (Apps Script deployment version 60, published 29 Sep 2026, 23:19 IST) |
 | **Database schema version** | **26** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -853,6 +853,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-29
+
+**v60 — 23:19 — Wider Create JD workspace** (no schema change)
+- The Create JD drawer now opens as a wide workspace on desktop so dense responsibility categories and editable statement rows have more horizontal room. Other drawers keep their earlier width.
+- Tests: source syntax and full local harness unchanged at 91/109 because existing v58 legacy defects remain.
 
 **v59 — 23:12 — Dynamic Create JD responsibility editing** (no schema change)
 - Create JD now uses a local working copy for responsibilities: users can add categories, add/edit/reorder/remove responsibilities and immediately download or save the generated Word JD from that working copy without database calls on every edit.
