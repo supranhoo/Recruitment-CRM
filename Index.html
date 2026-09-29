@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div id="boot" class="boot">Loading the recruitment CRM…</div>
+
+  <div id="shell" class="shell" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>BFCL Recruitment</div>
+      <div class="user" id="userChip"></div>
+    </header>
+    <nav class="rail" id="rail" aria-label="Main">
+      <a href="#overview" data-view="overview">Overview</a>
+      <a href="#positions" data-view="positions">Positions</a>
+      <a href="#daily" data-view="daily">Daily log</a>
+      <a href="#candidates" data-view="candidates">Candidates</a>
+      <a href="#panel" data-view="panel">Panel availability</a>
+      <a href="#admin" data-view="admin" id="navAdmin" hidden>Admin</a>
+    </nav>
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2 id="drawerTitle"></h2>
+      <button class="icon-btn" id="drawerClose" aria-label="Close">✕</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <?!= include('App'); ?>
+</body>
+</html>

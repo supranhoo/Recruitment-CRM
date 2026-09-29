@@ -1,0 +1,1553 @@
+<script>
+const S = { boot: null, positions: null, candidates: null, view: 'overview' };
+const PAGE = 50;
+const METRICS = [['CV_Sourced','CV sourced','CVs'],['CV_Reviewed','CVs reviewed','Reviewed'],['HR_1st_Round','HR 1st round','HR R1'],['CV_Shared_Dept','CV shared with dept','Shared'],
+  ['Shortlisted_Dept','Shortlisted by dept','Shortlisted'],['Interviews_Done','Interviews done','Interviews'],['Selected_Final','Selected for final','Selected']];
+const ACTIVE = ['Open','Offered'];
+
+function api(fn, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve)
+      .withFailureHandler(e => reject(e && e.message ? e.message.replace(new RegExp('^Error:\\s*'), '') : String(e)))[fn](...args);
+  });
+}
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDate(ymd) { if (!ymd) return ''; const p = String(ymd).split('-'); return p.length < 3 ? ymd : `${+p[2]} ${MONTHS[p[1]-1]} ${p[0]}`; }
+function today() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function daysAgo(n) { const d = new Date(Date.now() - n * 86400000); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function isLead() { return ['Admin','Head'].includes(S.boot.user.role); }
+
+let toastTimer;
+function toast(msg, err) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = 'toast', err ? 6000 : 2800);
+}
+function busy(btn, on, label) { if (!btn) return; btn.disabled = on; if (label) btn.textContent = label; }
+
+window.addEventListener('load', () => {
+  api('apiBootstrap').then(b => {
+    S.boot = b;
+    buildPanelIndex();
+    const pnav = $('#rail a[data-view="panel"]'); if (pnav) pnav.textContent = 'Interview panel';
+    if (!$('#rail a[data-view="pipeline"]')) $('#rail a[data-view="positions"]').insertAdjacentHTML('afterend', '<a href="#pipeline" data-view="pipeline">Pipeline</a>');
+    $('#boot').hidden = true; $('#shell').hidden = false;
+    $('#userChip').innerHTML = `<b>${esc(b.user.name)}</b> · ${esc(b.user.role)}`;
+    $('#navAdmin').hidden = !['Admin', 'Head'].includes(b.user.role);
+    if (!$('#rail a[data-view="kpi"]')) $('#rail a[data-view="overview"]').insertAdjacentHTML('afterend', '<a href="#myday" data-view="myday">My day</a>' + (['Admin', 'Head'].includes(b.user.role) ? '<a href="#review" data-view="review">Daily review</a>' : '') + '<a href="#kpi" data-view="kpi">KPI scorecard</a><a href="#compliance" data-view="compliance">Compliance</a>');
+    $$('#rail a').forEach(a => a.addEventListener('click', e => { e.preventDefault(); go(a.dataset.view, true); }));
+    google.script.history.setChangeHandler(e => go((e.state && e.state.view) || 'overview', false));
+    google.script.url.getLocation(loc => go((loc.hash || '').replace('#','') || 'overview', false));
+  }).catch(msg => {
+    const el = $('#boot'); el.classList.add('error');
+    el.textContent = String(msg).replace(new RegExp('^ACCESS:\\s*'), '');
+  });
+  $('#drawerClose').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+});
+
+const VIEWS = { overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, admin: viewAdmin };
+function go(view, push) {
+  if (!VIEWS[view]) view = 'overview';
+  S.view = view;
+  if (push) google.script.history.push({ view }, null, view);
+  $$('#rail a').forEach(a => { if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>'; v.focus();
+  VIEWS[view](v).catch(msg => { v.innerHTML = `<div class="empty">${esc(msg)}</div>`; console.error(msg); });
+}
+
+function loadPositions(force) { return (!S.positions || force) ? api('apiListPositions').then(p => (S.positions = p)) : Promise.resolve(S.positions); }
+function loadCandidates(force) { return (!S.candidates || force) ? api('apiListCandidates').then(c => (S.candidates = c)) : Promise.resolve(S.candidates); }
+function lineById(id) { return (S.positions || []).find(p => p.Line_ID === id); }
+function lineLabel(p) { return p ? `${p.MRF_No || '—'} · ${p.Position} · ${p.Dept}` : ''; }
+
+function burn(p) {
+  const days = p.Days_Taken, fin = Number(p.Final_TAT) || 0;
+  if (days === '' || days == null || !fin) return '<span class="sub">—</span>';
+  const pct = days / fin;
+  const cls = { 'Overdue': 'over', 'At risk': 'risk', 'Achieved': 'done', 'Missed': 'missed' }[p.TAT_Result] || '';
+  const fill = Math.max(Math.min(pct / 1.25, 1), 0) * 100;
+  return `<div class="burn ${cls}" title="${esc(p.TAT_Result)}: ${days} of ${fin} days">
+    <div class="burn-track"><div class="burn-fill" style="width:${fill}%"></div><div class="burn-limit" style="left:80%"></div></div>
+    <span class="burn-label">${days} / ${fin} d</span></div>`;
+}
+function status(s) { return `<span class="status ${esc(s)}">${esc(s || '—')}</span>`; }
+function opts(list, sel, blank = true) {
+  return (blank ? '<option value=""></option>' : '') + list.map(o => {
+    const [v, l] = Array.isArray(o) ? o : [o, o];
+    return `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(l)}</option>`;
+  }).join('');
+}
+function list(name) { return (S.boot.lists[name] || []); }
+
+function form(fields, data, readonly) {
+  return fields.map(f => {
+    if (f.section) return `</div></fieldset><fieldset><legend>${esc(f.section)}</legend><div class="grid">`;
+    const v = data[f.k] == null ? '' : data[f.k];
+    const ro = readonly || f.ro;
+    const id = 'f_' + f.k;
+    let input;
+    if (f.t === 'jdpick') {
+      return `<div class="field wide"><label>JD from the JD folder</label>
+        <div class="jd-pick"><span id="jdPicked" class="${v ? '' : 'att-off'}">${v ? 'A JD is attached (see JD document above). Choose another to replace it.' : 'None chosen yet'}</span>
+        ${ro ? '' : '<button type="button" class="btn" id="jdPickBtn">Choose from JD folder</button>'}</div>
+        <input type="hidden" name="_jdFileId" id="f__jdFileId" value="">
+        <span class="hint">JD files saved in the Drive folder \u201cJD\u201d appear here. A JD uploaded on this form is also saved into that folder.</span></div>`;
+    }
+    if (f.t === 'multi') {
+      return `<div class="field wide"><label id="lbl_${f.k}">${esc(f.l)}</label>
+        <div class="ms" data-k="${f.k}" data-pref="${esc(f.pref || '')}" data-ro="${ro ? 1 : ''}">
+          <input type="hidden" name="${f.k}" value="${esc(v)}">
+          <div class="ms-chips"></div>
+          ${ro ? '' : `<select class="ms-add" aria-labelledby="lbl_${f.k}"></select>`}
+        </div><span class="hint" id="hint_${f.k}">${esc(f.hint || '')}</span></div>`;
+    }
+    if (f.t === 'file') {
+      return `<div class="field ${f.wide ? 'wide' : ''}"><label>${esc(f.l)}</label>
+        <div class="att">${v ? `<span class="att-on">Attached</span><button type="button" class="btn att-view" data-field="${f.k}">View</button>` : '<span class="att-off">No file yet</span>'}</div>
+        ${ro ? '' : `<input type="file" class="att-input" data-field="${f.k}" aria-label="${esc(f.l)}" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">${esc(f.hint || (v ? 'Choose a file to replace it. ' : '') + 'Uploaded when you save.')}</span>`}</div>`;
+    }
+    if (f.t === 'select') input = `<select id="${id}" name="${f.k}" ${ro ? 'disabled' : ''}>${opts(f.opts, v, !f.noBlank)}</select>`;
+    else if (f.t === 'textarea') input = `<textarea id="${id}" name="${f.k}" ${ro ? 'readonly' : ''}>${esc(v)}</textarea>`;
+    else input = `<input id="${id}" name="${f.k}" type="${f.t || 'text'}" value="${esc(v)}" ${ro ? 'readonly' : ''} ${f.t === 'number' ? 'min="0" step="1"' : ''} ${f.list ? `list="${f.list}"` : ''}>`;
+    return `<div class="field ${f.wide ? 'wide' : ''}"><label for="${id}">${esc(f.l)}${f.req ? ' *' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
+  }).join('');
+}
+function wrapForm(html) { return `<fieldset><div class="grid">${html}</div></fieldset>`.replace('<fieldset><div class="grid"></div></fieldset>', ''); }
+function readForm(root) {
+  const o = {};
+  $$('[name]', root).forEach(el => { o[el.name] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value; });
+  return o;
+}
+
+function openDrawer(title, html) {
+  hideCv();
+  $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html;
+  $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
+  setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
+  return $('#drawerBody');
+}
+function closeDrawer() { hideCv(); $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').hidden = true; }
+
+async function viewOverview(v, fresh) {
+  const d = await api(fresh ? 'apiRefreshDashboard' : 'apiDashboard');
+  const k = d.kpi;
+  const maxF = Math.max(1, ...Object.values(d.funnel).map(n => n || 0));
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Recruitment overview</h1>
+      <p>Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days).</p></div>
+      <div class="refresh"><span class="stamp">Updated ${esc(d.builtAt)} · ${esc(d.builtBy)}${d.stale ? ' · <b>new changes since</b>' : ''}</span>
+      <button class="btn ${d.stale ? 'primary' : ''}" id="dashRefresh">Refresh</button></div></div>
+    <div class="kpis">
+      <div class="kpi"><div class="v">${k.open}</div><div class="l">Open positions</div></div>
+      <div class="kpi"><div class="v">${k.offered}</div><div class="l">Offered, awaiting joining</div></div>
+      <div class="kpi ${k.overdue ? 'alert' : ''}"><div class="v">${k.overdue}</div><div class="l">Past TAT</div></div>
+      <div class="kpi"><div class="v">${k.atRisk}</div><div class="l">At risk (80% of TAT used)</div></div>
+      <div class="kpi"><div class="v">${k.joinedMonth}</div><div class="l">Joined this month</div></div>
+      <div class="kpi"><div class="v">${d.tatPct == null ? '—' : d.tatPct + '%'}</div><div class="l">Closed within TAT, last 180 days</div></div>
+    </div>
+    <div class="two">
+      <section class="panel"><h2>Positions closest to TAT</h2>
+        ${d.watch.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT used</th></tr></thead><tbody>
+        ${d.watch.map(p => `<tr data-id="${esc(p.Line_ID)}"><td>${esc(p.Position)}<span class="sub">${esc(p.MRF_No)} · ${esc(p.Grade)} · ${esc(p.Dept)}</span></td>
+          <td>${esc(p.Recruiter)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="empty">No open positions. New MRFs appear here once entered.</div>'}
+      </section>
+      <div style="display:grid;gap:20px">
+        <section class="panel"><h2>Funnel, last 30 days</h2><div class="funnel">
+          ${METRICS.map(([key, label]) => `<div class="frow"><span>${label}</span><div class="fbar"><span style="width:${100 * (d.funnel[key] || 0) / maxF}%"></span></div><span class="num">${d.funnel[key] || 0}</span></div>`).join('')}
+        </div></section>
+        <section class="panel"><h2>By recruiter</h2><div class="table-wrap"><table>
+          <thead><tr><th>Recruiter</th><th class="num">Open</th><th class="num">Offered</th><th class="num">Past TAT</th><th class="num">Joined 30d</th><th class="num">CVs 30d</th></tr></thead><tbody>
+          ${d.recruiters.map(r => `<tr data-rec="${esc(r.recruiter)}"><td>${esc(r.recruiter)}</td><td class="num">${r.open}</td><td class="num">${r.offered}</td><td class="num">${r.overdue}</td><td class="num">${r.joined30}</td><td class="num">${r.cv30}</td></tr>`).join('')}
+          </tbody></table></div></section>
+      </div>
+    </div>`;
+  pipelineAlertsPanel(v);
+  $('#dashRefresh').onclick = async () => {
+    const b = $('#dashRefresh'); busy(b, true, 'Refreshing…');
+    try { await viewOverview(v, true); toast('Dashboard updated'); } catch (e) { toast(e, true); busy(b, false, 'Refresh'); }
+  };
+  $$('tr[data-id]', v).forEach(tr => tr.addEventListener('click', async () => {
+    try { await loadPositions(); positionDrawer(lineById(tr.dataset.id)); } catch (e) { toast(e, true); }
+  }));
+  $$('tr[data-rec]', v).forEach(tr => tr.addEventListener('click', () => { S.posFilter = { recruiter: tr.dataset.rec, sel: ['Open', 'Offered'] }; go('positions', true); }));
+}
+
+async function viewPositions(v) {
+  await loadPositions();
+  const f = Object.assign({ q: '', recruiter: isLead() ? '' : S.boot.user.recruiter, band: '', dept: '', sel: ['Open', 'Offered'], page: 0 }, S.posFilter || {});
+  S.posFilter = f;
+  const STATUSES = ['Open','Offered','Closed','On Hold','Not Needed','No Vacancy'];
+  const depts = [...new Set(S.positions.map(p => p.Dept).filter(Boolean))].sort();
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Positions</h1><p>One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save.</p></div>
+      <button class="btn primary" id="newPos">Add MRF position</button></div>
+    <div class="filters">
+      <div class="field search"><label for="pq">Search</label><input id="pq" type="search" placeholder="MRF no, position, remark" value="${esc(f.q)}"></div>
+      <div class="field"><label for="prec">Recruiter</label><select id="prec">${opts(S.boot.recruiters, f.recruiter)}</select></div>
+      <div class="field"><label for="pband">Band</label><select id="pband">${opts([['M','M levels'],['W','W levels'],['T','Trainees']], f.band)}</select></div>
+      <div class="field"><label for="pdept">Department</label><select id="pdept">${opts(depts, f.dept)}</select></div>
+    </div>
+    <div class="chips" id="pchips"></div>
+    <div class="table-wrap"><table><thead><tr>
+      <th data-k="MRF_No">MRF no</th><th data-k="Position">Position</th><th data-k="Grade">Grade</th><th data-k="Recruiter">Recruiter</th>
+      <th data-k="Receipt_Date">Received</th><th data-k="Position_Status">Status</th><th data-k="Days_Taken">TAT used</th><th data-k="EDOJ">Expected / actual DOJ</th>
+    </tr></thead><tbody id="ptbody"></tbody></table></div>
+    <div class="pager" id="ppager"></div>`;
+
+  let rows = [];
+  const match = (p, ignoreStatus) => {
+    const s = p.Position_Status;
+    if (!ignoreStatus && f.sel.length && !f.sel.includes(s)) return false;
+    if (f.recruiter && String(p.Recruiter).trim() !== f.recruiter) return false;
+    if (f.band && String(p.Grade)[0] !== f.band) return false;
+    if (f.dept && p.Dept !== f.dept) return false;
+    if (f.q) { const q = f.q.toLowerCase(); if (![p.MRF_No, p.Position, p.Dept, p.Remarks, p.Line_ID].join(' ').toLowerCase().includes(q)) return false; }
+    return true;
+  };
+  const renderChips = () => {
+    const base = S.positions.filter(p => match(p, true));
+    const count = c => c === 'All' ? base.length : c === 'Active' ? base.filter(p => ACTIVE.includes(p.Position_Status)).length : base.filter(p => p.Position_Status === c).length;
+    const isActive = f.sel.length === 2 && ACTIVE.every(s => f.sel.includes(s));
+    const chip = (c, pressed, extra) => `<button class="chip${extra || ''}" aria-pressed="${pressed}" data-c="${c}">${c}<span class="n">${count(c)}</span></button>`;
+    $('#pchips').innerHTML = chip('Active', isActive, ' shortcut') + chip('All', !f.sel.length, ' shortcut') + '<span class="chip-sep" aria-hidden="true"></span>'
+      + STATUSES.map(c => chip(c, f.sel.includes(c))).join('')
+      + '<span class="chip-hint">Select one or more</span>';
+    $$('#pchips .chip').forEach(b => b.addEventListener('click', () => {
+      const c = b.dataset.c;
+      if (c === 'Active') f.sel = ACTIVE.slice();
+      else if (c === 'All') f.sel = [];
+      else f.sel = f.sel.includes(c) ? f.sel.filter(x => x !== c) : f.sel.concat(c);
+      f.page = 0; apply();
+    }));
+  };
+  const render = () => {
+    const slice = rows.slice(f.page * PAGE, (f.page + 1) * PAGE);
+    $('#ptbody').innerHTML = slice.length ? slice.map(p => `<tr data-id="${esc(p.Line_ID)}">
+      <td class="nw">${esc(p.MRF_No)}<span class="sub">${esc(p.Line_ID)}</span></td>
+      <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}</td><td>${esc(p.Recruiter)}</td>
+      <td class="nw">${fmtDate(p.Receipt_Date)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}</td>
+      <td class="nw">${p.Actual_DOJ ? fmtDate(p.Actual_DOJ) : p.EDOJ ? fmtDate(p.EDOJ) + '<span class="sub">expected</span>' : ''}</td></tr>`).join('')
+      : `<tr><td colspan="8" class="empty">No positions match these filters.</td></tr>`;
+    $$('#ptbody tr[data-id]').forEach(tr => tr.addEventListener('click', () => positionDrawer(lineById(tr.dataset.id))));
+    const pages = Math.ceil(rows.length / PAGE);
+    $('#ppager').innerHTML = `${rows.length} positions ${pages > 1 ? `· page ${f.page + 1} of ${pages} <button class="btn" id="pprev" ${f.page ? '' : 'disabled'}>Previous</button><button class="btn" id="pnext" ${f.page < pages - 1 ? '' : 'disabled'}>Next</button>` : ''}`;
+    if ($('#pprev')) { $('#pprev').onclick = () => { f.page--; render(); }; $('#pnext').onclick = () => { f.page++; render(); }; }
+  };
+  const apply = () => {
+    rows = S.positions.filter(p => match(p)).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
+    renderChips(); render();
+  };
+  $('#pq').addEventListener('input', e => { f.q = e.target.value; f.page = 0; apply(); });
+  $('#prec').addEventListener('change', e => { f.recruiter = e.target.value; f.page = 0; apply(); });
+  $('#pband').addEventListener('change', e => { f.band = e.target.value; f.page = 0; apply(); });
+  $('#pdept').addEventListener('change', e => { f.dept = e.target.value; f.page = 0; apply(); });
+  $$('th[data-k]', v).forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.k, dir = th.dataset.dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+    rows.sort((a, b) => { const x = a[k], y = b[k]; const r = (typeof x === 'number' && typeof y === 'number') ? x - y : String(x).localeCompare(String(y)); return dir === 'asc' ? r : -r; });
+    render();
+  }));
+  $('#newPos').addEventListener('click', () => positionDrawer(null));
+  apply();
+}
+
+function previewTat(d) {
+  const a = String(d.Approval_Status || '').toUpperCase();
+  let s = a === 'NO VACANCY' ? 'No Vacancy' : a === 'NOT NEEDED' ? 'Not Needed' : a === 'ON HOLD' ? 'On Hold'
+    : a === 'APPROVED' ? (String(d.Offer_Sent).toUpperCase() !== 'YES' ? 'Open' : d.Actual_DOJ ? 'Closed' : 'Offered') : '';
+  const g = S.boot.grades.find(x => x.grade === String(d.Grade).toUpperCase());
+  const std = g ? g.tat : 50, ex = Math.max((Number(d.Notice_Period_Days) || 0) - 30, 0), fin = std + ex;
+  let end = d.Actual_DOJ || (s === 'No Vacancy' ? d.No_Vacancy_Date : ['Not Needed','On Hold'].includes(s) ? d.Not_Needed_Date : '');
+  const start = d.Assigned_On || d.Approved_On || d.Receipt_Date;
+  const days = start ? Math.round((Date.parse(end || today()) - Date.parse(start)) / 86400000) : '';
+  let r = '';
+  if (days !== '') r = ACTIVE.includes(s) ? (days > fin ? 'Overdue' : days >= 0.8 * fin ? 'At risk' : 'On track') : (days > fin ? 'Missed' : 'Achieved');
+  return { Position_Status: s, Standard_TAT: std, Exemption_Days: ex, Final_TAT: fin, Days_Taken: days, TAT_Result: r,
+    _start: start, _basis: d.Assigned_On ? 'position assigned' : d.Approved_On ? 'MRF approved' : 'MRF received' };
+}
+
+function positionFields(isNew, p, orig) {
+  const locked = k => !isNew && !isLead() && !!(orig && orig[k]);
+  return [
+    { section: 'Requisition' },
+    { k: 'MRF_No', l: 'MRF no', req: true },
+    { k: 'Receipt_Date', l: 'MRF received on', t: 'date', req: true },
+    { k: 'Approved_On', l: 'MRF approved on', t: 'date', ro: locked('Approved_On'), hint: locked('Approved_On') ? 'Set. Only the recruitment head or admin can change it.' : 'Defaults to the MRF received date until corrected.' },
+    { k: 'Assigned_On', l: 'Position assigned on', t: 'date', ro: locked('Assigned_On'), hint: locked('Assigned_On') ? 'Set. Only the recruitment head or admin can change it. TAT counts from this date.' : 'Same as the approval date unless the position was assigned later. TAT counts from this date.' },
+    { k: 'JD_Confirmed_Date', l: 'JD confirmed on', t: 'date', hint: 'Date the department confirmed the JD.' },
+    { k: 'SQ_Confirmed_Date', l: 'Screening questions confirmed by dept on', t: 'date', hint: 'After the JD is confirmed.' },
+    { k: 'Position', l: 'Position', req: true, wide: true },
+    { k: 'Grade', l: 'Grade', t: 'select', req: true, opts: S.boot.grades.map(g => [g.grade, `${g.grade} — ${g.designations}`]) },
+    { k: 'Dept', l: 'Department', t: 'select', req: true, opts: S.boot.depts.map(d => d.dept) },
+    { k: 'Recruiter', l: 'Recruiter (TA SPOC)', t: 'select', opts: S.boot.recruiters, ro: !isLead() },
+    isNew ? { k: '_count', l: 'Number of positions', t: 'number', hint: 'Creates one line per position, as in the tracker.' } : { k: 'No_Of_Positions', l: 'Positions on this line', t: 'number', ro: true },
+    { section: 'Requisition details' },
+    { k: 'Vacancy_Reason', l: 'Reason for vacancy', t: 'select', opts: ['New position', 'Replacement', 'Additional headcount', 'Project requirement'] },
+    { k: 'Budget_CTC', l: 'Budgeted CTC range' },
+    { k: 'Justification', l: 'Justification', t: 'textarea', wide: true },
+    ...(isNew ? [] : [{ k: 'MRF_Form_File', l: 'Signed MRF form', t: 'file', wide: true }]),
+    { section: 'Job description' },
+    { k: 'JD_Text', l: 'JD (key responsibilities, qualifications, experience)', t: 'textarea', wide: true },
+    ...(isNew ? [] : [{ k: 'JD_File', l: 'Upload a JD document', t: 'file', wide: true }]),
+    { k: 'JD_File', t: 'jdpick' },
+    { section: 'Interview panel' },
+    { k: 'Tech_Panel', l: 'Technical interview panel', t: 'multi', hint: 'Policy for this grade: ' + policyPanel(p && p.Grade) },
+    { k: 'Final_Panel', l: 'Final interview panel', t: 'multi' },
+    { section: 'Approval' },
+    { k: 'Approval_Status', l: 'Approval status', t: 'select', opts: list('Approval_Status'), req: true },
+    { k: 'No_Vacancy_Date', l: 'Marked No Vacancy on', t: 'date' },
+    { k: 'Not_Needed_Date', l: 'Marked Not Needed / On Hold on', t: 'date' },
+    { section: 'Offer and joining' },
+    { k: 'Offer_Sent', l: 'Offer sent', t: 'select', opts: ['Yes','No'], noBlank: true },
+    { k: 'Offer_Date', l: 'Offer letter date', t: 'date' },
+    { k: 'EDOJ', l: 'Expected joining date', t: 'date', hint: 'Joining days are Monday and Thursday.' },
+    { k: 'Notice_Period_Days', l: 'Notice period (days)', t: 'number', hint: 'Days beyond 30 extend the TAT.' },
+    { k: 'Actual_DOJ', l: 'Actual joining date', t: 'date', hint: 'Entering this closes the position.' },
+    { k: 'Backout_Date', l: 'Backout date', t: 'date', hint: 'On backout: set Offer sent to No and clear joining dates to reopen.' },
+    { k: 'Candidate_ID', l: 'Selected candidate ID', hint: 'Optional, e.g. CAN-01088' },
+    { section: 'Background verification' },
+    { k: 'BGV_Required', l: 'BGV required', t: 'select', noBlank: true, opts: [['Auto', 'Auto (Manager & above)'], ['Yes', 'Yes, flagged case'], ['No', 'Not required']] },
+    { k: 'BGV_Prev_Org_Date', l: 'Previous employer BGV completed on', t: 'date', hint: 'Must be on or before the offer letter date.' },
+    { k: 'BGV_Current_Org_Date', l: 'Current employer BGV started on', t: 'date', hint: 'Within 2 days of joining.' },
+    { k: 'BGV_Remarks', l: 'BGV remarks' },
+    ...(isNew ? [] : [
+      { k: 'BGV_Prev_Org_File', l: 'Previous employer BGV report', t: 'file' },
+      { k: 'BGV_Current_Org_File', l: 'Current employer BGV initiation proof', t: 'file' }]),
+    { section: 'Remarks' },
+    { k: 'Remarks', l: 'Remarks', t: 'textarea', wide: true }
+  ];
+}
+
+function positionDrawer(p) {
+  const isNew = !p;
+  const data = p ? Object.assign({ BGV_Required: 'Auto' }, p) : { Receipt_Date: today(), Approval_Status: 'Approved', Offer_Sent: 'No', Recruiter: S.boot.user.recruiter, BGV_Required: 'Auto', _count: 1 };
+  if (!data.Approved_On && data.Receipt_Date && (!data.Approval_Status || data.Approval_Status === 'Approved')) data.Approved_On = data.Receipt_Date;
+  if (!data.Assigned_On && data.Approved_On) data.Assigned_On = data.Approved_On;
+  if (!data.BGV_Required) data.BGV_Required = 'Auto';
+  const ro = !isNew && !p._canEdit;
+  const body = openDrawer(isNew ? 'Add MRF position' : `${p.Position}`, `
+    ${isNew ? '' : `<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="details">Details</button><button role="tab" data-t="log">Daily log</button><button role="tab" data-t="cands">Candidates</button></div>`}
+    <div id="tab-details">
+      ${ro ? `<div class="note">This position is assigned to ${esc(p.Recruiter)}. You can view it; only they or the recruitment head can edit it.</div>` : ''}
+      ${isNew ? '' : `<p style="margin:12px 0 0"><button class="btn" id="openPipe">Open candidate pipeline</button></p>`}
+      <div class="readout" id="tatReadout"></div>
+      <div id="posForm">${wrapForm(form(positionFields(isNew, data, p), data, ro))}</div>
+      ${ro ? '' : `<div class="drawer-actions"><button class="btn" id="pCancel">Cancel</button><button class="btn primary" id="pSave">${isNew ? 'Add position' : 'Save changes'}</button></div>`}
+    </div>
+    <div id="tab-log" hidden></div><div id="tab-cands" hidden></div>`);
+  const readout = () => {
+    const t = previewTat(Object.assign({}, data, readForm($('#posForm'))));
+    $('#tatReadout').innerHTML = `<div>Status<b>${esc(t.Position_Status || '—')}</b></div><div>Days used / allowed<b>${t.Days_Taken === '' ? '—' : t.Days_Taken} / ${t.Final_TAT}</b>${t._start ? `<span class="sub">counted from ${fmtDate(t._start)} (${t._basis})</span>` : ''}</div><div>TAT<b>${esc(t.TAT_Result || '—')}</b></div>`;
+  };
+  readout();
+  $('#posForm').addEventListener('input', readout);
+  if (!isNew) bindAttachmentViews('MRF', p.Line_ID, body);
+  if ($('#jdPickBtn', body)) $('#jdPickBtn', body).onclick = () => openJdPicker(file => {
+    $('#f__jdFileId', body).value = file.id; const el = $('#jdPicked', body); el.textContent = 'Chosen: ' + file.name + ' (attached when you save)'; el.className = '';
+  });
+  if ($('#openPipe', body)) $('#openPipe', body).onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: p.Line_ID }); closeDrawer(); go('pipeline', true); };
+  initMulti(body);
+  const gsel = $('#f_Grade', body); if (gsel) gsel.addEventListener('change', () => { $('#hint_Tech_Panel', body).textContent = 'Policy for this grade: ' + policyPanel(gsel.value); });
+  const fR = $('#f_Receipt_Date', body), fA = $('#f_Approved_On', body), fS = $('#f_Assigned_On', body), fRec = $('#f_Recruiter', body);
+  if (fR && fA && fS) {
+    let aAuto = fA.value === fR.value, sAuto = fS.value === fA.value;
+    const origRec = p ? String(p.Recruiter || '') : '', origAssigned = fS.value;
+    const hintS = $('#f_Assigned_On', body).parentElement.querySelector('.hint');
+    const baseHint = hintS ? hintS.textContent : '';
+    const onA = byUser => { if (byUser) aAuto = fA.value === fR.value; if (sAuto && !fS.readOnly) fS.value = fA.value; readout(); };
+    fR.addEventListener('change', () => { if (aAuto && !fA.readOnly) { fA.value = fR.value; onA(false); } });
+    fA.addEventListener('change', () => onA(true));
+    fS.addEventListener('change', () => { sAuto = fS.value === fA.value; });
+    if (fRec && !isNew) fRec.addEventListener('change', () => {
+      const moved = fRec.value && fRec.value !== origRec;
+      fS.value = moved ? today() : origAssigned; sAuto = false;
+      if (hintS) hintS.textContent = moved ? 'Reassigned to ' + fRec.value + ': TAT restarts from this date for the new recruiter. The original date stays in the change history.' : baseHint;
+      readout();
+    });
+  }
+  $('#posForm').addEventListener('change', readout);
+  $$('.tabs button', body).forEach(b => b.addEventListener('click', () => {
+    $$('.tabs button', body).forEach(x => x.setAttribute('aria-selected', x === b));
+    ['details','log','cands'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.t);
+    if (b.dataset.t === 'log') renderLineLog(p);
+    if (b.dataset.t === 'cands') renderLineCands(p);
+  }));
+  if (ro) return;
+  $('#pCancel').onclick = closeDrawer;
+  $('#pSave').onclick = async () => {
+    const d = Object.assign({ Line_ID: isNew ? '' : p.Line_ID }, readForm($('#posForm')));
+    const jdId = d._jdFileId; delete d._jdFileId;
+    const bad = checkAttachments($('#posForm')); if (bad) return toast(bad, true);
+    const btn = $('#pSave'); busy(btn, true, 'Saving…');
+    try {
+      if (isNew) {
+        const n = Number(d._count) || 1; delete d._count;
+        const saved = await api('apiAddPositionLines', d, n);
+        if (jdId) {
+          try { const j = await api('apiUseJd', saved.map(x => x.Line_ID), jdId); saved.forEach(x => { x.JD_File = j.url; }); }
+          catch (e) { toast('Position added, but the JD could not be attached: ' + e, true); }
+        }
+        S.positions.unshift(...saved);
+        toast(n > 1 ? `Added ${n} position lines` : 'Position added');
+      } else {
+        const saved = await api('apiSavePosition', d);
+        if (jdId) saved.JD_File = (await api('apiUseJd', [saved.Line_ID], jdId)).url;
+        const hasFiles = $$('.att-input', $('#posForm')).some(x => x.files[0]);
+        if (hasFiles) {
+          busy(btn, true, 'Uploading files…');
+          try { Object.assign(saved, await uploadAttachments('MRF', saved.Line_ID, $('#posForm'))); }
+          catch (e) { toast('Position saved, but a file upload failed: ' + e, true); }
+        }
+        const i = S.positions.findIndex(x => x.Line_ID === saved.Line_ID); S.positions[i] = saved;
+        toast(hasFiles ? 'Changes and files saved' : 'Changes saved');
+      }
+      closeDrawer(); if (S.view === 'positions' || S.view === 'overview') go(S.view, false);
+    } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add position' : 'Save changes'); }
+  };
+}
+
+async function renderLineLog(p) {
+  const el = $('#tab-log'); el.innerHTML = '<div class="empty">Loading…</div>';
+  const rows = await api('apiListFunnel', { lineId: p.Line_ID });
+  const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
+  el.innerHTML = `
+    <div class="readout" style="grid-template-columns:repeat(3,1fr);margin-top:12px">${METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join('')}</div>
+    <h3 id="llHead" style="margin:18px 0 8px;font-size:16px">Log today's activity</h3>
+    <div id="llForm">${dailyFormHtml(p.Line_ID)}</div>
+    <h3 style="margin:18px 0 8px;font-size:16px">History (${rows.length} entries)</h3>
+    <div id="llHist">${funnelTable(rows, false)}</div>`;
+  bindDailyForm($('#llForm', el), saved => renderLineLog(p));
+  $$('#llHist [data-edit]', el).forEach(b => b.onclick = () => {
+    const r = rows.find(x => x.Entry_ID === b.dataset.edit);
+    $('#llHead', el).innerHTML = `Editing the entry for ${fmtDate(r.Entry_Date)} <button class="btn sm" id="llCancel">Cancel</button>`;
+    $('#llForm', el).innerHTML = dailyFormHtml(p.Line_ID, r);
+    bindDailyForm($('#llForm', el), () => renderLineLog(p));
+    $('#llCancel', el).onclick = () => renderLineLog(p);
+    $('#llHead', el).scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+}
+
+async function renderLineCands(p) {
+  const el = $('#tab-cands'); el.innerHTML = '<div class="empty">Loading…</div>';
+  await loadCandidates();
+  const rows = S.candidates.filter(c => c.Line_ID === p.Line_ID);
+  el.innerHTML = `<div style="display:flex;justify-content:flex-end;margin:12px 0"><button class="btn primary" id="addCandLine">Add candidate for this position</button></div>
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Tech</th><th>HR</th></tr></thead><tbody>
+    ${rows.map(c => `<tr data-id="${esc(c.Candidate_ID)}"><td>${esc(c.Name)}<span class="sub">${esc(c.Mobile)}</span></td><td>${esc(c.Tech_Result)}</td><td>${esc(c.HR_Result)}</td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty">No candidates are linked to this position yet. Link one from its candidate record, or add a new one.</div>'}`;
+  $('#addCandLine').onclick = () => candidateDrawer(null, { Line_ID: p.Line_ID, Position: p.Position, Dept: p.Dept });
+  $$('tr[data-id]', el).forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
+}
+
+function activeLineOptions(selected) {
+  const mine = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status) && (isLead() || String(p.Recruiter).trim() === S.boot.user.recruiter));
+  return opts(mine.sort((a, b) => String(a.MRF_No).localeCompare(String(b.MRF_No))).map(p => [p.Line_ID, lineLabel(p)]), selected);
+}
+function dailyFormHtml(fixedLine, data) {
+  data = data || { Entry_Date: today() };
+  return `<div class="dailyform" data-entry="${esc(data.Entry_ID || '')}">
+    <div class="grid">
+      ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : `<div class="field wide"><label for="dl_line">Position *</label><select id="dl_line" name="Line_ID">${activeLineOptions(data.Line_ID)}</select></div>`}
+      <div class="field"><label for="dl_date">Date *</label><input id="dl_date" type="date" name="Entry_Date" value="${esc(data.Entry_Date)}" max="${today()}"></div>
+      <div class="field"><label for="dl_fb">Feedback from dept</label><select id="dl_fb" name="FB_From_Dept">${opts(['Yes','No','Pending'], data.FB_From_Dept)}</select></div>
+    </div>
+    <div class="counts" style="margin-top:12px">${METRICS.map(([k, l]) => `<div class="field"><label for="dl_${k}">${l}</label><input id="dl_${k}" type="number" min="0" step="1" name="${k}" value="${esc(data[k] || '')}" placeholder="0"></div>`).join('')}</div>
+    <div class="field" style="margin-top:12px"><label for="dl_rm">Remarks</label><input id="dl_rm" name="Remarks" value="${esc(data.Remarks || '')}" placeholder="e.g. 2 candidates scheduled for F2F with HOD"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary dl-save">${data.Entry_ID ? 'Save changes' : 'Log activity'}</button></div>
+  </div>`;
+}
+function bindDailyForm(root, after) {
+  const f = $('.dailyform', root);
+  $('.dl-save', f).onclick = async () => {
+    const d = readForm(f); d.Entry_ID = f.dataset.entry;
+    const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
+    try { const saved = await api('apiSaveFunnel', d); toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
+    catch (e) { toast(e, true); busy(btn, false, label); }
+  };
+}
+function bindEntryEdits(root, rows, after) {
+  $$('[data-edit]', root).forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const r = rows.find(x => x.Entry_ID === b.dataset.edit);
+    const d = openDrawer('Edit activity entry', `<p class="hint" style="margin:0 0 10px">You can change this entry until midnight today. After that it is locked.</p>` + dailyFormHtml(null, r));
+    bindDailyForm(d, () => { closeDrawer(); after(); });
+  });
+}
+function funnelTable(rows, withPosition) {
+  if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
+  const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
+  return `<div class="table-wrap"><table><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
+    ${METRICS.map(([, l, s]) => `<th class="num" title="${l}">${s}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
+    ${rows.map(r => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
+      ${withPosition ? `<td>${esc(p ? p.Position : r.Line_ID)}<span class="sub">${esc(r.MRF_No)}</span></td><td>${esc(r.Recruiter)}</td>` : ''}
+      ${METRICS.map(([k]) => `<td class="num">${Number(r[k]) || ''}</td>`).join('')}<td class="remarks">${esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
+      <td class="nw">${r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
+    <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${METRICS.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
+    </tbody></table></div>`;
+}
+
+async function viewDaily(v) {
+  await loadPositions();
+  const f = S.dailyFilter = S.dailyFilter || { recruiter: isLead() ? '' : S.boot.user.recruiter, from: daysAgo(14), to: today() };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Daily log</h1><p>Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports.</p></div></div>
+    <section class="panel" id="dailyNew"><h2>Log activity</h2>${dailyFormHtml(null)}</section>
+    <div class="filters" style="margin-top:22px">
+      <div class="field"><label for="dfrec">Recruiter</label><select id="dfrec">${opts(S.boot.recruiters, f.recruiter)}</select></div>
+      <div class="field"><label for="dffrom">From</label><input id="dffrom" type="date" value="${f.from}"></div>
+      <div class="field"><label for="dfto">To</label><input id="dfto" type="date" value="${f.to}"></div>
+    </div>
+    <div id="dailyList"><div class="empty">Loading…</div></div>`;
+  const load = async () => {
+    const rows = await api('apiListFunnel', { recruiter: f.recruiter, from: f.from, to: f.to });
+    $('#dailyList').innerHTML = funnelTable(rows, true);
+    bindEntryEdits($('#dailyList'), rows, load);
+  };
+  $('#dfrec').onchange = e => { f.recruiter = e.target.value; load(); };
+  $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
+  $('#dfto').onchange = e => { f.to = e.target.value; load(); };
+  bindDailyForm($('#dailyNew'), function again() { $('#dailyNew').innerHTML = '<h2>Log activity</h2>' + dailyFormHtml(null); bindDailyForm($('#dailyNew'), again); load(); });
+  load();
+}
+
+async function viewCandidates(v) {
+  await Promise.all([loadCandidates(), loadPositions()]);
+  const f = S.candFilter = S.candFilter || { q: '', hr: '', src: '', dup: false, page: 0 };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Candidates</h1><p>The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists.</p></div>
+      <button class="btn primary" id="newCand">Add candidate</button></div>
+    <div class="filters">
+      <div class="field search"><label for="cq">Search</label><input id="cq" type="search" placeholder="Name, mobile, email, position" value="${esc(f.q)}"></div>
+      <div class="field"><label for="chr">HR result</label><select id="chr">${opts(list('Interview_Result'), f.hr)}</select></div>
+      <div class="field"><label for="csrc">Sourced by</label><select id="csrc">${opts(S.boot.recruiters, f.src)}</select></div>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="ccv" ${f.cv ? 'checked' : ''}> Has CV</label>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="cdup" ${f.dup ? 'checked' : ''}> Possible duplicates only</label>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Position</th><th class="num">Mobile</th><th>Experience</th><th>Tech</th><th>HR</th><th>Sourced by</th><th>CV</th></tr></thead><tbody id="ctbody"></tbody></table></div>
+    <div class="pager" id="cpager"></div>`;
+  let rows = [];
+  const render = () => {
+    const slice = rows.slice(f.page * PAGE, (f.page + 1) * PAGE);
+    $('#ctbody').innerHTML = slice.length ? slice.map(c => `<tr data-id="${esc(c.Candidate_ID)}">
+      <td>${esc(c.Name)}<span class="sub">${esc(c.Email)}${c.Possible_Duplicate_Of ? ` · may duplicate ${esc(c.Possible_Duplicate_Of)}` : ''}</span></td>
+      <td>${esc(c.Position)}<span class="sub">${esc(c.Dept)}</span></td><td class="num">${esc(c.Mobile)}</td><td>${esc(c.Relevant_Experience)}</td>
+      <td>${esc(c.Tech_Result)}</td><td>${esc(c.HR_Result)}</td><td>${esc(c.Sourced_By)}</td>
+      <td>${c.CV_File_URL ? '<span class="cv-flag" title="CV on file">CV</span>' : ''}</td></tr>`).join('')
+      : `<tr><td colspan="8" class="empty">No candidates match. Check the spelling, or add them as a new candidate.</td></tr>`;
+    $$('#ctbody tr[data-id]').forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
+    const pages = Math.ceil(rows.length / PAGE);
+    $('#cpager').innerHTML = `${rows.length} candidates ${pages > 1 ? `· page ${f.page + 1} of ${pages} <button class="btn" id="cprev" ${f.page ? '' : 'disabled'}>Previous</button><button class="btn" id="cnext" ${f.page < pages - 1 ? '' : 'disabled'}>Next</button>` : ''}`;
+    if ($('#cprev')) { $('#cprev').onclick = () => { f.page--; render(); }; $('#cnext').onclick = () => { f.page++; render(); }; }
+  };
+  const apply = () => {
+    const q = f.q.toLowerCase().trim();
+    rows = S.candidates.filter(c => {
+      if (f.hr && c.HR_Result !== f.hr) return false;
+      if (f.src && c.Sourced_By !== f.src) return false;
+      if (f.dup && !c.Possible_Duplicate_Of) return false;
+      if (f.cv && !c.CV_File_URL) return false;
+      if (q && ![c.Name, c.Mobile, c.Email, c.Position, c.Candidate_ID].join(' ').toLowerCase().includes(q)) return false;
+      return true;
+    }).sort((a, b) => String(b.Candidate_ID).localeCompare(String(a.Candidate_ID)));
+    render();
+  };
+  $('#cq').addEventListener('input', e => { f.q = e.target.value; f.page = 0; apply(); });
+  $('#chr').onchange = e => { f.hr = e.target.value; f.page = 0; apply(); };
+  $('#csrc').onchange = e => { f.src = e.target.value; f.page = 0; apply(); };
+  $('#cdup').onchange = e => { f.dup = e.target.checked; f.page = 0; apply(); };
+  $('#ccv').onchange = e => { f.cv = e.target.checked; f.page = 0; apply(); };
+  $('#newCand').onclick = () => candidateDrawer(null);
+  apply();
+}
+
+function candidateFields(data) {
+  data = data || {};
+  const lines = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)).map(p => [p.Line_ID, lineLabel(p)]);
+  return [
+    { section: 'Candidate' },
+    { k: 'Name', l: 'Full name', req: true, wide: true },
+    { k: 'Mobile', l: 'Mobile', hint: '10 digits' }, { k: 'Email', l: 'Email', t: 'email' },
+    { k: 'Education', l: 'Education' }, { k: 'Relevant_Experience', l: 'Relevant experience', hint: 'e.g. 6 years' },
+    { k: 'Current_Designation', l: 'Current designation' }, { k: 'Current_CTC', l: 'Current CTC', hint: 'e.g. 6.5 LPA' },
+    { section: 'Applied for' },
+    { k: 'Line_ID', l: 'Linked MRF position', t: 'select', opts: lines, wide: true, hint: 'Only open, offered and on-hold positions are listed.' },
+    { k: 'Position', l: 'Position applied for' }, { k: 'Offered_Designation', l: 'Offered designation' },
+    { k: 'Dept', l: 'Department', t: 'select', opts: S.boot.depts.map(d => d.dept) },
+    { k: 'Source_Channel', l: 'Source', t: 'select', opts: list('Source_Channel') },
+    { k: 'Sourced_By', l: 'Sourced by', t: 'select', opts: S.boot.recruiters },
+    { section: 'Interviews' },
+    { k: 'Tech_Interview_Date', l: 'Technical interview date', t: 'date' },
+    { k: 'Tech_Interview_By', l: 'Technical interview by', t: 'multi', pref: linePanel(data.Line_ID, 'Tech_Panel'), hint: 'Members of the linked position\u2019s panel are listed first.' },
+    { k: 'Tech_Result', l: 'Technical result', t: 'select', opts: list('Interview_Result') },
+    { k: 'HR_Interview_Date', l: 'HR / final interview date', t: 'date' },
+    { k: 'HR_Interview_By', l: 'HR / final interview by', t: 'multi', pref: linePanel(data.Line_ID, 'Final_Panel') },
+    { k: 'HR_Result', l: 'HR result', t: 'select', opts: list('Interview_Result') },
+    { k: 'Interview_Remarks', l: 'Interview remarks', t: 'textarea', wide: true },
+    { section: 'Psychometric test (Mettl)' },
+    { k: 'Psychometric_Status', l: 'Test status', t: 'select', opts: ['Scheduled', 'Done', 'Waived'], hint: 'Required for shortlisted Manager & above candidates.' },
+    { k: 'Psychometric_Date', l: 'Test date', t: 'date' },
+    { k: 'Psychometric_Score', l: 'Score / result' }, { k: 'Psychometric_Report', l: 'Report reference (optional)' },
+    { k: 'Psychometric_File', l: 'Psychometric report (attachment)', t: 'file', wide: true },
+    { section: 'Outcome' },
+    { k: 'CV_Box', l: 'CV box', t: 'select', opts: list('CV_Box') }, { k: 'DOJ', l: 'Date of joining', t: 'date' },
+    { k: 'Notes', l: 'Notes', t: 'textarea', wide: true }
+  ];
+}
+
+async function openCandidate(id) {
+  openDrawer('Loading…', '<div class="empty">Loading…</div>');
+  try { await loadPositions(); candidateDrawer(await api('apiGetCandidate', id)); } catch (e) { toast(e, true); closeDrawer(); }
+}
+
+function candidateDrawer(c, preset) {
+  const isNew = !c;
+  const data = c || Object.assign({ Sourced_By: S.boot.user.recruiter, Source_Channel: 'Recruiter' }, preset || {});
+  const body = openDrawer(isNew ? 'Add candidate' : data.Name, `
+    ${data.Possible_Duplicate_Of ? `<div class="note">Imported as a possible duplicate of ${esc(data.Possible_Duplicate_Of)} (same mobile or email).</div>` : ''}
+    <div id="dupNote"></div>
+    <div id="candForm">${wrapForm(form(candidateFields(data), data, false))}</div>
+    <fieldset><legend>CV</legend>
+      <div id="cvBox">${data.CV_File_URL
+        ? `<div class="cv-current"><span>CV on file</span><button class="btn" id="cvView">View CV</button></div>`
+        : '<p class="hint" style="color:var(--muted);margin:0 0 8px">No CV uploaded yet.</p>'}</div>
+      <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
+        <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
+    </fieldset>
+    <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
+  $('#cCancel').onclick = closeDrawer;
+  initMulti(body);
+  $('#f_Line_ID', body).addEventListener('change', e => {
+    const tp = $('.ms[data-k="Tech_Interview_By"]', body), fp = $('.ms[data-k="HR_Interview_By"]', body);
+    if (tp) tp._setPref(linePanel(e.target.value, 'Tech_Panel'));
+    if (fp) fp._setPref(linePanel(e.target.value, 'Final_Panel'));
+    const p = lineById(e.target.value); if (!p) return;
+    if (!$('#f_Position').value) $('#f_Position').value = p.Position;
+    $('#f_Dept').value = p.Dept;
+  });
+  const save = async force => {
+    const file = $('#cvFile').files[0];
+    if (file && file.size > 10 * 1024 * 1024) return toast('That CV is over 10 MB. Compress it or save it as PDF.', true);
+    if (file && !/\.(pdf|docx?|jpe?g|png)$/i.test(file.name)) return toast('Attach the CV as PDF, Word, JPG or PNG.', true);
+    const badAtt = checkAttachments($('#candForm')); if (badAtt) return toast(badAtt, true);
+    const attFiles = $$('.att-input', $('#candForm')).some(x => x.files[0]);
+    const d = Object.assign({ Candidate_ID: isNew ? '' : data.Candidate_ID }, readForm($('#candForm')));
+    const dm = S.boot.depts.find(x => x.dept === d.Dept); if (dm) { d.Business_Unit = dm.bu; d.Division = dm.division; }
+    const btn = $('#cSave'); busy(btn, true, 'Saving…');
+    try {
+      const res = await api('apiSaveCandidate', d, !!force);
+      if (res.duplicates) {
+        busy(btn, false, isNew ? 'Add candidate' : 'Save changes');
+        $('#dupNote').innerHTML = `<div class="note"><b>This mobile or email is already in the CV bank:</b><br>
+          ${res.duplicates.map(x => `<button class="linklike" data-open="${esc(x.id)}">${esc(x.id)} ${esc(x.name)}</button> — ${esc(x.position)}${x.hr ? ', HR: ' + esc(x.hr) : ''}`).join('<br>')}
+          <div style="margin-top:8px"><button class="btn" id="saveAnyway">Save as a separate candidate anyway</button></div></div>`;
+        $$('[data-open]', body).forEach(b => b.onclick = () => openCandidate(b.dataset.open));
+        $('#saveAnyway').onclick = () => save(true);
+        $('#dupNote').scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+      const s = res.saved;
+      if (file) {
+        busy(btn, true, 'Uploading CV…');
+        try { s.CV_File_URL = await uploadCv(s.Candidate_ID, file); }
+        catch (e) { toast('Candidate saved, but the CV upload failed: ' + e, true); candidateDrawer(s); return; }
+      }
+      if (attFiles) {
+        busy(btn, true, 'Uploading files…');
+        try { Object.assign(s, await uploadAttachments('CAND', s.Candidate_ID, $('#candForm'))); }
+        catch (e) { toast('Candidate saved, but a file upload failed: ' + e, true); candidateDrawer(s); return; }
+      }
+      const slim = {}; Object.keys(S.candidates[0] || s).forEach(k => slim[k] = s[k] == null ? '' : s[k]);
+      const i = S.candidates.findIndex(x => x.Candidate_ID === s.Candidate_ID);
+      if (i >= 0) S.candidates[i] = slim; else S.candidates.unshift(slim);
+      toast((isNew ? `Candidate added as ${s.Candidate_ID}` : 'Changes saved') + (file || attFiles ? ', files uploaded' : ''));
+      if (S.view === 'pipeline' && s.Line_ID) { closeDrawer(); go('pipeline', false); return; }
+      if (isNew || file || attFiles) candidateDrawer(s); else { closeDrawer(); if (S.view === 'candidates') go('candidates', false); }
+    } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add candidate' : 'Save changes'); }
+  };
+  $('#cSave').onclick = () => save(false);
+  if ($('#cvView')) $('#cvView').onclick = () => showCv(data.Candidate_ID, $('#cvView'));
+  if (!isNew) bindAttachmentViews('CAND', data.Candidate_ID, body);
+}
+
+const FILE_OK = /\.(pdf|docx?|jpe?g|png)$/i;
+function fileMime(file) {
+  return file.type || ({ pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' })[file.name.split('.').pop().toLowerCase()];
+}
+function readB64(file) {
+  return new Promise((resolve, reject) => { const r = new FileReader(); r.onerror = () => reject('Could not read ' + file.name); r.onload = () => resolve(r.result.split(',')[1]); r.readAsDataURL(file); });
+}
+function checkAttachments(root) {
+  for (const inp of $$('.att-input', root)) {
+    const f = inp.files[0]; if (!f) continue;
+    if (f.size > 10 * 1024 * 1024) return `${f.name} is over 10 MB. Compress it or save it as PDF.`;
+    if (!FILE_OK.test(f.name)) return `${f.name}: attach PDF, Word, JPG or PNG.`;
+  }
+  return '';
+}
+async function uploadAttachments(entity, id, root) {
+  const out = {};
+  for (const inp of $$('.att-input', root)) {
+    const f = inp.files[0]; if (!f) continue;
+    out[inp.dataset.field] = await api('apiUploadDoc', entity, id, inp.dataset.field, f.name, fileMime(f), await readB64(f));
+  }
+  return out;
+}
+function bindAttachmentViews(entity, id, root) {
+  $$('.att-view', root).forEach(b => b.onclick = () => showFile(`${entity}:${id}:${b.dataset.field}`, () => api('apiGetDoc', entity, id, b.dataset.field), b, 'View', 'Hide'));
+}
+
+function uploadCv(id, file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject('Could not read that file.');
+    r.onload = () => {
+      const mime = file.type || ({ pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' })[file.name.split('.').pop().toLowerCase()];
+      api('apiUploadCv', id, file.name, mime, r.result.split(',')[1]).then(resolve, reject);
+    };
+    r.readAsDataURL(file);
+  });
+}
+
+const CDN = { pdf: 'https:\/\/cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', pdfWorker: 'https:\/\/cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  mammoth: 'https:\/\/cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js' };
+const loaded = {};
+function loadScript(src) { return loaded[src] = loaded[src] || new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej('Could not load the viewer. Check the internet connection.'); document.head.appendChild(s); }); }
+function b64Bytes(b64) { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+
+function cvPane() {
+  let pane = $('#cvPane');
+  if (!pane) {
+    document.body.insertAdjacentHTML('beforeend', `<section id="cvPane" class="cv-pane" role="region" aria-label="CV preview" hidden>
+      <div class="cv-pane-head"><span class="cv-name"></span><div class="cv-pane-actions"><a class="btn" id="cvDownload">Download</a><button class="btn" id="cvPaneClose">Close</button></div></div>
+      <div class="cv-pane-body"></div></section>`);
+    pane = $('#cvPane');
+    $('#cvPaneClose').onclick = hideCv;
+  }
+  return pane;
+}
+function hideCv() {
+  const pane = $('#cvPane'); if (!pane || pane.hidden) return;
+  pane.hidden = true; $('.cv-pane-body', pane).innerHTML = ''; document.body.classList.remove('cv-open');
+  if (pane.dataset.url) { URL.revokeObjectURL(pane.dataset.url); pane.dataset.url = ''; }
+  if (pane._btn) { pane._btn.textContent = pane._viewLabel || 'View'; pane._btn = null; }
+  pane.dataset.id = '';
+}
+
+function showCv(id, btn) { return showFile('cv:' + id, () => api('apiGetCv', id), btn, 'View CV', 'Hide CV'); }
+
+async function showFile(key, fetchFile, btn, viewLabel, hideLabel) {
+  const pane = cvPane();
+  if (!pane.hidden && pane.dataset.id === key) return hideCv();
+  if (!pane.hidden) hideCv();
+  busy(btn, true, 'Loading…');
+  const id = key;
+  try {
+    const f = await fetchFile();
+    const bytes = b64Bytes(f.b64);
+    if (pane.dataset.url) URL.revokeObjectURL(pane.dataset.url);
+    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: f.mime }));
+    pane.dataset.url = blobUrl; pane.dataset.id = key; pane._btn = btn; pane._viewLabel = viewLabel;
+    $('.cv-name', pane).textContent = f.name;
+    const dl = $('#cvDownload'); dl.href = blobUrl; dl.setAttribute('download', f.name);
+    const body = $('.cv-pane-body', pane);
+    body.innerHTML = '<div class="empty">Rendering…</div>';
+    pane.hidden = false; document.body.classList.add('cv-open');
+    if (/^image[/]/.test(f.mime)) {
+      body.innerHTML = `<img class="cv-img" alt="${esc(f.name)}" src="${blobUrl}">`;
+    } else if (f.mime === 'application/pdf') {
+      await loadScript(CDN.pdf);
+      pdfjsLib.GlobalWorkerOptions.workerSrc = CDN.pdfWorker;
+      const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      body.innerHTML = '';
+      const width = Math.min(body.clientWidth - 40, 900);
+      for (let n = 1; n <= Math.min(pdf.numPages, 15); n++) {
+        const page = await pdf.getPage(n);
+        const vp0 = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: (width / vp0.width) * (window.devicePixelRatio || 1) });
+        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height; c.style.width = width + 'px';
+        body.appendChild(c);
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      }
+      if (pdf.numPages > 15) body.insertAdjacentHTML('beforeend', `<p class="hint">Showing the first 15 of ${pdf.numPages} pages. Download to see the rest.</p>`);
+    } else if (/wordprocessingml/.test(f.mime)) {
+      await loadScript(CDN.mammoth);
+      const out = await mammoth.convertToHtml({ arrayBuffer: bytes.buffer });
+      body.innerHTML = `<div class="cv-doc">${out.value}</div>`;
+    } else {
+      body.innerHTML = '<p class="empty">This file type cannot be previewed here. Use Download.</p>';
+    }
+    busy(btn, false, hideLabel || 'Hide');
+  } catch (e) { toast(e, true); busy(btn, false, viewLabel); }
+}
+
+async function viewPanel(v) {
+  const f = S.panelTab = S.panelTab || { tab: 'avail', q: '' };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Interview panel</h1><p>The master list of people who sit on interview panels, and a log of when they were unavailable.</p></div></div>
+    <div class="tabs" role="tablist"><button role="tab" data-t="avail" aria-selected="${f.tab === 'avail'}">Unavailability log</button><button role="tab" data-t="members" aria-selected="${f.tab === 'members'}">Panel members</button></div>
+    <div id="pnBody" style="margin-top:16px"><div class="empty">Loading\u2026</div></div>`;
+  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewPanel(v); });
+  if (f.tab === 'members') return renderPanelMembers($('#pnBody'), f);
+  const rows = await api('apiListPanel');
+  $('#pnBody').innerHTML = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn primary" id="newPanel">Log unavailability</button></div>
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Panel member</th><th>Interview for</th><th>Time</th><th>Reason</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${esc(r.Entry_ID)}"><td class="nw">${fmtDate(r.Date)}</td><td>${esc(r.Panel_Member)}<span class="sub">${esc(r.Designation)} \u00b7 ${esc(r.Department)}</span></td>
+      <td>${esc(r.Interview_For)}</td><td>${esc(r.From_Time)}${r.To_Time ? '\u2013' + esc(r.To_Time) : ''}</td><td>${esc(r.Reason)}<span class="sub">${esc(r.Remarks)}</span></td><td>${esc(r.Availability_Status)}</td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty">Nothing logged yet.</div>'}`;
+  const edit = r => {
+    const names = S.boot.panel.map(m => m.name);
+    if (r && r.Panel_Member && !names.includes(r.Panel_Member)) names.unshift(r.Panel_Member);
+    const fields = [{ k: 'Panel_Member', l: 'Panel member', t: 'select', opts: names, req: true, hint: 'Not listed? Add them in the Panel members tab.' },
+      { k: 'Designation', l: 'Designation' }, { k: 'Department', l: 'Department / function' },
+      { k: 'Interview_For', l: 'Interview for position' }, { k: 'Date', l: 'Date', t: 'date', req: true }, { k: 'Availability_Status', l: 'Status', t: 'select', opts: ['Unavailable', 'Rescheduled', 'Available'], noBlank: true },
+      { k: 'From_Time', l: 'From', t: 'time' }, { k: 'To_Time', l: 'To', t: 'time' }, { k: 'Reason', l: 'Reason', wide: true }, { k: 'Remarks', l: 'Remarks', t: 'textarea', wide: true }];
+    const b = openDrawer(r ? 'Edit panel entry' : 'Log panel unavailability', `<div id="pnForm">${wrapForm(form(fields, r || { Date: today(), Availability_Status: 'Unavailable' }))}</div>
+      <div class="drawer-actions"><button class="btn" id="pnCancel">Cancel</button><button class="btn primary" id="pnSave">Save</button></div>`);
+    $('#f_Panel_Member', b).onchange = e => { const m = S.boot.panel.find(x => x.name === e.target.value); if (m) { $('#f_Designation', b).value = m.designation; $('#f_Department', b).value = m.department; } };
+    $('#pnCancel').onclick = closeDrawer;
+    $('#pnSave').onclick = async () => {
+      const btn = $('#pnSave'); busy(btn, true, 'Saving\u2026');
+      try { await api('apiSavePanel', Object.assign({ Entry_ID: r ? r.Entry_ID : '' }, readForm($('#pnForm')))); toast('Saved'); closeDrawer(); go('panel', false); }
+      catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+    };
+  };
+  $('#newPanel').onclick = () => edit(null);
+  $$('#pnBody tr[data-id]').forEach(tr => tr.addEventListener('click', () => edit(rows.find(r => r.Entry_ID === tr.dataset.id))));
+}
+
+async function renderPanelMembers(el, f) {
+  const all = await api('apiListPanelMembers');
+  el.innerHTML = `<div class="filters"><div class="field search"><label for="pmq">Search</label><input id="pmq" type="search" value="${esc(f.q)}" placeholder="Name, department, designation"></div>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="pmNotes" ${f.notes ? 'checked' : ''}> Needs review</label>
+      <div style="flex:1"></div><button class="btn primary" id="pmNew">Add panel member</button></div>
+    <div id="pmList"></div>
+    <p class="legend">Seeded from the interviewer names in the CV Tracker, with spelling variants kept as aliases so old records still match. Members marked \u201cneeds review\u201d have a note, for example a first name only.${isLead() ? ' Click a member to edit or deactivate them.' : ''}</p>`;
+  const render = () => {
+    const q = f.q.toLowerCase();
+    const rows = all.filter(m => (!q || [m.name, m.aliases, m.department, m.designation].join(' ').toLowerCase().includes(q)) && (!f.notes || m.note));
+    $('#pmList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Designation</th><th>Department</th><th>Roles</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(m => `<tr data-id="${esc(m.id)}" ${isLead() ? '' : 'style="cursor:default"'}><td>${esc(m.name)}${m.aliases ? `<span class="sub">also: ${esc(m.aliases)}</span>` : ''}${m.note ? `<span class="sub miss">${esc(m.note)}</span>` : ''}</td>
+        <td>${esc(m.designation)}</td><td>${esc(m.department)}</td><td>${esc(m.roles)}</td><td>${m.active === 'No' ? 'Inactive' : 'Active'}</td></tr>`).join('')}
+      </tbody></table></div><p class="pager">${rows.length} of ${all.length} members</p>`;
+    if (isLead()) $$('#pmList tr[data-id]').forEach(tr => tr.onclick = () => openPanelDialog(all.find(m => m.id === tr.dataset.id), () => renderPanelMembers(el, f)));
+  };
+  $('#pmq').oninput = e => { f.q = e.target.value; render(); };
+  $('#pmNotes').onchange = e => { f.notes = e.target.checked; render(); };
+  $('#pmNew').onclick = () => openPanelDialog(null, () => renderPanelMembers(el, f));
+  render();
+}
+
+function panelKey(s) { return String(s || '').toLowerCase().replace(/\b(sir|mr|mrs|ms|dr)\b\.?/g, '').replace(/[^a-z]/g, ''); }
+function buildPanelIndex() {
+  S.panelIndex = {};
+  (S.boot.panel || []).forEach(m => [m.name].concat(String(m.aliases || '').split(';')).forEach(a => { const k = panelKey(a); if (k) S.panelIndex[k] = m.name; }));
+}
+function splitNames(v) { return String(v || '').split(/[\/;,&]| and /i).map(s => s.replace(/\s+/g, ' ').trim()).filter(s => s && !/^(pending|na|hr)$/i.test(s)); }
+function linePanel(lineId, field) { const p = lineId && lineById(lineId); return p ? String(p[field] || '') : ''; }
+function policyPanel(grade) {
+  const g = String(grade || '').toUpperCase();
+  if (/^M[12]$/.test(g)) return 'Technical: Head HR, Strategy Team \u00b7 Final: Strategy Team, Director';
+  if (g === 'M3') return 'Technical: HOD, BU Head \u00b7 Final: HOD, BU Head, Head HR';
+  if (/^M[45]$/.test(g)) return 'Technical: HOD, BU Head, Lead TA \u00b7 Final (if required): HOD, BU Head, Lead TA';
+  if (g) return 'Technical: HOD, TA Team \u00b7 Final (if required): HOD, TA Team';
+  return 'pick a grade to see the policy panel';
+}
+function initMulti(root) {
+  $$('.ms', root).forEach(el => {
+    const hidden = $('input[type=hidden]', el);
+    let pref = splitNames(el.dataset.pref).map(n => S.panelIndex[panelKey(n)] || n);
+    let sel = [];
+    splitNames(hidden.value).forEach(n => { const name = S.panelIndex[panelKey(n)] || n; if (!sel.includes(name)) sel.push(name); });
+    const known = n => !!S.panelIndex[panelKey(n)];
+    const draw = () => {
+      hidden.value = sel.join('; ');
+      $('.ms-chips', el).innerHTML = sel.length ? sel.map((n, i) => `<span class="ms-chip ${known(n) ? '' : 'legacy'}" ${known(n) ? '' : 'title="Not in the panel list. Pick the right person or add them."'}>${esc(n)}${el.dataset.ro ? '' : `<button type="button" data-i="${i}" aria-label="Remove ${esc(n)}">\u00d7</button>`}</span>`).join('') : '<span class="att-off">None selected</span>';
+      $$('.ms-chips button', el).forEach(b => b.onclick = () => { sel.splice(+b.dataset.i, 1); draw(); });
+      const s = $('.ms-add', el); if (!s) return;
+      const rest = S.boot.panel.map(m => m.name).filter(n => !sel.includes(n));
+      const first = pref.filter(n => rest.includes(n));
+      s.innerHTML = '<option value="">Add a panel member\u2026</option>'
+        + (first.length ? `<optgroup label="This position\u2019s panel">${first.map(n => `<option>${esc(n)}</option>`).join('')}</optgroup>` : '')
+        + `<optgroup label="All panel members">${rest.filter(n => !first.includes(n)).map(n => `<option>${esc(n)}</option>`).join('')}</optgroup>`
+        + '<option value="__new">+ New panel member\u2026</option>';
+    };
+    el._setPref = v => { pref = splitNames(v).map(n => S.panelIndex[panelKey(n)] || n); draw(); };
+    el._redraw = draw;
+    const s = $('.ms-add', el);
+    if (s) s.onchange = () => {
+      const v = s.value; s.value = '';
+      if (v === '__new') return openPanelDialog(null, m => { if (!sel.includes(m.name)) sel.push(m.name); $$('.ms').forEach(x => x._redraw && x._redraw()); draw(); });
+      if (v && !sel.includes(v)) { sel.push(v); draw(); }
+    };
+    draw();
+  });
+}
+function openPanelDialog(m, onSaved) {
+  let dlg = $('#pmDialog');
+  if (!dlg) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pmDialog" class="pm-dialog" aria-labelledby="pmTitle"></dialog>'); dlg = $('#pmDialog'); }
+  const edit = !!m; const d = m || { roles: 'Technical', active: 'Yes' };
+  const roles = String(d.roles || '');
+  dlg.innerHTML = `<form method="dialog" id="pmForm"><h2 id="pmTitle">${edit ? 'Edit panel member' : 'New panel member'}</h2>
+    <div class="grid">
+      <div class="field wide"><label for="pm_name">Full name *</label><input id="pm_name" name="Name" value="${esc(d.name || '')}" required></div>
+      <div class="field"><label for="pm_des">Designation</label><input id="pm_des" name="Designation" value="${esc(d.designation || '')}"></div>
+      <div class="field"><label for="pm_dep">Department</label><input id="pm_dep" name="Department" value="${esc(d.department || '')}"></div>
+      <div class="field wide"><label for="pm_mail">Email</label><input id="pm_mail" name="Email" type="email" value="${esc(d.email || '')}"></div>
+      <fieldset class="wide" style="margin:0;padding:0;border:0"><legend style="font-size:13px;font-weight:500;color:var(--ink-2)">Sits on</legend>
+        ${['Technical', 'Final', 'HR'].map(r => `<label style="margin-right:14px"><input type="checkbox" class="pm-role" value="${r}" ${roles.includes(r) ? 'checked' : ''}> ${r}</label>`).join('')}</fieldset>
+      ${edit ? `<div class="field wide"><label for="pm_al">Other spellings (aliases)</label><input id="pm_al" name="Aliases" value="${esc(d.aliases || '')}"><span class="hint">Separate with semicolons. Old records with these spellings will match this person.</span></div>
+      <div class="field"><label for="pm_act">Status</label><select id="pm_act" name="Active">${opts([['Yes', 'Active'], ['No', 'Inactive']], d.active || 'Yes', false)}</select></div>
+      <div class="field"><label for="pm_note">Note</label><input id="pm_note" name="Note" value="${esc(d.note || '')}"></div>` : ''}
+    </div>
+    <div class="drawer-actions" style="position:static"><button type="button" class="btn" id="pmCancel">Cancel</button><button type="button" class="btn primary" id="pmSave">${edit ? 'Save' : 'Add member'}</button></div></form>`;
+  dlg.showModal(); $('#pm_name').focus();
+  $('#pmCancel').onclick = () => dlg.close();
+  $('#pmSave').onclick = async () => {
+    const data = readForm($('#pmForm')); data.Roles = $$('.pm-role:checked', dlg).map(x => x.value).join(', ');
+    if (edit) data.Panel_ID = m.id;
+    const b = $('#pmSave'); busy(b, true, 'Saving\u2026');
+    try {
+      const saved = await api('apiSavePanelMember', data);
+      S.boot.panel = S.boot.panel.filter(x => x.id !== saved.id);
+      if (saved.active !== 'No') S.boot.panel.push(saved);
+      S.boot.panel.sort((a, b) => a.name.localeCompare(b.name)); buildPanelIndex();
+      dlg.close(); toast(edit ? 'Panel member updated' : `${saved.name} added to the panel list`); onSaved && onSaved(saved);
+    } catch (e) { toast(e, true); busy(b, false, edit ? 'Save' : 'Add member'); }
+  };
+}
+
+async function viewAdmin(v) {
+  const admin = S.boot.user.role === 'Admin';
+  const f = S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Admin</h1><p>Data checks, change history and database tools.</p></div></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-t="checks" aria-selected="${f.tab === 'checks'}">Data checks</button>
+      <button role="tab" data-t="history" aria-selected="${f.tab === 'history'}">Change history</button>
+      <button role="tab" data-t="tools" aria-selected="${f.tab === 'tools'}">Tools</button></div>
+    <div id="adBody" style="margin-top:16px"><div class="empty">Loading\u2026</div></div>`;
+  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
+  const el = $('#adBody');
+  if (f.tab === 'tools') {
+    const info = await api('apiAdminInfo');
+    el.innerHTML = `<div class="two"><section class="panel"><h2>Database</h2>
+        ${admin ? `<p><a href="${esc(S.boot.dbUrl)}" target="_blank" rel="noopener">Open the database sheet</a></p>` : ''}
+        <p style="color:var(--ink-2)">Team members: Users sheet (company email, role Admin / Head / Recruiter, recruiter name), then run shareWithTeam in the script editor.</p>
+        <p style="color:var(--ink-2)">TAT per grade: M_Grades. KPI targets per recruiter: KPI_Targets. Scoring start for compliance KPIs: Settings \u2192 KPI_CAPTURE_FROM.</p></section>
+      <section class="panel"><h2>Backups and recalculation</h2>
+        <p style="color:var(--ink-2)">A dated copy of the database is saved every night to the private \u201cBFCL Recruitment CRM - Backups\u201d folder and kept for 14 days (Settings \u2192 BACKUP_KEEP_DAYS).</p>
+        <p>Last backup: <b>${esc(info.lastBackup || 'none yet')}</b></p>
+        ${admin ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="bkNow">Back up now</button><button class="btn" id="recalc">Recalculate TAT</button></div>` : '<p class="hint">Only the admin can run these.</p>'}
+      </section></div>
+      <section class="panel" style="margin-top:20px"><h2>Weekly email summary</h2>
+        <p style="color:var(--ink-2);max-width:75ch">Every Monday at 9:00: headline numbers, positions past TAT, last week\u2019s joinings, offers and backouts, this month\u2019s KPI scores and open data-check issues. Sent to everyone in the Users sheet with the Head or Admin role, plus any addresses in Settings \u2192 WEEKLY_SUMMARY_TO.</p>
+        <div id="wkStatus"><p class="hint">Loading\u2026</p></div></section>`;
+    const wk = async s => {
+      s = s || await api('apiWeeklyStatus');
+      $('#wkStatus').innerHTML = `<p>Status: <b>${s.on ? 'On' : 'Off'}</b>${s.on && s.by ? ` \u00b7 scheduled by ${esc(s.by)}` : ''}</p>
+        <p>Recipients: ${s.to.length ? esc(s.to.join(', ')) : '<span class="miss">none \u2014 add emails for Head/Admin users</span>'}</p>
+        <p>Last sent: ${esc(s.lastSent || 'not yet')}</p>
+        ${admin ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ${s.on ? '' : 'primary'}" id="wkToggle">${s.on ? 'Turn off' : 'Turn on'}</button><button class="btn" id="wkTest">Send a test to me</button></div>` : ''}`;
+      if (!admin) return;
+      $('#wkToggle').onclick = async () => { const b = $('#wkToggle'); busy(b, true, 'Saving\u2026'); try { wk(await api('apiSetWeekly', !s.on)); toast(s.on ? 'Weekly summary turned off' : 'Weekly summary turned on: Mondays 9:00'); } catch (e) { toast(e, true); busy(b, false, s.on ? 'Turn off' : 'Turn on'); } };
+      $('#wkTest').onclick = async () => { const b = $('#wkTest'); busy(b, true, 'Sending\u2026'); try { toast(await api('apiSendSummaryTest')); } catch (e) { toast(e, true); } finally { busy(b, false, 'Send a test to me'); } };
+    };
+    wk().catch(e => { $('#wkStatus').innerHTML = `<p class="miss">${esc(e)}</p>`; });
+    if (!admin) return;
+    $('#bkNow').onclick = async () => { const b = $('#bkNow'); busy(b, true, 'Backing up\u2026'); try { const r = await api('apiBackupNow'); toast(`Saved \u201c${r.name}\u201d \u00b7 ${r.kept} backups kept`); viewAdmin(v); } catch (e) { toast(e, true); busy(b, false, 'Back up now'); } };
+    $('#recalc').onclick = async () => { const b = $('#recalc'); busy(b, true, 'Recalculating\u2026'); try { const n = await api('apiRecomputeAll'); toast(`Recalculated ${n} positions`); S.positions = null; } catch (e) { toast(e, true); } finally { busy(b, false, 'Recalculate TAT'); } };
+    return;
+  }
+  if (f.tab === 'history') {
+    const sheets = ['MRF', 'Candidates', 'Daily_Funnel', 'Panel_Unavailability', 'Observations', 'Audit_Checks', 'M_Panel_Members'];
+    el.innerHTML = `<div class="filters">
+        <div class="field search"><label for="hq">Search</label><input id="hq" type="search" value="${esc(f.q)}" placeholder="Person, record ID, field or value"></div>
+        <div class="field"><label for="hs">Sheet</label><select id="hs">${opts(sheets, f.sheet)}</select></div>
+        <div class="field"><label for="hf">From</label><input id="hf" type="date" value="${esc(f.from)}"></div>
+        <div class="field"><label for="ht">To</label><input id="ht" type="date" value="${esc(f.to)}"></div></div>
+      <div id="hList"><div class="empty">Loading\u2026</div></div>`;
+    let timer;
+    const load = async () => {
+      const rows = await api('apiAuditLog', { q: f.q, sheet: f.sheet, from: f.from, to: f.to });
+      $('#hList').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Record</th><th>Change</th></tr></thead><tbody>
+        ${rows.map(r => `<tr style="cursor:default"><td class="nw">${esc(r.ts)}</td><td>${esc(r.user)}</td><td class="nw">${esc(r.id)}<span class="sub">${esc(r.sheet)}</span></td>
+          <td>${r.action === 'Update' ? `<b>${esc(r.field.replace(/_/g, ' '))}</b><span class="sub"><s>${esc(r.oldV) || '(blank)'}</s> \u2192 ${esc(r.newV) || '(blank)'}</span>` : `<b>${esc(r.action)}</b>${r.newV ? `<span class="sub">${esc(r.newV)}</span>` : ''}`}</td></tr>`).join('')}
+        </tbody></table></div><p class="pager">${rows.length === 300 ? 'Showing the latest 300 changes. Narrow the filters to see older ones.' : rows.length + ' changes'}</p>` : '<div class="empty">No changes match these filters.</div>';
+    };
+    $('#hq').oninput = e => { f.q = e.target.value; clearTimeout(timer); timer = setTimeout(load, 350); };
+    $('#hs').onchange = e => { f.sheet = e.target.value; load(); };
+    $('#hf').onchange = e => { f.from = e.target.value; load(); };
+    $('#ht').onchange = e => { f.to = e.target.value; load(); };
+    return load();
+  }
+  const checks = await api('apiDataChecks');
+  const total = checks.reduce((s, c) => s + c.count, 0);
+  el.innerHTML = `<p style="margin:0 0 14px;color:var(--ink-2)">${total ? `${total} records to look at. Click a record to open and fix it.` : 'No problems found.'}</p>
+    ${checks.map(c => `<details class="check" ${c.count ? '' : 'data-ok'}><summary><span class="check-n ${c.count ? '' : 'zero'}">${c.count}</span><span><b>${esc(c.title)}</b><span class="sub">${esc(c.why)}</span></span></summary>
+      ${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+  $$('#adBody tr[data-id]').forEach(tr => tr.onclick = async () => {
+    if (tr.dataset.e === 'CAND') openCandidate(tr.dataset.id); else { await loadPositions(); positionDrawer(lineById(tr.dataset.id)); }
+  });
+}
+
+const KPI_NOTES = {
+  OFFER_BACKOUT: 'Backouts ÷ offers made in the month · lower is better · not scored',
+  PSYCHOMETRIC: 'Shortlisted Manager+ candidates without a test · 5 for 0, 3 for 1, 0 for more',
+  MRF_ADHERENCE: 'Observations logged in the month · 5 for 0, down to 0 for more than 4',
+  BGV: 'Manager+ or flagged hires without BGV on time · 5 for 0, 2 for 1, 0 for more',
+  TRACKER_ACCURACY: 'Errors in the monthly 20% audit · 5 for 0 errors, 0 for any'
+};
+function fyNow() { const d = new Date(); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; }
+function monthLabel(m) { const [y, mm] = m.split('-'); return `${MONTHS[mm - 1]} ${y.slice(2)}`; }
+function scoreBadge(s) { return s == null ? '' : `<span class="score s${s}">${s}</span>`; }
+
+async function viewKpi(v, fresh) {
+  const f = S.kpiFilter = S.kpiFilter || { fy: fyNow(), rec: isLead() ? 'TEAM_TOTAL' : S.boot.user.recruiter };
+  const k = await api('apiKpi', f.fy, !!fresh);
+  const recs = Object.keys(k.data).filter(r => r !== 'TEAM_TOTAL').sort();
+  const d = k.data[f.rec] || {};
+  const tgt = kpi => {
+    const who = f.rec === 'TEAM_TOTAL' ? '*' : f.rec.toLowerCase();
+    const rows = k.targets.filter(t => t.kpi === kpi && (t.recruiter === who || t.recruiter === '*')).sort((a, b) => (a.recruiter === '*') - (b.recruiter === '*') || (a.from < b.from ? 1 : -1));
+    const t = rows[0]; if (!t) return '';
+    return `${t.days} days · ${String(t.levels || 'All')} levels${t.exempt ? ' · notice beyond 30 days exempt' : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' · team default' : ''}`;
+  };
+  const cellHtml = (kpi, m) => {
+    const c = d[kpi] && d[kpi][m];
+    if (!c) return '<td class="kcell empty-cell">–</td>';
+    if (k.defs[kpi].count) {
+      if (kpi === 'TRACKER_ACCURACY' && c.pending) return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.num}</b><span class="frac">${c.pending} to check</span></td>`;
+      return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.num}</b><span class="frac">${esc(k.defs[kpi].unit)}</span>${scoreBadge(c.score)}</td>`;
+    }
+    return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.pct}%</b><span class="frac">${c.num}/${c.den}</span>${scoreBadge(c.score)}</td>`;
+  };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>KPI scorecard</h1>
+      <p>Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number.</p></div>
+      <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button></div></div>
+    <div class="filters">
+      <div class="field"><label for="kfy">Financial year</label><select id="kfy">${opts([fyNow() - 1, fyNow()].map(y => [y, `FY ${y}-${String(y + 1).slice(2)}`]), f.fy, false)}</select></div>
+      <div class="field"><label for="krec">Recruiter</label><select id="krec">${opts([['TEAM_TOTAL', 'Whole team']].concat(recs.map(r => [r, r])), f.rec, false)}</select></div>
+    </div>
+    <div class="table-wrap"><table class="ktable"><thead><tr><th class="kname">KPI</th>${k.months.map(m => `<th class="num">${monthLabel(m)}</th>`).join('')}</tr></thead><tbody>
+      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc(KPI_NOTES[kpi] || tgt(kpi))}</span></th>
+        ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <p class="legend">Score: 5 for 100%, 4 for 95%+, 3 for 90%+, 2 for 85%+, 1 for 80%+, 0 below 80%. Timely closure counts positions filled in the month. M-level fulfilment counts positions due that month (MRF date + TAT) or filled that month. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Settings → KPI_CAPTURE_FROM); tracker accuracy shows only for months with an audit sample.</p>`;
+  $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
+  $('#krec').onchange = e => { f.rec = e.target.value; go('kpi', false); };
+  $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
+  $$('.kcell[data-k]', v).forEach(td => {
+    const open = () => kpiDrill(k, f, td.dataset.k, td.dataset.m);
+    td.addEventListener('click', open);
+    td.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+  });
+}
+
+function kpiDrill(k, f, kpi, m) {
+  const c = k.data[f.rec][kpi][m];
+  const team = f.rec === 'TEAM_TOTAL';
+  const who = team ? 'Whole team' : f.rec;
+  let head, rows;
+  const recCol = i => team ? `<td>${esc(i.recruiter)}</td>` : '';
+  const recHead = team ? '<th>Recruiter</th>' : '';
+  if (kpi === 'PSYCHOMETRIC') {
+    head = `<th>Candidate</th>${recHead}<th>Shortlisted</th><th>Test</th>`;
+    rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.name)}<span class="sub">${esc(i.id)} · ${esc(i.position)}</span></td>${recCol(i)}<td class="nw">${fmtDate(i.date)}</td><td>${i.ok ? `<span class="ok">${esc(i.status)}</span>` : `<span class="miss">${esc(i.status)}</span>`}</td></tr>`);
+  } else if (kpi === 'BGV') {
+    head = `<th>Position</th>${recHead}<th>Offer / joined</th><th>BGV</th><th>Result</th>`;
+    rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${recCol(i)}<td class="nw">${fmtDate(i.offer) || '—'}<span class="sub">joined ${fmtDate(i.doj)}</span></td><td class="nw">Prev: ${fmtDate(i.prev) || '—'}<span class="sub">Current: ${fmtDate(i.curr) || '—'}</span></td><td>${i.ok ? `<span class="ok">OK</span>${i.why ? `<span class="sub">${esc(i.why)}</span>` : ''}` : `<span class="miss">${esc(i.why)}</span>`}</td></tr>`);
+  } else if (kpi === 'MRF_ADHERENCE') {
+    head = `<th>Date</th>${recHead}<th>Observation</th><th>Status</th>`;
+    rows = c.items.map(i => `<tr><td class="nw">${fmtDate(i.date)}</td>${recCol(i)}<td>${esc(i.type)}<span class="sub">${esc(i.mrf ? i.mrf + ' · ' : '')}${esc(i.description)}</span></td><td>${esc(i.status)}</td></tr>`);
+  } else if (kpi === 'TRACKER_ACCURACY') {
+    head = `<th>Record</th>${recHead}<th>Result</th>`;
+    rows = c.items.sort((a, b) => (a.result === 'Error' ? -1 : 1)).map(i => `<tr><td>${esc(i.label)}<span class="sub">${esc(i.entity)} · ${esc(i.record)}</span></td>${recCol(i)}<td>${i.result === 'Error' ? `<span class="miss">Error: ${esc(i.field)}${i.critical ? ' (critical)' : ''}</span>` : esc(i.result)}${i.remarks ? `<span class="sub">${esc(i.remarks)}</span>` : ''}</td></tr>`);
+  } else if (kpi === 'OFFER_BACKOUT') {
+    head = `<th>Event</th><th>Date</th><th>Position</th>${team ? '<th>Recruiter</th>' : ''}`;
+    rows = c.items.sort((a, b) => a.date < b.date ? -1 : 1).map(i => `<tr><td>${i.event === 'Backout' ? '<b>Backout</b>' : 'Offer'}</td><td class="nw">${fmtDate(i.date)}</td><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}</tr>`);
+  } else {
+    const due = kpi === 'M_FULFILMENT';
+    head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>MRF date</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
+    rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}
+      <td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
+      <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
+  }
+  openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
+    <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : c.pct + '%'}</b></div><div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / offers' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div><div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
+    ${c.items.length ? '' : '<p class="empty">Nothing to count this month.</p>'}
+    <div class="table-wrap" style="margin-top:14px"><table><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`);
+}
+
+const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
+  'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
+function thisMonth() { return today().slice(0, 7); }
+function lastMonth() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 7); }
+
+async function viewCompliance(v) {
+  const f = S.compFilter = S.compFilter || { tab: 'obs', month: thisMonth(), rec: isLead() ? '' : S.boot.user.recruiter, auditMonth: lastMonth() };
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Compliance</h1><p>Process observations and the monthly tracker audit. Both feed the KPI scorecard.</p></div></div>
+    <div class="tabs" role="tablist"><button role="tab" data-t="obs" aria-selected="${f.tab === 'obs'}">Observations</button><button role="tab" data-t="audit" aria-selected="${f.tab === 'audit'}">Monthly audit</button></div>
+    <div id="compBody" style="margin-top:16px"></div>`;
+  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewCompliance(v); });
+  if (f.tab === 'obs') await renderObservations($('#compBody'), f); else await renderAudit($('#compBody'), f);
+}
+
+async function renderObservations(el, f) {
+  await loadPositions();
+  el.innerHTML = `
+    <div class="filters">
+      <div class="field"><label for="obm">Month</label><input id="obm" type="month" value="${esc(f.month)}"></div>
+      <div class="field"><label for="obr">Recruiter</label><select id="obr">${opts(S.boot.recruiters, f.rec)}</select></div>
+      <div style="flex:1"></div>${isLead() ? '<button class="btn primary" id="obNew">Log observation</button>' : ''}
+    </div><div id="obList"><div class="empty">Loading…</div></div>`;
+  const load = async () => {
+    const rows = await api('apiListObservations', { month: f.month, recruiter: f.rec });
+    $('#obList').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Recruiter</th><th>Observation</th><th>Position</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${esc(r.Obs_ID)}"><td class="nw">${fmtDate(r.Obs_Date)}</td><td>${esc(r.Recruiter)}</td><td>${esc(r.Type)}<span class="sub">${esc(r.Description)}</span></td><td>${esc(r.MRF_No)}</td><td>${esc(r.Status)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No observations for this month. Each month with none scores 5.</div>';
+    $$('#obList tr[data-id]').forEach(tr => tr.onclick = () => { if (isLead()) obDrawer(rows.find(r => r.Obs_ID === tr.dataset.id), load); });
+  };
+  $('#obm').onchange = e => { f.month = e.target.value; load(); };
+  $('#obr').onchange = e => { f.rec = e.target.value; load(); };
+  if ($('#obNew')) $('#obNew').onclick = () => obDrawer(null, load);
+  load();
+}
+
+function obDrawer(r, after) {
+  const lines = S.positions.slice().sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date))).map(p => [p.Line_ID, lineLabel(p) + ' \u00b7 ' + p.Recruiter]);
+  const data = r || { Obs_Date: today(), Status: 'Open' };
+  const fields = [{ k: 'Obs_Date', l: 'Date', t: 'date', req: true }, { k: 'Status', l: 'Status', t: 'select', opts: ['Open', 'Closed'], noBlank: true },
+    { k: 'Type', l: 'Observation', t: 'select', opts: OBS_TYPES, req: true, wide: true },
+    { k: 'Line_ID', l: 'Position (optional)', t: 'select', opts: lines, wide: true, hint: 'Linking a position fills in the recruiter.' },
+    { k: 'Recruiter', l: 'Recruiter', t: 'select', opts: S.boot.recruiters },
+    { k: 'Description', l: 'Details', t: 'textarea', wide: true }];
+  const b = openDrawer(r ? 'Edit observation' : 'Log observation', `<div id="obForm">${wrapForm(form(fields, data))}</div>
+    <div class="drawer-actions"><button class="btn" id="obCancel">Cancel</button><button class="btn primary" id="obSave">Save</button></div>`);
+  $('#f_Line_ID', b).onchange = e => { const p = lineById(e.target.value); if (p) $('#f_Recruiter', b).value = String(p.Recruiter).trim(); };
+  $('#obCancel').onclick = closeDrawer;
+  $('#obSave').onclick = async () => {
+    const btn = $('#obSave'); busy(btn, true, 'Saving\u2026');
+    try { await api('apiSaveObservation', Object.assign({ Obs_ID: r ? r.Obs_ID : '' }, readForm($('#obForm')))); toast('Observation saved'); closeDrawer(); after(); }
+    catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+  };
+}
+
+async function renderAudit(el, f) {
+  el.innerHTML = `
+    <div class="filters">
+      <div class="field"><label for="aum">Audit month</label><input id="aum" type="month" value="${esc(f.auditMonth)}" max="${thisMonth()}"></div>
+      <div style="flex:1"></div>${isLead() ? '<button class="btn primary" id="auGen">Create 20% sample</button>' : ''}
+    </div>
+    <p class="legend" style="margin-top:0">The sample is a random 20% of the positions and candidates the team added or edited in that month. Mark each record Correct or Error after checking it against the source documents. Any error in the MRF date or closing/joining date is marked critical.</p>
+    <div id="auList"><div class="empty">Loading\u2026</div></div>`;
+  const load = async () => {
+    const rows = await api('apiAuditList', f.auditMonth);
+    if (!rows.length) { $('#auList').innerHTML = `<div class="empty">No audit sample for ${esc(monthLabel(f.auditMonth))} yet.${isLead() ? ' Create one with the button above.' : ''}</div>`; return; }
+    const done = rows.filter(r => r.Result !== 'Pending').length, errs = rows.filter(r => r.Result === 'Error').length;
+    $('#auList').innerHTML = `<p style="margin:0 0 10px;color:var(--ink-2)">${done} of ${rows.length} checked \u00b7 ${errs} error${errs === 1 ? '' : 's'}</p>
+      <div class="table-wrap"><table><thead><tr><th>Record</th><th>Recruiter</th><th>Result</th><th>Wrong field</th><th>Remarks</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${esc(r.Audit_ID)}" style="cursor:default"><td>${esc(r.Label)}<span class="sub">${esc(r.Entity)} \u00b7 <button class="linklike" data-open="${esc(r.Entity)}|${esc(r.Record_ID)}">${esc(r.Record_ID)}</button></span></td><td>${esc(r.Recruiter)}</td>
+        <td><select data-f="Result" ${isLead() ? '' : 'disabled'}>${opts(['Pending', 'Correct', 'Error'], r.Result, false)}</select></td>
+        <td><input data-f="Error_Field" value="${esc(r.Error_Field)}" placeholder="e.g. MRF date" ${isLead() ? '' : 'disabled'}></td>
+        <td><input data-f="Remarks" value="${esc(r.Remarks)}" ${isLead() ? '' : 'disabled'}></td>
+        <td>${isLead() ? '<button class="btn au-save">Save</button>' : ''}${r.Critical === 'Yes' ? '<span class="sub miss">critical</span>' : ''}</td></tr>`).join('')}
+      </tbody></table></div>`;
+    $$('#auList [data-open]').forEach(b => b.onclick = async e => {
+      e.stopPropagation(); const [ent, id] = b.dataset.open.split('|');
+      if (ent === 'Candidate') openCandidate(id); else { await loadPositions(); positionDrawer(lineById(id)); }
+    });
+    $$('#auList .au-save').forEach(b => b.onclick = async () => {
+      const tr = b.closest('tr'); const d = { Audit_ID: tr.dataset.id };
+      $$('[data-f]', tr).forEach(x => d[x.dataset.f] = x.value);
+      busy(b, true, 'Saving\u2026');
+      try { await api('apiAuditSave', d); toast('Audit result saved'); load(); } catch (e) { toast(e, true); busy(b, false, 'Save'); }
+    });
+  };
+  $('#aum').onchange = e => { f.auditMonth = e.target.value; load(); };
+  if ($('#auGen')) $('#auGen').onclick = async () => {
+    const b = $('#auGen'); busy(b, true, 'Creating\u2026');
+    try { const r = await api('apiAuditGenerate', f.auditMonth); toast(`Sampled ${r.sampled} of ${r.population} records`); load(); } catch (e) { toast(e, true); } finally { busy(b, false, 'Create 20% sample'); }
+  };
+  load();
+}
+
+const DAY_LABELS = { CV_Sourced: 'Sourced', CV_Reviewed: 'CVs reviewed', HR_1st_Round: 'HR 1st round', CV_Shared_Dept: 'Shared with dept',
+  Shortlisted_Dept: 'Shortlisted by dept', Interviews_Done: 'Interviews', Selected_Final: 'Selected', Offers: 'Offers released', Joined: 'Joined' };
+function dayFunnelHtml(stages, f) {
+  const max = Math.max(1, ...stages.map(s => f[s] || 0));
+  return `<div class="dfun">${stages.map(s => `<div class="dfun-step"><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${DAY_LABELS[s]}</span></div>`).join('')}</div>`;
+}
+function dayFunnelBars(stages, f) {
+  const max = Math.max(1, ...stages.map(s => f[s] || 0));
+  return `<div class="funnel">${stages.map(s => `<div class="frow"><span>${DAY_LABELS[s]}</span><div class="fbar"><span style="width:${100 * (f[s] || 0) / max}%"></span></div><span class="num">${f[s] || 0}</span></div>`).join('')}</div>`;
+}
+function dayPositionsHtml(rows) {
+  if (!rows.length) return '<p class="hint">No activity logged against positions.</p>';
+  const cols = [['CV_Sourced', 'Sourced'], ['CV_Reviewed', 'Reviewed'], ['HR_1st_Round', 'HR R1'], ['CV_Shared_Dept', 'Shared'], ['Shortlisted_Dept', 'Shortlisted'], ['Interviews_Done', 'Interviews'], ['Selected_Final', 'Selected']];
+  return `<div class="table-wrap"><table><thead><tr><th>Position / MRF</th><th>Department</th>${cols.map(c => `<th class="num">${c[1]}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
+    ${rows.map(g => `<tr style="cursor:default"><td>${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span></td><td>${esc(g.dept)}</td>${cols.map(c => `<td class="num">${g[c[0]] || ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function dayWorkHtml(r) {
+  const items = r.work.map(w => `<li><b>${w.count}</b> ${esc(w.label.toLowerCase())}</li>`);
+  const mv = Object.entries(r.moves || {});
+  if (mv.length) items.push(`<li>Candidate moves: ${mv.map(([k, n]) => `${n} \u2192 ${esc(MOVE_LABELS[k] || k)}`).join(', ')}</li>`);
+  if (r.offers.length) items.push(`<li>Offers dated this day: ${r.offers.map(o => esc(o.position)).join(', ')}</li>`);
+  if (r.joined.length) items.push(`<li>Joined: ${r.joined.map(o => esc(o.position)).join(', ')}</li>`);
+  if (r.backouts) items.push(`<li class="miss">${r.backouts} backout${r.backouts > 1 ? 's' : ''}</li>`);
+  return items.length ? `<ul class="work">${items.join('')}</ul>` : '<p class="hint">Nothing recorded in the app for this day.</p>';
+}
+
+async function viewMyDay(v) {
+  const f = S.myDay = S.myDay || { date: today() };
+  const data = await api('apiDaySummary', f.date);
+  const me = S.boot.user.recruiter;
+  const r = data.recruiters.find(x => x.recruiter.toLowerCase() === me.toLowerCase()) || { recruiter: me, overview: '', tasks: [], funnel: {}, byPosition: [], work: [], candidates: [], offers: [], joined: [], backouts: 0 };
+  const editable = isLead() || f.date >= daysAgo(1);
+  let tasks = (r.tasks || []).slice();
+  v.innerHTML = `
+    <div class="page-head"><div><h1>My day</h1><p>Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own.</p></div>
+      <div class="field"><label for="mdDate">Day</label><input id="mdDate" type="date" value="${esc(f.date)}" max="${today()}"></div></div>
+    <section class="panel"><h2>Funnel for ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, r.funnel)}</section>
+    <div class="two" style="margin-top:20px">
+      <section class="panel"><h2>Overview of the day</h2>
+        <textarea id="mdNote" class="day-note" placeholder="What did you get done? What is blocked, and what is next?" ${editable ? '' : 'readonly'}>${esc(r.overview)}</textarea>
+        <h2 style="margin-top:18px">Tasks</h2>
+        <ul class="tasks" id="mdTasks"></ul>
+        ${editable ? '<div class="task-add"><input id="mdNewTask" placeholder="Add a task and press Enter" aria-label="New task"><button class="btn" id="mdAdd">Add</button></div>' : '<p class="hint">Days older than yesterday are read-only.</p>'}
+        <p class="save-state" id="mdState" aria-live="polite">${r.updatedAt ? 'Last saved ' + esc(r.updatedAt) : ''}</p>
+      </section>
+      <section class="panel"><h2>Picked up from the app</h2>${dayWorkHtml(r)}
+        ${r.candidates.length ? `<h2 style="margin-top:16px">Candidates added (${r.candidates.length})</h2><ul class="work">${r.candidates.map(c => `<li><button class="linklike" data-cand="${esc(c.id)}">${esc(c.name)}</button> \u00b7 ${esc(c.position)}</li>`).join('')}</ul>` : ''}
+      </section>
+    </div>
+    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2>${dayPositionsHtml(r.byPosition)}
+      <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries"><p class="hint">Loading\u2026</p></div>
+      ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity for a position</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
+    </section>`;
+  $('#mdDate').onchange = e => { f.date = e.target.value || today(); go('myday', false); };
+  $$('[data-cand]', v).forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
+  let timer, saving = Promise.resolve();
+  const state = t => { const el = $('#mdState'); if (el) el.textContent = t; };
+  const save = () => {
+    clearTimeout(timer);
+    state('Saving\u2026');
+    saving = saving.then(() => api('apiSaveDaySummary', { date: f.date, overview: $('#mdNote').value, tasks }))
+      .then(res => state('Saved at ' + res.savedAt)).catch(e => { state('Not saved'); toast(e, true); });
+  };
+  const later = () => { clearTimeout(timer); state('Unsaved changes'); timer = setTimeout(save, 1200); };
+  const drawTasks = () => {
+    const done = tasks.filter(t => t.d).length;
+    $('#mdTasks').innerHTML = tasks.length ? tasks.map((t, i) => `<li class="${t.d ? 'done' : ''}"><label><input type="checkbox" data-i="${i}" ${t.d ? 'checked' : ''} ${editable ? '' : 'disabled'}> <span>${esc(t.t)}</span></label>${editable ? `<button class="icon-btn" data-del="${i}" aria-label="Delete task ${esc(t.t)}">\u00d7</button>` : ''}</li>`).join('')
+      + `<li class="task-count">${done} of ${tasks.length} done</li>` : '<li class="hint">No tasks yet.</li>';
+    $$('#mdTasks input[type=checkbox]').forEach(cb => cb.onchange = () => { tasks[+cb.dataset.i].d = cb.checked; drawTasks(); save(); });
+    $$('#mdTasks [data-del]').forEach(b => b.onclick = () => { tasks.splice(+b.dataset.del, 1); drawTasks(); save(); });
+  };
+  drawTasks();
+  loadPositions().then(() => api('apiListFunnel', { from: f.date, to: f.date, mine: true })).then(rows => {
+    const el = $('#mdEntries'); if (!el) return;
+    el.innerHTML = rows.length ? funnelTable(rows, true) + '<p class="hint">Entries can be edited until midnight on the day they are saved.</p>' : '<p class="hint">You have not logged any activity for this day yet.</p>';
+    bindEntryEdits(el, rows, () => go('myday', false));
+  }).catch(() => { const el = $('#mdEntries'); if (el) el.innerHTML = ''; });
+  if (!editable) return;
+  $('#mdNote').addEventListener('input', later);
+  $('#mdNote').addEventListener('blur', () => { if (timer) save(); });
+  const add = () => { const inp = $('#mdNewTask'); const t = inp.value.trim(); if (!t) return; tasks.push({ t, d: false }); inp.value = ''; drawTasks(); save(); };
+  $('#mdAdd').onclick = add;
+  $('#mdNewTask').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  await loadPositions();
+  $('#mdLog').innerHTML = dailyFormHtml(null, { Entry_Date: f.date });
+  bindDailyForm($('#mdLog'), () => { toast('Activity logged'); go('myday', false); });
+}
+
+async function viewDailyReview(v) {
+  const f = S.review = S.review || { date: daysAgo(1), rec: '' };
+  const data = await api('apiDaySummary', f.date);
+  const list = data.recruiters.filter(r => !f.rec || r.recruiter === f.rec);
+  const chip = (n, l) => `<span class="rchip"><b>${n}</b> ${l}</span>`;
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Daily review</h1><p>What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app.</p></div>
+      <div class="filters" style="margin:0">
+        <div class="field"><label for="drDate">Day</label><input id="drDate" type="date" value="${esc(f.date)}" max="${today()}"></div>
+        <div class="field"><label for="drRec">Recruiter</label><select id="drRec">${opts(data.recruiters.map(r => r.recruiter), f.rec)}</select></div>
+        <button class="btn" id="drPrev" aria-label="Previous day">\u2039</button><button class="btn" id="drNext" aria-label="Next day" ${f.date >= today() ? 'disabled' : ''}>\u203a</button></div></div>
+    <section class="panel"><h2>Team funnel \u00b7 ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, data.team)}</section>
+    ${list.map(r => {
+      const done = r.tasks.filter(t => t.d).length;
+      return `<article class="panel rcard ${r.active ? '' : 'idle'}">
+        <header class="rcard-head"><h2>${esc(r.recruiter)}</h2>
+          <span class="badge ${r.overview ? 'ok-b' : 'warn-b'}">${r.overview ? 'Summary written' + (r.updatedAt ? ' \u00b7 ' + esc(r.updatedAt) : '') : 'No summary written'}</span></header>
+        <div class="rchips">${chip(r.funnel.CV_Reviewed, 'CVs reviewed')}${chip(r.funnel.CV_Sourced, 'sourced')}${chip(r.funnel.CV_Shared_Dept, 'shared with dept')}${chip(r.funnel.Interviews_Done, 'interviews')}${chip(r.funnel.Selected_Final, 'selected')}${chip(r.funnel.Offers, 'offers')}${chip(r.funnel.Joined, 'joined')}${chip(done + '/' + r.tasks.length, 'tasks done')}</div>
+        <div class="two" style="margin-top:14px">
+          <div><h3>Overview</h3>${r.overview ? `<p class="day-text">${esc(r.overview)}</p>` : '<p class="hint">The recruiter has not written an overview for this day.</p>'}
+            <h3>Tasks</h3>${r.tasks.length ? `<ul class="tasks ro">${r.tasks.map(t => `<li class="${t.d ? 'done' : ''}"><span class="tick">${t.d ? '\u2713' : '\u25cb'}</span> ${esc(t.t)}</li>`).join('')}</ul>` : '<p class="hint">No tasks listed.</p>'}</div>
+          <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
+        </div>
+        <h3>CVs by position</h3>${dayPositionsHtml(r.byPosition)}
+      </article>`;
+    }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
+  const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
+  $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
+  $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
+  $('#drPrev').onclick = () => shift(-1);
+  $('#drNext').onclick = () => shift(1);
+}
+
+const P_STAGES = ['Sourced', 'Screened', 'Shared', 'Confirmed', 'Technical', 'HR', 'Docs', 'Offer', 'Prejoin', 'Joined', 'Onboarded'];
+const P_NAMES = { Sourced: 'CV received', Screened: 'Screened', Shared: 'Shared with dept', Confirmed: 'Dept confirmed', Technical: 'Technical interview',
+  HR: 'HR interview', Docs: 'Documents verified', Offer: 'Offer released', Prejoin: 'Pre-joining', Joined: 'Joined', Onboarded: 'Onboarded' };
+const MOVE_LABELS = Object.assign({}, P_NAMES, { Rejected: 'rejected', 'On hold': 'on hold', Withdrawn: 'withdrawn', Backout: 'backout', Active: 'reactivated' });
+const DOC_STATES = ['Pending', 'Received', 'Verified', 'NA'];
+
+async function pipelineAlertsPanel(v) {
+  try {
+    const a = await api('apiPipelineAlerts');
+    const box = (title, list, fmt, cls) => `<section class="panel palert ${list.length ? cls : ''}"><h2>${title} <span class="pcount">${list.length}</span></h2>${list.length ? `<ul class="work">${list.slice(0, 6).map(x => `<li><button class="linklike" data-pl="${esc(x.line)}" data-pa="${esc(x.app)}">${esc(x.name)}</button> \u00b7 ${esc(x.position)} \u00b7 ${esc(x.recruiter)}${fmt(x)}</li>`).join('')}</ul>${list.length > 6 ? `<p class="hint">and ${list.length - 6} more</p>` : ''}` : '<p class="hint">None.</p>'}</section>`;
+    const html = `<div class="palerts">${box('Waiting for department feedback (over 24h)', a.hodOverdue, x => ` \u00b7 <b>${x.hours}h</b>`, 'warn')}
+      ${box('Joiners at risk', a.atRisk, x => ` \u00b7 <b class="${x.risk === 'Red' ? 'miss' : ''}">${esc(x.risk)}</b>`, 'bad')}
+      ${box('Joining follow-ups due', a.dueToday, x => x.missing ? ' \u00b7 no check-in scheduled' : ` \u00b7 due ${fmtDate(x.next)}`, 'warn')}</div>`;
+    const host = document.createElement('div'); host.innerHTML = html;
+    const kpis = $('.kpis', v); if (kpis) kpis.insertAdjacentElement('afterend', host); else v.appendChild(host);
+    $$('[data-pl]', host).forEach(b => b.onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: b.dataset.pl, openApp: b.dataset.pa }); go('pipeline', true); });
+  } catch (e) { }
+}
+
+async function viewPipeline(v) {
+  await loadPositions();
+  const f = S.pipe = S.pipe || {};
+  const mine = S.positions.filter(p => isLead() || p.Recruiter === S.boot.user.recruiter);
+  const active = mine.filter(p => ['Open', 'Offered'].includes(p.Position_Status)).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
+  if (!f.line && active.length) f.line = active[0].Line_ID;
+  const others = mine.filter(p => !active.includes(p));
+  v.innerHTML = `
+    <div class="page-head"><div><h1>Candidate pipeline</h1><p>Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up.</p></div>
+      <div style="display:flex;gap:8px;align-items:end"><button class="btn" id="pRefresh">Refresh</button></div></div>
+    <div class="filters"><div class="field" style="flex:1;min-width:280px"><label for="pLine">Position</label><select id="pLine">
+      <optgroup label="Open and offered">${active.map(p => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Recruiter)}</option>`).join('')}</optgroup>
+      <optgroup label="Other positions">${others.slice(0, 400).map(p => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Position_Status)}</option>`).join('')}</optgroup></select></div>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="pClosed" ${f.closed ? 'checked' : ''}> Show rejected and withdrawn</label></div>
+    <div id="pBody"><div class="empty">Loading\u2026</div></div>`;
+  $('#pLine').onchange = e => { f.line = e.target.value; go('pipeline', false); };
+  $('#pClosed').onchange = e => { f.closed = e.target.checked; renderBoard(); };
+  $('#pRefresh').onclick = () => go('pipeline', false);
+  if (!f.line) { $('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
+  let P = await api('apiPipeline', f.line);
+  const canEdit = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
+  const renderBoard = () => {
+    const L = P.line;
+    const posts = P.posts.filter(x => x.Status !== 'Closed');
+    const ready = [
+      ['MRF approved', L.Approval_Status === 'Approved', L.Approval_Status || 'not set'],
+      ['JD confirmed', !!L.JD_Confirmed_Date, (L.JD_Confirmed_Date ? fmtDate(L.JD_Confirmed_Date) : (L.JD_Text || L.JD_File ? 'added, not confirmed' : 'missing')) + (L.JD_File ? ' \u00b7 file attached' : '')],
+      ['Screening questions', P.questions.length > 0 && !!L.SQ_Confirmed_Date, P.questions.length + ' set' + (L.SQ_Confirmed_Date ? ' \u00b7 confirmed ' + fmtDate(L.SQ_Confirmed_Date) : ', not confirmed')],
+      ['Job posted', posts.length > 0, posts.length ? posts.map(x => x.Channel).join(', ') : 'not posted']];
+    const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
+    const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
+    $('#pBody').innerHTML = `
+      <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span></div></div>`).join('')}</div>
+        <div class="ready-actions">${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn primary" id="pAdd">Add candidate</button>' : ''}</div></section>
+      <div class="board" role="list">${P_STAGES.map(s => {
+        const cards = shown.filter(a => a.Stage === s);
+        return `<section class="col" role="listitem" aria-label="${P_NAMES[s]}"><header><span>${P_NAMES[s]}</span><span class="pcount">${cards.length}</span></header>
+          ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
+            <b>${esc(a.cand.name || a.Candidate_ID)}</b>
+            <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
+            <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}</span>
+          </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
+      }).join('')}</div>`;
+    $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => openApp(P.apps.find(a => a.App_ID === b.dataset.app)));
+    $('#pOpenPos').onclick = () => positionDrawer(lineById(f.line));
+    if (!canEdit) return;
+    $('#pAdd').onclick = addToPipelineDialog;
+    $('#pQs').onclick = questionsDialog;
+    $('#pJd').onclick = () => openJdPicker(async file => {
+      try { await api('apiUseJd', [f.line], file.id); S.positions = null; await loadPositions(); toast(file.name + ' attached as the JD'); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); }
+    }, P.line.JD_File);
+    $('#pPost').onclick = postsDialog;
+  };
+  const reload = np => { P = np; renderBoard(); };
+  const dlg = (html, wide) => {
+    let d = $('#pDialog');
+    if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pDialog" class="pm-dialog" aria-labelledby="pdTitle"></dialog>'); d = $('#pDialog'); }
+    d.className = 'pm-dialog' + (wide ? ' wide' : '');
+    d.innerHTML = html; if (!d.open) d.showModal();
+    $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+    return d;
+  };
+  const addToPipelineDialog = async () => {
+    const d = dlg(`<h2 id="pdTitle">Add a candidate to ${esc(P.line.Position)}</h2>
+      <div class="field"><label for="pcSearch">Find an existing candidate</label><input id="pcSearch" type="search" placeholder="Name, mobile or email"></div>
+      <div id="pcResults" class="pc-results"><p class="hint">Type at least 3 characters.</p></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn primary" id="pcNew">New candidate</button></div>`);
+    $('#pcNew').onclick = () => { d.close(); const L = P.line; candidateDrawer(null, { Line_ID: L.Line_ID, Position: L.Position, Dept: L.Dept }); };
+    if (!S.candidates) S.candidates = await api('apiListCandidates');
+    $('#pcSearch').focus();
+    $('#pcSearch').oninput = e => {
+      const q = e.target.value.trim().toLowerCase();
+      if (q.length < 3) { $('#pcResults').innerHTML = '<p class="hint">Type at least 3 characters.</p>'; return; }
+      const hits = S.candidates.filter(c => [c.Name, c.Mobile, c.Email].join(' ').toLowerCase().includes(q)).slice(0, 12);
+      $('#pcResults').innerHTML = hits.length ? hits.map(c => `<button class="pc-hit" data-id="${esc(c.Candidate_ID)}"><b>${esc(c.Name)}</b><span class="sub">${esc(c.Candidate_ID)} \u00b7 ${esc(c.Position)} \u00b7 ${esc(c.Mobile)}</span></button>`).join('') : '<p class="hint">No match. Use New candidate.</p>';
+      $$('.pc-hit', d).forEach(b => b.onclick = async () => {
+        try { await api('apiAddToPipeline', b.dataset.id, f.line); d.close(); toast('Added to the pipeline'); reload(await api('apiPipeline', f.line)); } catch (err) { toast(err, true); }
+      });
+    };
+  };
+  const questionsDialog = () => {
+    let qs = P.questions.slice();
+    const d = dlg(`<h2 id="pdTitle">Screening questions</h2><p class="hint">Asked by the recruiter at screening; answers are saved with each candidate.</p>
+      <ol id="qList" class="qlist"></ol><div class="task-add"><input id="qNew" placeholder="Add a question and press Enter" aria-label="New question"><button class="btn" id="qAdd">Add</button></div>
+      <div class="field" style="margin-top:14px;max-width:280px"><label for="qConf">Confirmed by department on</label><input id="qConf" type="date" value="${esc(P.line.SQ_Confirmed_Date || '')}" max="${today()}"><span class="hint">JD confirmed: ${P.line.JD_Confirmed_Date ? fmtDate(P.line.JD_Confirmed_Date) : 'not yet'}</span></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button><button class="btn primary" id="qSave">Save questions</button></div>`);
+    const draw = () => { $('#qList').innerHTML = qs.map((q, i) => `<li><span>${esc(q)}</span><button class="icon-btn" data-i="${i}" aria-label="Remove question">\u00d7</button></li>`).join('') || '<li class="hint">No questions yet.</li>'; $$('#qList [data-i]').forEach(b => b.onclick = () => { qs.splice(+b.dataset.i, 1); draw(); }); };
+    const add = () => { const t = $('#qNew').value.trim(); if (t) { qs.push(t); $('#qNew').value = ''; draw(); } };
+    $('#qAdd').onclick = add; $('#qNew').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    $('#qSave').onclick = async () => { try { const r = await api('apiSaveScreeningQuestions', f.line, qs, $('#qConf').value); P.questions = r.questions; P.line.SQ_Confirmed_Date = r.confirmed; S.positions = null; d.close(); toast('Screening questions saved'); renderBoard(); } catch (e) { toast(e, true); } };
+    draw();
+  };
+  const postsDialog = () => {
+    const fields = [{ k: 'Post_Type', l: 'Type', t: 'select', opts: ['External', 'Internal (IJP)', 'Referral drive', 'Consultant'], noBlank: true },
+      { k: 'Channel', l: 'Where', req: true, hint: 'e.g. Naukri, LinkedIn, notice board, consultant name' },
+      { k: 'Posted_On', l: 'Posted on', t: 'date', req: true }, { k: 'Closes_On', l: 'Closes on', t: 'date', hint: 'Internal postings run at least 15 working days (Policy 2.6).' },
+      { k: 'Reference', l: 'Link or reference' }, { k: 'Status', l: 'Status', t: 'select', opts: ['Live', 'Closed'], noBlank: true }, { k: 'Notes', l: 'Notes', wide: true }];
+    const d = dlg(`<h2 id="pdTitle">Job posts</h2>
+      ${P.posts.length ? `<div class="table-wrap"><table><thead><tr><th>Type</th><th>Where</th><th>Posted</th><th>Closes</th><th>Status</th></tr></thead><tbody>${P.posts.map(x => `<tr style="cursor:default"><td>${esc(x.Post_Type)}</td><td>${esc(x.Channel)}<span class="sub">${esc(x.Reference)} ${esc(x.Notes)}</span></td><td class="nw">${fmtDate(x.Posted_On)}</td><td class="nw">${fmtDate(x.Closes_On)}</td><td>${esc(x.Status)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Not posted anywhere yet.</p>'}
+      <h3 style="margin:16px 0 6px">Add a post</h3><div id="jpForm">${wrapForm(form(fields, { Post_Type: 'External', Posted_On: today(), Status: 'Live' }))}</div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn primary" id="jpSave">Add post</button></div>`, true);
+    $('#jpSave').onclick = async () => { try { const x = await api('apiSaveJobPost', Object.assign({ Line_ID: f.line }, readForm($('#jpForm')))); P.posts.push(x); toast('Job post added'); renderBoard(); postsDialog(); } catch (e) { toast(e, true); } };
+  };
+  const openApp = a => {
+    const i = P_STAGES.indexOf(a.Stage), next = P_STAGES[i + 1];
+    const reached = {}; a.history.forEach(h => { if (h.to && h.from !== h.to) reached[h.to] = h.at.split(',')[0]; });
+    const nextFields = stageFields(next, a);
+    const active = a.Status === 'Active';
+    const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
+        <button class="btn" id="apProfile">Candidate profile</button></div>
+      <ol class="track">${P_STAGES.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${P_NAMES[s]}</span><small>${esc(reached[s] || '')}</small></li>`).join('')}</ol>
+      <div class="two app-grid">
+        <div>
+          ${canEdit && active && next ? `<section class="app-sec"><h3>Next: ${P_NAMES[next]}</h3><div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
+            <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">Move to ${P_NAMES[next]}</button></div></section>` : ''}
+          ${canEdit ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
+            <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
+            ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section>` : ''}
+          ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
+            ${a.followups.length ? `<ul class="work">${a.followups.map(x => `<li><b>${fmtDate(x.date)}</b> ${esc(x.mode)} \u00b7 <span class="risk r-${esc(x.risk)}">${esc(x.risk)}</span> ${esc(x.response)}${x.note ? ` \u2014 ${esc(x.note)}` : ''}${x.next ? ` \u00b7 next ${fmtDate(x.next)}` : ''}</li>`).join('')}</ul>` : '<p class="hint">No check-ins logged yet.</p>'}
+            ${canEdit && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
+              { k: 'response', l: 'What the candidate said', wide: true }, { k: 'risk', l: 'Risk of not joining', t: 'select', opts: ['Green', 'Amber', 'Red'], noBlank: true },
+              { k: 'next', l: 'Next check-in', t: 'date' }, { k: 'note', l: 'Note', wide: true }], { date: today(), mode: 'Call', risk: a.Risk || 'Green', next: daysAhead(3) }))}</div>
+              <div class="drawer-actions" style="position:static"><button class="btn" id="apFuSave">Log check-in</button></div>` : ''}</section>` : ''}
+        </div>
+        <div>
+          ${Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
+          ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
+          ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
+          ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
+          <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.by)}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
+        </div></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, true);
+    initMulti(d);
+    bindAttachmentViews('APP', a.App_ID, d);
+    $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
+    const after = np => { reload(np); const na = np.apps.find(x => x.App_ID === a.App_ID); if (na) openApp(na); };
+    if ($('#apMove')) $('#apMove').onclick = async () => {
+      const root = $('#apNext'); const bad = checkAttachments(root); if (bad) return toast(bad, true);
+      const payload = collectStage(next, root, a);
+      const b = $('#apMove'); busy(b, true, 'Saving\u2026');
+      try {
+        let np = await api('apiMoveStage', a.App_ID, next, payload);
+        if ($$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
+        S.positions = null; await loadPositions();
+        toast(`${a.cand.name} moved to ${P_NAMES[next]}`); after(np);
+      } catch (e) { toast(e, true); busy(b, false, `Move to ${P_NAMES[next]}`); }
+    };
+    $$('[data-st]', d).forEach(b => b.onclick = async () => {
+      try { const np = await api('apiSetAppStatus', a.App_ID, b.dataset.st, $('#apReason').value); S.positions = null; await loadPositions(); toast('Status updated'); after(np); } catch (e) { toast(e, true); }
+    });
+    if ($('#apBack')) $('#apBack').onchange = async e => {
+      if (!e.target.value) return;
+      try { after(await api('apiMoveStage', a.App_ID, e.target.value, { note: 'Moved back by recruitment head' })); toast('Moved back'); } catch (err) { toast(err, true); }
+    };
+    if ($('#apFuSave')) $('#apFuSave').onclick = async () => {
+      try { after(await api('apiAddFollowup', a.App_ID, readForm($('#apFu')))); toast('Check-in logged'); } catch (e) { toast(e, true); }
+    };
+  };
+  const stageFields = (s, a) => {
+    const note = { k: 'note', l: 'Note', wide: true };
+    if (s === 'Screened') return P.questions.map((q, k) => ({ k: 'q' + k, l: q, wide: true })).concat([note]);
+    if (s === 'Shared') return [{ k: 'note', l: 'Shared with (HOD / department) and how', wide: true }];
+    if (s === 'Confirmed') return [{ k: 'note', l: 'Department confirmation (who confirmed, any remarks)', wide: true }];
+    if (s === 'Technical' || s === 'HR') return [{ k: 'date', l: 'Interview date', t: 'date', req: true }, { k: 'result', l: 'Result', t: 'select', opts: ['Selected', 'Rejected', 'Hold'], req: true },
+      { k: 'by', l: s === 'HR' ? 'HR / final interview by' : 'Technical interview by', t: 'multi', pref: s === 'HR' ? P.line.Final_Panel : P.line.Tech_Panel }, note];
+    if (s === 'Docs') return P.docSections.map(([k, n]) => ({ k: 'doc_' + k, l: `${k}. ${n}`, t: 'select', opts: DOC_STATES, noBlank: true }))
+      .concat([{ k: 'exception', l: 'Approved exception (if any section is not verified)', wide: true, hint: 'Conditional joining needs Head HR / Plant Head approval (Policy 9.3).' },
+        { k: 'Docs_File', l: 'Documents (combined file)', t: 'file', wide: true }, note]);
+    if (s === 'Offer') return [{ k: 'offerDate', l: 'Offer letter date', t: 'date', req: true }, { k: 'edoj', l: 'Expected joining date', t: 'date', hint: 'Joining days are Monday and Thursday.' },
+      { k: 'ctc', l: 'Offered CTC' }, { k: 'Offer_Letter_File', l: 'Offer letter', t: 'file', wide: true }, note];
+    if (s === 'Prejoin') return [{ k: 'acceptedOn', l: 'Offer accepted on', t: 'date', req: true }, note];
+    if (s === 'Joined') return [{ k: 'doj', l: 'Actual joining date', t: 'date', req: true }, note];
+    if (s === 'Onboarded') return [{ k: 'induction', l: 'Induction completed on', t: 'date', req: true }, { k: 'buddy', l: 'Buddy assigned', req: true },
+      { k: 'hrms', l: 'HRMS, J-controls and access set up', t: 'select', opts: ['Yes', 'No'], noBlank: true },
+      { k: 'm1', l: '1-month check-in (M levels)', t: 'date' }, { k: 'm2', l: '2-month check-in', t: 'date' }, { k: 'm3', l: '3-month check-in', t: 'date' }, note];
+    return [note];
+  };
+  const stageDefaults = (s, a) => {
+    const o = {};
+    if (s === 'Technical' || s === 'HR') o.date = today();
+    if (s === 'Docs') P.docSections.forEach(([k]) => { o['doc_' + k] = (a.Docs_JSON || {})[k] || 'Pending'; });
+    if (s === 'Offer') { o.offerDate = today(); o.edoj = P.line.EDOJ || ''; }
+    if (s === 'Prejoin') o.acceptedOn = today();
+    if (s === 'Joined') o.doj = P.line.EDOJ && P.line.EDOJ <= today() ? P.line.EDOJ : today();
+    if (s === 'Onboarded') { o.induction = today(); o.hrms = 'Yes'; }
+    if (s === 'Screened') P.questions.forEach((q, k) => { o['q' + k] = (a.Screening_JSON || {})[q] || ''; });
+    return o;
+  };
+  const collectStage = (s, root, a) => {
+    const raw = readForm(root); const out = { note: raw.note };
+    if (s === 'Screened') { out.answers = {}; P.questions.forEach((q, k) => { out.answers[q] = raw['q' + k] || ''; }); }
+    if (s === 'Technical' || s === 'HR') Object.assign(out, { date: raw.date, result: raw.result, by: raw.by });
+    if (s === 'Docs') { out.docs = {}; P.docSections.forEach(([k]) => { out.docs[k] = raw['doc_' + k]; }); out.exception = raw.exception; }
+    if (s === 'Offer') Object.assign(out, { offerDate: raw.offerDate, edoj: raw.edoj, ctc: raw.ctc });
+    if (s === 'Prejoin') out.acceptedOn = raw.acceptedOn;
+    if (s === 'Joined') out.doj = raw.doj;
+    if (s === 'Onboarded') out.onboard = { induction: raw.induction, buddy: raw.buddy, hrms: raw.hrms, m1: raw.m1, m2: raw.m2, m3: raw.m3 };
+    return out;
+  };
+  renderBoard();
+  if (f.openApp) { const a = P.apps.find(x => x.App_ID === f.openApp); f.openApp = ''; if (a) openApp(a); }
+}
+function daysAhead(n) { const d = new Date(); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+
+async function openJdPicker(onPick, currentUrl) {
+  let d = $('#jdDialog');
+  if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="jdDialog" class="pm-dialog wide" aria-labelledby="jdTitle"></dialog>'); d = $('#jdDialog'); }
+  d.innerHTML = '<h2 id="jdTitle">Choose a JD from the JD folder</h2><div class="empty">Loading the JD folder\u2026</div>';
+  if (!d.open) d.showModal();
+  let res;
+  try { res = await api('apiListJds'); } catch (e) { d.innerHTML = `<h2 id="jdTitle">JD folder</h2><p class="miss">${esc(e)}</p><div class="drawer-actions" style="position:static"><button class="btn" id="jdClose">Close</button></div>`; $('#jdClose').onclick = () => d.close(); return; }
+  const curId = (String(currentUrl || '').match(new RegExp('[-\\w]{25,}')) || [''])[0];
+  const kb = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  d.innerHTML = `<div class="app-head"><div><h2 id="jdTitle">Choose a JD from the JD folder</h2><p class="sub">${res.files.length} file${res.files.length === 1 ? '' : 's'} in \u201c${esc(res.folderName)}\u201d. Save JD attachments from email into this folder and they appear here.</p></div>
+      <a class="btn" href="${esc(res.folderUrl)}" target="_blank" rel="noopener">Open JD folder in Drive</a></div>
+    <div class="field" style="margin:12px 0"><label for="jdQ">Search</label><input id="jdQ" type="search" placeholder="File name, position or MRF no"></div>
+    <div id="jdList" class="jd-list"></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" id="jdClose">Close</button></div>`;
+  $('#jdClose').onclick = () => d.close();
+  const draw = () => {
+    const q = $('#jdQ').value.trim().toLowerCase();
+    const rows = res.files.filter(x => !q || [x.name, ...x.usedBy.map(u => u.position + ' ' + u.mrf)].join(' ').toLowerCase().includes(q));
+    $('#jdList').innerHTML = rows.length ? rows.map(x => `<div class="jd-row ${x.id === curId ? 'current' : ''}">
+        <div><b>${esc(x.name)}</b><span class="sub">Updated ${fmtDate(x.updated)} \u00b7 ${kb(x.size)}${x.usedBy.length ? ' \u00b7 used by ' + x.usedBy.map(u => esc((u.mrf ? u.mrf + ' ' : '') + u.position)).join(', ') : ' \u00b7 not used yet'}${x.supported ? '' : ' \u00b7 <span class="miss">cannot be previewed in the app</span>'}</span></div>
+        <div class="jd-acts"><a class="btn" href="${esc(x.url)}" target="_blank" rel="noopener">Open</a>${x.id === curId ? '<span class="badge ok-b">Attached</span>' : `<button class="btn primary" data-jd="${esc(x.id)}">Use this JD</button>`}</div></div>`).join('')
+      : `<div class="empty">${res.files.length ? 'No JD matches that search.' : 'The JD folder is empty. Save JD files into it from Drive, or upload a JD on a position.'}</div>`;
+    $$('[data-jd]', d).forEach(b => b.onclick = () => { const file = res.files.find(x => x.id === b.dataset.jd); d.close(); onPick(file); });
+  };
+  $('#jdQ').oninput = draw;
+  draw();
+}
+</script>
