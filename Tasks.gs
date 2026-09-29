@@ -419,9 +419,10 @@ function allTasks_() {
   const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
-  const cache = CacheService.getScriptCache();
-  try { const hit = cache.get(key); if (hit) return JSON.parse(hit); } catch (e) { }
-  const now = Date.now();
+  /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
+     which used to mean it was never cached and was rebuilt from about ten sheets on every call. */
+  try { const hit = cacheBigGet_(key); if (hit) return JSON.parse(hit); } catch (e) { }
+  const now = Date.now(), t0 = now;
   const state = taskState_().map;
   const list = computeTasks_().map(function (t) {
     const s = state[t.key];
@@ -437,7 +438,8 @@ function allTasks_() {
     delete t.startMs;
     return t;
   });
-  try { const s = JSON.stringify(list); if (s.length < 95000) cache.put(key, s, 900); } catch (e) { }
+  try { const s = JSON.stringify(list); if (s.length < 900000) cacheBigPut_(key, s, 900); else console.log('[perf] to-do list too big to cache: ' + s.length + ' chars'); } catch (e) { }
+  perfNote_('to-do list rebuilt', t0, list.length + ' tasks');
   return list;
 }
 

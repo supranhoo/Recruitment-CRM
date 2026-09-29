@@ -22,10 +22,22 @@ function fresh(fn, ...args) {
   });
 }
 const UPDATED_MSG = 'The app was just updated. Reload the page (Ctrl + Shift + R) to continue.';
+/** Set localStorage 'bfcl.perf' to '1' to log every server call's time in the browser console. */
+let PERF = false; try { PERF = localStorage.getItem('bfcl.perf') === '1'; } catch (e) { }
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 function api(fn, ...args) {
   if (PACKED.includes(fn)) return api('apiPacked', fn, args).then(unpack);
+  if (PERF) { const t0 = performance.now(), sub = fn === 'apiFetch' || fn === 'apiPacked' ? ' ' + args[0] : '';
+    const done = ok => () => console.log(`[perf] ${fn}${sub} ${Math.round(performance.now() - t0)} ms${ok ? '' : ' (failed)'}`);
+    const p = apiCall(fn, args); p.then(done(true), done(false)); return p; }
+  return apiCall(fn, args);
+}
+function apiCall(fn, args) {
   return new Promise((resolve, reject) => {
-    const run = google.script.run.withSuccessHandler(resolve)
+    /* Any other call may have changed positions on the server (a pipeline move sets the offer, a closure the status):
+       the next screen that shows positions checks the server in the background instead of waiting 15 s. */
+    const ok = fn === 'apiFetch' || fn === 'apiPacked' ? resolve : r => { S.posCheckedAt = 0; resolve(r); };
+    const run = google.script.run.withSuccessHandler(ok)
       .withFailureHandler(e => reject(e && e.message ? e.message.replace(new RegExp('^Error:\\s*'), '') : String(e)));
     if (typeof run[fn] !== 'function') return reject(UPDATED_MSG);
     run[fn](...args);
@@ -118,6 +130,8 @@ window.addEventListener('load', () => {
     $('#boot').hidden = true; $('#shell').hidden = false;
     google.script.history.setChangeHandler(e => go((e.state && e.state.view) || 'overview', false));
     google.script.url.getLocation(loc => go((loc.hash || '').replace('#','') || 'overview', false));
+    /* Most screens need the positions list: fetch it once the first page has had its turn, so they open at once. */
+    setTimeout(() => { if (!S.positions) loadPositions().catch(() => { }); }, 1500);
   }).catch(msg => {
     const el = $('#boot'); el.className = 'boot error'; el.removeAttribute('aria-busy');
     el.textContent = String(msg).replace(new RegExp('^ACCESS:\\s*'), '');
@@ -170,35 +184,64 @@ function setRail(mini, save) {
 const VIEWS = { reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
-  S.view = view; S.posStale = true; S.candStale = true;
+  S.view = view; S.candStale = true;
   if (push) google.script.history.push({ view }, null, view);
   $$('#rail a').forEach(a => { if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   const host = $('#view'); host.innerHTML = ''; host.focus();
   const v = document.createElement('div'); v.className = 'view-page'; host.appendChild(v);
-  const seq = ++S.goSeq, layer = $('#skel');
-  clearTimeout(S.skTimer);
-  if (layer) S.skTimer = setTimeout(() => {
-    if (seq !== S.goSeq) return;
-    layer.innerHTML = skFor(view); layer.setAttribute('aria-label', 'Loading ' + ((SK_HEADS[view] || [view])[0]));
-    layer.hidden = false; S.skShownAt = Date.now();
-  }, 250);
+  const seq = ++S.goSeq, layer = $('#skel'), t0 = performance.now();
+  let ready = false;
+  clearTimeout(S.skTimer); cancelAnimationFrame(S.skRaf);
+  if (layer) {
+    layer.classList.remove('out');
+    /* Pages drawn from data already in memory are ready before the next frame, so no placeholder is shown for them. */
+    S.skRaf = requestAnimationFrame(() => {
+      if (seq !== S.goSeq || ready) return;
+      layer.innerHTML = skFor(view); layer.setAttribute('aria-label', 'Loading ' + ((SK_HEADS[view] || [view])[0]));
+      layer.hidden = false;
+    });
+  }
   VIEWS[view](v).catch(msg => { v.innerHTML = `<div class="empty">${esc(msg)}</div>`; console.error(msg); }).finally(() => {
-    if (seq !== S.goSeq) return;
-    clearTimeout(S.skTimer);
-    if (!layer || layer.hidden) return;
-    setTimeout(() => { if (seq === S.goSeq) { layer.hidden = true; layer.innerHTML = ''; } }, Math.max(0, 400 - (Date.now() - S.skShownAt)));
+    ready = true;
+    if (PERF) console.log(`[perf] page ${view} ready in ${Math.round(performance.now() - t0)} ms`);
+    if (seq !== S.goSeq || !layer || layer.hidden) return;
+    layer.classList.add('out');
+    S.skTimer = setTimeout(() => { if (seq === S.goSeq) { layer.hidden = true; layer.innerHTML = ''; layer.classList.remove('out'); } }, 150);
   });
 }
 
 async function refreshLine(id) {
   const l = await api('apiGetPosition', id);
-  if (S.positions) { const i = S.positions.findIndex(x => x.Line_ID === id); if (i >= 0) S.positions[i] = l; else S.positions.unshift(l); }
+  if (S.positions) {
+    const next = S.positions.slice(), i = next.findIndex(x => x.Line_ID === id);
+    if (i >= 0) next[i] = l; else next.unshift(l);
+    S.positions = next;
+  }
   return l;
 }
+/**
+ * Positions come from memory when the page already has them, so screens open at once; the server is asked in the
+ * background (at most every 15 s) and, if anything changed, the list is swapped and a 'positions-updated' event lets
+ * the open screen redraw. After a save, S.posStale (or force) makes the next call wait for the server as before.
+ */
 function loadPositions(force) {
-  if (S.positions && !force && !S.posStale) return Promise.resolve(S.positions);
+  if (S.positions && !force && !S.posStale) { revalidatePositions(); return Promise.resolve(S.positions); }
+  if (S.posLoading && !force) return S.posLoading;
   S.posStale = false;
-  return fresh('apiListPositions').then(p => (S.positions = p.slice()));
+  const req = S.posLoading = fresh('apiListPositions').then(p => { S.posCheckedAt = Date.now(); return (S.positions = p.slice()); })
+    .finally(() => { if (S.posLoading === req) S.posLoading = null; });
+  return req;
+}
+function revalidatePositions() {
+  if (S.posCheck || Date.now() - (S.posCheckedAt || 0) < 15000) return;
+  const was = S.positions, before = (FRESH.get('apiListPositions[]') || {}).v;
+  S.posCheck = fresh('apiListPositions').then(p => {
+    S.posCheckedAt = Date.now();
+    /* A save made meanwhile replaced S.positions or marked it stale: keep that, it is newer. */
+    if (S.positions !== was || S.posStale || (FRESH.get('apiListPositions[]') || {}).v === before) return;
+    S.positions = p.slice();
+    document.dispatchEvent(new CustomEvent('positions-updated'));
+  }).catch(() => { }).finally(() => { S.posCheck = null; });
 }
 function loadCandidates(force) {
   if (S.candidates && !force && !S.candStale) return Promise.resolve(S.candidates);
@@ -273,7 +316,7 @@ function readForm(root) {
 }
 
 function openDrawer(title, html, cls) {
-  hideCv();
+  hideCv(); S.drawerTok = {};
   $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html;
   $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
   setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
@@ -377,13 +420,22 @@ function renderTodo(el, res, opt) {
   $$('li.tgroup', el).forEach(li => { const b = $('[data-act=expand]', li), sub = $('.sub-list', li); b.onclick = () => { sub.hidden = !sub.hidden; b.textContent = sub.hidden ? 'Show ' + $$('li.task', sub).length : 'Hide'; }; });
   if ($('#todoMore', el)) $('#todoMore', el).onclick = () => { el.dataset.all = el.dataset.all === '1' ? '' : '1'; renderTodo(el, res, opt); };
 }
-async function lineTasksInto(el, lineId) {
+/**
+ * Open tasks of one position. The last list seen for the line is shown at once (so the block does not pop in on a
+ * second visit) and refreshed from the server; `pre` is a list or a request already started by the caller.
+ */
+const LINE_TASKS = new Map();
+async function lineTasksInto(el, lineId, pre) {
   if (!el) return;
-  try {
-    const list = await api('apiTasksForLine', lineId);
+  const paint = list => {
+    if (!el.isConnected) return;
+    LINE_TASKS.set(lineId, list);
     el.innerHTML = list.length ? `<section class="panel line-tasks"><h3>Open tasks for this position</h3><ul class="tasklist">${list.map(t => taskItemHtml(t, 'compact')).join('')}</ul></section>` : '';
     bindTaskList(el, list, () => {});
-  } catch (e) { el.innerHTML = ''; }
+  };
+  if (Array.isArray(pre)) return paint(pre);
+  if (LINE_TASKS.has(lineId)) paint(LINE_TASKS.get(lineId));
+  try { paint(await (pre || api('apiTasksForLine', lineId))); } catch (e) { if (!LINE_TASKS.has(lineId)) el.innerHTML = ''; }
 }
 async function findCandidatesDialog(lineId, after) {
   const d = cpDlg(`<h2 id="cpTitle">Find candidates</h2><div id="fcBody">${skRows(5, 3)}</div>`);
@@ -636,13 +688,17 @@ function resumePositionDialog(p, after) {
     catch (e) { toast(e, true); busy(b, false); }
   };
 }
+let RC_LAST = null;
 function rcBannerInto(el) {
   if (!el) return;
-  api('apiReconcileList').then(r => {
-    if (!el.isConnected || !r.items.length) return;
-    el.innerHTML = `<div class="todo-strip miss-strip"><div><b>${r.items.length} position${r.items.length === 1 ? '' : 's'} need a switch-over check</b> before ${fmtDate(r.cutover)}: typed offer details that do not match the candidate pipeline.</div><button class="btn sm primary" id="rcGo">Open the switch-over check</button></div>`;
-    $('#rcGo', el).onclick = () => go('reconcile', true);
-  }).catch(() => {});
+  if (RC_LAST) rcBannerPaint(el, RC_LAST);
+  api('apiReconcileList').then(r => { RC_LAST = r; rcBannerPaint(el, r); }).catch(() => {});
+}
+function rcBannerPaint(el, r) {
+  if (!el.isConnected) return;
+  if (!r.items.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="todo-strip miss-strip"><div><b>${r.items.length} position${r.items.length === 1 ? '' : 's'} need a switch-over check</b> before ${fmtDate(r.cutover)}: typed offer details that do not match the candidate pipeline.</div><button class="btn sm primary" id="rcGo">Open the switch-over check</button></div>`;
+  $('#rcGo', el).onclick = () => go('reconcile', true);
 }
 async function viewReconcile(v) {
   const res = await api('apiReconcileList');
@@ -751,7 +807,12 @@ function bindRcCard(card, r, render) {
     }
   });
 }
+const OV_ALERTS = ['Waiting for department feedback (over 24h)', 'Joiners at risk', 'Joining follow-ups due'];
 async function viewOverview(v, fresh) {
+  /* The to-do counts and pipeline alerts are asked for at the same time as the dashboard, and the page keeps a slot
+     of about their size for each, so nothing jumps when they arrive. */
+  const sumP = api('apiTaskSummary'), alertsP = api('apiPipelineAlerts');
+  sumP.catch(() => { }); alertsP.catch(() => { });
   const d = await api(fresh ? 'apiRefreshDashboard' : 'apiDashboard');
   const k = d.kpi;
   const maxF = Math.max(1, ...Object.values(d.funnel).map(n => n || 0));
@@ -760,6 +821,7 @@ async function viewOverview(v, fresh) {
       <p>Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days).</p></div>
       <div class="refresh"><span class="stamp">Updated ${esc(d.builtAt)} · ${esc(d.builtBy)}${d.stale ? ' · <b>new changes since</b>' : ''}</span>
       <button class="btn ${d.stale ? 'primary' : ''}" id="dashRefresh">Refresh</button></div></div>
+    <div class="todo-strip ov-todo" id="ovTodo">${skb('46%', 13)}${skb('180px', 28)}</div>
     <div class="kpis">
       <div class="kpi"><div class="v">${k.open}</div><div class="l">Open positions</div></div>
       <div class="kpi"><div class="v">${k.offered}</div><div class="l">Offered, awaiting joining</div></div>
@@ -768,6 +830,7 @@ async function viewOverview(v, fresh) {
       <div class="kpi"><div class="v">${k.joinedMonth}</div><div class="l">Joined this month</div></div>
       <div class="kpi"><div class="v">${d.tatPct == null ? '—' : d.tatPct + '%'}</div><div class="l">Closed within TAT, last 180 days</div></div>
     </div>
+    <div id="ovAlerts"><div class="palerts">${OV_ALERTS.map(t => `<section class="panel palert"><h2>${t}</h2>${skLines(2)}</section>`).join('')}</div></div>
     <div class="two">
       <section class="panel"><h2>Positions closest to TAT</h2>
         ${d.watch.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT used</th></tr></thead><tbody>
@@ -785,14 +848,13 @@ async function viewOverview(v, fresh) {
           </tbody></table></div></section>
       </div>
     </div>`;
-  pipelineAlertsPanel(v);
-  api('apiTaskSummary').then(s => {
-    const host = document.createElement('div'); host.className = 'todo-strip';
+  pipelineAlertsPanel($('#ovAlerts', v), alertsP);
+  sumP.then(s => {
+    const host = $('#ovTodo', v); if (!host) return;
     host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}</div>
       <div class="btn-row"><button class="btn sm" data-go="myday">My to-do</button>${s.team ? '<button class="btn sm" data-go="review">Daily review</button>' : ''}</div>`;
-    const head = $('.page-head', v); if (head) head.insertAdjacentElement('afterend', host);
     $$('[data-go]', host).forEach(b => b.onclick = () => go(b.dataset.go, true));
-  }).catch(() => {});
+  }).catch(() => { const host = $('#ovTodo', v); if (host) host.remove(); });
   $('#dashRefresh').onclick = async () => {
     const b = $('#dashRefresh'); busy(b, true, 'Refreshing…');
     try { await viewOverview(v, true); toast('Dashboard updated'); } catch (e) { toast(e, true); busy(b, false, 'Refresh'); }
@@ -870,7 +932,10 @@ async function viewPositions(v) {
     rows = S.positions.filter(p => match(p)).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
     renderChips(); render();
   };
-  $('#pq').addEventListener('input', e => { f.q = e.target.value; f.page = 0; apply(); });
+  const applyLater = debounce(apply, 150);
+  $('#pq').addEventListener('input', e => { f.q = e.target.value; f.page = 0; applyLater(); });
+  const onUpdated = () => { if (!v.isConnected) return document.removeEventListener('positions-updated', onUpdated); apply(); };
+  document.addEventListener('positions-updated', onUpdated);
   $('#prec').addEventListener('change', e => { f.recruiter = e.target.value; f.page = 0; apply(); });
   $('#pband').addEventListener('change', e => { f.band = e.target.value; f.page = 0; apply(); });
   $('#pdept').addEventListener('change', e => { f.dept = e.target.value; f.page = 0; apply(); });
@@ -1011,6 +1076,19 @@ function positionDrawer(p) {
   };
   readout();
   if (!isNew) lineTasksInto($('#posTasks', body), p.Line_ID);
+  /* The drawer opens from the list in memory; the position itself is re-read from the server so an edit is never saved
+     over a colleague's newer change. Untouched, the drawer redraws with the new values; once typed in, it warns instead. */
+  if (!isNew && !ro) {
+    const tok = S.drawerTok; let typed = false;
+    $('#posForm').addEventListener('input', () => { typed = true; });
+    refreshLine(p.Line_ID).then(fr => {
+      if (S.drawerTok !== tok || !$('#drawer').classList.contains('open')) return;
+      const changed = Object.keys(fr).some(k => k[0] !== '_' && String(fr[k] == null ? '' : fr[k]) !== String(p[k] == null ? '' : p[k]));
+      if (!changed) return;
+      if (!typed) positionDrawer(fr);
+      else { const d = $('#tab-details'); if (d) d.insertAdjacentHTML('afterbegin', '<div class="note warn-note">This position was changed by someone else after you opened it. Close it and open it again before saving, so their change is not overwritten.</div>'); }
+    }).catch(() => { });
+  }
   const afterClose = () => { closeDrawer(); S.posStale = true; if (S.view === 'positions' || S.view === 'pipeline' || S.view === 'reconcile') go(S.view, false); };
   if ($('#posClose', body)) $('#posClose', body).onclick = () => closePositionDialog(p, afterClose);
   if ($('#posResume', body)) $('#posResume', body).onclick = () => resumePositionDialog(p, afterClose);
@@ -1073,7 +1151,7 @@ function positionDrawer(p) {
           try { const j = await api('apiUseJd', saved.map(x => x.Line_ID), jdId); saved.forEach(x => { x.JD_File = j.url; }); }
           catch (e) { toast('Position added, but the JD could not be attached: ' + e, true); }
         }
-        S.positions.unshift(...saved);
+        S.positions = saved.concat(S.positions);
         toast(n > 1 ? `Added ${n} position lines` : 'Position added');
       } else {
         const saved = await api('apiSavePosition', d);
@@ -1084,7 +1162,7 @@ function positionDrawer(p) {
           try { Object.assign(saved, await uploadAttachments('MRF', saved.Line_ID, $('#posForm'))); }
           catch (e) { toast('Position saved, but a file upload failed: ' + e, true); }
         }
-        const i = S.positions.findIndex(x => x.Line_ID === saved.Line_ID); S.positions[i] = saved;
+        S.positions = S.positions.map(x => x.Line_ID === saved.Line_ID ? saved : x);
         toast(hasFiles ? 'Changes and files saved' : 'Changes saved');
       }
       closeDrawer(); if (S.view === 'positions' || S.view === 'overview') go(S.view, false);
@@ -1184,7 +1262,7 @@ async function viewDaily(v) {
   const f = S.dailyFilter = S.dailyFilter || { recruiter: isLead() ? '' : S.boot.user.recruiter, from: daysAgo(14), to: today() };
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily log</h1><p>Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports.</p></div></div>
-    <div id="dlTodo" class="todo-strip" hidden></div>
+    <div id="dlTodo" class="todo-strip ov-todo">${skb('46%', 13)}${skb('140px', 28)}</div>
     <section class="panel" id="dailyNew"><h2>Log activity</h2>${dailyFormHtml(null)}</section>
     <div class="filters" style="margin-top:22px">
       <div class="field"><label for="dfrec">Recruiter</label><select id="dfrec">${opts(S.boot.recruiters, f.recruiter)}</select></div>
@@ -1207,7 +1285,7 @@ async function viewDaily(v) {
       ${next.length ? `<ul class="strip-list">${next.map(t => `<li class="l-${t.level}">${esc(t.title)}<span class="sub"> \u00b7 ${esc(t.context)}</span></li>`).join('')}</ul>` : '<span class="hint">Nothing pending.</span>'}
       <button class="btn sm" id="dlTodoOpen">Open my to-do</button>`;
     el.hidden = false; $('#dlTodoOpen').onclick = () => go('myday', true);
-  }).catch(() => {});
+  }).catch(() => { const el = $('#dlTodo'); if (el) el.remove(); });
   bindDailyForm($('#dailyNew'), function again() { $('#dailyNew').innerHTML = '<h2>Log activity</h2>' + dailyFormHtml(null); bindDailyForm($('#dailyNew'), again); load(); });
   load();
 }
@@ -1611,7 +1689,8 @@ async function renderPanelMembers(el, f) {
       </tbody></table></div><p class="pager">${rows.length} of ${all.length} members</p>`;
     if (isLead()) $$('#pmList tr[data-id]').forEach(tr => tr.onclick = () => openPanelDialog(all.find(m => m.id === tr.dataset.id), () => renderPanelMembers(el, f)));
   };
-  $('#pmq').oninput = e => { f.q = e.target.value; render(); };
+  const renderLater = debounce(render, 200);
+  $('#pmq').oninput = e => { f.q = e.target.value; renderLater(); };
   $('#pmNotes').onchange = e => { f.notes = e.target.checked; render(); };
   $('#pmNew').onclick = () => openPanelDialog(null, () => renderPanelMembers(el, f));
   render();
@@ -2616,6 +2695,7 @@ async function loadScreenHistory(cand, body) {
   });
 }
 
+const JDM_SHOW = 150;
 async function jdmProfiles(el, f, v) {
   const p = await api('apiJdmTemplates');
   const all = p.rows.map(r => Object.fromEntries(p.cols.map((c, i) => [c, r[i]])));
@@ -2632,12 +2712,13 @@ async function jdmProfiles(el, f, v) {
     const bulk = manage && (f.show === 'grade' || f.show === 'dept') && rows.length ? `<button class="btn" id="jdmBulk">Confirm ${f.show === 'grade' ? 'grades' : 'departments'} of the ${rows.length} shown</button>` : '';
     $('#jdmList').innerHTML = `${bulk ? `<div class="filters" style="justify-content:flex-end;margin:0 0 8px">${bulk}</div>` : ''}
       ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Job profile</th><th>Grade</th><th>Competency department</th><th class="num">Content</th><th>Status</th></tr></thead><tbody>
-      ${rows.map(r => `<tr data-id="${esc(r.id)}"><td><b>${esc(r.desig)}</b><span class="sub">${esc(r.id)} \u00b7 ${esc(r.fn)} \u00b7 ${esc(r.unit)}</span></td>
+      ${(f.more ? rows : rows.slice(0, JDM_SHOW)).map(r => `<tr data-id="${esc(r.id)}"><td><b>${esc(r.desig)}</b><span class="sub">${esc(r.id)} \u00b7 ${esc(r.fn)} \u00b7 ${esc(r.unit)}</span></td>
         <td class="nw">${esc(r.grade)} ${jdmTick(r.gOk, 'Grade confirmed')}<span class="sub">${esc(r.basis)}</span></td>
         <td>${esc(r.cdept || '\u2014')} ${jdmTick(r.dOk, 'Department confirmed')}</td>
         <td class="num">${r.stmts} resp. \u00b7 ${r.skills} skills<span class="sub">${r.reqs ? `${r.reqs} framework competencies` : '<b class="miss">no framework requirements</b>'}${r.effExp !== '' ? ` \u00b7 ${r.effExp} yrs${r.raisedTo ? ` (raised from ${r.exp})` : ''}` : ''}</span></td>
         <td>${r.status === 'Variant' ? `Variant of ${esc(r.primary)}` : esc(r.status)}${r.dup ? ` <span class="badge-pipe">dup group ${esc(r.dup)}</span>${r.dupOk ? ' ' + jdmTick(1, 'Duplicate decision confirmed') : ''}` : ''}</td></tr>`).join('')}
-      </tbody></table></div><p class="pager">${rows.length} of ${all.length} job profiles</p>` : '<div class="empty">No job profiles match.</div>'}`;
+      </tbody></table></div><p class="pager">${rows.length} of ${all.length} job profiles${!f.more && rows.length > JDM_SHOW ? ` \u00b7 showing the first ${JDM_SHOW} <button class="btn sm" id="jdmMore">Show all ${rows.length}</button>` : ''}</p>` : '<div class="empty">No job profiles match.</div>'}`;
+    if ($('#jdmMore')) $('#jdmMore').onclick = () => { f.more = true; render(); };
     $$('#jdmList tr[data-id]').forEach(tr => tr.onclick = () => jdmProfile(tr.dataset.id, () => jdmProfiles(el, f, v)));
     if ($('#jdmBulk')) twoStep($('#jdmBulk'), `Click again to confirm ${rows.length}`, async () => {
       const btn = $('#jdmBulk'); busy(btn, true, 'Confirming\u2026');
@@ -2650,8 +2731,9 @@ async function jdmProfiles(el, f, v) {
       <div class="field"><label for="jdmfn">Function</label><select id="jdmfn"><option value="">All</option>${fns.map(x => `<option ${f.fn === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
       <div class="field"><label for="jdmgr">Grade</label><select id="jdmgr"><option value="">All</option>${p.grades.map(x => `<option ${f.grade === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div></div>
     <div id="jdmList"></div>`;
-  $$('[data-show]', el).forEach(b => b.onclick = () => { f.show = b.dataset.show; jdmProfiles(el, f, v); });
-  $('#jdmq').oninput = e => { f.q = e.target.value; render(); };
+  $$('[data-show]', el).forEach(b => b.onclick = () => { f.show = b.dataset.show; f.more = false; $$('[data-show]', el).forEach(x => x.setAttribute('aria-pressed', String(x === b))); render(); });
+  const renderLater = debounce(render, 200);
+  $('#jdmq').oninput = e => { f.q = e.target.value; f.more = false; renderLater(); };
   $('#jdmfn').onchange = e => { f.fn = e.target.value; render(); };
   $('#jdmgr').onchange = e => { f.grade = e.target.value; render(); };
   render();
@@ -2777,7 +2859,8 @@ async function jdmDepts(el, f) {
     <div class="chips" role="group" aria-label="Show"><button class="chip" aria-pressed="${f.dshow === 'open'}" data-ds="open">Needs attention<span class="n">${open}</span></button><button class="chip" aria-pressed="${f.dshow === 'all'}" data-ds="all">All<span class="n">${m.rows.length}</span></button></div>
     <div class="filters"><div class="field search"><label for="jdmdq">Search</label><input id="jdmdq" type="search" value="${esc(f.dq)}" placeholder="Department"></div></div><div id="jdmDl"></div>`;
   $$('[data-ds]', el).forEach(b => b.onclick = () => { f.dshow = b.dataset.ds; jdmDepts(el, f); });
-  $('#jdmdq').oninput = e => { f.dq = e.target.value; render(); };
+  const renderLater = debounce(render, 200);
+  $('#jdmdq').oninput = e => { f.dq = e.target.value; renderLater(); };
   render();
 }
 async function jdmNorms(el) {
@@ -2846,7 +2929,8 @@ async function renderUsers(el, v) {
     ${r.accessChecked ? '' : '<div class="note warn-note">Access to the database and CV folder could not be checked from your account.</div>'}
     <div id="usList"></div>
     <p class="legend">Everyone active here can sign in, and gets edit access to the database and CV folder automatically. Deactivating removes access but keeps their history. ${r.canEdit ? '' : 'Only the admin can add or change users.'}</p>`;
-  $('#usq', el).oninput = e => { f.q = e.target.value; draw(); };
+  const drawLater = debounce(draw, 200);
+  $('#usq', el).oninput = e => { f.q = e.target.value; drawLater(); };
   $('#usr', el).onchange = e => { f.role = e.target.value; draw(); };
   $('#usi', el).onchange = e => { f.inactive = e.target.checked; draw(); };
   if ($('#usNew', el)) $('#usNew', el).onclick = () => userDrawer(r, null, () => renderUsers(el, v));
@@ -3466,17 +3550,17 @@ const P_NAMES = { Sourced: 'CV received', Screened: 'Screened', Shared: 'Shared 
 const MOVE_LABELS = Object.assign({}, P_NAMES, { Rejected: 'rejected', 'On hold': 'on hold', Withdrawn: 'withdrawn', Backout: 'backout', Active: 'reactivated' });
 const DOC_STATES = ['Pending', 'Received', 'Verified', 'NA'];
 
-async function pipelineAlertsPanel(v) {
+async function pipelineAlertsPanel(host, pending) {
+  if (!host) return;
   try {
-    const a = await api('apiPipelineAlerts');
+    const a = await pending;
     const box = (title, list, fmt, cls) => `<section class="panel palert ${list.length ? cls : ''}"><h2>${title} <span class="pcount">${list.length}</span></h2>${list.length ? `<ul class="work">${list.slice(0, 6).map(x => `<li><button class="linklike" data-pl="${esc(x.line)}" data-pa="${esc(x.app)}">${esc(x.name)}</button> \u00b7 ${esc(x.position)} \u00b7 ${esc(x.recruiter)}${fmt(x)}</li>`).join('')}</ul>${list.length > 6 ? `<p class="hint">and ${list.length - 6} more</p>` : ''}` : '<p class="hint">None.</p>'}</section>`;
-    const html = `<div class="palerts">${box('Waiting for department feedback (over 24h)', a.hodOverdue, x => ` \u00b7 <b>${x.hours}h</b>`, 'warn')}
-      ${box('Joiners at risk', a.atRisk, x => ` \u00b7 <b class="${x.risk === 'Red' ? 'miss' : ''}">${esc(x.risk)}</b>`, 'bad')}
-      ${box('Joining follow-ups due', a.dueToday, x => x.missing ? ' \u00b7 no check-in scheduled' : ` \u00b7 due ${fmtDate(x.next)}`, 'warn')}</div>`;
-    const host = document.createElement('div'); host.innerHTML = html;
-    const kpis = $('.kpis', v); if (kpis) kpis.insertAdjacentElement('afterend', host); else v.appendChild(host);
+    if (!host.isConnected) return;
+    host.innerHTML = `<div class="palerts">${box(OV_ALERTS[0], a.hodOverdue, x => ` \u00b7 <b>${x.hours}h</b>`, 'warn')}
+      ${box(OV_ALERTS[1], a.atRisk, x => ` \u00b7 <b class="${x.risk === 'Red' ? 'miss' : ''}">${esc(x.risk)}</b>`, 'bad')}
+      ${box(OV_ALERTS[2], a.dueToday, x => x.missing ? ' \u00b7 no check-in scheduled' : ` \u00b7 due ${fmtDate(x.next)}`, 'warn')}</div>`;
     $$('[data-pl]', host).forEach(b => b.onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: b.dataset.pl, openApp: b.dataset.pa }); go('pipeline', true); });
-  } catch (e) { }
+  } catch (e) { host.innerHTML = ''; }
 }
 
 async function viewPipeline(v) {
@@ -3498,7 +3582,9 @@ async function viewPipeline(v) {
   $('#pClosed').onchange = e => { f.closed = e.target.checked; renderBoard(); };
   $('#pRefresh').onclick = () => go('pipeline', false);
   if (!f.line) { $('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
+  const tasksP = api('apiTasksForLine', f.line);
   let P = await fresh('apiPipeline', f.line);
+  let firstTasks = await tasksP.catch(() => null);
   const replaced = P.line.Position_Status === 'Replaced';
   const closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
   const owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
@@ -3550,7 +3636,7 @@ async function viewPipeline(v) {
     if ($('#pFind')) $('#pFind').onclick = () => findCandidatesDialog(f.line, async () => { reload(await api('apiPipeline', f.line)); });
     if ($('#pClosePos')) $('#pClosePos').onclick = () => loadPositions(true).then(() => closePositionDialog(lineById(f.line), reloadBoard));
     if ($('#pResume')) $('#pResume').onclick = () => loadPositions(true).then(() => resumePositionDialog(lineById(f.line), reloadBoard));
-    lineTasksInto($('#pTasks'), f.line);
+    lineTasksInto($('#pTasks'), f.line, firstTasks || undefined); firstTasks = null;
     if ($('#pGoRepl')) $('#pGoRepl').onclick = () => { f.line = P.line.Replaced_By; f.closed = false; go('pipeline', false); };
     if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.line = P.line.Parent_Line_ID; f.closed = true; go('pipeline', false); };
     if (!canEdit) return;
@@ -3831,7 +3917,7 @@ async function openJdPicker(onPick, currentUrl) {
       : `<div class="empty">${res.files.length ? 'No JD matches that search.' : 'The JD folder is empty. Save JD files into it from Drive, or upload a JD on a position.'}</div>`;
     $$('[data-jd]', d).forEach(b => b.onclick = () => { const file = res.files.find(x => x.id === b.dataset.jd); d.close(); onPick(file); });
   };
-  $('#jdQ').oninput = draw;
+  $('#jdQ').oninput = debounce(draw, 200);
   draw();
 }
 </script>

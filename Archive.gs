@@ -18,12 +18,13 @@ function archiveVer_() { return PropertiesService.getScriptProperties().getPrope
 function archiveBump_() { PropertiesService.getScriptProperties().setProperty('ARCHIVE_VER', String(Date.now())); }
 
 /* ---------- big values in the script cache (split into pieces under the 100 KB limit) ---------- */
-function cacheBigPut_(key, s) {
+function cacheBigPut_(key, s, ttl) {
   try {
-    const c = CacheService.getScriptCache(), n = Math.ceil(s.length / 90000), o = {};
-    for (let i = 0; i < n; i++) o[key + '_' + i] = s.slice(i * 90000, (i + 1) * 90000);
+    /* 30,000 characters stays under the 100 KB-per-entry limit even if every character took 3 bytes in UTF-8. */
+    const c = CacheService.getScriptCache(), size = 30000, n = Math.ceil(s.length / size), o = {};
+    for (let i = 0; i < n; i++) o[key + '_' + i] = s.slice(i * size, (i + 1) * size);
     o[key + '_n'] = String(n);
-    c.putAll(o, 21600);
+    c.putAll(o, ttl || 21600);
   } catch (e) { }
 }
 function cacheBigGet_(key) {

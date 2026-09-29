@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Document version** | 1.17 (adds v62, not yet deployed: grades and designations separated) |
-| **Describes app version** | **v61** (Apps Script deployment version 61, published 29 Sep 2026, 23:45 IST) |
-| **Database schema version** | **26** live; **27** once v62 is deployed (Script Property `SCHEMA_V`) |
+| **Document version** | 1.18 (v62 deployed: grades and designations separated; UI speed changes unreleased) |
+| **Describes app version** | **v62** (Apps Script deployment version 62, 29 Sep 2026) |
+| **Database schema version** | **27** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -860,7 +860,19 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-29
 
-**v62 — not yet deployed — Grades and designations separated** (schema 27, ADR-038)
+**Unreleased — UI speed and stability** (no schema change)
+- Screens no longer re-ask the server for the positions list on every menu click: the list in memory is shown at once and checked in the background (at most every 15 s, or on the next screen after any server action); if it changed, the list is swapped and the Positions screen redraws. After a save the next load still waits for the server as before. The list is prefetched 1.5 s after the first page, and simultaneous requests share one call.
+- A position drawer opened from memory re-reads that position: untouched, it redraws with the newer values; once typed in, it warns so a colleague's change is not overwritten.
+- Overview: to-do counts and pipeline alerts are requested together with the dashboard, and their space is reserved, so the page no longer jumps (layout shift 0.18 → 0 in the browser harness). Daily log reserves its tasks strip; the switch-over banner and a position's open tasks are drawn from the last answer on later visits.
+- Pipeline: the board and its tasks are requested together and drawn once (about 1.9 s → 0.85 s at 700 ms per server call).
+- Loading placeholders appear only when a page is not ready by the next frame, with no 250 ms blank before and no 400 ms minimum after; they fade out.
+- Searches wait 150–200 ms after typing (Positions, Interview panel, JD Master, departments, Users, JD picker); JD Master shows the first 150 profiles with "Show all", and its filter chips no longer reload the library from the server.
+- The side menu collapses without animating the page grid (which re-laid out the whole page every frame).
+- Set `localStorage['bfcl.perf'] = '1'` in the browser console to log every server call and page time.
+- Server: the to-do list is cached in chunks (`cacheBigPut_`), so a list over the 100 KB single-entry limit is cached instead of being rebuilt from about ten sheets on every call; chunks are now 30,000 characters so multi-byte text cannot overflow an entry.
+- Server slow-step log: sheet reads and to-do rebuilds taking 400 ms or more are written to the execution log as `[perf] …` (Apps Script → Executions).
+
+**v62 — deployed 29 Sep — Grades and designations separated** (schema 27, ADR-038)
 - New `M_Designations` sheet (one row per designation per grade) and `MRF.Designation` column; `M_Grades` gains `Active`, and its `Designations` column becomes a read-only summary. New `Grades.gs`; the v54 functions `apiGradeDesignations` / `apiSaveGradeDesignations` are replaced by `apiGradeSetup` / `apiSaveGradeSetup`.
 - Migration: old grade labels split on commas and slashes with short forms expanded ("Engr/SE, Officer/Sr Officer" → Engineer, Senior Engineer, Officer, Senior Officer); each position's designation filled only when its title names exactly one designation of its grade (longest match; ties and no match left blank).
 - Admin → **Grades & designations** (lead): grades (band, active, add) and designations (add, rename with carry-over to positions, move while unused, deactivate, note), filter by grade.
