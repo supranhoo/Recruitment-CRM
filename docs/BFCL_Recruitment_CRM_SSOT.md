@@ -858,6 +858,15 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
+### 2026-09-30
+
+**Unreleased — Overview pipeline alerts: full details and honest risk** (no schema change)
+- *Joiners at risk* no longer depends only on a risk picked at a check-in: it also lists joiners whose expected joining date has passed with no joining recorded (Red), whose offer is not accepted 7 days after the letter (`OFFER_ACCEPT_RISK_DAYS_`, Amber), and whose joining is recorded on the position while the card was not moved to Joined (Amber). Each item says why. The box states how many joiners have never been checked on (risk not known).
+- `pipelineAlerts_` returns every item with its detail: candidate and mobile, position, MRF, grade, department, recruiter, stage and since when, offer / acceptance / expected joining dates, last check-in (date, mode, risk, response, note, by) and number of check-ins, next check-in, what is pending and for how many days; HOD for department feedback. Sorted longest pending first.
+- Overview: box titles and "View all N" open a pop-up with the three lists as tabs, recruiter filter and search, an ageing summary (never checked in / no next check-in / overdue / due today; Red / Amber; waiting over 3 days), "Open card" to the candidate in the Pipeline, and Download CSV.
+- *Waiting for department feedback* is unchanged in logic: it counts cards at "Shared with department" for over 24 hours, so it fills once recruiters move cards to that stage (sharing logged only as daily counts does not appear).
+- Weekly email: at-risk rows show Red/Amber with the reason; the summary line adds joiners never checked on.
+
 ### 2026-09-29
 
 **Unreleased — UI speed and stability** (no schema change)

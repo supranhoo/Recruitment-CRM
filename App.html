@@ -3550,17 +3550,96 @@ const P_NAMES = { Sourced: 'CV received', Screened: 'Screened', Shared: 'Shared 
 const MOVE_LABELS = Object.assign({}, P_NAMES, { Rejected: 'rejected', 'On hold': 'on hold', Withdrawn: 'withdrawn', Backout: 'backout', Active: 'reactivated' });
 const DOC_STATES = ['Pending', 'Received', 'Verified', 'NA'];
 
+/* Overview pipeline alerts: three boxes with the first few items; the title or "View all" opens the full list. */
+const ALERT_TABS = [['hod', 'hodOverdue', OV_ALERTS[0]], ['risk', 'atRisk', OV_ALERTS[1]], ['due', 'dueToday', OV_ALERTS[2]]];
+function alertAge(n) { return n == null ? '' : n === 0 ? 'today' : n > 0 ? n + ' day' + (n === 1 ? '' : 's') + ' ago' : 'in ' + (-n) + ' day' + (n === -1 ? '' : 's'); }
+function alertWait(h) { return h < 48 ? h + ' h' : Math.floor(h / 24) + ' d ' + (h % 24) + ' h'; }
+function openAlertCard(x) { S.pipe = Object.assign(S.pipe || {}, { line: x.line, openApp: x.app }); go('pipeline', true); }
 async function pipelineAlertsPanel(host, pending) {
   if (!host) return;
   try {
     const a = await pending;
-    const box = (title, list, fmt, cls) => `<section class="panel palert ${list.length ? cls : ''}"><h2>${title} <span class="pcount">${list.length}</span></h2>${list.length ? `<ul class="work">${list.slice(0, 6).map(x => `<li><button class="linklike" data-pl="${esc(x.line)}" data-pa="${esc(x.app)}">${esc(x.name)}</button> \u00b7 ${esc(x.position)} \u00b7 ${esc(x.recruiter)}${fmt(x)}</li>`).join('')}</ul>${list.length > 6 ? `<p class="hint">and ${list.length - 6} more</p>` : ''}` : '<p class="hint">None.</p>'}</section>`;
     if (!host.isConnected) return;
-    host.innerHTML = `<div class="palerts">${box(OV_ALERTS[0], a.hodOverdue, x => ` \u00b7 <b>${x.hours}h</b>`, 'warn')}
-      ${box(OV_ALERTS[1], a.atRisk, x => ` \u00b7 <b class="${x.risk === 'Red' ? 'miss' : ''}">${esc(x.risk)}</b>`, 'bad')}
-      ${box(OV_ALERTS[2], a.dueToday, x => x.missing ? ' \u00b7 no check-in scheduled' : ` \u00b7 due ${fmtDate(x.next)}`, 'warn')}</div>`;
-    $$('[data-pl]', host).forEach(b => b.onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: b.dataset.pl, openApp: b.dataset.pa }); go('pipeline', true); });
+    const short = {
+      hod: x => ` · ${esc(x.dept)} · waiting <b>${alertWait(x.hours)}</b>`,
+      risk: x => ` · <span class="risk r-${esc(x.level)}">${esc(x.level)}</span> <span class="sub">${esc(x.why[0])}</span>`,
+      due: x => ` · ${esc(x.recruiter)} · ${x.missing ? (x.fuCount ? 'no next check-in' : 'never checked in') : 'due ' + fmtDate(x.next)}`
+    };
+    const box = ([k, key, title], cls) => {
+      const list = a[key] || [];
+      const note = k === 'risk' && a.unassessed ? `<p class="hint">${a.unassessed} joiner${a.unassessed === 1 ? ' has' : 's have'} never been checked on, so their risk is not known. <button class="linklike" data-all="due">See follow-ups</button></p>` : '';
+      return `<section class="panel palert ${list.length ? cls : ''}"><h2><button class="linklike palert-t" data-all="${k}">${title}</button> <span class="pcount">${list.length}</span></h2>
+        ${list.length ? `<ul class="work">${list.slice(0, 5).map((x, i) => `<li><button class="linklike" data-k="${k}" data-i="${i}">${esc(x.name)}</button> · ${esc(x.position)}${short[k](x)}</li>`).join('')}</ul>` : '<p class="hint">None.</p>'}
+        ${note}${list.length ? `<button class="btn sm palert-all" data-all="${k}">View all ${list.length}${list.length > 5 ? '' : ' with details'}</button>` : ''}</section>`;
+    };
+    host.innerHTML = `<div class="palerts">${box(ALERT_TABS[0], 'warn')}${box(ALERT_TABS[1], 'bad')}${box(ALERT_TABS[2], 'warn')}</div>`;
+    $$('[data-all]', host).forEach(b => b.onclick = () => alertsDialog(a, b.dataset.all));
+    $$('[data-k]', host).forEach(b => b.onclick = () => openAlertCard(a[ALERT_TABS.find(t => t[0] === b.dataset.k)[1]][+b.dataset.i]));
   } catch (e) { host.innerHTML = ''; }
+}
+/** Full pop-up of the pipeline alerts: every item with what is pending and since when; filter, open the card, export. */
+function alertsDialog(a, tab) {
+  let d = $('#alertsDlg');
+  if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="alertsDlg" class="pm-dialog alerts-dlg" aria-labelledby="alTitle"></dialog>'); d = $('#alertsDlg'); }
+  const f = { tab: tab || 'due', rec: '', q: '' };
+  const lastTxt = x => x.last ? `${fmtDate(x.last.date)} · ${x.last.mode}${x.last.risk ? ' · ' + x.last.risk : ''}${x.last.response ? ' · ' + x.last.response : ''}${x.last.note ? ' · ' + x.last.note : ''}` : 'None recorded';
+  const joinTxt = x => x.edoj ? `${fmtDate(x.edoj)} (${alertAge(-x.edojIn)})` : 'Not set';
+  const cand = x => `<button class="linklike" data-open="${esc(x.app)}"><b>${esc(x.name)}</b></button><span class="sub">${esc(x.cand)}${x.mobile ? ' · ' + esc(x.mobile) : ''}</span>`;
+  const pos = x => `${esc(x.position)}<span class="sub">${esc(x.mrf)} · ${esc(x.grade)} · ${esc(x.dept)}</span>`;
+  const stage = x => `${esc(x.stageName)}<span class="sub">since ${x.since ? fmtDate(x.since) + ' (' + alertAge(x.daysInStage) + ')' : '—'}</span>`;
+  const last = x => `${esc(lastTxt(x))}${x.last && x.last.by ? `<span class="sub">by ${esc(x.last.by)} · ${x.fuCount} check-in${x.fuCount === 1 ? '' : 's'} in all</span>` : ''}`;
+  const COLS = {
+    due: [['Candidate', cand, x => x.name + ' ' + x.mobile], ['Position', pos, x => x.position + ' ' + x.mrf + ' ' + x.dept], ['Recruiter', x => esc(x.recruiter), x => x.recruiter],
+      ['Stage', stage, x => x.stageName + ' since ' + x.since], ['Offer / accepted', x => `${x.offer ? fmtDate(x.offer) : '—'}<span class="sub">${x.accepted ? 'accepted ' + fmtDate(x.accepted) : 'not accepted yet'}</span>`, x => x.offer + ' / ' + (x.accepted || 'not accepted')],
+      ['Expected joining', x => esc(joinTxt(x)), joinTxt], ['Last check-in', last, lastTxt],
+      ['What is pending', x => `<b class="${x.waitDays > 3 ? 'miss' : ''}">${esc(x.pending)}</b>${x.waitDays != null ? `<span class="sub">pending ${x.waitDays} day${x.waitDays === 1 ? '' : 's'}</span>` : ''}`, x => x.pending]],
+    risk: [['Candidate', cand, x => x.name + ' ' + x.mobile], ['Position', pos, x => x.position + ' ' + x.mrf + ' ' + x.dept], ['Recruiter', x => esc(x.recruiter), x => x.recruiter],
+      ['Risk', x => `<span class="risk r-${esc(x.level)}">${esc(x.level)}</span>`, x => x.level], ['Why', x => `<ul class="work">${x.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`, x => x.why.join('; ')],
+      ['Stage', stage, x => x.stageName + ' since ' + x.since], ['Expected joining', x => esc(joinTxt(x)), joinTxt], ['Last check-in', last, lastTxt],
+      ['Next check-in', x => x.next ? fmtDate(x.next) : '<span class="miss">None scheduled</span>', x => x.next || 'None scheduled']],
+    hod: [['Candidate', cand, x => x.name + ' ' + x.mobile], ['Position', pos, x => x.position + ' ' + x.mrf], ['Department / HOD', x => `${esc(x.dept)}<span class="sub">${esc(x.hod || 'HOD not set')}${x.hodEmail ? ' · ' + esc(x.hodEmail) : ''}</span>`, x => x.dept + ' / ' + (x.hod || 'HOD not set')],
+      ['Recruiter', x => esc(x.recruiter), x => x.recruiter], ['Shared on', x => x.since ? fmtDate(x.since) : '—', x => x.since],
+      ['Waiting', x => `<b class="${x.hours >= 72 ? 'miss' : ''}">${alertWait(x.hours)}</b>`, x => alertWait(x.hours)], ['What is pending', x => esc(x.pending), x => x.pending]]
+  };
+  const listOf = k => a[ALERT_TABS.find(t => t[0] === k)[1]] || [];
+  const recs = [...new Set([].concat(...ALERT_TABS.map(t => (a[t[1]] || []).map(x => x.recruiter))))].sort();
+  const rows = () => listOf(f.tab).filter(x => (!f.rec || x.recruiter === f.rec) && (!f.q || COLS[f.tab].map(c => c[2](x)).join(' ').toLowerCase().includes(f.q)));
+  const summary = list => {
+    if (f.tab === 'due') {
+      const n = fn => list.filter(fn).length, oldest = Math.max(0, ...list.map(x => x.waitDays || 0));
+      const parts = [[n(x => !x.next && !x.fuCount), 'never checked in', 1], [n(x => !x.next && x.fuCount), 'no next check-in scheduled'],
+        [n(x => x.next && x.next < a.today), 'check-in overdue', 1], [n(x => x.next === a.today), 'due today']].filter(p => p[0]);
+      return `${list.length} due${parts.map(([c, t, bad]) => ` \u00b7 ${bad ? '<b class="miss">' : ''}${c} ${t}${bad ? '</b>' : ''}`).join('')}${list.length ? ' \u00b7 longest pending ' + oldest + ' days' : ''}`;
+    }
+    if (f.tab === 'risk') { const red = list.filter(x => x.level === 'Red').length;
+      return `${list.length} at risk · <b class="miss">${red} Red</b> · ${list.length - red} Amber${a.unassessed ? ` · ${a.unassessed} joiners never checked on (risk not known)` : ''}`; }
+    const long = list.filter(x => x.hours >= 72).length;
+    return `${list.length} waiting · <b class="miss">${long} over 3 days</b>${list.length ? ' · longest ' + alertWait(Math.max(...list.map(x => x.hours))) : ''}`;
+  };
+  const draw = () => {
+    const list = rows(), cols = COLS[f.tab];
+    d.innerHTML = `<div class="al-head"><h2 id="alTitle">Pipeline alerts</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <div class="chips" role="tablist">${ALERT_TABS.map(([k, key, t]) => `<button class="chip" role="tab" aria-selected="${f.tab === k}" aria-pressed="${f.tab === k}" data-tab="${k}">${t}<span class="n">${(a[key] || []).length}</span></button>`).join('')}</div>
+      <div class="filters">${isLead() ? `<div class="field"><label for="alRec">Recruiter</label><select id="alRec">${opts(recs, f.rec)}</select></div>` : ''}
+        <div class="field search"><label for="alQ">Search</label><input id="alQ" type="search" value="${esc(f.q)}" placeholder="Candidate, position, MRF, department"></div></div>
+      <p class="al-sum">${summary(list)}</p>
+      <div class="al-body">${list.length ? `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${c[0]}</th>`).join('')}<th></th></tr></thead><tbody>
+        ${list.map(x => `<tr style="cursor:default">${cols.map(c => `<td>${c[1](x)}</td>`).join('')}<td><button class="btn sm" data-open="${esc(x.app)}">Open card</button></td></tr>`).join('')}</tbody></table></div>`
+        : `<div class="empty">${listOf(f.tab).length ? 'Nothing matches these filters.' : f.tab === 'hod' ? 'No candidate has been waiting over 24 hours at “Shared with department”. This list fills when recruiters move cards to that stage in the Pipeline.' : 'Nothing here.'}</div>`}</div>
+      <div class="drawer-actions" style="position:static"><span class="hint" style="margin-right:auto">Sorted with the longest pending first. “Open card” goes to the candidate in the Pipeline.</span><button class="btn" id="alCsv">Download CSV</button><button class="btn" data-close>Close</button></div>`;
+    $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+    $$('[data-tab]', d).forEach(b => b.onclick = () => { f.tab = b.dataset.tab; draw(); });
+    if ($('#alRec', d)) $('#alRec', d).onchange = e => { f.rec = e.target.value; draw(); };
+    const q = $('#alQ', d); q.oninput = debounce(() => { f.q = q.value.trim().toLowerCase(); const pos = q.selectionStart; draw(); const n = $('#alQ', d); n.focus(); n.setSelectionRange(pos, pos); }, 200);
+    $$('[data-open]', d).forEach(b => b.onclick = () => { const x = list.find(y => y.app === b.dataset.open); d.close(); openAlertCard(x); });
+    $('#alCsv', d).onclick = () => {
+      const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const csv = [cols.map(c => c[0]).concat('App ID', 'Line ID').map(cell).join(',')].concat(list.map(x => cols.map(c => c[2](x)).concat(x.app, x.line).map(cell).join(','))).join('\r\n');
+      saveBlob(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `pipeline-alerts-${f.tab}-${a.today}.csv`);
+    };
+  };
+  draw();
+  if (!d.open) d.showModal();
 }
 
 async function viewPipeline(v) {
