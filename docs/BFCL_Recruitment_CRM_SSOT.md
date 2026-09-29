@@ -863,6 +863,8 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - Searches wait 150–200 ms after typing (Positions, Interview panel, JD Master, departments, Users, JD picker); JD Master shows the first 150 profiles with "Show all", and its filter chips no longer reload the library from the server.
 - The side menu collapses without animating the page grid (which re-laid out the whole page every frame).
 - Set `localStorage['bfcl.perf'] = '1'` in the browser console to log every server call and page time.
+- Server: the to-do list is cached in chunks (`cacheBigPut_`), so a list over the 100 KB single-entry limit is cached instead of being rebuilt from about ten sheets on every call; chunks are now 30,000 characters so multi-byte text cannot overflow an entry.
+- Server slow-step log: sheet reads and to-do rebuilds taking 400 ms or more are written to the execution log as `[perf] …` (Apps Script → Executions).
 
 **v61 — 23:45 — Create JD save hotfix** (no schema change)
 - Fixed the Create JD save/download error caused by duplicate `jmWork` IDs after the wide responsibility editor release. The responsibility editor now uses its own container and the working-conditions textarea is read safely.
