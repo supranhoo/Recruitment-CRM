@@ -32,7 +32,7 @@ function ensureKpiTargets_() {
     sh.getRange(2, 6, 2, 1).setNumberFormat('@');
     sh.getRange(1, 1, 1, 7).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1F3A5F');
     sh.setFrozenRows(1);
-    _tables[KPI_TARGETS] = null;
+    dropStale_(KPI_TARGETS);
   }
 }
 
@@ -75,7 +75,7 @@ function computeKpis_(fy) {
   ensureSchema_();
   const grace = Number(settings_().NOTICE_GRACE_DAYS) || 30;
   const targets = readTable_(KPI_TARGETS).rows.map(function (r) {
-    const f = r.Effective_From instanceof Date ? Utilities.formatDate(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '0000-00').slice(0, 7);
+    const f = r.Effective_From instanceof Date ? fmt_(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '0000-00').slice(0, 7);
     return { recruiter: String(r.Recruiter).trim().toLowerCase(), kpi: String(r.KPI).trim().toUpperCase(), levels: r.Levels,
       days: Number(r.TAT_Days) || 0, exempt: String(r.Notice_Exemption).toUpperCase() !== 'NO', from: f };
   });
@@ -110,7 +110,7 @@ function computeKpis_(fy) {
     }
 
     // 2. M-level fulfilment — targeted = due this month (receipt + TAT) or filled this month.
-    if (receipt && ['Open', 'Offered', 'Closed'].indexOf(status) >= 0) {
+    if (receipt && ['Open', 'Offered', 'Closed'].indexOf(status) >= 0 && String(l.Fill_Type || '') !== 'Internal') {
       const probe = doj ? doj.slice(0, 7) : receipt.slice(0, 7);
       const t = targetFor_(targets, rec, 'M_FULFILMENT', probe);
       if (t && levelMatch_(t.levels, l.Grade)) {
@@ -136,7 +136,7 @@ function computeKpis_(fy) {
   // ---- Compliance KPIs (scored from KPI_CAPTURE_FROM onward) ----
   const s = settings_();
   const capRaw = s.KPI_CAPTURE_FROM;
-  const captureFrom = capRaw instanceof Date ? Utilities.formatDate(capRaw, TZ, 'yyyy-MM') : String(capRaw || '').replace(/^'/, '').slice(0, 7) || '9999-99';
+  const captureFrom = capRaw instanceof Date ? fmt_(capRaw, TZ, 'yyyy-MM') : String(capRaw || '').replace(/^'/, '').slice(0, 7) || '9999-99';
   const nowM = ymd_(new Date()).slice(0, 7), today = ymd_(new Date());
   const tracked = function (m) { return inFy(m) && m >= captureFrom && m <= nowM; };
   const lineById = {};
@@ -157,7 +157,7 @@ function computeKpis_(fy) {
     b.items.push({ id: c.Candidate_ID, name: String(c.Name), position: String(c.Position), grade: grade, date: shortlisted, status: st || 'Not recorded', ok: !miss });
   });
 
-  // 5. BGV — new hires (Manager+ or flagged) without previous-employer BGV before the offer,
+  // 5. BGV — new hires (Manager+ or flagged) without previous-employer BGV initiated within 3 days after the offer (policy 9.1.1),
   //    or without current-employer BGV started within 2 days of joining.
   lines.forEach(function (l) {
     const doj = ymd_(l.Actual_DOJ);
@@ -167,7 +167,7 @@ function computeKpis_(fy) {
     if (!required) return;
     const offer = ymd_(l.Offer_Date), prev = ymd_(l.BGV_Prev_Org_Date), curr = ymd_(l.BGV_Current_Org_Date);
     const deadline = addDays_(doj, 2);
-    const prevOk = !!prev && (!offer || prev <= offer);
+    const prevOk = !!prev && (!offer || prev <= addDays_(offer, 3));
     const currOk = !!curr && curr <= deadline;
     const currPending = !curr && today <= deadline;
     const miss = !prevOk || (!currOk && !currPending);
@@ -176,7 +176,7 @@ function computeKpis_(fy) {
     b.den++; if (miss) b.num++;
     b.items.push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), doj: doj, offer: offer,
       prev: prev, curr: curr, ok: !miss,
-      why: miss ? [!prev ? 'No previous-employer BGV' : (!prevOk ? 'Previous-employer BGV after offer' : ''), (!currOk && !currPending) ? (curr ? 'Current-employer BGV started late' : 'Current-employer BGV not started') : ''].filter(Boolean).join('; ') : (currPending ? 'Current-employer BGV due by ' + deadline : '') });
+      why: miss ? [!prev ? 'No previous-employer BGV' : (!prevOk ? 'Previous-employer BGV initiated more than 3 days after the offer' : ''), (!currOk && !currPending) ? (curr ? 'Current-employer BGV started late' : 'Current-employer BGV not started') : ''].filter(Boolean).join('; ') : (currPending ? 'Current-employer BGV due by ' + deadline : '') });
   });
 
   // 6. Observations — count per recruiter per month.
@@ -267,7 +267,7 @@ function apiKpi(fy, fresh) {
   }
   const o = computeKpis_(fy);
   o.dirtyAt = dirtyAt;
-  o.builtAt = Utilities.formatDate(new Date(), TZ, 'd MMM yyyy, HH:mm');
+  o.builtAt = fmt_(new Date(), TZ, 'd MMM yyyy, HH:mm');
   const json = JSON.stringify(o);
   if (json.length < 95000) cache.put(key, json, 21600);
   return o;

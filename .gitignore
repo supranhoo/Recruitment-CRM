@@ -16,3 +16,9 @@ coverage/
 ~$*
 .DS_Store
 Thumbs.db
+
+# Never commit recruitment data or exports
+*.xlsx
+*.xls
+*.csv
+*.pdf

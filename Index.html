@@ -8,22 +8,15 @@
   <?!= include('Styles'); ?>
 </head>
 <body>
-  <div id="boot" class="boot">Loading the recruitment CRM…</div>
+  <div id="boot" class="shell" role="status" aria-busy="true" aria-label="Loading the recruitment CRM">
+    <nav class="rail" aria-hidden="true"><div class="rail-head"><div class="brand"><span class="brand-mark"></span><span class="lbl brand-text"><b>BFCL</b><small>Recruitment</small></span></div></div><div class="rail-nav"><span class="sk" style="width:70px;height:12px;margin:10px 12px"></span><span class="sk" style="width:92px;height:12px;margin:10px 12px"></span><span class="sk" style="width:89px;height:12px;margin:10px 12px"></span><span class="sk" style="width:63px;height:12px;margin:10px 12px"></span><span class="sk" style="width:78px;height:12px;margin:10px 12px"></span><span class="sk" style="width:93px;height:12px;margin:10px 12px"></span><span class="sk" style="width:85px;height:12px;margin:10px 12px"></span><span class="sk" style="width:95px;height:12px;margin:10px 12px"></span><span class="sk" style="width:92px;height:12px;margin:10px 12px"></span><span class="sk" style="width:59px;height:12px;margin:10px 12px"></span><span class="sk" style="width:93px;height:12px;margin:10px 12px"></span></div></nav>
+    <main class="view" id="bootMain"></main>
+  </div>
 
   <div id="shell" class="shell" hidden>
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>BFCL Recruitment</div>
-      <div class="user" id="userChip"></div>
-    </header>
-    <nav class="rail" id="rail" aria-label="Main">
-      <a href="#overview" data-view="overview">Overview</a>
-      <a href="#positions" data-view="positions">Positions</a>
-      <a href="#daily" data-view="daily">Daily log</a>
-      <a href="#candidates" data-view="candidates">Candidates</a>
-      <a href="#panel" data-view="panel">Panel availability</a>
-      <a href="#admin" data-view="admin" id="navAdmin" hidden>Admin</a>
-    </nav>
+    <nav class="rail" id="rail" aria-label="Main"></nav>
     <main id="view" class="view" tabindex="-1"></main>
+    <div id="skel" class="view skel-layer" role="status" aria-busy="true" hidden></div>
   </div>
 
   <aside id="drawer" class="drawer" aria-hidden="true">

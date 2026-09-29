@@ -5,16 +5,16 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '10';
+const SCHEMA_VERSION = '26';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
 /** Adds new columns/sheets once. Cheap after the first run (one property read). */
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('SCHEMA_V') === SCHEMA_VERSION) return;
+  if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
   withLock_(function () {
-    if (props.getProperty('SCHEMA_V') === SCHEMA_VERSION) return;
+    if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
     addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
       'Tech_Panel', 'Final_Panel']);
     seedPanelMembers_();
@@ -23,6 +23,22 @@ function ensureSchema_() {
     addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
     try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); }
     addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
+    tasksSchema_();
+    addColumns_(T.MRF.name, ['Parent_Line_ID', 'Replaced_By', 'Replaced_On', 'TAT_Start_From']);
+    addColumns_(T.APP.name, ['Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Backout_Reason']);
+    reconcileSchema_();
+    closureSchema_();
+    addColumns_(T.PANEL.name, ['To_Date', 'Kind']);
+    archiveSchema_();
+    poolSchema_();
+    parseSchema_();
+    usersSchema_();
+    tatSchema_();
+    jdmSchema_();
+    pdocSchema_();
+    scrSchema_();
+    gradeDesigMigrate_();
+    dayStatusSchema_();
     addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
       'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
     addColumns_(T.CAND.name, ['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']);
@@ -33,10 +49,11 @@ function ensureSchema_() {
     const s = readTable_('Settings', true);
     if (!s.rows.some(function (r) { return r.Key === 'KPI_CAPTURE_FROM'; })) {
       const next = new Date(); next.setDate(1); next.setMonth(next.getMonth() + 1);
-      s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + Utilities.formatDate(next, TZ, 'yyyy-MM'),
+      s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + fmt_(next, TZ, 'yyyy-MM'),
         'First month scored for psychometric, BGV, observation and audit KPIs']);
     }
     props.setProperty('SCHEMA_V', SCHEMA_VERSION);
+    dropTableCache_();
     _tables = {};
   });
 }
@@ -83,7 +100,7 @@ function apiListObservations(filter) {
 
 function apiSaveObservation(data) {
   const u = currentUser_(); ensureSchema_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can log observations.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can log observations.');
   const patch = prepare_(T.OBS, data);
   if (!patch.Obs_Date || !patch.Type) throw new Error('Date and observation type are required.');
   if (patch.Line_ID) {
@@ -107,7 +124,7 @@ function apiAuditList(month) {
 /** Picks a random 20% of the MRF lines and candidates added or changed in the month. */
 function apiAuditGenerate(month) {
   const u = currentUser_(); ensureSchema_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can create the audit sample.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can create the audit sample.');
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Pick a month.');
   if (readTable_('Audit_Checks').rows.some(function (r) { return String(r.Month) === month; })) throw new Error('A sample for ' + month + ' already exists.');
   // Records a person added or edited that month (the one-time migration does not count).
@@ -140,14 +157,14 @@ function apiAuditGenerate(month) {
     t.sheet.getRange(t.sheet.getLastRow() + 1, 1, rows.length, t.headers.length).setValues(rows);
     audit_(u, 'Audit_Checks', month, 'Create sample', 'rows', '', String(rows.length) + ' of ' + pool.length);
     markDashDirty_('Audit_Checks');
-    _tables['Audit_Checks'] = null;
+    dropStale_('Audit_Checks');
     return { sampled: rows.length, population: pool.length };
   });
 }
 
 function apiAuditSave(data) {
   const u = currentUser_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can record audit results.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can record audit results.');
   const patch = prepare_(T.AUDIT, data);
   if (['Pending', 'Correct', 'Error'].indexOf(patch.Result) < 0) throw new Error('Result must be Correct or Error.');
   if (patch.Result === 'Error' && !patch.Error_Field) throw new Error('Say which field was wrong.');
@@ -186,17 +203,18 @@ function docFolder_(entity) {
 function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   const u = currentUser_(); ensureSchema_();
   const t = docTarget_(entity, id, field);
-  if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or the recruitment head can attach files to this position.');
-  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l)) throw new Error('Only ' + l.Recruiter + ' or the recruitment head can attach files for this position.'); }
+  if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or a TA Lead or the Head of HR can attach files to this position.');
+  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l)) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
   const ext = (String(fileName).match(/\.[a-z0-9]+$/i) || [''])[0];
   const isJd = entity === 'MRF' && field === 'JD_File';
   const folder = isJd ? jdFolder_() : docFolder_(entity);
-  let name = isJd ? jdName_(t.rec, ext) : id + '_' + DOC_FIELDS[entity][field] + '_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd') + ext;
-  if (isJd && folder.getFilesByName(name).hasNext()) name = name.slice(0, name.length - ext.length) + ' - ' + Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HHmm') + ext;
+  let name = isJd ? jdName_(t.rec, ext) : id + '_' + DOC_FIELDS[entity][field] + '_' + fmt_(new Date(), TZ, 'yyyyMMdd') + ext;
+  if (isJd && folder.getFilesByName(name).hasNext()) name = name.slice(0, name.length - ext.length) + ' - ' + fmt_(new Date(), TZ, 'yyyy-MM-dd HHmm') + ext;
   const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), mimeType, name));
   const patch = {}; patch[field] = file.getUrl();
   update_(t.def, id, patch, u);
+  if (isJd) pdocAddJd_(u, id, { file: file.getUrl(), source: _pdocSource || 'Uploaded file: ' + fileName });
   return file.getUrl();
 }
 
@@ -229,7 +247,7 @@ function seedPanelMembers_() {
     return ['PM-' + String(i + 1).padStart(3, '0'), s[0], s[4], s[1], s[2], '', s[3], 'Yes', s[5], 'seed', now, 'seed', now];
   });
   sheet_(T.PM.name).getRange(2, 1, rows.length, headers.length).setValues(rows);
-  _tables[T.PM.name] = null;
+  dropStale_(T.PM.name);
 }
 
 function panelMembers_(includeInactive) {
@@ -247,7 +265,20 @@ function panelKey_(s) { return String(s || '').toLowerCase().replace(/\b(sir|mr|
 
 function apiListPanelMembers() {
   currentUser_(); ensureSchema_();
-  return panelMembers_(true);
+  const today = ymd_(new Date()), away = {};
+  readTable_(T.PANEL.name).rows.forEach(function (r) {
+    if (String(r.Availability_Status || 'Unavailable') !== 'Unavailable' || panelKind_(r) !== 'Full days') return;
+    const from = ymd_(r.Date), to = ymd_(r.To_Date) || from;
+    if (!from || to < today) return;
+    const k = panelKey_(r.Panel_Member);
+    (away[k] = away[k] || []).push({ from: from, to: to, reason: String(r.Reason || '') });
+  });
+  return panelMembers_(true).map(function (m) {
+    const list = (away[panelKey_(m.name)] || []).sort(function (a, b) { return a.from < b.from ? -1 : 1; });
+    const now = list.filter(function (x) { return x.from <= today; })[0], next = list.filter(function (x) { return x.from > today; })[0];
+    if (now) m.awayNow = now; if (next) m.awayNext = next;
+    return m;
+  });
 }
 
 /** Any team member can add a panel member; only the head or admin can edit or deactivate one. */
@@ -266,7 +297,7 @@ function apiSavePanelMember(data) {
   if (clash) throw new Error(patch.Name + ' is already in the panel list as ' + clash.Name + '.');
   let rec;
   if (data.Panel_ID) {
-    if (!isLead_(u)) throw new Error('Only the recruitment head or admin can edit panel members.');
+    if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can edit panel members.');
     rec = update_(T.PM, data.Panel_ID, patch, u);
   } else {
     rec = insert_(T.PM, patch, u);

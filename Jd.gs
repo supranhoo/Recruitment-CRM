@@ -44,7 +44,7 @@ function apiListJds() {
     const f = it.next();
     if (f.isTrashed()) continue;
     const mime = f.getMimeType();
-    files.push({ id: f.getId(), name: f.getName(), mime: mime, url: f.getUrl(), updated: Utilities.formatDate(f.getLastUpdated(), TZ, 'yyyy-MM-dd'),
+    files.push({ id: f.getId(), name: f.getName(), mime: mime, url: f.getUrl(), updated: fmt_(f.getLastUpdated(), TZ, 'yyyy-MM-dd'),
       size: f.getSize(), supported: DOC_TYPES.indexOf(mime) >= 0 || JD_EXTRA_TYPES.indexOf(mime) >= 0, usedBy: used[f.getId()] || [] });
   }
   files.sort(function (a, b) { return b.updated.localeCompare(a.updated) || a.name.localeCompare(b.name); });
@@ -60,7 +60,7 @@ function apiUseJd(lineIds, fileId) {
   if (file.isTrashed() || !inFolder_(file, folder)) throw new Error('Pick a file from the JD folder.');
   const ids = Array.isArray(lineIds) ? lineIds : [lineIds];
   ids.forEach(function (id) { requireLineEdit_(u, id); });
-  ids.forEach(function (id) { update_(T.MRF, id, { JD_File: file.getUrl() }, u); });
+  ids.forEach(function (id) { update_(T.MRF, id, { JD_File: file.getUrl() }, u); pdocAddJd_(u, id, { file: file.getUrl(), source: 'JD folder: ' + file.getName() }); });
   return { url: file.getUrl(), name: file.getName() };
 }
 

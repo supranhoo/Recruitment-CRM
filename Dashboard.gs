@@ -42,7 +42,7 @@ function buildSnapshot_(by) {
   const started = Date.now();
   const data = computeDashboard_();
   const now = new Date();
-  data.builtAt = Utilities.formatDate(now, TZ, 'd MMM yyyy, HH:mm');
+  data.builtAt = fmt_(now, TZ, 'd MMM yyyy, HH:mm');
   data.builtAtMs = now.getTime();
   data.builtBy = by || 'scheduled refresh';
   data.buildMs = Date.now() - started;
@@ -66,6 +66,12 @@ function markDashDirty_(sheetName) {
 
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */
 function refreshDashboardJob() {
+  try { reconcileTasks_(); } catch (e) { console.error('To-do reconcile failed: ' + e); }
+  try { archiveDaily_(); } catch (e) { console.error('Candidate archive failed: ' + e); }
+  try {
+    const y = fmt_(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
+    if (typeof daySnapGet_ === 'function' && !daySnapGet_(y)) { _tables = {}; daySnapPut_(y, dayData_(y, '')); _tables = {}; }
+  } catch (e) { console.error('Daily review pre-build failed: ' + e); }
   const dirtyAt = Number(PropertiesService.getScriptProperties().getProperty('DASH_DIRTY_AT') || 0);
   const snap = readSnapshot_();
   if (snap && dirtyAt <= Number(snap.builtAtMs || 0)) return;

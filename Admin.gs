@@ -7,7 +7,7 @@ function backupDb_() {
   const base = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
   const it = base.getFoldersByName('BFCL Recruitment CRM - Backups');
   const folder = it.hasNext() ? it.next() : base.createFolder('BFCL Recruitment CRM - Backups');
-  const name = 'DB backup ' + Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm');
+  const name = 'DB backup ' + fmt_(new Date(), TZ, 'yyyy-MM-dd HH:mm');
   file.makeCopy(name, folder);
   const keep = Number(settings_().BACKUP_KEEP_DAYS) || 14;
   const cutoff = Date.now() - keep * 86400000;
@@ -29,17 +29,17 @@ function apiBackupNow() {
 
 function apiAdminInfo() {
   const u = currentUser_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can open this page.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can open this page.');
   return { lastBackup: PropertiesService.getScriptProperties().getProperty('LAST_BACKUP') || '' };
 }
 
 /** Change history from Audit_Log, newest first (max 300 rows). */
 function apiAuditLog(f) {
   const u = currentUser_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can see the change history.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can see the change history.');
   f = f || {};
   const q = String(f.q || '').toLowerCase().trim();
-  const rows = readTable_('Audit_Log').rows;
+  const rows = readTableFrom_('Audit_Log', 'Timestamp', f.from || '').rows;
   const out = [];
   for (let i = rows.length - 1; i >= 0 && out.length < 300; i--) {
     const r = rows[i];
@@ -48,7 +48,7 @@ function apiAuditLog(f) {
     if (f.to && d > f.to) continue;
     if (f.sheet && String(r.Sheet) !== f.sheet) continue;
     if (q && [r.User, r.Record_ID, r.Field, r.Old_Value, r.New_Value].join(' ').toLowerCase().indexOf(q) < 0) continue;
-    out.push({ ts: r.Timestamp instanceof Date ? Utilities.formatDate(r.Timestamp, TZ, 'd MMM yyyy, HH:mm') : String(r.Timestamp),
+    out.push({ ts: r.Timestamp instanceof Date ? fmt_(r.Timestamp, TZ, 'd MMM yyyy, HH:mm') : String(r.Timestamp),
       user: String(r.User), sheet: String(r.Sheet), id: String(r.Record_ID), action: String(r.Action), field: String(r.Field),
       oldV: String(r.Old_Value), newV: String(r.New_Value) });
   }
@@ -58,7 +58,7 @@ function apiAuditLog(f) {
 /** Likely data-entry errors, grouped by check. */
 function apiDataChecks() {
   const u = currentUser_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can run data checks.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can run data checks.');
   return dataChecks_();
 }
 
@@ -74,6 +74,7 @@ function dataChecks_() {
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
   const weekday = function (ymd) { const p = ymd.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay(); };
   readTable_(T.MRF.name).rows.forEach(function (l) {
+    if (positionStatus_(l) === 'Removed') return;
     const label = String(l.MRF_No) + ' \u00b7 ' + l.Position + ' (' + l.Recruiter + ')';
     const miss = ['MRF_No', 'Receipt_Date', 'Grade', 'Dept', 'Recruiter'].filter(function (k) { return !l[k]; });
     if (miss.length) c1.items.push({ id: l.Line_ID, label: label, detail: 'Missing: ' + miss.join(', ').replace(/_/g, ' ') });
@@ -95,6 +96,16 @@ function dataChecks_() {
     });
     if (/selected/i.test(String(c.HR_Result)) && !c.Line_ID && String(c.Created_By) !== 'migration') c7.items.push({ id: c.Candidate_ID, label: label, detail: 'HR result Selected' });
   });
+  const rc = {
+    orphan: add('pipe_orphan', 'Pipeline cards without a candidate record', 'The candidate was deleted but the card stayed. Remove it in the Switch-over check.', 'MRF'),
+    offer_unlinked: add('pipe_offer_unlinked', 'Offer on the position but no candidate holds it', 'Record who holds the offer in the Switch-over check.', 'MRF'),
+    legacy_backout: add('pipe_legacy_backout', 'Backout recorded by reopening the position', 'Policy 9.5 now raises a replacement MRF. Convert or keep it in the Switch-over check.', 'MRF'),
+    joined_open: add('pipe_joined_open', 'Joined in the pipeline but the position is not closed', 'Record the joining date in the Switch-over check.', 'MRF'),
+    maybe_closed: add('pipe_maybe_closed', 'Remarks say closed or on hold, but the position is still open', 'Use Close without hiring on the position, or keep it as it is in the Switch-over check.', 'MRF')
+  };
+  reconcileScan_('', false).forEach(function (it) {
+    it.issues.forEach(function (x) { rc[x.code].items.push({ id: it.line.Line_ID, label: it.line.MRF_No + ' \u00b7 ' + it.line.Position + ' (' + it.line.Recruiter + ')', detail: x.text }); });
+  });
   return checks.map(function (c) { c.count = c.items.length; c.items = c.items.slice(0, 200); return c; });
 }
 
@@ -105,20 +116,20 @@ function setSetting_(key, value, note) {
   const row = s.rows.filter(function (r) { return r.Key === key; })[0];
   if (row) s.sheet.getRange(row._row, 2).setValue(value);
   else s.sheet.appendRow([key, value, note || '']);
-  _tables['Settings'] = null;
+  dropStale_('Settings');
 }
 
 function summaryRecipients_() {
   const extra = String(settings_().WEEKLY_SUMMARY_TO || '').split(/[,;\s]+/).filter(function (e) { return /@/.test(e); });
   const leads = readTable_('Users').rows.filter(function (r) {
-    return String(r.Active || 'Yes') !== 'No' && /^(Admin|Head)$/.test(String(r.Role)) && /@/.test(String(r.Email));
+    return String(r.Active || 'Yes') !== 'No' && (PERMS_[normRole_(r.Role)] || []).indexOf('lead') >= 0 && /@/.test(String(r.Email));
   }).map(function (r) { return String(r.Email).trim().toLowerCase(); });
   return leads.concat(extra).filter(function (e, i, all) { return all.indexOf(e) === i; });
 }
 
 function apiWeeklyStatus() {
   const u = currentUser_();
-  if (!isLead_(u)) throw new Error('Only the recruitment head or admin can see this.');
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can see this.');
   const p = PropertiesService.getScriptProperties();
   return { on: String(settings_().WEEKLY_SUMMARY || 'Off') === 'On', by: p.getProperty('WEEKLY_TRIGGER_BY') || '',
     lastSent: p.getProperty('WEEKLY_LAST_SENT') || '', to: summaryRecipients_() };
@@ -129,7 +140,7 @@ function apiSetWeekly(on) {
   const u = currentUser_(); requireAdmin_(u);
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'weeklySummaryJob') ScriptApp.deleteTrigger(t); });
   if (on) ScriptApp.newTrigger('weeklySummaryJob').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(9).create();
-  setSetting_('WEEKLY_SUMMARY', on ? 'On' : 'Off', 'Monday 9:00 email to Head and Admin users (and WEEKLY_SUMMARY_TO)');
+  setSetting_('WEEKLY_SUMMARY', on ? 'On' : 'Off', 'Monday 9:00 email to Admin, Head of HR and TA Lead users (and WEEKLY_SUMMARY_TO)');
   PropertiesService.getScriptProperties().setProperty('WEEKLY_TRIGGER_BY', on ? u.email : '');
   return apiWeeklyStatus();
 }
@@ -150,9 +161,9 @@ function sendSummary_(to, test) {
   const snap = buildSnapshot_('weekly summary');
   const fy = kpiCurrentFy_();
   const k = computeKpis_(fy);
-  const month = Utilities.formatDate(new Date(), TZ, 'yyyy-MM');
+  const month = fmt_(new Date(), TZ, 'yyyy-MM');
   const team = k.data.TEAM_TOTAL || {};
-  const since = Utilities.formatDate(new Date(Date.now() - 7 * 86400000), TZ, 'yyyy-MM-dd');
+  const since = fmt_(new Date(Date.now() - 7 * 86400000), TZ, 'yyyy-MM-dd');
   const lines = readTable_(T.MRF.name).rows;
   const wk = { joined: [], offers: 0, backouts: [] };
   lines.forEach(function (l) {
@@ -162,7 +173,7 @@ function sendSummary_(to, test) {
     if (bo >= since) wk.backouts.push(l);
   });
   const ctx = tatContext_();
-  const overdue = lines.map(function (l) { return Object.assign({}, l, computeTat_(l, ctx)); })
+  const overdue = lines.map(function (l) { return orgTat_(Object.assign({}, l, computeTat_(l, ctx))); })
     .filter(function (l) { return l.TAT_Result === 'Overdue'; })
     .sort(function (a, b) { return (b.Days_Taken - b.Final_TAT) - (a.Days_Taken - a.Final_TAT); });
   const issues = dataChecks_().reduce(function (s, c) { return s + c.count; }, 0);
@@ -185,7 +196,7 @@ function sendSummary_(to, test) {
   const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#18222F;max-width:680px">'
     + (test ? '<p style="background:#FFF4E6;padding:8px 12px;border-radius:4px">Test copy \u2014 only you received this.</p>' : '')
     + '<h2 style="margin:0 0 4px;color:#1F3A5F">BFCL recruitment \u2014 weekly summary</h2>'
-    + '<p style="margin:0 0 14px;color:#4A5668">' + Utilities.formatDate(new Date(), TZ, 'EEEE d MMMM yyyy') + '</p>'
+    + '<p style="margin:0 0 14px;color:#4A5668">' + fmt_(new Date(), TZ, 'EEEE d MMMM yyyy') + '</p>'
     + '<table cellspacing="0" style="border-collapse:collapse;margin-bottom:18px"><tr>' + card(kp.open, 'Open positions') + card(kp.offered, 'Offered, awaiting joining') + card(kp.overdue, 'Past TAT', kp.overdue > 0) + card(kp.atRisk, 'At risk') + card(kp.joinedMonth, 'Joined this month') + '</tr></table>'
     + '<h3 style="margin:0 0 6px">Last 7 days</h3><p style="margin:0 0 16px">' + wk.joined.length + ' joined \u00b7 ' + wk.offers + ' offers made \u00b7 ' + wk.backouts.length + ' backouts'
     + (wk.backouts.length ? ' (' + wk.backouts.map(function (l) { return esc(l.Position) + ', ' + esc(l.Recruiter); }).join('; ') + ')' : '') + '</p>'
@@ -200,7 +211,7 @@ function sendSummary_(to, test) {
     + '<p style="margin:0 0 18px">' + (issues ? issues + ' records flagged in Admin \u2192 Data checks.' : 'No data-check issues.') + '</p>'
     + (url ? '<p><a href="' + url + '" style="background:#1F3A5F;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none">Open the recruitment CRM</a></p>' : '')
     + '<p style="color:#8793A3;font-size:12px;margin-top:20px">Sent automatically every Monday. The admin can turn it off in Admin \u2192 Tools.</p></div>';
-  MailApp.sendEmail({ to: to.join(','), subject: (test ? '[Test] ' : '') + 'BFCL recruitment weekly summary \u00b7 ' + Utilities.formatDate(new Date(), TZ, 'd MMM yyyy'),
+  MailApp.sendEmail({ to: to.join(','), subject: (test ? '[Test] ' : '') + 'BFCL recruitment weekly summary \u00b7 ' + fmt_(new Date(), TZ, 'd MMM yyyy'),
     htmlBody: html, name: 'BFCL Recruitment CRM' });
-  if (!test) PropertiesService.getScriptProperties().setProperty('WEEKLY_LAST_SENT', Utilities.formatDate(new Date(), TZ, 'd MMM yyyy, HH:mm') + ' to ' + to.join(', '));
+  if (!test) PropertiesService.getScriptProperties().setProperty('WEEKLY_LAST_SENT', fmt_(new Date(), TZ, 'd MMM yyyy, HH:mm') + ' to ' + to.join(', '));
 }

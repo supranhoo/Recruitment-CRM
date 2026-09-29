@@ -10,3 +10,6 @@ README.md
 *.tmp
 *.bak
 ~$*
+
+# Documentation stays in GitHub only
+docs/**

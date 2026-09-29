@@ -11,7 +11,7 @@ const T = {
   MRF: {
     name: 'MRF', id: 'Line_ID', prefix: 'MRL-', width: 5,
     dates: ['Receipt_Date', 'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'TAT_End_Date',
-      'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'JD_Confirmed_Date', 'SQ_Confirmed_Date', 'Approved_On', 'Assigned_On'],
+      'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'JD_Confirmed_Date', 'SQ_Confirmed_Date', 'Approved_On', 'Assigned_On', 'Replaced_On', 'TAT_Start_From', 'Reconciled_On'],
     editable: ['MRF_No', 'Receipt_Date', 'Position', 'Grade', 'Dept', 'Recruiter', 'No_Of_Positions', 'Approval_Status',
       'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Sent', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date',
       'Notice_Period_Days', 'Remarks', 'Candidate_ID', 'BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks',
@@ -31,12 +31,13 @@ const T = {
       'Offered_Designation', 'Dept', 'Business_Unit', 'Division', 'Mobile', 'Email', 'Tech_Interview_Date',
       'Tech_Interview_By', 'Tech_Result', 'HR_Interview_Date', 'HR_Interview_By', 'HR_Result', 'Interview_Remarks',
       'DOJ', 'Sourced_By', 'Source_Channel', 'Notes', 'Line_ID',
-      'Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report']
+      'Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report',
+      'Function_Area', 'Key_Skills', 'Total_Exp_Years', 'Current_Location', 'Expected_CTC', 'Notice_Days', 'Current_Company']
   },
   PANEL: {
     name: 'Panel_Unavailability', id: 'Entry_ID', prefix: 'PNL-', width: 4,
-    dates: ['Date'],
-    editable: ['Panel_Member', 'Department', 'Designation', 'Interview_For', 'Date', 'From_Time', 'To_Time',
+    dates: ['Date', 'To_Date'],
+    editable: ['Panel_Member', 'Department', 'Designation', 'Interview_For', 'Date', 'To_Date', 'Kind', 'From_Time', 'To_Time',
       'Reason', 'Availability_Status', 'Remarks']
   }
 };
@@ -58,7 +59,7 @@ T.DAY = {
 };
 T.APP = {
   name: 'Applications', id: 'App_ID', prefix: 'APP-', width: 5,
-  dates: ['Next_Followup', 'Offer_Accepted_On'],
+  dates: ['Next_Followup', 'Offer_Accepted_On', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date'],
   editable: ['Stage', 'Status', 'Screening_JSON', 'Docs_JSON', 'Onboard_JSON', 'Offer_CTC', 'Offer_Accepted_On', 'Risk', 'Next_Followup', 'Status_Reason']
 };
 T.HIST = { name: 'Stage_History', id: 'Hist_ID', prefix: 'SH-', width: 6, dates: [], editable: [] };
@@ -75,4 +76,16 @@ T.AUDIT = {
 };
 
 const FUNNEL_METRICS = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
-const ROLES = { ADMIN: 'Admin', HEAD: 'Head', RECRUITER: 'Recruiter' };
+const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER: 'Recruiter' };
+const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter'];
+/**
+ * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
+ * admin data checks); 'withdraw_offer' = close a position with a live offer; 'system' = backups, archive, tools,
+ * JD library import; 'jd_manage' = sign off and edit the JD Master.
+ */
+const PERMS_ = {
+  'Recruiter': [],
+  'TA Lead': ['lead', 'tat_view', 'jd_manage'],
+  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'users_view', 'jd_manage'],
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'users_view', 'users_edit', 'system', 'jd_manage']
+};

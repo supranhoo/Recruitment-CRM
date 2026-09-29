@@ -5,11 +5,21 @@ function currentUser_() {
   const u = usersCached_().filter(function (r) {
     return String(r.Email).toLowerCase().trim() === email && String(r.Active || 'Yes') !== 'No';
   })[0];
-  if (!u) throw new Error('ACCESS: ' + email + ' is not on the recruitment team list. Ask the CRM admin to add you in the Users sheet.');
-  return { email: email, name: String(u.Name), role: String(u.Role || ROLES.RECRUITER), recruiter: String(u.Recruiter_Name || u.Name) };
+  if (!u) throw new Error('ACCESS: ' + email + ' is not on the recruitment team list. Ask the admin to add you in Admin \u2192 Users.');
+  const role = normRole_(u.Role);
+  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: (PERMS_[role] || []).slice() };
 }
 
-function isLead_(u) { return u.role === ROLES.ADMIN || u.role === ROLES.HEAD; }
+/** Accepts older or informal role names from the Users sheet: "Head", "Head HR", "Lead TA" and so on. */
+function normRole_(r) {
+  const s = String(r || '').trim().toLowerCase().replace(/[^a-z]/g, '');
+  if (s === 'admin' || s === 'administrator') return ROLES.ADMIN;
+  if (s === 'head' || s === 'headhr' || s === 'headofhr' || s === 'hrhead') return ROLES.HEAD;
+  if (s === 'talead' || s === 'leadta' || s === 'tl' || s === 'lead') return ROLES.TALEAD;
+  return ROLES.RECRUITER;
+}
+function can_(u, perm) { return (PERMS_[u.role] || []).indexOf(perm) >= 0; }
+function isLead_(u) { return can_(u, 'lead'); }
 
 function requireAdmin_(u) {
   if (u.role !== ROLES.ADMIN) throw new Error('Only the CRM admin can do this.');
