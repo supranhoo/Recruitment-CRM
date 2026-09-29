@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.15 (adds v60: wider Create JD workspace) |
-| **Describes app version** | **v60** (Apps Script deployment version 60, published 29 Sep 2026, 23:19 IST) |
+| **Document version** | 1.16 (adds v61: Create JD save hotfix) |
+| **Describes app version** | **v61** (Apps Script deployment version 61, published 29 Sep 2026, 23:45 IST) |
 | **Database schema version** | **26** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -853,6 +853,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-29
+
+**v61 — 23:45 — Create JD save hotfix** (no schema change)
+- Fixed the Create JD save/download error caused by duplicate `jmWork` IDs after the wide responsibility editor release. The responsibility editor now uses its own container and the working-conditions textarea is read safely.
+- Tests: source syntax and full local harness unchanged at 91/109 because existing v58 legacy defects remain.
 
 **v60 — 23:19 — Wider Create JD workspace** (no schema change)
 - The Create JD drawer now opens as a wide workspace on desktop so dense responsibility categories and editable statement rows have more horizontal room. Other drawers keep their earlier width.

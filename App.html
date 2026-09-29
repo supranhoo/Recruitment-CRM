@@ -2027,7 +2027,7 @@ async function openJdMaker(lineId, templateId, after) {
       <span class="sub">Ranked by competency department, designation and grade. Workman roles use a profile only for the same department and trade.</span></div>
     <div class="field wide"><label for="jmSum">Role purpose</label><textarea id="jmSum" rows="3" placeholder="Two or three sentences on why the role exists (with the HOD)">${esc(dr.summary)}</textarea></div>
     <h4 style="margin:14px 0 6px">Responsibilities <span class="sub">edit locally; save reusable changes only after review</span></h4>
-    <div id="jmWork"></div>
+    <div id="jmRespWork"></div>
     <div class="field wide"><label for="jmAdd">${trade ? 'Trade duties' : 'Additional duties'} (one per line)</label><textarea id="jmAdd" rows="3" placeholder="${trade ? 'e.g. Carry out preventive maintenance of LT motors as per schedule' : 'Optional: duties specific to this position'}"></textarea></div>
     <div class="field-grid"><div class="field"><label for="jmPref">Preferred experience</label><input id="jmPref" placeholder="Optional"></div>
       <div class="field"><label for="jmWork">Working conditions and safety</label><textarea id="jmWork" rows="2" placeholder="Shifts, location, PPE, fitness (with the HOD)"></textarea></div></div>
@@ -2035,7 +2035,7 @@ async function openJdMaker(lineId, templateId, after) {
     <div class="drawer-actions"><button class="btn" id="jmDl">Download Word</button>${dr.canSave ? '<button class="btn primary" id="jmSave">Save to JD folder and attach</button>' : ''}</div>`;
   $('#jmTpl', body).onchange = e => openJdMaker(lineId, e.target.value, after);
   const bindWork = () => {
-    $('#jmWork', body).innerHTML = jmEditorHtml(work, can('jd_manage'));
+    $('#jmRespWork', body).innerHTML = jmEditorHtml(work, can('jd_manage'));
     $$('.jm-card', body).forEach(card => {
       const g = work.groups[Number(card.dataset.g)];
       $('.jm-cat-name', card).oninput = e => { g.name = e.target.value.trim(); mark(); };
@@ -2072,13 +2072,13 @@ async function openJdMaker(lineId, templateId, after) {
   const collect = () => {
     const d = JSON.parse(JSON.stringify(dr));
     d.summary = $('#jmSum', body).value.trim();
-    d.groups = work.groups.filter(g => g.active).map(g => ({ cat: g.name, items: g.items.filter(it => it.active && it.text.trim()).map(it => ({ id: it.id, text: it.text.trim() })) })).filter(g => g.items.length);
+    d.groups = work.groups.filter(g => g.active).map(g => ({ cat: String(g.name || '').trim(), items: g.items.filter(it => it.active && String(it.text || '').trim()).map(it => ({ id: it.id, text: String(it.text || '').trim() })) })).filter(g => g.cat && g.items.length);
     const add = $('#jmAdd', body).value.split(/\n/).map(s => s.trim()).filter(Boolean);
     if (add.length) {
       if (!d.groups.some(g => g.items.length)) d.groups = [{ cat: 'Standard duties (' + d.band + ')', items: d.bandKras.map(s => ({ text: s })) }];
       d.groups.push({ cat: trade ? 'Trade duties' : 'Role-specific duties', items: add.map(s => ({ text: s })) });
     }
-    d.preferred = $('#jmPref', body).value.trim(); d.working = $('#jmWork', body).value.trim();
+    d.preferred = String($('#jmPref', body).value || '').trim(); d.working = String($('#jmWork', body).value || '').trim();
     return d;
   };
   const makeBlob = async d => { await loadScript(CDN_NPM + 'docx@9.6.1/dist/index.iife.js'); return window.docx.Packer.toBlob(jdmDocx(d)); };
