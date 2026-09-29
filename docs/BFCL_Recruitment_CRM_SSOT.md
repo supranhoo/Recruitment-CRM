@@ -860,6 +860,14 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
+Measured in a browser harness at 1780×900 (1366×768 in brackets), before → after:
+- Candidate card (Pipeline): 1000 px wide, 1.78 screens tall → up to 1680 px (97% of the screen), **1.12** screens (2.10 → 1.71). Three columns: next step and joining follow-ups | interviews and other actions | screening, documents, offer, onboarding and history. Short form fields sit two to a row.
+- Position drawer (and every side drawer): 1000 → up to 1320 px wide; a long form's sections sit side by side in two columns and each section's fields flow into two or more columns: 3.77 → **2.22** screens (4.48 → 2.64).
+- Pipeline board: stages with no candidates shrink to a narrow labelled strip, so the board fits the screen: 2,190 px of columns in 1,500 px (scrolled sideways) → fits at both sizes.
+- Wide pop-ups (JD & questions, JD picker, close position, job posts) 1000 → 1280 px; screening 1040 → 1320 px; share with department 720 → 920 px; screening-questions view and editor, add-a-candidate search and panel-member form 520 → 860 px.
+- Overview at 1366 px: the right column no longer pushes the page 118 px sideways (grid items could not shrink below their table width).
+
 **Unreleased — Overview pipeline alerts: full details and honest risk** (no schema change)
 - *Joiners at risk* no longer depends only on a risk picked at a check-in: it also lists joiners whose expected joining date has passed with no joining recorded (Red), whose offer is not accepted 7 days after the letter (`OFFER_ACCEPT_RISK_DAYS_`, Amber), and whose joining is recorded on the position while the card was not moved to Joined (Amber). Each item says why. The box states how many joiners have never been checked on (risk not known).
 - `pipelineAlerts_` returns every item with its detail: candidate and mobile, position, MRF, grade, department, recruiter, stage and since when, offer / acceptance / expected joining dates, last check-in (date, mode, risk, response, note, by) and number of check-ins, next check-in, what is pending and for how many days; HOD for department feedback. Sorted longest pending first.
