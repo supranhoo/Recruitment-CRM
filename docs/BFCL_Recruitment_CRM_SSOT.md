@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Document version** | 1.16 (adds v61: Create JD save hotfix) |
+| **Document version** | 1.17 (adds v62, not yet deployed: grades and designations separated) |
 | **Describes app version** | **v61** (Apps Script deployment version 61, published 29 Sep 2026, 23:45 IST) |
-| **Database schema version** | **26** (Script Property `SCHEMA_V`) |
+| **Database schema version** | **26** live; **27** once v62 is deployed (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -150,6 +150,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Db.gs` (file_3) | Data access: `readTable_`, `readTableFrom_` (tail read), table cache, fast IST date formatting, `insert_`, `update_` (with guard + audit), `audit_`, `nextId_` (never-reused IDs), version stamps, `withLock_`, `prepare_`/`clean_` (formula-injection guard), `settings_` |
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
+| `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
 | `Import.gs` (file_8) | One-time `importDatabase()` from the migrated Excel data |
@@ -169,7 +170,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | Layer | Mechanism |
 |---|---|
 | Overview | Never computed on page load. Reads a **snapshot** (script cache `dash_v1`, then `Dash_Snapshot` sheet). Rebuilt by **Refresh** button, by the 30-minute trigger when `DASH_DIRTY_AT` is newer than the snapshot, and nightly. Saves only mark it dirty. |
-| Small tables | `CACHED_TABLES_` = Settings, M_Grades, TAT_Rules, M_Recruiters, M_Lists, M_Departments, KPI_Targets, M_Panel_Members, Users — script cache 10 minutes (`tbl3_<name>`), dropped on every app write to that table. Sheets under 1,000 rows are read in one trip. |
+| Small tables | `CACHED_TABLES_` = Settings, M_Grades, M_Designations, TAT_Rules, M_Recruiters, M_Lists, M_Departments, KPI_Targets, M_Panel_Members, Users — script cache 10 minutes (`tbl3_<name>`), dropped on every app write to that table. Sheets under 1,000 rows are read in one trip. |
 | Growing tables | `readTableFrom_(name, dateField, from)` reads only the tail from the first row on/after a date (Daily_Funnel, Audit_Log, Stage_History, Candidates). |
 | Dates | `fmt_`/`ymd_` compute IST with a fixed +5:30 offset (≈400× faster than `Utilities.formatDate`, identical output); any other zone or pattern falls back to Google's formatter. |
 | Payload | Big lists are sent **packed** as `{cols, rows}` (≈ ⅓ size) and only list columns; full records load when opened. After a save, only the changed row is refreshed (`apiGetPosition`). |
@@ -264,7 +265,8 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 |---|---|---|
 | **Users** | Email, Name, Role, Recruiter_Name, Active, Added_By, Added_On, Updated_By, Updated_At | Team list and access (§3) |
 | **M_Recruiters** | Recruiter, Email, Active | Recruiter dropdown, kept in sync by Users |
-| **M_Grades** | Grade, Designations, Band, Standard_TAT_Days | 17 levels; Standard_TAT_Days mirrors the TAT rule in force **today** (kept in sync; no longer the source of truth) |
+| **M_Grades** | Grade, Designations, Band, Standard_TAT_Days, Active | 17 levels; Standard_TAT_Days mirrors the TAT rule in force **today** (kept in sync; no longer the source of truth). From schema 27, **Designations is a read-only summary** of the grade's active rows in M_Designations; Band and Active are edited in Admin → Grades & designations (ADR-038) |
+| **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
@@ -361,7 +363,7 @@ Evaluated in this order:
 
 ### 6.2 Creating and editing positions (`apiSavePosition`, `apiAddPositionLines`)
 
-- Required: Position, Grade, Dept, MRF receipt date.
+- Required: Position, Grade, Dept, MRF receipt date. **Designation** (schema 27, `checkDesignation_`): the form lists only the active designations of the grade picked; a **new** position must pick one when its grade has any; a value must belong to the grade (the line's existing value is kept if it was later deactivated or the grade's list changed); existing positions without one can still be saved. The grade dropdown shows grade and band only.
 - A multi-position MRF is added as N identical lines (tracker keeps one row per resource).
 - **Dates** (`assignDates_`, ADR-013): when Approval status is Approved and the approved date is blank, MRF approved on defaults to MRF received on; Position assigned on defaults to MRF approved on. Neither may be in the future; approved ≥ received; assigned ≥ approved. **Recruiters can set these dates only while blank**; after that only `lead` users can change them. **Reassigning** a position to another recruiter restarts the recruiter clock: Assigned_On becomes today, unless a `lead` user deliberately sets a different assigned date in the same save; the change history keeps the original.
 - **JD / screening-question confirmation dates** (`checkConfirmDates_`): received ≤ JD confirmed ≤ SQ confirmed, none in the future; SQ date needs the JD date first and needs questions.
@@ -677,6 +679,7 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 | Tools | lead (system actions Admin) | Back up now; Recalculate TAT (Admin); weekly email test/on/off; archive status and **Archive now**; CV parser accuracy; database/folder links |
 | HOD contacts | lead | Department → HOD name/email |
 | Task rules | lead | Due/critical hours and on/off per rule |
+| Grades & designations | lead | Grades: band, active, add a grade (code + starting TAT days). Designations: add, rename (carried to every position of that grade using the old name), move to another grade (only while unused), deactivate, note. Short forms are expanded on save (Sr → Senior, Engr → Engineer, SE → Senior Engineer). All changes audited (`apiGradeSetup`, `apiSaveGradeSetup`) |
 | TAT rules | tat_view (edit: tat_edit) | §7.2 |
 | Users | users_view (edit: users_edit) | §3.3 |
 | Roles & permissions | everyone with Admin page | Read-only matrix |
@@ -833,6 +836,9 @@ Decision: experience is always at least the Appendix F minimum (designation-awar
 **ADR-033 — JD Maker composes, it does not invent** (27 Sep)
 Context: the library is white-collar heavy and department JDs vary; a generated JD must not borrow the wrong trade's duties or state requirements below the policy. Decision: rank library profiles by department, designation and grade with a minimum evidence rule; workmen use a profile only for the same department, band and trade; duties are reused only within the same band family and flagged when re-levelled; competencies come from the framework at the position's grade; experience follows ADR-032; every gap (unmapped department, no profile, inferred qualification, HOD confirmations) is shown as a flag rather than filled silently. Consequences: some JDs (notably workmen) start as standards plus HOD-supplied duties; nothing in a generated JD is unexplained.
 
+**ADR-038 — A grade and a designation are separate; documents use the position's own designation** (29 Sep, v62, user decision)
+Context: each grade carried one free-text label ("M6 — Engr/SE, Officer/Sr Officer") shown in the grade dropdown, and the JD printed the grade's generic description, so a JD for an HR Officer read "M6 – Officers/Engineers". One grade holds many designations. Decision: `M_Designations` holds one row per designation per grade; every position stores its own `Designation`; the position form lists only the chosen grade's designations; the JD Grade cell shows "grade – the position's designation" and never the grade's list; rules that read the title (M5 Junior Manager experience, shift questions) use designation and position title together (`lineTitle_`). Migration seeds designations by splitting the old labels and fills a position's designation only where its title names exactly one. Consequences: grades and designations are configured separately in Admin; renames flow to positions; existing JD files already saved in Drive keep their old wording until regenerated; positions whose title matched no single designation need one picked.
+
 **ADR-037 — Screening is structured, scored the same way for everyone, and kept per candidate** (28 Sep, v53, user process)
 Context: screening answers were free text with no link to the JD, no judgement and nothing the HOD could compare. Decision: questions are drafted from the final JD with requirements, importance and knock-outs; answers are rated (automatically where objective); one transparent weighted score and band; the answered sheet and CV go to the HOD together; every screening is kept with the exact question version. PDFs are built in the browser (jsPDF) so they can be tested end to end; attachments are downloaded because Outlook web links cannot carry files. Consequences: recruiters must complete a screening before Screened; HOD contacts need emails for pre-addressed mail; old free-text answers remain for earlier candidates.
 
@@ -853,6 +859,14 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-29
+
+**v62 — not yet deployed — Grades and designations separated** (schema 27, ADR-038)
+- New `M_Designations` sheet (one row per designation per grade) and `MRF.Designation` column; `M_Grades` gains `Active`, and its `Designations` column becomes a read-only summary. New `Grades.gs`; the v54 functions `apiGradeDesignations` / `apiSaveGradeDesignations` are replaced by `apiGradeSetup` / `apiSaveGradeSetup`.
+- Migration: old grade labels split on commas and slashes with short forms expanded ("Engr/SE, Officer/Sr Officer" → Engineer, Senior Engineer, Officer, Senior Officer); each position's designation filled only when its title names exactly one designation of its grade (longest match; ties and no match left blank).
+- Admin → **Grades & designations** (lead): grades (band, active, add) and designations (add, rename with carry-over to positions, move while unused, deactivate, note), filter by grade.
+- Position form: grade shows grade and band only; a Designation dropdown lists the grade's designations and refreshes when the grade changes; required on new positions. Positions list shows the designation under the grade.
+- JD: the Grade cell reads "M6 – Officer" (the position's designation), no longer the grade's generic description; the JD Maker header shows the same. JD Master profile view no longer shows the grade description next to a profile's grade. M5 Junior Manager experience, screening-question drafts, pool suggestions and shift detection read the designation with the title.
+- Tests: E2E B1 now passes a designation; new B1a–B1d (designation saved, required on new positions, must belong to the grade, grade setup lists). Source syntax checked; Apps Script E2E to be run before deploy.
 
 **v61 — 23:45 — Create JD save hotfix** (no schema change)
 - Fixed the Create JD save/download error caused by duplicate `jmWork` IDs after the wide responsibility editor release. The responsibility editor now uses its own container and the working-conditions textarea is read safely.

@@ -11,7 +11,7 @@ function apiBootstrap() {
   return {
     user: u,
     depts: readTable_('M_Departments').rows.map(function (r) { return { dept: String(r.Dept), bu: String(r.Business_Unit), division: String(r.Division || '') }; }),
-    grades: readTable_('M_Grades').rows.map(function (r) { return { grade: String(r.Grade), designations: String(r.Designations), band: String(r.Band), tat: Number(r.Standard_TAT_Days) }; }),
+    grades: gradesForClient_(),
     tatRules: (function () { const s = settings_(); return tatRulesMap_(Number(s.NOTICE_GRACE_DAYS) || 30, Number(s.TAT_AT_RISK_PCT) || 0.8); })(),
     panel: panelMembers_(false),
     recruiters: readTable_('M_Recruiters').rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Recruiter); }),
@@ -93,6 +93,7 @@ function apiSavePosition(data) {
   if (!patch.Position || !patch.Grade || !patch.Dept || !patch.Receipt_Date) throw new Error('Position, grade, department and MRF receipt date are required.');
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;
+  checkDesignation_(patch, old);
   assignDates_(patch, old, u);
   if (patch.Approval_Status === 'No Vacancy' && !patch.No_Vacancy_Date) throw new Error('Add the date the position was marked No Vacancy.');
   if ((patch.Approval_Status === 'Not Needed' || patch.Approval_Status === 'On Hold') && !patch.Not_Needed_Date) throw new Error('Add the date the position was marked ' + patch.Approval_Status + '.');

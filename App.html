@@ -857,7 +857,7 @@ async function viewPositions(v) {
     const slice = rows.slice(f.page * PAGE, (f.page + 1) * PAGE);
     $('#ptbody').innerHTML = slice.length ? slice.map(p => `<tr data-id="${esc(p.Line_ID)}">
       <td class="nw">${esc(p.MRF_No)}<span class="sub">${esc(p.Line_ID)}</span></td>
-      <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}</td><td>${esc(p.Recruiter)}</td>
+      <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}${p.Designation ? `<span class="sub">${esc(p.Designation)}</span>` : ''}</td><td>${esc(p.Recruiter)}</td>
       <td class="nw">${fmtDate(p.Receipt_Date)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}</td>
       <td class="nw">${p.Actual_DOJ ? fmtDate(p.Actual_DOJ) : p.EDOJ ? fmtDate(p.EDOJ) + '<span class="sub">expected</span>' : ''}</td></tr>`).join('')
       : `<tr><td colspan="8" class="empty">No positions match these filters.</td></tr>`;
@@ -911,6 +911,17 @@ function previewTat(d) {
     _start: start, _hold: hold, _basis: d.TAT_Start_From ? 'original MRF start' : d.Assigned_On ? 'position assigned' : d.Approved_On ? 'MRF approved' : 'MRF received' };
 }
 
+/** Grades for the position form: active grades plus the one the position already has. Only grade and band are shown. */
+function gradeOpts(cur) {
+  return S.boot.grades.filter(g => g.active !== false || g.grade === cur).map(g => [g.grade, g.band ? `${g.grade} \u2014 ${g.band}` : g.grade]);
+}
+/** Designations of one grade (active ones, plus the position's current value if it is no longer listed). */
+function desigOpts(grade, cur) {
+  const g = S.boot.grades.find(x => x.grade === String(grade || '').trim().toUpperCase());
+  const l = g ? (g.designations || []).slice() : [];
+  if (cur && !l.some(d => d.toLowerCase() === String(cur).toLowerCase())) l.unshift(cur);
+  return l;
+}
 function pipelineLocked() { return !isLead() && today() >= (S.boot.cutover || '2026-10-05'); }
 function positionFields(isNew, p, orig) {
   const locked = k => !isNew && !isLead() && !!(orig && orig[k]);
@@ -924,7 +935,9 @@ function positionFields(isNew, p, orig) {
     { k: 'JD_Confirmed_Date', l: 'JD final on', t: 'date', ro: true, hint: 'Set when the department validates the JD (Pipeline \u2192 JD & questions).' },
     { k: 'SQ_Confirmed_Date', l: 'Screening questions final on', t: 'date', ro: true, hint: 'Set when the department confirms the questions (Pipeline \u2192 JD & questions).' },
     { k: 'Position', l: 'Position', req: true, wide: true },
-    { k: 'Grade', l: 'Grade', t: 'select', req: true, opts: S.boot.grades.map(g => [g.grade, `${g.grade} — ${g.designations}`]) },
+    { k: 'Grade', l: 'Grade', t: 'select', req: true, opts: gradeOpts(p && p.Grade) },
+    { k: 'Designation', l: 'Designation', t: 'select', req: desigOpts(p && p.Grade).length > 0, opts: desigOpts(p && p.Grade, p && p.Designation),
+      hint: 'The title within the grade. The JD and screening questions use this, not the whole grade list.' },
     { k: 'Dept', l: 'Department', t: 'select', req: true, opts: S.boot.depts.map(d => d.dept) },
     { k: 'Recruiter', l: 'Recruiter (TA SPOC)', t: 'select', opts: S.boot.recruiters, ro: !isLead() },
     isNew ? { k: '_count', l: 'Number of positions', t: 'number', hint: 'Creates one line per position, as in the tracker.' } : { k: 'No_Of_Positions', l: 'Positions on this line', t: 'number', ro: true },
@@ -1013,7 +1026,14 @@ function positionDrawer(p) {
   if ($('#jdMakeBtn', body)) $('#jdMakeBtn', body).onclick = () => { if (isNew) { toast('Save the position first, then create its JD.', true); return; } openJdMaker(p.Line_ID); };
   if ($('#openPipe', body)) $('#openPipe', body).onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: p.Line_ID }); closeDrawer(); go('pipeline', true); };
   initMulti(body);
-  const gsel = $('#f_Grade', body); if (gsel) gsel.addEventListener('change', () => { $('#hint_Tech_Panel', body).textContent = 'Policy for this grade: ' + policyPanel(gsel.value); });
+  const gsel = $('#f_Grade', body); if (gsel) gsel.addEventListener('change', () => {
+    $('#hint_Tech_Panel', body).textContent = 'Policy for this grade: ' + policyPanel(gsel.value);
+    const dsel = $('#f_Designation', body); if (!dsel) return;
+    const was = dsel.value, keep = p && p.Grade === gsel.value ? p.Designation : '', l = desigOpts(gsel.value, keep);
+    dsel.innerHTML = opts(l, l.find(d => d.toLowerCase() === was.toLowerCase()) || keep || '');
+    if (l.length === 1 && !dsel.value) dsel.value = l[0];
+    const lab = $('label[for=f_Designation]', body); if (lab) lab.textContent = 'Designation' + (l.length ? ' *' : '');
+  });
   const fR = $('#f_Receipt_Date', body), fA = $('#f_Approved_On', body), fS = $('#f_Assigned_On', body), fRec = $('#f_Recruiter', body);
   if (fR && fA && fS) {
     let aAuto = fA.value === fR.value, sAuto = fS.value === fA.value;
@@ -1906,7 +1926,7 @@ function jdmDocx(dr) {
   kids.push(table(pw, [
     row([l('Function'), c(dr.fn, pw[1]), l('Department'), c(dr.dept, pw[3]), l('Unit'), c(dr.unit, pw[5])]),
     row([l('Reports to'), c(dr.reportsTo || tbc, pw[1]), l('Reportees'), c(dr.reportees, pw[3]), l('Category'), c(dr.category, pw[5])]),
-    row([l('Job family'), c(dr.family, pw[1]), l('Competency dept'), c(dr.compDept, pw[3]), l('Grade'), c(dr.grade + (dr.gradeDesc ? ' \u2013 ' + dr.gradeDesc : ''), pw[5])])]));
+    row([l('Job family'), c(dr.family, pw[1]), l('Competency dept'), c(dr.compDept, pw[3]), l('Grade'), c(dr.grade + (dr.gradeTitle ? ' \u2013 ' + dr.gradeTitle : ''), pw[5])])]));
   kids.push(...head('Role purpose'));
   kids.push(P(dr.summary ? t(dr.summary) : t(tbc, { italics: true, color: MUTED }), { after: 20 }));
   const groups = dr.groups.filter(g => g.items.length);
@@ -2018,7 +2038,7 @@ async function openJdMaker(lineId, templateId, after) {
   let localSeq = 1000;
   const mark = () => { work.dirty = true; };
   body.innerHTML = `
-    <p class="hint" style="margin-top:0">${esc(dr.jdRef)} \u00b7 <b>${esc(dr.designation)}</b> \u00b7 ${esc(dr.grade)} (${esc(dr.band)}) \u00b7 ${esc(dr.dept)} \u00b7 version ${esc(dr.version)}</p>
+    <p class="hint" style="margin-top:0">${esc(dr.jdRef)} \u00b7 <b>${esc(dr.designation)}</b> \u00b7 ${esc(dr.grade)}${dr.gradeTitle ? ' ' + esc(dr.gradeTitle) : ''} (${esc(dr.band)}) \u00b7 ${esc(dr.dept)} \u00b7 version ${esc(dr.version)}</p>
     ${dr.flags.map(f => `<div class="note ${f.level === 'warn' ? 'warn-note' : ''}" style="margin:6px 0">${esc(f.text)}</div>`).join('')}
     <div class="field wide"><label for="jmTpl">Library profile used</label><select id="jmTpl">
       ${dr.candidates.map(c => `<option value="${esc(c.id)}" ${dr.template && dr.template.id === c.id ? 'selected' : ''}>${esc(c.id)} \u00b7 ${esc(c.designation)} (${esc(c.grade)}) \u2013 ${esc(c.reasons.join(', '))}</option>`).join('')}
@@ -2670,7 +2690,7 @@ async function jdmProfile(id, after) {
         <button class="btn primary" id="jsave">Save changes</button></div></fieldset>` : '';
   b.innerHTML = `<p style="margin:0 0 4px"><b style="font-size:18px">${esc(t.Designation)}</b></p>
     <p class="hint" style="margin:0 0 12px">${esc(t.Function)} \u00b7 ${esc(t.Job_Family)} \u00b7 ${esc(t.Unit)}${t.Division ? ' \u00b7 ' + esc(t.Division) : ''}${t.Department ? ' \u00b7 ' + esc(t.Department) : ''}</p>
-    <div class="two"><dl class="kv"><dt>Grade</dt><dd>${esc(t.Grade)} \u00b7 ${esc(n.gradeDesc)} ${jdmTick(t.Grade_Confirmed_By)}<span class="sub">${esc(n.band)}</span></dd>
+    <div class="two"><dl class="kv"><dt>Grade</dt><dd>${esc(t.Grade)} ${jdmTick(t.Grade_Confirmed_By)}<span class="sub">${esc(n.band)}</span></dd>
       <dt>Competency department</dt><dd>${esc(t.Competency_Dept || '\u2014')} ${jdmTick(t.Dept_Confirmed_By)}</dd><dt>Reports to</dt><dd>${esc(t.Reports_To || '\u2014')}</dd><dt>Reportees</dt><dd>${esc(t.Reportees || '\u2014')}</dd>
       <dt>Status</dt><dd>${t.Status === 'Variant' ? 'Variant of ' + esc(t.Primary_JD) : esc(t.Status)}</dd><dt>Source</dt><dd style="font-weight:400;font-size:13px">${esc(t.Source_File)}</dd></dl>
       <div><h4 style="margin:0 0 6px">Experience and qualification</h4>${expLine()}</div></div>
@@ -2891,23 +2911,48 @@ async function renderDayStatusAdmin(el) {
   draw();
 }
 async function renderGrades(el) {
-  let rows; try { rows = await api('apiGradeDesignations'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  el.innerHTML = `<section class="panel"><h2>Grades</h2><p class="hint">The designations shown next to each grade when a position is added or edited (for example \u201cM6 \u2014 Engr/SE, Officer/Sr Officer\u201d). Separate titles with commas or slashes. TAT days are set in TAT rules.</p>
-    <div class="table-wrap"><table><thead><tr><th>Grade</th><th>Band</th><th>Designations</th><th>Shown in the position form</th><th class="num">TAT days</th></tr></thead><tbody>
-    ${rows.map(g => `<tr style="cursor:default" data-grade="${esc(g.grade)}"><td><b>${esc(g.grade)}</b></td><td>${esc(g.band)}</td>
-      <td><input data-f="des" value="${esc(g.designations)}" maxlength="200" aria-label="Designations for ${esc(g.grade)}" style="min-width:320px"></td>
-      <td class="sub" data-prev>${esc(g.grade)} \u2014 ${esc(g.designations)}</td><td class="num">${g.tat}</td></tr>`).join('')}
-    </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn primary" id="gradeSave">Save designations</button></div></section>`;
-  $$('tr[data-grade]', el).forEach(tr => { const i = $('[data-f=des]', tr); i.oninput = () => { $('[data-prev]', tr).textContent = tr.dataset.grade + ' \u2014 ' + i.value; }; });
-  $('#gradeSave').onclick = async () => {
-    const list = $$('tr[data-grade]', el).map(tr => ({ grade: tr.dataset.grade, designations: $('[data-f=des]', tr).value }));
-    const b = $('#gradeSave'); busy(b, true, 'Saving\u2026');
-    try {
-      const saved = await api('apiSaveGradeDesignations', list);
-      S.boot.grades = saved.map(g => ({ grade: g.grade, designations: g.designations, band: g.band, tat: g.tat }));
-      toast('Grade designations saved. Everyone sees them after their next refresh.'); busy(b, false, 'Save designations');
-    } catch (e) { toast(e, true); busy(b, false, 'Save designations'); }
+  let res; try { res = await api('apiGradeSetup'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  let grades = res.grades.map(g => Object.assign({}, g)), desigs = res.desigs.map(d => Object.assign({}, d)), only = S.gradeFilter || '';
+  const gradeList = () => grades.filter(g => g.grade).map(g => g.grade.toUpperCase());
+  const draw = () => {
+    const shown = desigs.map((d, i) => [d, i]).filter(([d]) => !only || d.grade === only);
+    el.innerHTML = `<section class="panel"><h2>Grades</h2><p class="hint">A grade is a pay level (for example M6). Its designations are listed separately below, so a JD for an Officer never shows the M6 engineers. Inactive grades are hidden when a position is added; positions already at that grade keep it. TAT days are set in TAT rules; a new grade starts with the days entered here.</p>
+      <div class="table-wrap"><table><thead><tr><th>Grade</th><th>Band</th><th class="num">Positions</th><th class="num">TAT days</th><th>Active</th></tr></thead><tbody>
+      ${grades.map((g, i) => `<tr style="cursor:default" data-g="${i}">
+        <td>${g.isNew ? `<input data-f="grade" value="${esc(g.grade)}" maxlength="5" placeholder="e.g. M8" aria-label="New grade code" style="width:90px">` : `<b>${esc(g.grade)}</b>`}</td>
+        <td><input data-f="band" value="${esc(g.band)}" maxlength="60" aria-label="Band for ${esc(g.grade || 'new grade')}" style="min-width:220px"></td>
+        <td class="num">${g.isNew ? '' : g.lines}</td>
+        <td class="num">${g.isNew ? `<input data-f="tat" type="number" min="1" max="365" value="${esc(g.tat || '')}" aria-label="TAT days" style="width:80px">` : g.tat}</td>
+        <td><input type="checkbox" data-f="active"${g.active ? ' checked' : ''} aria-label="Active"></td></tr>`).join('')}
+      </tbody></table></div><div class="btn-row" style="margin-top:8px"><button class="btn" id="grAdd">Add grade</button></div></section>
+      <section class="panel"><h2>Designations</h2><p class="hint">One row per title within a grade. The position form lists only the designations of the grade picked, and the JD shows only the position’s own designation. Renaming a designation updates the positions that use it. A designation in use cannot move to another grade; add it to the other grade instead. Deactivate rather than delete.</p>
+      <div class="filters"><div class="field"><label for="dgOnly">Grade</label><select id="dgOnly"><option value="">All grades</option>${gradeList().map(g => `<option ${g === only ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Designation</th><th>Grade</th><th class="num">Positions</th><th>Active</th><th>Note</th></tr></thead><tbody>
+      ${shown.length ? shown.map(([d, i]) => `<tr style="cursor:default" data-d="${i}">
+        <td><input data-f="designation" value="${esc(d.designation)}" maxlength="60" placeholder="e.g. Senior Officer" aria-label="Designation" style="min-width:220px"></td>
+        <td><select data-f="grade" aria-label="Grade"${d.used ? ' disabled title="In use by positions"' : ''}>${opts(gradeList(), d.grade, !d.grade)}</select></td>
+        <td class="num">${d.used || ''}</td>
+        <td><input type="checkbox" data-f="active"${d.active ? ' checked' : ''} aria-label="Active"></td>
+        <td><input data-f="note" value="${esc(d.note)}" maxlength="200" aria-label="Note" style="min-width:200px"></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No designations for this grade yet.</td></tr>'}
+      </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn" id="dgAdd">Add designation</button><button class="btn primary" id="gradeSave">Save grades & designations</button></div></section>`;
+    const bind = (sel, arr) => $$(sel, el).forEach(tr => { const o = arr[+(tr.dataset.g ?? tr.dataset.d)];
+      $$('[data-f]', tr).forEach(inp => inp.oninput = inp.onchange = () => { o[inp.dataset.f] = inp.type === 'checkbox' ? inp.checked : inp.value; }); });
+    bind('tr[data-g]', grades); bind('tr[data-d]', desigs);
+    $('#dgOnly').onchange = e => { only = S.gradeFilter = e.target.value; draw(); };
+    $('#grAdd').onclick = () => { grades.push({ grade: '', band: '', tat: 50, active: true, lines: 0, isNew: true }); draw(); };
+    $('#dgAdd').onclick = () => { desigs.push({ id: '', designation: '', grade: only, active: true, note: '', used: 0 }); draw(); const ins = $$('tr[data-d] [data-f=designation]', el); if (ins.length) ins[ins.length - 1].focus(); };
+    $('#gradeSave').onclick = async e => {
+      const b = e.target; busy(b, true, 'Saving…');
+      try {
+        const out = await api('apiSaveGradeSetup', { grades, desigs: desigs.filter(d => d.id || String(d.designation).trim()) });
+        grades = out.grades.map(g => Object.assign({}, g)); desigs = out.desigs.map(d => Object.assign({}, d));
+        S.boot.grades = grades.map(g => ({ grade: g.grade, band: g.band, tat: g.tat, active: g.active,
+          designations: desigs.filter(d => d.active && d.grade.toUpperCase() === g.grade.toUpperCase()).map(d => d.designation) }));
+        toast('Grades and designations saved. Everyone sees them after their next refresh.'); S.posStale = true; draw();
+      } catch (err) { toast(err, true); busy(b, false, 'Save grades & designations'); }
+    };
   };
+  draw();
 }
 async function viewAdmin(v) {
   const admin = can('system');
@@ -2920,7 +2965,7 @@ async function viewAdmin(v) {
       <button role="tab" data-t="tools" aria-selected="${f.tab === 'tools'}">Tools</button>
       <button role="tab" data-t="hod" aria-selected="${f.tab === 'hod'}">HOD contacts</button>
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
-      <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades</button>
+      <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>
       <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button></div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });

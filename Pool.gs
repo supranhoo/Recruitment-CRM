@@ -99,7 +99,7 @@ function apiSuggestForLine(lineId, opts) {
     if (shared.length) { score += Math.min(4, 2 * shared.length); reasons.push('Title/skills match: ' + shared.join(', ')); }
     if (!score) return;
     const y = expYears_(c), iti = eduIti_(c.Education);
-    const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(grade, line.Position) : null;
+    const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(grade, lineTitle_(line)) : null;
     const min = pol ? (iti ? pol.iti : pol.degree) : (iti ? GRADE_MIN_EXP_.iti : GRADE_MIN_EXP_.degree)[grade];
     if (y != null && min != null) {
       if (y >= min) { score += 2; reasons.push(y + ' yrs (grade ' + grade + ' needs ' + min + '+' + (iti ? ' with 12th/ITI' : '') + ')'); }

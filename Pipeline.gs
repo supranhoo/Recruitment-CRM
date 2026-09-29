@@ -565,7 +565,7 @@ function pdocSuggest_(line) {
     if (rows.length) dr = JSON.parse(String(rows[rows.length - 1].Draft_JSON || '{}'));
   } catch (e) { dr = null; }
   const g = String(line.Grade || '').trim().toUpperCase();
-  const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(g, line.Position) : null;
+  const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(g, lineTitle_(line)) : null;
   out.push(dr && dr.qualification ? 'What is your highest qualification? This role needs: ' + dr.qualification + '.' : 'What is your highest qualification, and in which discipline?');
   const exp = dr && dr.expMin !== '' && dr.expMin != null ? dr.expMin : pol ? pol.degree : null;
   if (exp) out.push('How many years of total experience do you have? The minimum is ' + exp + ' years' + (pol && pol.iti ? ' (' + pol.iti + ' with 12th / ITI)' : '') + '.');
@@ -731,7 +731,7 @@ function sqJdSource_(line) {
 function sqDraft_(line) {
   const g = String(line.Grade || '').trim().toUpperCase(), gk = typeof jdmGradeKey_ === 'function' ? jdmGradeKey_(g) : g;
   const dr = sqJdSource_(line) || {};
-  const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(gk, line.Position) : null;
+  const pol = typeof jdmPolicyExp_ === 'function' ? jdmPolicyExp_(gk, lineTitle_(line)) : null;
   const items = [];
   const E = function (o) { items.push(Object.assign({ sec: 'E', imp: 'M', ko: true }, o)); };
   const R = function (o) { items.push(Object.assign({ sec: 'R', imp: 'I', ko: false }, o)); };
@@ -745,7 +745,7 @@ function sqDraft_(line) {
     E({ label: 'Relevant experience', q: 'How many years of that experience are directly relevant to this role?', type: 'number', min: m ? Number(m[1]) : null,
       need: sqCut_(String(dr.expRelevant).replace(/^Total:\s*/i, ''), 140), source: 'JD relevant experience' });
   }
-  const shiftText = [line.Position, dr.designation, dr.working, dr.summary].join(' ');
+  const shiftText = [line.Position, line.Designation, dr.designation, dr.working, dr.summary].join(' ');
   if (/shift/i.test(shiftText) || /^W/.test(gk)) E({ label: 'Rotational shifts', q: 'Are you willing to work rotational shifts, including nights?', type: 'yesno', expect: 'Yes', need: 'Yes', source: 'JD: shift role' });
   E({ label: 'Based at ' + (dr.unit ? dr.unit + ' ' : '') + 'plant', q: 'Are you willing to be based at our ' + (dr.unit ? dr.unit + ' ' : '') + 'plant location?', type: 'yesno', expect: 'Yes', need: 'Yes', source: 'Position location' });
   E({ label: 'Notice period', q: 'What is your notice period (days)?', type: 'number', max: 30, partly: 60, imp: 'I', ko: false, need: 'Up to 30 days (31\u201360 partly)', source: 'Recruitment Policy 20.1 (notice over 30 days adds to TAT)' });
