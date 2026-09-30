@@ -154,7 +154,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
-| `Ctc.gs` | CTC calculator (schema 29): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters") |
+| `Ctc.gs` | CTC calculator (schema 29): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
 | `Import.gs` (file_8) | One-time `importDatabase()` from the migrated Excel data |
@@ -273,7 +273,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **TAT_Exemptions** | Exemption_ID (TEX-), Line_ID, MRF_No, Type (Days / Pause), Days, From_Date, To_Date, Reason, Remark, Proof_File, Applies_Recruiter, Applies_Position, Status (Pending / Approved / Rejected / Withdrawn / Revoked), Requested_By/On, Decided_By/On, Decision_Note | Schema 28 (ADR-039). Applies_* are copied from the reason when decided |
 | **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
-| **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
+| **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired / Discarded), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Updated_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
 | **CTC_Calcs** | Calc_ID (CTC-00001…), Status (Draft / Issued / Superseded / Discarded), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 29. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
@@ -706,7 +706,17 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 - **Issue letter** (two clicks): the page draws the letter as an image (html2canvas, 2x) and makes an A4 PDF (jsPDF); the server checks it is a PDF, keeps it in Drive and locks the record (`apiCtcIssue`). The rules must still be the version it was worked out on. Drafts show a DRAFT watermark and cannot be downloaded; issued letters download as **PDF** or **image (PNG)**, and **Open issued PDF** opens the Drive copy.
 - **Saved calculations** tab (`apiCtcList`): own calculations (everyone's with `ctc_view_all`), search and status filter, CSV, a note when some were made on older rules. Opening one (`apiCtcGet`) offers Letter, Edit in calculator (own draft), **Re-run on current rules** (loads the inputs with a line-by-line "before / now / change" comparison; saving makes a new calculation linked to the old one, and issuing it marks the old one Superseded) and Discard draft. Letters of older calculations use the rules version they were made on (`apiCtcVersion`).
 
-**Still to come (planned phases):** the rules editor (draft, test bench, required reason and remark, activation); role access settings with "Preview as role" and optional approval before sharing.
+**Changing the rules** (phase 3; **Rules** tab, `ctc_rules`, Admin):
+- **Start a new version** copies the rules in force into a draft (one draft at a time; `apiCtcDraftNew`). The draft is edited on four sub-tabs:
+  - **Items**, grouped by section: rename any item; fixed amounts; percentages; caps; the condition value and test (above / from / up to / below); slab limits and amounts (Mediclaim by Single/Married), add or remove slabs; option names and amounts of each choice. **Add an allowance**: a name and the monthly amounts to choose from (added before Other allowances, which keeps balancing); allowance options can be added or removed and an added allowance removed. Changed items are marked.
+  - **Choices**: the names shown on the calculator, the preselected option and the note under each.
+  - **Letter & terms**: company name, line under it, signatory, the candidate signature line (English, Hindi), the terms (English and Hindi, "Always" or "Only when <item> is paid"; add or remove) and the calculator's explanations.
+  - **Test & put in force**: the list of changes against the rules in force (from the last save), the **test bench** (27 sample targets on Gross, Total CTC and Net with the preselected choices or those set on the Calculator tab; old and new Gross, Net, Gross CTC and Total CTC and the items that change) and the activation form.
+- Problems are shown live (the engine's checks); **Save draft** (`apiCtcDraftSave`) also checks names, amounts (0 to 1 crore), option codes, terms and letter text and saves nothing if anything is wrong. The version cannot be put in force with unsaved changes or no changes.
+- **Put in force** (`apiCtcActivate`): effective date today or later (never in the past), a reason (Statutory change, Company policy change, Correction, Other) and a remark of at least 10 characters. The version's Change_Summary stores every change against the version it replaces, e.g. "Conveyance › amount: 1600 → 1800", "ESIC (Deductions) › option 1 › condition: 21000 → 25000", "Added item: Shift allowance". A future-dated version shows as **Scheduled** (on the calculator badge and in Version history) and can be **cancelled** before it takes effect with a remark (`apiCtcRetire`, status Retired); a version in force is never withdrawn, only replaced by a new one. **Discard draft** keeps the row as Discarded.
+- Every step is in the change history (`audit_`). Calculations keep the version they were made on; a draft made on older rules must be re-run before its letter can be issued.
+
+**Still to come (planned phase):** role access settings with "Preview as role" and optional approval before sharing.
 
 ## 12. Administration, settings, jobs and operations
 
@@ -906,6 +916,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — CTC calculator, phase 3: rules editor** (schema 29, same release; §11.7)
+- Rules tab (Admin): draft version copied from the rules in force; edit items, amounts, percentages, caps, conditions, slabs, choices, allowances (add/remove), letter and terms; live problems; save; test bench with item-level changes; put in force from today or a later date with reason and remark; scheduled versions shown and cancellable; automatic change summary stored with each version.
+- `apiCtcDraftNew`, `apiCtcDraftSave`, `apiCtcDraftDiscard`, `apiCtcActivate`, `apiCtcRetire`; `ctcCheck_`, `ctcDiff_`. Tests: 16 server cases, browser run of the editor, E2E I13–I17.
 
 **Unreleased — CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 29, same release; §11.7)
 - Save draft, Letter preview (English / Hindi / both), Issue (PDF kept in Drive "CTC letters", record locked), PDF and PNG downloads for issued letters, Saved calculations tab with search, CSV, re-run with before/now comparison, superseding, discard.
@@ -1488,6 +1502,14 @@ Generated mechanically from the v46 source: every message the server can show a 
 - Only the person who made this calculation can issue it. / Calculation {…} is already {…}. / Calculation {…} was issued meanwhile.
 - The CTC rules changed to {…} after this was saved. Re-run it on the new rules first.
 - The letter PDF did not arrive. Try again. / The letter file is not a PDF.
+- Version {…} is already being drafted by {…}. Continue that one or discard it first.
+- The rules did not arrive. Try again. / The rules are too long to store in one cell. Remove unused options or shorten texts.
+- Version {…} is {…} and can no longer be edited.
+- The rules can take effect from today or a later date, not the past. / Choose the reason for the change.
+- Write a remark of at least 10 characters: what changed and why. / … why the version is cancelled.
+- The draft has problems: {…} / The draft is the same as {…}. Change something or discard it.
+- Only a version that has not taken effect yet can be cancelled. To change rules in force, make a new version.
+- (save) {item}: enter a number from 0 to 1,00,00,000. / {…}: enter the text. / {…}: keep it under {n} characters. / "{choice}": option code {…} is used twice.
 - Only a draft can be discarded. / Calculation {…} was not found. / You can open only your own calculations. / Rules version {…} was not found.
 - (page) Other allowances comes out negative ({…}): the chosen allowances add up to more than this gross allows. Lower the allowances or raise the target.
 

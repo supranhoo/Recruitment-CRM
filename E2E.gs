@@ -226,5 +226,19 @@ function e2eRun_(trash) {
     });
     t('I12 saved calculations list', function () { return apiCtcList({}).rows.length >= 2; });
   }
+  const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
+  if (ctcR) {
+    t('I14 save a change and see it listed', function () {
+      const cfg = ctcR.draft.config; cfg.components.filter(function (c) { return c.id === 'conv'; })[0].amount = 1800;
+      const r = apiCtcDraftSave(ctcR.draft.id, cfg); return r.saved && r.changes.length === 1 ? r.changes[0] : false;
+    });
+    err('I15 a remark is required to put rules in force', function () { apiCtcActivate(ctcR.draft.id, { eff: today, reason: 'Correction', remark: 'x' }); }, /at least 10/);
+    t('I16 put the new version in force', function () {
+      const r = apiCtcActivate(ctcR.draft.id, { eff: today, reason: 'Correction', remark: 'E2E test of the rules editor' });
+      const c = apiCtcCalc({ basis: 'gross', target: 72080, codes: ctcSample });
+      return r.active.id === ctcR.draft.id && c.lines.filter(function (l) { return l.id === 'conv'; })[0].monthly === 1800 ? r.active.id : false;
+    });
+    err('I17 an issued letter on older rules cannot be re-issued', function () { apiCtcIssue(ctcA.id, { language: 'en', pdf: ctcPdf }); }, /already|superseded/i);
+  }
   return { pass: pass, fail: fail, log: log };
 }
