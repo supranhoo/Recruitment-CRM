@@ -9,8 +9,13 @@
  */
 const CTC_RULES_ = 'CTC_Rules';
 const CTC_RULE_COLS_ = ['Version_ID', 'Effective_From', 'Status', 'Config_JSON', 'Reason', 'Remark', 'Change_Summary',
-  'Created_By', 'Created_At', 'Activated_By', 'Activated_At'];
+  'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Activated_By', 'Activated_At'];
 const CTC_REASONS_ = ['Statutory change', 'Company policy change', 'Correction', 'Initial setup', 'Other'];
+/** Saved calculations. A Draft can be replaced by its maker; an Issued one is never changed (a re-run makes a new record). */
+const CTC_CALCS_ = { name: 'CTC_Calcs', id: 'Calc_ID', prefix: 'CTC-', width: 5, dates: [], editable: [] };
+const CTC_CALC_COLS_ = ['Calc_ID', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total_CTC', 'Gross', 'Net', 'Rule_Version',
+  'Inputs_JSON', 'Result_JSON', 'Language', 'Letter_File', 'Rerun_Of', 'Superseded_By', 'Issued_By', 'Issued_At', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
+const CTC_LANGS_ = ['en', 'hi', 'both'];
 
 /* ---------------------------------------------------------------- engine (shared with the page) ------------ */
 
@@ -283,6 +288,8 @@ function ctcSeedConfig_() {
   const ltaOpts = ro(3, 15).concat([{ code: 30, label: '₹30,000' }]);
   return {
     title: 'CTC structure',
+    letter: { company: 'BFCL', heading: 'Salary structure', subheading: 'Compensation details (CTC)', signatory: 'Authorised signatory',
+      accept: { en: 'Candidate\u2019s signature', hi: '\u0909\u092e\u094d\u092e\u0940\u0926\u0935\u093e\u0930 \u0915\u0947 \u0939\u0938\u094d\u0924\u093e\u0915\u094d\u0937\u0930' } },
     source: 'New_CTC_Structure.xlsx, sheet "CTC Calculator"',
     basisList: [{ id: 'total_ctc', label: 'Total CTC' }, { id: 'gross_ctc', label: 'Gross CTC' }, { id: 'gross', label: 'Gross salary' }, { id: 'net', label: 'Net (in-hand) salary' }],
     defaultBasis: 'gross',
@@ -388,6 +395,8 @@ function ctcSchema_() {
     sh.getRange(1, 1, 1, CTC_RULE_COLS_.length).setValues([CTC_RULE_COLS_]).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1F3A5F');
     sh.setFrozenRows(1);
   }
+  addSheet_(CTC_CALCS_.name, CTC_CALC_COLS_);
+  addColumns_(CTC_RULES_, ['Updated_By', 'Updated_At']);
   if (sh.getLastRow() > 1) return;
   const now = new Date(), eff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const o = { Version_ID: 'CTC-V1', Effective_From: eff, Status: 'Active', Config_JSON: JSON.stringify(ctcSeedConfig_()), Reason: 'Initial setup',
@@ -403,7 +412,8 @@ function ctcVersions_() {
       reason: String(r.Reason || ''), remark: String(r.Remark || ''), summary: String(r.Change_Summary || ''),
       by: String(r.Created_By || ''), at: r.Created_At instanceof Date ? fmt_(r.Created_At, TZ, 'd MMM yyyy, HH:mm') : '',
       activatedBy: String(r.Activated_By || ''), activatedAt: r.Activated_At instanceof Date ? fmt_(r.Activated_At, TZ, 'd MMM yyyy, HH:mm') : '',
-      json: String(r.Config_JSON || '') };
+      updatedBy: String(r.Updated_By || ''), updatedAt: r.Updated_At instanceof Date ? fmt_(r.Updated_At, TZ, 'd MMM yyyy, HH:mm') : '',
+      json: String(r.Config_JSON || ''), _row: r._row };
   }).sort(function (a, b) { return b.no - a.no; });
 }
 
@@ -427,8 +437,12 @@ function apiCtcRules() {
   const u = currentUser_(); ensureSchema_();
   ctcRequire_(u, 'ctc_use');
   const act = ctcActive_();
-  const versions = ctcVersions_().map(function (v) { const o = Object.assign({}, v); delete o.json; return o; });
-  return { canRules: can_(u, 'ctc_rules'), today: fmt_(new Date(), TZ, 'yyyy-MM-dd'), active: act, versions: versions, reasons: CTC_REASONS_ };
+  const all = ctcVersions_(), rules = can_(u, 'ctc_rules');
+  const versions = all.filter(function (v) { return v.status !== 'Draft' && v.status !== 'Discarded'; }).map(function (v) { const o = Object.assign({}, v); delete o.json; delete o._row; return o; });
+  const d = rules ? all.filter(function (v) { return v.status === 'Draft'; })[0] : null;
+  const draft = d ? { id: d.id, by: d.by, at: d.at, updatedBy: d.updatedBy, updatedAt: d.updatedAt, config: JSON.parse(d.json), changes: ctcDiff_(act.config, JSON.parse(d.json)) } : null;
+  return { canRules: rules, today: fmt_(new Date(), TZ, 'yyyy-MM-dd'), active: act, versions: versions, draft: draft,
+    reasons: CTC_REASONS_.filter(function (x) { return x !== 'Initial setup'; }) };
 }
 
 /** The server's own calculation on the rules in force (the page shows the same figures live). */
@@ -455,4 +469,330 @@ function ctcInput_(d) {
   const txt = function (v, n) { return clean_(String(v || '')).trim().slice(0, n); };
   return { basis: basis, target: Math.round(target), codes: codes, amounts: amounts,
     name: txt(d.name, 120), designation: txt(d.designation, 120), grade: txt(d.grade, 20) };
+}
+
+/* ---------------------------------------------------------------- saved calculations and letters ----------- */
+
+function ctcCanSee_(u, r) { return can_(u, 'ctc_view_all') || String(r.Created_By).toLowerCase() === u.email; }
+function ctcRow_(id) {
+  const r = readTable_(CTC_CALCS_.name).rows.filter(function (x) { return String(x.Calc_ID) === String(id); })[0];
+  if (!r) throw new Error('Calculation ' + id + ' was not found.');
+  return r;
+}
+function ctcOut_(r, full) {
+  const at = function (v) { return v instanceof Date ? fmt_(v, TZ, 'd MMM yyyy, HH:mm') : String(v || ''); };
+  const o = { id: String(r.Calc_ID), status: String(r.Status), name: String(r.Name || ''), designation: String(r.Designation || ''), grade: String(r.Grade || ''),
+    basis: String(r.Basis), target: Number(r.Target) || 0, totalCtc: Number(r.Total_CTC) || 0, gross: Number(r.Gross) || 0, net: Number(r.Net) || 0,
+    version: String(r.Rule_Version), language: String(r.Language || ''), letter: String(r.Letter_File || ''), rerunOf: String(r.Rerun_Of || ''),
+    supersededBy: String(r.Superseded_By || ''), by: String(r.Created_By || ''), at: at(r.Created_At), day: r.Created_At instanceof Date ? ymd_(r.Created_At) : '',
+    issuedBy: String(r.Issued_By || ''), issuedAt: at(r.Issued_At) };
+  if (full) { o.inputs = JSON.parse(String(r.Inputs_JSON || '{}')); o.result = JSON.parse(String(r.Result_JSON || '{}')); }
+  return o;
+}
+
+/**
+ * Saves a calculation as a draft on the rules in force (the server works it out again; the page's figures are not
+ * trusted). d.id replaces the caller's own draft; d.rerunOf links a re-run of an earlier calculation.
+ */
+function apiCtcSave(d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  d = d || {};
+  const inp = ctcInput_(d), act = ctcActive_();
+  const r = ctcEngine_().solve(act.config, inp);
+  if (r.status === 'unsettled') throw new Error('The structure did not settle, so it cannot be saved. Check the Basic choice.');
+  if ((r.warnings || []).length) throw new Error(r.warnings[0]);
+  const rerunOf = d.rerunOf ? String(d.rerunOf) : '';
+  if (rerunOf && !ctcCanSee_(u, ctcRow_(rerunOf))) throw new Error('You can re-run only your own calculations.');
+  const patch = { Status: 'Draft', Name: inp.name, Designation: inp.designation, Grade: inp.grade, Basis: inp.basis, Target: inp.target,
+    Total_CTC: r.totals.totalCtc, Gross: r.totals.gross, Net: r.totals.net, Rule_Version: act.id,
+    Inputs_JSON: JSON.stringify(inp), Result_JSON: JSON.stringify(r), Rerun_Of: rerunOf };
+  let rec;
+  if (d.id) {
+    const old = ctcRow_(d.id);
+    if (String(old.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this draft can change it.');
+    if (String(old.Status) !== 'Draft') throw new Error('Calculation ' + d.id + ' is ' + String(old.Status).toLowerCase() + ' and cannot be changed. Re-run it to make a new one.');
+    rec = update_(CTC_CALCS_, d.id, patch, u);
+  } else rec = insert_(CTC_CALCS_, patch, u);
+  return ctcOut_(rec, true);
+}
+
+/**
+ * Issues a draft: stores the letter PDF made on the page in Drive and locks the record. The rules must still be the
+ * ones it was worked out on. Issuing a re-run marks the calculation it replaces as superseded.
+ */
+function apiCtcIssue(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  d = d || {};
+  const r = ctcRow_(id);
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can issue it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is already ' + String(r.Status).toLowerCase() + '.');
+  const act = ctcActive_();
+  if (String(r.Rule_Version) !== act.id) throw new Error('The CTC rules changed to ' + act.id + ' after this was saved. Re-run it on the new rules first.');
+  const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : 'en';
+  const b64 = String(d.pdf || '');
+  if (b64.length < 200 || b64.length > 20 * 1024 * 1024) throw new Error('The letter PDF did not arrive. Try again.');
+  const bytes = Utilities.base64Decode(b64);
+  if (String.fromCharCode.apply(null, bytes.slice(0, 5)) !== '%PDF-') throw new Error('The letter file is not a PDF.');
+  const name = id + ' - ' + (String(r.Name || '').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'Salary structure') + '.pdf';
+  const file = ctcFolder_().createFile(Utilities.newBlob(bytes, 'application/pdf', name));
+  const rec = update_(CTC_CALCS_, id, { Status: 'Issued', Language: lang, Letter_File: file.getUrl(), Issued_By: u.email, Issued_At: new Date() }, u, function (x) {
+    if (String(x.Status) !== 'Draft') throw new Error('Calculation ' + id + ' was issued meanwhile.');
+  });
+  const prev = String(r.Rerun_Of || '');
+  if (prev) {
+    try {
+      const p = ctcRow_(prev);
+      if (String(p.Status) === 'Issued') update_(CTC_CALCS_, prev, { Status: 'Superseded', Superseded_By: id }, u);
+    } catch (e) { }
+  }
+  return ctcOut_(rec, true);
+}
+
+/** Drops the caller's own draft (kept in the sheet as Discarded, for the record). */
+function apiCtcDiscard(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const r = ctcRow_(id);
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this draft can discard it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Only a draft can be discarded.');
+  update_(CTC_CALCS_, id, { Status: 'Discarded' }, u);
+  return true;
+}
+
+/** Saved calculations, newest first: the caller's own, or everyone's with ctc_view_all. */
+function apiCtcList(f) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  f = f || {};
+  const rows = readTable_(CTC_CALCS_.name).rows.filter(function (r) { return ctcCanSee_(u, r) && (f.discarded || String(r.Status) !== 'Discarded'); })
+    .map(function (r) { return ctcOut_(r, false); })
+    .sort(function (a, b) { return Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')); });
+  return { all: can_(u, 'ctc_view_all'), active: ctcActive_().id, rows: rows.slice(0, 1000) };
+}
+
+/** One version's rules (for letters worked out on earlier rules). */
+function apiCtcVersion(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const v = ctcVersions_().filter(function (x) { return x.id === String(id); })[0];
+  if (!v) throw new Error('Rules version ' + id + ' was not found.');
+  return JSON.parse(v.json);
+}
+
+function apiCtcGet(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const r = ctcRow_(id);
+  if (!ctcCanSee_(u, r)) throw new Error('You can open only your own calculations.');
+  return ctcOut_(r, true);
+}
+
+/** Drive folder for issued letters, inside the documents folder. */
+function ctcFolder_() {
+  const s = settings_();
+  if (s.CTC_FOLDER_ID) { try { const f = DriveApp.getFolderById(s.CTC_FOLDER_ID); if (!f.isTrashed()) return f; } catch (e) { } }
+  if (!s.CV_FOLDER_ID) throw new Error('The documents folder is not set. Ask the admin to run setup().');
+  const parent = DriveApp.getFolderById(s.CV_FOLDER_ID);
+  const it = parent.getFoldersByName('CTC letters');
+  const folder = it.hasNext() ? it.next() : parent.createFolder('CTC letters');
+  setSetting_('CTC_FOLDER_ID', folder.getId(), 'Drive folder for issued CTC letters (PDF)');
+  return folder;
+}
+
+/* ---------------------------------------------------------------- editing the rules (ctc_rules) ------------ */
+
+/** Checks beyond the engine's: labels, amounts, percentages, letter text. Returns a list of problems. */
+function ctcCheck_(cfg) {
+  const errs = ctcEngine_().validate(cfg);
+  if (errs.length) return errs;
+  const num = function (v, where, max) { if (!(typeof v === 'number' && isFinite(v) && v >= 0 && v <= (max || 1e7))) errs.push(where + ': enter a number from 0 to ' + (max || 1e7).toLocaleString('en-IN') + '.'); };
+  const txt = function (v, where, n) { if (!String(v || '').trim()) errs.push(where + ': enter the text.'); else if (String(v).length > (n || 80)) errs.push(where + ': keep it under ' + (n || 80) + ' characters.'); };
+  cfg.components.forEach(function (c) {
+    const w = '"' + (c.label || c.id) + '"';
+    txt(c.label, 'An item', 60);
+    if (c.kind === 'fixed') num(c.amount, w);
+    if (c.when) num(Number(c.when.value) === c.when.value ? c.when.value : NaN, w + ' condition');
+    Object.keys(c.values || {}).forEach(function (k) {
+      const o = c.values[k], ow = w + ', option ' + k;
+      if (o.amount !== undefined) num(o.amount, ow);
+      if (o.cap !== undefined && o.cap !== null && o.cap !== '') num(o.cap, ow + ' cap');
+      if (o.when) num(Number(o.when.value) === o.when.value ? o.when.value : NaN, ow + ' condition');
+    });
+    (c.slabs || []).forEach(function (sl, i) {
+      const sw = w + ', slab ' + (i + 1);
+      if (sl.upto !== null && sl.upto !== undefined && sl.upto !== '') num(sl.upto, sw + ' "up to"');
+      if (sl.amount && typeof sl.amount === 'object') Object.keys(sl.amount).forEach(function (k) { num(sl.amount[k], sw + ' (' + k + ')'); });
+      else num(sl.amount, sw);
+    });
+  });
+  Object.keys(cfg.flags).forEach(function (k) {
+    const f = cfg.flags[k], seen = {};
+    txt(f.label, 'A choice', 60);
+    f.options.forEach(function (o) { txt(o.label, '"' + f.label + '" option', 80); if (seen[String(o.code)]) errs.push('"' + f.label + '": option code ' + o.code + ' is used twice.'); seen[String(o.code)] = 1; });
+  });
+  (cfg.notes || []).forEach(function (n, i) { txt(n.en, 'Term ' + (i + 1) + ' (English)', 600); if (n.hi && n.hi.length > 600) errs.push('Term ' + (i + 1) + ' (Hindi): keep it under 600 characters.'); });
+  txt((cfg.letter || {}).company, 'Letter: company name', 80);
+  txt((cfg.letter || {}).signatory, 'Letter: signatory', 60);
+  return errs;
+}
+
+/** Readable list of what changed from one rules document to another, e.g. "Conveyance › amount: 1600 → 1800". */
+function ctcDiff_(a, b) {
+  const labelOf = function (cfg, id) { const c = cfg.components.filter(function (x) { return x.id === id; })[0]; return c ? c.label : id; };
+  const flat = function (cfg) {
+    const out = {};
+    const NAMES = { when: 'condition', op: 'test', pct: '%', upto: 'up to', base: 'of' };
+    const put = function (path, v) { out[path.map(function (k) { return NAMES[k] || k; }).join(' \u203a ').replace(' \u203a condition \u203a value', ' \u203a condition').replace(' \u203a condition \u203a test', ' \u203a condition test')] = v; };
+    const walk = function (path, v) {
+      if (v === null || typeof v !== 'object') { put(path, v); return; }
+      if (Array.isArray(v)) { v.forEach(function (x, i) { walk(path.concat([x && x.code !== undefined ? 'option ' + x.code : x && x.id ? x.id : 'item ' + (i + 1)]), x); }); return; }
+      Object.keys(v).forEach(function (k) { walk(path.concat([k]), v[k]); });
+    };
+    const count = {}; cfg.components.forEach(function (c) { count[c.label] = (count[c.label] || 0) + 1; });
+    const secName = cfg.sections || {};
+    cfg.components.forEach(function (c) {
+      const base = [(c.label || c.id) + (count[c.label] > 1 ? ' (' + (secName[c.section] || c.section) + ')' : '')];
+      Object.keys(c).forEach(function (k) {
+        if (k === 'id' || k === 'section' || k === 'kind' || k === 'flag') return;
+        if (k === 'slabs') { (c.slabs || []).forEach(function (sl, i) { walk(base.concat(['slab ' + (i + 1)]), sl); }); return; }
+        if (k === 'values') { Object.keys(c.values).forEach(function (code) { walk(base.concat(['option ' + code]), c.values[code]); }); return; }
+        walk(base.concat([k]), c[k]);
+      });
+    });
+    Object.keys(cfg.flags).forEach(function (k) { const f = cfg.flags[k]; walk(['Choice: ' + (f.label || k)], { label: f.label, default: f.default, options: f.options, note: f.note }); });
+    (cfg.notes || []).forEach(function (n, i) { walk(['Term ' + (n.id || i + 1)], { English: n.en, Hindi: n.hi, 'only when paid': n.when ? labelOf(cfg, n.when) : '' }); });
+    (cfg.explain || []).forEach(function (e, i) { put(['Explanation ' + (i + 1)], e.text); });
+    walk(['Letter'], cfg.letter || {});
+    return out;
+  };
+  const A = flat(a), B = flat(b), out = [];
+  const show = function (v) { return v === undefined || v === '' || v === null ? '(none)' : String(v).length > 60 ? '“' + String(v).slice(0, 57) + '…”' : String(v); };
+  const ids = function (cfg) { const o = {}; cfg.components.forEach(function (c) { o[c.id] = c.label; }); return o; };
+  const ia = ids(a), ib = ids(b);
+  Object.keys(ib).forEach(function (k) { if (!ia[k]) out.push('Added item: ' + ib[k]); });
+  Object.keys(ia).forEach(function (k) { if (!ib[k]) out.push('Removed item: ' + ia[k]); });
+  const added = {}; Object.keys(ib).forEach(function (k) { if (!ia[k]) added[ib[k]] = 1; });
+  const gone = {}; Object.keys(ia).forEach(function (k) { if (!ib[k]) gone[ia[k]] = 1; });
+  const skip = function (p) { const head = p.split(' › ')[0]; return added[head] || gone[head] || /^Choice: /.test(head) && (added[head.slice(8)] || gone[head.slice(8)]); };
+  const keys = {}; Object.keys(A).concat(Object.keys(B)).forEach(function (k) { keys[k] = 1; });
+  Object.keys(keys).forEach(function (k) {
+    if (skip(k) || String(A[k]) === String(B[k])) return;
+    out.push(k + ': ' + show(A[k]) + ' → ' + show(B[k]));
+  });
+  return out;
+}
+
+function ctcRulesRow_(id) {
+  const v = ctcVersions_().filter(function (x) { return x.id === String(id); })[0];
+  if (!v) throw new Error('Rules version ' + id + ' was not found.');
+  return v;
+}
+function ctcSetRow_(v, patch) {
+  const sh = sheet_(CTC_RULES_);
+  const heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  Object.keys(patch).forEach(function (k) { const c = heads.indexOf(k); if (c >= 0) sh.getRange(v._row, c + 1).setValue(patch[k]); });
+  dropStale_(CTC_RULES_);
+}
+
+/** Starts a new version as a draft copy of the rules in force (one draft at a time). */
+function apiCtcDraftNew() {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  const id = withLock_(function () {
+    const all = ctcVersions_();
+    const open = all.filter(function (v) { return v.status === 'Draft'; })[0];
+    if (open) throw new Error('Version ' + open.id + ' is already being drafted by ' + open.by + '. Continue that one or discard it first.');
+    const act = ctcActive_();
+    /* V1 was first stored without letter details: start the draft from the standard ones. */
+    act.config.letter = Object.assign({}, ctcSeedConfig_().letter, act.config.letter || {});
+    const vid = 'CTC-V' + (all.reduce(function (m, v) { return Math.max(m, v.no); }, 0) + 1), now = new Date();
+    const o = { Version_ID: vid, Status: 'Draft', Config_JSON: JSON.stringify(act.config), Change_Summary: 'Draft copied from ' + act.id, Created_By: u.email, Created_At: now, Updated_By: u.email, Updated_At: now };
+    const sh = sheet_(CTC_RULES_), heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+    sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+    dropStale_(CTC_RULES_);
+    return vid;
+  });
+  audit_(u, CTC_RULES_, id, 'Create', 'draft', '', 'copied from ' + ctcActive_().id);
+  return apiCtcRules();
+}
+
+/** Saves the draft's rules after checking them; returns the problems (nothing is saved if any) and the changes so far. */
+function apiCtcDraftSave(id, cfg) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  if (!cfg || typeof cfg !== 'object') throw new Error('The rules did not arrive. Try again.');
+  const errs = ctcCheck_(cfg);
+  if (errs.length) return { saved: false, errors: errs };
+  const json = JSON.stringify(cfg);
+  if (json.length > 45000) throw new Error('The rules are too long to store in one cell. Remove unused options or shorten texts.');
+  const changes = withLock_(function () {
+    const v = ctcRulesRow_(id);
+    if (v.status !== 'Draft') throw new Error('Version ' + id + ' is ' + v.status.toLowerCase() + ' and can no longer be edited.');
+    ctcSetRow_(v, { Config_JSON: json, Updated_By: u.email, Updated_At: new Date() });
+    return ctcDiff_(ctcActive_().config, cfg);
+  });
+  audit_(u, CTC_RULES_, id, 'Update', 'draft', '', changes.length + ' change(s)');
+  return { saved: true, errors: [], changes: changes };
+}
+
+function apiCtcDraftDiscard(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  withLock_(function () {
+    const v = ctcRulesRow_(id);
+    if (v.status !== 'Draft') throw new Error('Only a draft can be discarded.');
+    ctcSetRow_(v, { Status: 'Discarded', Updated_By: u.email, Updated_At: new Date() });
+  });
+  audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Draft', 'Discarded');
+  return apiCtcRules();
+}
+
+/**
+ * Puts a draft in force from a date (today or later: history is never rewritten). The reason and a remark are
+ * required; the list of changes against the rules in force is stored with the version.
+ */
+function apiCtcActivate(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  d = d || {};
+  const today = fmt_(new Date(), TZ, 'yyyy-MM-dd');
+  const eff = ymd_(d.eff);
+  if (!eff) throw new Error('Pick the date the new rules take effect.');
+  if (eff < today) throw new Error('The rules can take effect from today or a later date, not the past.');
+  const reason = String(d.reason || '');
+  if (CTC_REASONS_.indexOf(reason) < 0 || reason === 'Initial setup') throw new Error('Choose the reason for the change.');
+  const remark = clean_(String(d.remark || '')).trim();
+  if (remark.length < 10) throw new Error('Write a remark of at least 10 characters: what changed and why.');
+  const res = withLock_(function () {
+    const v = ctcRulesRow_(id);
+    if (v.status !== 'Draft') throw new Error('Version ' + id + ' is ' + v.status.toLowerCase() + '.');
+    const cfg = JSON.parse(v.json), errs = ctcCheck_(cfg);
+    if (errs.length) throw new Error('The draft has problems: ' + errs[0]);
+    const base = ctcActive_(eff), changes = ctcDiff_(base.config, cfg);
+    if (!changes.length) throw new Error('The draft is the same as ' + base.id + '. Change something or discard it.');
+    const summary = ('Against ' + base.id + ': ' + changes.join('; ')).slice(0, 45000);
+    ctcSetRow_(v, { Status: 'Active', Effective_From: parseYmd_(eff), Reason: reason, Remark: remark.slice(0, 1000), Change_Summary: summary,
+      Activated_By: u.email, Activated_At: new Date(), Updated_By: u.email, Updated_At: new Date() });
+    return { changes: changes.length, base: base.id };
+  });
+  audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Draft', 'Active from ' + eff + ' (' + reason + ': ' + remark.slice(0, 200) + ')');
+  return apiCtcRules();
+}
+
+/** Cancels a version that has not taken effect yet. Versions already in force are never withdrawn: make a new one. */
+function apiCtcRetire(id, remark) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  remark = clean_(String(remark || '')).trim();
+  if (remark.length < 10) throw new Error('Write a remark of at least 10 characters: why the version is cancelled.');
+  const today = fmt_(new Date(), TZ, 'yyyy-MM-dd');
+  withLock_(function () {
+    const v = ctcRulesRow_(id);
+    if (v.status !== 'Active' || !(v.eff > today)) throw new Error('Only a version that has not taken effect yet can be cancelled. To change rules in force, make a new version.');
+    ctcSetRow_(v, { Status: 'Retired', Remark: (v.remark + ' | Cancelled: ' + remark).slice(0, 1000), Updated_By: u.email, Updated_At: new Date() });
+  });
+  audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Active', 'Retired (' + remark.slice(0, 200) + ')');
+  return apiCtcRules();
 }
