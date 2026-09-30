@@ -467,8 +467,14 @@ function ctcInput_(d) {
   const amounts = {};
   Object.keys(d.amounts || {}).forEach(function (k) { const n = Number(d.amounts[k]); if (/^[a-z][a-z0-9_]*$/.test(k) && n >= 0 && n < 1e7) amounts[k] = Math.round(n); });
   const txt = function (v, n) { return clean_(String(v || '')).trim().slice(0, n); };
+  /* The candidate's current pay, their ask and the hike used (kept with the calculation; not on the letter). */
+  const h = d.hike || {}, amt = function (v) { const n = Number(String(v || '').replace(/[^\d]/g, '')); return n > 0 && n < 1e9 ? String(Math.round(n)) : ''; };
+  const pc = function (v) { const n = Number(String(v || '').replace(/[^\d.]/g, '')); return n >= 0 && n <= 1000 && String(v || '') !== '' ? String(Math.round(n * 100) / 100) : ''; };
+  const hike = { per: h.per === 'year' ? 'year' : 'month', ctc: amt(h.ctc), gross: amt(h.gross), net: amt(h.net), ask: amt(h.ask),
+    askBasis: ['total_ctc', 'gross', 'net'].indexOf(h.askBasis) >= 0 ? h.askBasis : 'total_ctc',
+    mode: ['total_ctc', 'gross', 'net', 'both'].indexOf(h.mode) >= 0 ? h.mode : 'total_ctc', pct: pc(h.pct), pctNet: pc(h.pctNet) };
   return { basis: basis, target: Math.round(target), codes: codes, amounts: amounts,
-    name: txt(d.name, 120), designation: txt(d.designation, 120), grade: txt(d.grade, 20) };
+    name: txt(d.name, 120), designation: txt(d.designation, 120), grade: txt(d.grade, 20), by: d.by === 'hike' ? 'hike' : 'amount', hike: hike };
 }
 
 /* ---------------------------------------------------------------- saved calculations and letters ----------- */

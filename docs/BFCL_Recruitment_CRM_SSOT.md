@@ -700,6 +700,12 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 
 **V1 as in the sheet:** Basic 50% of Gross / fixed 25,100 / 50% of Total CTC / none (stipend); HRA 40% of Basic; Conveyance 1,600 and Medical 1,250 when Gross > 21,000; allowances CEA, child hostel, helper, books, uniform, driver, fuel, vehicle, soft furnishing, food, mobile, LTA, PPA; PF 12% of Basic max 3,000 / 12% of Basic+HRA+Conv+Med+Other max 1,800 / 12% of Basic / 12% of Gross; ESIC 0.75% + 3.25% (rounded up) on Gross ≤ 21,000 or on Basic ≤ 21,000; Meal coupon 2,600; PT slabs 25,000 / 41,666 / 66,666 / 83,333 → 0 / 100 / 150 / 175 / 208; Mediclaim from Gross 21,000 by slab and S/M; NPS 10–70% of Basic; Gratuity 4.81% of Basic; Bonus 8.33% of Basic or Gross, or 5% of Gross CTC, only when Gross ≤ 21,000; PLI 5% of Gross CTC, 8.33% or 20% of Gross, only when Gross > 21,000. Note: the sheet's PF note says "ceiling of 1800" for option 1 but its formula caps at 3,000; V1 follows the formula.
 
+**Hike on current pay** (candidate's pay and ask):
+- **Candidate's pay** (optional; monthly or yearly figures, remembered per browser): current CTC, current Gross, current Net in-hand, and what the candidate asked for with its basis (Total CTC, Gross or Net).
+- **Target → A hike on current pay**: a hike % on CTC, Gross or Net in-hand, or on **CTC and Net** together (two %; both targets are worked out and the one needing the higher CTC is the offer, so both hikes are met; the page says which one decides). The target shown is in the period entered, with the monthly figure.
+- **Hike comparison** panel (under the totals, when any current figure or the ask is given): a summary line (the ask as a % on current pay, this offer's like-for-like hikes, how far the offer is from the ask); a table of Total CTC, Gross CTC, Gross and Net with current, this offer (hike % below), the structure at the ask (hike % below) and offer vs ask; and **Every combination**: each current figure against each figure of the offer and of the ask (like-for-like cells shaded; e.g. current CTC → offered Gross). **Use the ask as the target** sets the target to the ask. Hikes are (new − current) ÷ current, one decimal.
+- The candidate's pay, ask and hike settings are saved with the calculation (Inputs_JSON `by`, `hike`), restored on Edit / Re-run and added to the CSV. They are not printed on the letter.
+
 **Saving and letters** (phase 2):
 - **Save draft** stores the calculation (`apiCtcSave`; the server works it out again and refuses an unsettled structure or negative Other allowances). Changing the inputs and saving again updates the same draft; only its maker can change it.
 - **Letter…** saves if needed and opens the letter preview: A4, BFCL logo and name, reference and date, Name (or a blank line), Designation and Grade when given, the structure (nil items left out) with Gross, Net in-hand, Gross CTC and Total CTC, Total CTC in words (Indian numbering, per year), the terms from the rules (PLI, Gratuity and Bonus terms only when that item is paid), signature blocks and a footer with reference, rules version and who prepared it. Language: English, Hindi or both, chosen per letter (Hindi in Noto Sans Devanagari).
@@ -916,6 +922,9 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — CTC calculator: hike on current pay**
+- Candidate's current CTC / Gross / Net and ask (monthly or yearly); target by a hike % on CTC, Gross, Net or CTC and Net; hike comparison panel with like-for-like and every-combination hikes for the offer and the ask; use the ask as the target; saved with the calculation; E2E I12a.
 
 **Unreleased — CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
 - Rules tab (Admin): draft version copied from the rules in force; edit items, amounts, percentages, caps, conditions, slabs, choices, allowances (add/remove), letter and terms; live problems; save; test bench with item-level changes; put in force from today or a later date with reason and remark; scheduled versions shown and cancellable; automatic change summary stored with each version.
