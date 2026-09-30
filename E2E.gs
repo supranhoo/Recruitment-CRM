@@ -205,5 +205,14 @@ function e2eRun_(trash) {
   t('H4 weekly summary recipients', function () { return summaryRecipients_().length > 0; });
   t('H5 dashboard rebuild', function () { _tables = {}; return typeof apiRefreshDashboard().kpi.open === 'number'; });
   t('H6 served page intact', function () { const app = include('App'); const js = app.slice(app.indexOf('<script>') + 8, app.lastIndexOf('</script>')); new Function(js); return true; });
+
+  const ctcSample = { basic: 3, pf: 1, esic: 0, nps: 0, gratuity: 1, bonus: 2, pli: 2, mediclaim: 'S' };
+  t('I1 CTC rules in force and valid', function () { const r = apiCtcRules(); const e = ctcEngine_().validate(r.active.config); return r.active.id && !e.length ? r.active.id : e.join('; ') && false; });
+  t('I2 CTC matches the workbook sample', function () { const r = apiCtcCalc({ basis: 'gross', target: 72080, codes: ctcSample }); return r.totals.totalCtc === 83082 && r.totals.net === 68800 && r.status === 'exact' ? 'Total CTC 83082' : false; });
+  t('I3 CTC works back from a Total CTC target', function () { const r = apiCtcCalc({ basis: 'total_ctc', target: 83082, codes: ctcSample }); return r.grossEntry === 72080 && r.status === 'exact'; });
+  t('I4 Net target gives at least the net', function () { const r = apiCtcCalc({ basis: 'net', target: 30000, codes: ctcSample }); return r.totals.net >= 30000 && r.totals.net - 30000 < 5 ? 'net ' + r.totals.net : false; });
+  err('I5 CTC needs a target amount', function () { apiCtcCalc({ basis: 'gross', target: 0 }); }, /target amount/);
+  t('I6 CTC calculator is admin-only at launch', function () { return can_({ role: ROLES.ADMIN }, 'ctc_use') && !can_({ role: ROLES.HEAD }, 'ctc_use') && !can_({ role: ROLES.TALEAD }, 'ctc_use') && !can_({ role: ROLES.RECRUITER }, 'ctc_use'); });
+  t('I7 page engine script intact', function () { new Function(ctcEngineScript_() + '; return CTC_ENGINE.solve;'); return true; });
   return { pass: pass, fail: fail, log: log };
 }

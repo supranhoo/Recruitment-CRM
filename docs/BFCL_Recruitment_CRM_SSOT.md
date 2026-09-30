@@ -96,6 +96,9 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `users_edit` | Add, change, deactivate users; Fix access | – | – | – | ✓ |
 | `jd_manage` | Sign off and edit the JD Master (grades, competency departments, duplicate groups, responsibilities, skills, department map) | – | ✓ | ✓ | ✓ |
 | `system` | Backups, candidate archive run, system tools, JD library import | – | – | – | ✓ |
+| `ctc_use` | Use the CTC calculator (§11.7) | – | – | – | ✓ |
+| `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
+| `ctc_view_all` | See everyone's CTC calculations (saved calculations arrive with the letter) | – | – | – | ✓ |
 
 Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)` (role = Admin; used by Recalculate TAT). Client checks: `can(perm)` / `isLead()` from `S.boot.user.perms`. The Admin → **Roles & permissions** tab shows this matrix read-only.
 
@@ -151,6 +154,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
+| `Ctc.gs` | CTC calculator (schema 29): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc` |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
 | `Import.gs` (file_8) | One-time `importDatabase()` from the migrated Excel data |
@@ -269,6 +273,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **TAT_Exemptions** | Exemption_ID (TEX-), Line_ID, MRF_No, Type (Days / Pause), Days, From_Date, To_Date, Reason, Remark, Proof_File, Applies_Recruiter, Applies_Position, Status (Pending / Approved / Rejected / Withdrawn / Revoked), Requested_By/On, Decided_By/On, Decision_Note | Schema 28 (ADR-039). Applies_* are copied from the reason when decided |
 | **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
+| **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
@@ -673,6 +678,29 @@ Grouped likely errors, each record clickable: positions missing key details; off
 
 Audit_Log newest first (max 300 rows per view) with filters; every field change with old/new value, user and time.
 
+### 11.7 CTC calculator (`Ctc.gs`; `ctc_use`, Admin only at launch; ADR-040)
+
+**Page:** Daily work → CTC calculator.
+- **Target:** choose what the amount stands for (Total CTC, Gross CTC, Gross salary or Net in-hand) and type the monthly amount. The result updates as you type.
+- **Details (all optional):** Name, Grade (active grades) and Designation (suggestions from the grade, free text allowed). There is no employee code.
+- **Structure:** the choices from the sheet's F column, shown as plain options (Basic, PF, ESIC, NPS, Gratuity, Bonus, PLI, Mediclaim category, Meal coupon), with Stipend when Basic is "None", and the code-driven allowances under **Allowances**.
+- **Result:** a status line (target met, nearest possible with the difference, or not settled), four tiles (Total CTC, Gross CTC, Gross salary, Net in-hand; the chosen basis is highlighted), the monthly and yearly structure grouped into Earnings, Deductions, Employer contribution and Other benefits, plain-language reasons for nil items, and a warning when Other allowances comes out negative. **Download CSV**. **Version history** lists every rules version with reason, remark, who and when.
+
+**Rules as data.** A version's Config_JSON holds:
+- `flags`: the choices, each with options and a default;
+- `components`: id, label, section (earning / deduction / employer / annual) and kind: `input` (typed amount), `fixed` (amount, optional condition), `pct` (share of listed items), `choice` (per option: an amount, or base + % + optional cap and condition), `slab` (by gross; per-option amounts allowed, e.g. Mediclaim S/M), `balancing` (Other allowances = Gross − the other earnings);
+- conditions (`when`: of gross or an item, with > ≥ < ≤), rounding (`round: 'up'` for ESIC; otherwise Excel ROUND), plain-language `explain` notes and the letter `notes` in English and Hindi.
+
+**Order of working:** earnings (with the Gross entry) → Gross = sum of earnings → deductions → Net → employer contribution → Gross CTC → other benefits → Total CTC. Basic can be a share of the Total CTC (sheet flag 3): the engine then settles Basic and Total CTC against each other (sheet Solver blocks 1–8).
+
+**Working back from the target** (replaces the sheet's Solver tab): gross bands start at every gross threshold in the rules (with V1: 21,000 · 21,001 · 25,001 · 41,667 · 42,001 · 50,001 · 60,001 · 66,667 · 70,001 · 80,001 · 83,334 · 90,001 · 1,00,001; cap 41,94,303). For Total CTC, Gross CTC and Gross, the highest Gross whose value does not exceed the target (highest band whose start qualifies, then binary search); for Net, the lowest Gross that gives at least the target. When rounding makes the exact target impossible, the nearest value is shown with the difference.
+
+**One engine:** `ctcEngine_()` is self-contained; Index.html embeds its source (`ctcEngineScript_`) so the page and `apiCtcCalc` give identical figures. Checked against the workbook sample (Gross 72,080 → Total CTC 83,082), a cell-by-cell transcription of the sheet on 20,000 random structures, and brute force over every Gross for the solver.
+
+**V1 as in the sheet:** Basic 50% of Gross / fixed 25,100 / 50% of Total CTC / none (stipend); HRA 40% of Basic; Conveyance 1,600 and Medical 1,250 when Gross > 21,000; allowances CEA, child hostel, helper, books, uniform, driver, fuel, vehicle, soft furnishing, food, mobile, LTA, PPA; PF 12% of Basic max 3,000 / 12% of Basic+HRA+Conv+Med+Other max 1,800 / 12% of Basic / 12% of Gross; ESIC 0.75% + 3.25% (rounded up) on Gross ≤ 21,000 or on Basic ≤ 21,000; Meal coupon 2,600; PT slabs 25,000 / 41,666 / 66,666 / 83,333 → 0 / 100 / 150 / 175 / 208; Mediclaim from Gross 21,000 by slab and S/M; NPS 10–70% of Basic; Gratuity 4.81% of Basic; Bonus 8.33% of Basic or Gross, or 5% of Gross CTC, only when Gross ≤ 21,000; PLI 5% of Gross CTC, 8.33% or 20% of Gross, only when Gross > 21,000. Note: the sheet's PF note says "ceiling of 1800" for option 1 but its formula caps at 3,000; V1 follows the formula.
+
+**Still to come (planned phases):** the letter (English, Hindi or both, chosen per letter) as PDF and image, saved calculations with history and re-runs on a newer version; the rules editor (draft, test bench, required reason and remark, activation); role access settings with "Preview as role" and optional approval before sharing.
+
 ## 12. Administration, settings, jobs and operations
 
 ### 12.1 Admin page tabs
@@ -842,6 +870,9 @@ Decision: experience is always at least the Appendix F minimum (designation-awar
 **ADR-033 — JD Maker composes, it does not invent** (27 Sep)
 Context: the library is white-collar heavy and department JDs vary; a generated JD must not borrow the wrong trade's duties or state requirements below the policy. Decision: rank library profiles by department, designation and grade with a minimum evidence rule; workmen use a profile only for the same department, band and trade; duties are reused only within the same band family and flagged when re-levelled; competencies come from the framework at the position's grade; experience follows ADR-032; every gap (unmapped department, no profile, inferred qualification, HOD confirmations) is shown as a flag rather than filled silently. Consequences: some JDs (notably workmen) start as standards plus HOD-supplied duties; nothing in a generated JD is unexplained.
 
+**ADR-040 — CTC rules are versioned data run by one shared engine** (30 Sep, user decisions)
+Context: salary structures were worked out in an Excel sheet with a helper Solver tab; the calculator must look professional, be used first by the admin only, and any change to the logic must record who, when, the reason and a remark, with history kept. Decision: only the "CTC Calculator" sheet is reproduced; the logic is stored as JSON versions in `CTC_Rules` (never overwritten; reason and remark required), built from a fixed set of item kinds so the admin can change rates, caps, slabs, amounts, labels and notes but not type free formulas; one self-contained engine runs on the server and is embedded in the page; Employee Code is dropped and Name, Grade and Designation are optional; access is by named permissions (`ctc_use`, `ctc_rules`, `ctc_view_all`), Admin only at launch; letter language is English, Hindi or both, chosen per letter; approval before sharing is off at launch. Consequences: figures on screen and on the server cannot differ; a new *kind* of rule needs a code release; later phases add letters, saved calculations and re-runs, the rules editor and role access settings.
+
 **ADR-039 — TAT exemptions are requested, approved by the Head of HR, and apply per reason** (30 Sep, user decisions)
 Context: the only exemption was the automatic notice extension, typed by recruiters without proof; nothing let the Head of HR grant time for causes outside the recruiter's control, and the KPI ignored on-hold days while the TAT screens excluded them. Decision: recruiters and TA Leads request extra days or a paused date range with a reason, remark and proof; the Head of HR or Admin (`tat_exempt`) approves, rejects, grants directly or revokes; each reason says whether it changes the recruiter clock and KPI and/or the position clock, copied at decision time; the notice extension stays automatic but needs proof and can be rejected; the KPI excludes hold days and applies recruiter exemptions; a closed position's exemptions lock 5 days after its closing month (Admin can still correct). Consequences: one calculation (`tatClock_`) feeds every screen and the KPI; pending, rejected, withdrawn and revoked requests have no effect; past KPI months with on-hold positions improve slightly.
 
@@ -868,6 +899,11 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — CTC calculator, phase 1** (schema 29; new `Ctc.gs`; ADR-040; §11.7)
+- **CTC calculator page** (Daily work; `ctc_use`, Admin only): target on Total CTC / Gross CTC / Gross / Net, optional Name, Grade and Designation, structure choices and allowances, live result with status, tiles, grouped monthly/yearly structure, reasons for nil items, negative Other-allowances warning, CSV, version history.
+- **CTC_Rules** sheet seeded with V1 from the "CTC Calculator" sheet (reason "Initial setup"). `apiCtcRules`, `apiCtcCalc`. New permissions `ctc_use`, `ctc_rules`, `ctc_view_all` (Admin); Roles matrix updated.
+- Tests: workbook sample on all four bases, 20,000 random structures against a cell-by-cell transcription of the sheet, solver against brute force, API access by role, browser checks at 1500 px and 390 px; E2E I1–I7.
 
 **Unreleased — TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
 - **Request** (position drawer → TAT exemptions; the position's recruiter or a lead): extra days or a paused date range (ended, not overlapping another pause), reason, remark, proof (required when the reason says so; `apiUploadDoc` entity `TEX`). **Decide** (`tat_exempt`: Head of HR, Admin): approve (proof enforced), reject or revoke with a note, or grant directly. Withdraw while pending. All audited.
@@ -1116,7 +1152,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+29 CTC_Rules (CTC calculator, unreleased) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
@@ -1426,6 +1462,14 @@ Generated mechanically from the v46 source: every message the server can show a 
 - {…} : "at risk" must be between 50% and 99%.
 - Pick the date the new rules take effect.
 - Only the Head of HR or the admin can change TAT rules.
+
+### CTC calculator (`Ctc.gs`)
+
+- You do not have access to the CTC calculator.
+- Only the admin can change the CTC rules.
+- No CTC rules are in force yet. Ask the admin to activate a version.
+- Enter a monthly target amount between ₹1 and ₹41,94,303.
+- (page) Other allowances comes out negative ({…}): the chosen allowances add up to more than this gross allows. Lower the allowances or raise the target.
 
 ### Data layer (`Db.gs`)
 

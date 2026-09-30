@@ -594,4 +594,45 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .iv-unavail{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .iv-unavail .iv-reason{flex:1;min-width:180px;height:32px;border:1px solid var(--line);border-radius:var(--r-sm);padding:0 8px}
 .chk{display:inline-flex;gap:6px;align-items:center;font-size:14px}
+/* CTC calculator */
+.ctc-ver{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.ctc-ver .badge{background:#E6ECF3;color:var(--navy)}
+.ctc{display:grid;grid-template-columns:minmax(320px,400px) minmax(0,1fr);gap:20px;align-items:start}.ctc>*{min-width:0}
+.ctc-in{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+.ctc-in h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:18px 0 10px}.ctc-in h2:first-child{margin-top:0}
+.ctc-in h2 .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)}
+.seg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:12px}
+.seg-o{position:relative;cursor:pointer}.seg-o input{position:absolute;opacity:0;inset:0;cursor:pointer}
+.seg-o span{display:block;text-align:center;border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 6px;font-weight:500;color:var(--ink-2);background:#fff;transition:background .15s,color .15s,border-color .15s}
+.seg-o input:checked+span{background:var(--navy);border-color:var(--navy);color:#fff}
+.seg-o input:focus-visible+span{outline:2px solid var(--navy-2);outline-offset:2px}
+.amt{display:flex;align-items:center;border:1px solid var(--line);border-radius:var(--r-sm);background:#fff;padding:0 10px}
+.amt:focus-within{border-color:var(--navy-2);box-shadow:0 0 0 2px rgba(44,76,117,.15)}
+.amt span{font-family:var(--num);font-size:22px;color:var(--ink-2)}
+.field .amt input{border:0;box-shadow:none;outline:0;font-family:var(--num);font-size:24px;font-weight:600;padding:8px 8px;font-variant-numeric:tabular-nums}
+.ctc-in .grid.one{grid-template-columns:1fr}.ctc-in .grid.one .field{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);align-items:center;gap:4px 10px}.ctc-in .grid.one .field .hint{grid-column:2}
+.ctc-allow{margin-top:14px;border-top:1px solid var(--line-2);padding-top:10px}.ctc-allow summary{cursor:pointer;font-weight:600;margin-bottom:10px}
+.ctc-actions{display:flex;justify-content:flex-end;margin-top:14px}
+.ctc-empty{display:flex;flex-direction:column;gap:6px;align-items:flex-start;padding:40px 28px;color:var(--ink-2)}.ctc-empty b{color:var(--ink);font-size:17px}
+.ctc-status{border-radius:var(--r-md);padding:10px 14px;font-weight:500;margin-bottom:14px;border:1px solid}
+.ctc-status.ok{background:#EBFBEE;border-color:#B2F2BB;color:#1E6B30}.ctc-status.warn{background:#FFF4E6;border-color:#FFD8A8;color:#8A4B08}.ctc-status.bad{background:#FFF0F0;border-color:#FFC9C9;color:#A61E1E}
+.ctc-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;margin-bottom:18px}
+.ctc-tile{background:#fff;padding:14px 16px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ctc-tile .l{font-size:13px;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+.ctc-tile b{font-family:var(--num);font-size:28px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;color:var(--ink)}
+.ctc-tile .y{font-family:var(--num);color:var(--ink-2);font-variant-numeric:tabular-nums}.ctc-tile .s{font-size:12px;color:var(--muted)}
+.ctc-tile.on{background:#F0F4F9;box-shadow:inset 0 3px 0 var(--navy)}.ctc-tile.on b{color:var(--navy)}
+.ctc-table{width:100%;border-collapse:collapse}
+.ctc-table th,.ctc-table td{padding:7px 14px;border-bottom:1px solid var(--line-2);text-align:left}
+.ctc-table thead th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-2);background:var(--paper)}
+.ctc-table .num{text-align:right;width:22%}
+.ctc-table tr.sec th{background:#fff;color:var(--navy);font-size:13px;text-transform:uppercase;letter-spacing:.06em;padding-top:14px;border-bottom:1px solid var(--line)}
+.ctc-table tr.nil td{color:var(--muted)}.ctc-table tr.neg td{color:var(--molten);font-weight:600}
+.ctc-table tr.tot td{font-weight:600;background:var(--paper)}
+.ctc-table tr.grand td{font-weight:600;background:#E6ECF3;color:var(--navy);border-bottom:1px solid #C9D5E3}
+.ctc-table tr.grand.main td{background:var(--navy);color:#fff;font-size:17px}
+.ctc-notes{margin:12px 0 0;padding-left:18px;color:var(--ink-2);font-size:14px}
+.ctc-vh{border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;margin:10px 0;display:flex;flex-direction:column;gap:3px}.ctc-vh.on{border-color:var(--navy);box-shadow:inset 3px 0 0 var(--navy)}
+.ctc-vh .dp-h{margin:0}.ctc-vh .sub{color:var(--muted);font-size:12px;margin-right:4px}
+@media (max-width:1100px){.ctc{grid-template-columns:1fr}.ctc-in{position:static;max-height:none}}
+@media (max-width:760px){.ctc-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.ctc-tile b{font-size:22px}.ctc-table th,.ctc-table td{padding:7px 10px}}
 </style>
