@@ -82,11 +82,12 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter'];
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
  * admin data checks); 'withdraw_offer' = close a position with a live offer; 'system' = backups, archive, tools,
  * JD library import; 'jd_manage' = sign off and edit the JD Master;
- * 'tat_exempt' = approve, reject, grant and revoke TAT exemptions and verify notice extensions.
+ * 'tat_exempt' = approve, reject, grant and revoke TAT exemptions and verify notice extensions;
+ * 'ctc_use' = use the CTC calculator; 'ctc_rules' = change the CTC rules; 'ctc_view_all' = see everyone's CTC calculations.
  */
 const PERMS_ = {
   'Recruiter': [],
   'TA Lead': ['lead', 'tat_view', 'jd_manage'],
   'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage']
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all']
 };
