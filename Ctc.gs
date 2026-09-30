@@ -11,6 +11,11 @@ const CTC_RULES_ = 'CTC_Rules';
 const CTC_RULE_COLS_ = ['Version_ID', 'Effective_From', 'Status', 'Config_JSON', 'Reason', 'Remark', 'Change_Summary',
   'Created_By', 'Created_At', 'Activated_By', 'Activated_At'];
 const CTC_REASONS_ = ['Statutory change', 'Company policy change', 'Correction', 'Initial setup', 'Other'];
+/** Saved calculations. A Draft can be replaced by its maker; an Issued one is never changed (a re-run makes a new record). */
+const CTC_CALCS_ = { name: 'CTC_Calcs', id: 'Calc_ID', prefix: 'CTC-', width: 5, dates: [], editable: [] };
+const CTC_CALC_COLS_ = ['Calc_ID', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total_CTC', 'Gross', 'Net', 'Rule_Version',
+  'Inputs_JSON', 'Result_JSON', 'Language', 'Letter_File', 'Rerun_Of', 'Superseded_By', 'Issued_By', 'Issued_At', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
+const CTC_LANGS_ = ['en', 'hi', 'both'];
 
 /* ---------------------------------------------------------------- engine (shared with the page) ------------ */
 
@@ -283,6 +288,8 @@ function ctcSeedConfig_() {
   const ltaOpts = ro(3, 15).concat([{ code: 30, label: '₹30,000' }]);
   return {
     title: 'CTC structure',
+    letter: { company: 'BFCL', heading: 'Salary structure', subheading: 'Compensation details (CTC)', signatory: 'Authorised signatory',
+      accept: { en: 'Candidate\u2019s signature', hi: '\u0909\u092e\u094d\u092e\u0940\u0926\u0935\u093e\u0930 \u0915\u0947 \u0939\u0938\u094d\u0924\u093e\u0915\u094d\u0937\u0930' } },
     source: 'New_CTC_Structure.xlsx, sheet "CTC Calculator"',
     basisList: [{ id: 'total_ctc', label: 'Total CTC' }, { id: 'gross_ctc', label: 'Gross CTC' }, { id: 'gross', label: 'Gross salary' }, { id: 'net', label: 'Net (in-hand) salary' }],
     defaultBasis: 'gross',
@@ -388,6 +395,7 @@ function ctcSchema_() {
     sh.getRange(1, 1, 1, CTC_RULE_COLS_.length).setValues([CTC_RULE_COLS_]).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1F3A5F');
     sh.setFrozenRows(1);
   }
+  addSheet_(CTC_CALCS_.name, CTC_CALC_COLS_);
   if (sh.getLastRow() > 1) return;
   const now = new Date(), eff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const o = { Version_ID: 'CTC-V1', Effective_From: eff, Status: 'Active', Config_JSON: JSON.stringify(ctcSeedConfig_()), Reason: 'Initial setup',
@@ -455,4 +463,134 @@ function ctcInput_(d) {
   const txt = function (v, n) { return clean_(String(v || '')).trim().slice(0, n); };
   return { basis: basis, target: Math.round(target), codes: codes, amounts: amounts,
     name: txt(d.name, 120), designation: txt(d.designation, 120), grade: txt(d.grade, 20) };
+}
+
+/* ---------------------------------------------------------------- saved calculations and letters ----------- */
+
+function ctcCanSee_(u, r) { return can_(u, 'ctc_view_all') || String(r.Created_By).toLowerCase() === u.email; }
+function ctcRow_(id) {
+  const r = readTable_(CTC_CALCS_.name).rows.filter(function (x) { return String(x.Calc_ID) === String(id); })[0];
+  if (!r) throw new Error('Calculation ' + id + ' was not found.');
+  return r;
+}
+function ctcOut_(r, full) {
+  const at = function (v) { return v instanceof Date ? fmt_(v, TZ, 'd MMM yyyy, HH:mm') : String(v || ''); };
+  const o = { id: String(r.Calc_ID), status: String(r.Status), name: String(r.Name || ''), designation: String(r.Designation || ''), grade: String(r.Grade || ''),
+    basis: String(r.Basis), target: Number(r.Target) || 0, totalCtc: Number(r.Total_CTC) || 0, gross: Number(r.Gross) || 0, net: Number(r.Net) || 0,
+    version: String(r.Rule_Version), language: String(r.Language || ''), letter: String(r.Letter_File || ''), rerunOf: String(r.Rerun_Of || ''),
+    supersededBy: String(r.Superseded_By || ''), by: String(r.Created_By || ''), at: at(r.Created_At), day: r.Created_At instanceof Date ? ymd_(r.Created_At) : '',
+    issuedBy: String(r.Issued_By || ''), issuedAt: at(r.Issued_At) };
+  if (full) { o.inputs = JSON.parse(String(r.Inputs_JSON || '{}')); o.result = JSON.parse(String(r.Result_JSON || '{}')); }
+  return o;
+}
+
+/**
+ * Saves a calculation as a draft on the rules in force (the server works it out again; the page's figures are not
+ * trusted). d.id replaces the caller's own draft; d.rerunOf links a re-run of an earlier calculation.
+ */
+function apiCtcSave(d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  d = d || {};
+  const inp = ctcInput_(d), act = ctcActive_();
+  const r = ctcEngine_().solve(act.config, inp);
+  if (r.status === 'unsettled') throw new Error('The structure did not settle, so it cannot be saved. Check the Basic choice.');
+  if ((r.warnings || []).length) throw new Error(r.warnings[0]);
+  const rerunOf = d.rerunOf ? String(d.rerunOf) : '';
+  if (rerunOf && !ctcCanSee_(u, ctcRow_(rerunOf))) throw new Error('You can re-run only your own calculations.');
+  const patch = { Status: 'Draft', Name: inp.name, Designation: inp.designation, Grade: inp.grade, Basis: inp.basis, Target: inp.target,
+    Total_CTC: r.totals.totalCtc, Gross: r.totals.gross, Net: r.totals.net, Rule_Version: act.id,
+    Inputs_JSON: JSON.stringify(inp), Result_JSON: JSON.stringify(r), Rerun_Of: rerunOf };
+  let rec;
+  if (d.id) {
+    const old = ctcRow_(d.id);
+    if (String(old.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this draft can change it.');
+    if (String(old.Status) !== 'Draft') throw new Error('Calculation ' + d.id + ' is ' + String(old.Status).toLowerCase() + ' and cannot be changed. Re-run it to make a new one.');
+    rec = update_(CTC_CALCS_, d.id, patch, u);
+  } else rec = insert_(CTC_CALCS_, patch, u);
+  return ctcOut_(rec, true);
+}
+
+/**
+ * Issues a draft: stores the letter PDF made on the page in Drive and locks the record. The rules must still be the
+ * ones it was worked out on. Issuing a re-run marks the calculation it replaces as superseded.
+ */
+function apiCtcIssue(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  d = d || {};
+  const r = ctcRow_(id);
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can issue it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is already ' + String(r.Status).toLowerCase() + '.');
+  const act = ctcActive_();
+  if (String(r.Rule_Version) !== act.id) throw new Error('The CTC rules changed to ' + act.id + ' after this was saved. Re-run it on the new rules first.');
+  const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : 'en';
+  const b64 = String(d.pdf || '');
+  if (b64.length < 200 || b64.length > 20 * 1024 * 1024) throw new Error('The letter PDF did not arrive. Try again.');
+  const bytes = Utilities.base64Decode(b64);
+  if (String.fromCharCode.apply(null, bytes.slice(0, 5)) !== '%PDF-') throw new Error('The letter file is not a PDF.');
+  const name = id + ' - ' + (String(r.Name || '').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'Salary structure') + '.pdf';
+  const file = ctcFolder_().createFile(Utilities.newBlob(bytes, 'application/pdf', name));
+  const rec = update_(CTC_CALCS_, id, { Status: 'Issued', Language: lang, Letter_File: file.getUrl(), Issued_By: u.email, Issued_At: new Date() }, u, function (x) {
+    if (String(x.Status) !== 'Draft') throw new Error('Calculation ' + id + ' was issued meanwhile.');
+  });
+  const prev = String(r.Rerun_Of || '');
+  if (prev) {
+    try {
+      const p = ctcRow_(prev);
+      if (String(p.Status) === 'Issued') update_(CTC_CALCS_, prev, { Status: 'Superseded', Superseded_By: id }, u);
+    } catch (e) { }
+  }
+  return ctcOut_(rec, true);
+}
+
+/** Drops the caller's own draft (kept in the sheet as Discarded, for the record). */
+function apiCtcDiscard(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const r = ctcRow_(id);
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this draft can discard it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Only a draft can be discarded.');
+  update_(CTC_CALCS_, id, { Status: 'Discarded' }, u);
+  return true;
+}
+
+/** Saved calculations, newest first: the caller's own, or everyone's with ctc_view_all. */
+function apiCtcList(f) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  f = f || {};
+  const rows = readTable_(CTC_CALCS_.name).rows.filter(function (r) { return ctcCanSee_(u, r) && (f.discarded || String(r.Status) !== 'Discarded'); })
+    .map(function (r) { return ctcOut_(r, false); })
+    .sort(function (a, b) { return Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')); });
+  return { all: can_(u, 'ctc_view_all'), active: ctcActive_().id, rows: rows.slice(0, 1000) };
+}
+
+/** One version's rules (for letters worked out on earlier rules). */
+function apiCtcVersion(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const v = ctcVersions_().filter(function (x) { return x.id === String(id); })[0];
+  if (!v) throw new Error('Rules version ' + id + ' was not found.');
+  return JSON.parse(v.json);
+}
+
+function apiCtcGet(id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const r = ctcRow_(id);
+  if (!ctcCanSee_(u, r)) throw new Error('You can open only your own calculations.');
+  return ctcOut_(r, true);
+}
+
+/** Drive folder for issued letters, inside the documents folder. */
+function ctcFolder_() {
+  const s = settings_();
+  if (s.CTC_FOLDER_ID) { try { const f = DriveApp.getFolderById(s.CTC_FOLDER_ID); if (!f.isTrashed()) return f; } catch (e) { } }
+  if (!s.CV_FOLDER_ID) throw new Error('The documents folder is not set. Ask the admin to run setup().');
+  const parent = DriveApp.getFolderById(s.CV_FOLDER_ID);
+  const it = parent.getFoldersByName('CTC letters');
+  const folder = it.hasNext() ? it.next() : parent.createFolder('CTC letters');
+  setSetting_('CTC_FOLDER_ID', folder.getId(), 'Drive folder for issued CTC letters (PDF)');
+  return folder;
 }
