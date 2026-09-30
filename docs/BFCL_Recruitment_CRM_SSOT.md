@@ -266,6 +266,8 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Users** | Email, Name, Role, Recruiter_Name, Active, Added_By, Added_On, Updated_By, Updated_At | Team list and access (§3) |
 | **M_Recruiters** | Recruiter, Email, Active | Recruiter dropdown, kept in sync by Users |
 | **M_Grades** | Grade, Designations, Band, Standard_TAT_Days, Active | 17 levels; Standard_TAT_Days mirrors the TAT rule in force **today** (kept in sync; no longer the source of truth). From schema 27, **Designations is a read-only summary** of the grade's active rows in M_Designations; Band and Active are edited in Admin → Grades & designations (ADR-038) |
+| **TAT_Exemptions** | Exemption_ID (TEX-), Line_ID, MRF_No, Type (Days / Pause), Days, From_Date, To_Date, Reason, Remark, Proof_File, Applies_Recruiter, Applies_Position, Status (Pending / Approved / Rejected / Withdrawn / Revoked), Requested_By/On, Decided_By/On, Decision_Note | Schema 28 (ADR-039). Applies_* are copied from the reason when decided |
+| **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
@@ -442,14 +444,17 @@ Policy 20.1: closure by grade from **MRF approval to joining date, excluding the
 
 ```
 rule        = ruleFor_(grade, start)
-exemption   = max(Notice_Period_Days − rule.grace, 0)        // only days above the grace are added
+notice      = max(Notice_Period_Days − rule.grace, 0)        // only days above the grace; 0 if Notice_Ext_Status = Rejected
+extra       = Σ approved TAT exemption days for this clock    // Type Days; Applies_Recruiter (recruiter clock) / Applies_Position (position clock)
+exemption   = notice + extra                                  // stored Exemption_Days (recruiter clock)
 allowed     = rule.std + exemption                            // Final_TAT
 end         = Actual_DOJ
               ‖ No_Vacancy_Date            (status No Vacancy)
               ‖ Not_Needed_Date            (status Not Needed / On Hold)
               ‖ Replaced_On ‖ Backout_Date (status Replaced)
               ‖ today
-days        = max(0, calendarDaysBetween(start, end) − Hold_Days)   // start day excluded
+paused      = days of approved Pause exemptions for this clock inside [start, end), not already on hold (Hold_Log), each day once
+days        = max(0, calendarDaysBetween(start, end) − Hold_Days − paused)   // start day excluded
 result      = Open/Offered : days > allowed → Overdue; days ≥ risk × allowed → At risk; else On track
               Replaced     : Replaced
               otherwise    : days > allowed → Missed; else Achieved
@@ -638,7 +643,7 @@ Financial-year grid (April–March), team or per recruiter, value + score (0–5
 
 | KPI | Definition | Score |
 |---|---|---|
-| **Timely closure of vacant positions** | Positions **filled in the month** (Closed, DOJ in month) within the recruiter's target days (KPI_Targets; default 60, all levels) + notice exemption (days above `NOTICE_GRACE_DAYS`) ÷ positions filled in the month; measured on the **recruiter clock** | 5 ≥100 %, 4 ≥95, 3 ≥90, 2 ≥85, 1 ≥80, else 0 |
+| **Timely closure of vacant positions** | Positions **filled in the month** (Closed, DOJ in month) within the recruiter's target days (KPI_Targets; default 60, all levels) + notice exemption (days above `NOTICE_GRACE_DAYS`, unless rejected) + approved recruiter exemptions, with on-hold and approved paused days not counted (schema 28) ÷ positions filled in the month; measured on the **recruiter clock** | 5 ≥100 %, 4 ≥95, 3 ≥90, 2 ≥85, 1 ≥80, else 0 |
 | **Fulfilment of M-level positions within TAT** | M-level positions **targeted** in the month (due = start + target days (default 50) + exemption, or filled that month) that were filled within TAT ÷ targeted; months up to the current one | same bands |
 | **Offer backout rate** | Backouts in the month ÷ offers made in the month | % only (scoring bands not yet given) |
 | **Mettl psychometric test** | Shortlisted **Manager+** candidates in the month without a completed or waived test | 0 → 5, 1 → 3, >1 → 0 |
@@ -679,6 +684,7 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 | Tools | lead (system actions Admin) | Back up now; Recalculate TAT (Admin); weekly email test/on/off; archive status and **Archive now**; CV parser accuracy; database/folder links |
 | HOD contacts | lead | Department → HOD name/email |
 | Task rules | lead | Due/critical hours and on/off per rule |
+| TAT exemptions | lead (act: `tat_exempt` = Head of HR, Admin) | Awaiting the Head of HR (oldest first, Approve / Reject), notice extensions to review (Verify / Reject), register with filters and CSV, reasons editor (add, deactivate; no rename) |
 | Grades & designations | lead | Grades: band, active, add a grade (code + starting TAT days). Designations: add, rename (carried to every position of that grade using the old name), move to another grade (only while unused), deactivate, note. Short forms are expanded on save (Sr → Senior, Engr → Engineer, SE → Senior Engineer). All changes audited (`apiGradeSetup`, `apiSaveGradeSetup`) |
 | TAT rules | tat_view (edit: tat_edit) | §7.2 |
 | Users | users_view (edit: users_edit) | §3.3 |
@@ -836,6 +842,9 @@ Decision: experience is always at least the Appendix F minimum (designation-awar
 **ADR-033 — JD Maker composes, it does not invent** (27 Sep)
 Context: the library is white-collar heavy and department JDs vary; a generated JD must not borrow the wrong trade's duties or state requirements below the policy. Decision: rank library profiles by department, designation and grade with a minimum evidence rule; workmen use a profile only for the same department, band and trade; duties are reused only within the same band family and flagged when re-levelled; competencies come from the framework at the position's grade; experience follows ADR-032; every gap (unmapped department, no profile, inferred qualification, HOD confirmations) is shown as a flag rather than filled silently. Consequences: some JDs (notably workmen) start as standards plus HOD-supplied duties; nothing in a generated JD is unexplained.
 
+**ADR-039 — TAT exemptions are requested, approved by the Head of HR, and apply per reason** (30 Sep, user decisions)
+Context: the only exemption was the automatic notice extension, typed by recruiters without proof; nothing let the Head of HR grant time for causes outside the recruiter's control, and the KPI ignored on-hold days while the TAT screens excluded them. Decision: recruiters and TA Leads request extra days or a paused date range with a reason, remark and proof; the Head of HR or Admin (`tat_exempt`) approves, rejects, grants directly or revokes; each reason says whether it changes the recruiter clock and KPI and/or the position clock, copied at decision time; the notice extension stays automatic but needs proof and can be rejected; the KPI excludes hold days and applies recruiter exemptions; a closed position's exemptions lock 5 days after its closing month (Admin can still correct). Consequences: one calculation (`tatClock_`) feeds every screen and the KPI; pending, rejected, withdrawn and revoked requests have no effect; past KPI months with on-hold positions improve slightly.
+
 **ADR-038 — A grade and a designation are separate; documents use the position's own designation** (29 Sep, v62, user decision)
 Context: each grade carried one free-text label ("M6 — Engr/SE, Officer/Sr Officer") shown in the grade dropdown, and the JD printed the grade's generic description, so a JD for an HR Officer read "M6 – Officers/Engineers". One grade holds many designations. Decision: `M_Designations` holds one row per designation per grade; every position stores its own `Designation`; the position form lists only the chosen grade's designations; the JD Grade cell shows "grade – the position's designation" and never the grade's list; rules that read the title (M5 Junior Manager experience, shift questions) use designation and position title together (`lineTitle_`). Migration seeds designations by splitting the old labels and fills a position's designation only where its title names exactly one. Consequences: grades and designations are configured separately in Admin; renames flow to positions; existing JD files already saved in Drive keep their old wording until regenerated; positions whose title matched no single designation need one picked.
 
@@ -859,6 +868,15 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
+- **Request** (position drawer → TAT exemptions; the position's recruiter or a lead): extra days or a paused date range (ended, not overlapping another pause), reason, remark, proof (required when the reason says so; `apiUploadDoc` entity `TEX`). **Decide** (`tat_exempt`: Head of HR, Admin): approve (proof enforced), reject or revoke with a note, or grant directly. Withdraw while pending. All audited.
+- **Effect**: approved days add to Final_TAT and approved pauses come off Days_Taken for the clocks the reason names (recruiter clock + KPI and/or position clock); a paused day already on hold counts once. Drawer readout shows e.g. "50 standard + 15 notice + 10 exemption = 75 d · 6 d paused"; positions list shows an "Exempt" badge.
+- **Notice extension**: a notice above the grace needs "Notice period proof" attached when it is entered or changed; the Head of HR can verify or reject it (rejected = not counted). New data check "Notice beyond the grace without proof" (13 checks).
+- **KPI**: Timely closure and M-level fulfilment now exclude on-hold and approved paused days and add approved recruiter exemptions; the drill-down shows them with reasons.
+- **Lock**: a closed position's exemptions can be changed until 5 days after the end of its closing month; then only the admin.
+- Admin → **TAT exemptions** tab; Overview to-do strip and weekly email show exemptions awaiting the Head of HR; Roles matrix updated. The Daily_Funnel `Exemption_Days` column is legacy (from the tracker) and unused.
+- Tests: calculation cases (notice kept/rejected, per-clock days, pauses clipped and not double-counted with holds, month lock), approval API cases as recruiter / other recruiter / Head of HR / Admin, KPI cases, browser checks of the drawer section and Admin tab; E2E X1–X6.
 
 **Unreleased — Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
 - New page (all users; leads see every department, a recruiter their own positions), period last 30 / 90 / 180 days or custom, from records already kept:

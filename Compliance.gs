@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '27';
+const SCHEMA_VERSION = '28';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -39,6 +39,7 @@ function ensureSchema_() {
     scrSchema_();
     gradeDesigMigrate_();
     gradeDesigSchema_();
+    exemptSchema_();
     dayStatusSchema_();
     addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
       'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
@@ -177,15 +178,16 @@ function apiAuditSave(data) {
 /* ---------------- Supporting attachments (BGV, psychometric) ---------------- */
 
 const DOC_FIELDS = {
-  MRF: { BGV_Prev_Org_File: 'BGV_Prev', BGV_Current_Org_File: 'BGV_Current', JD_File: 'JD', MRF_Form_File: 'MRF_Form' },
+  MRF: { BGV_Prev_Org_File: 'BGV_Prev', BGV_Current_Org_File: 'BGV_Current', JD_File: 'JD', MRF_Form_File: 'MRF_Form', Notice_Proof_File: 'Notice_Proof' },
+  TEX: { Proof_File: 'Exemption_Proof' },
   APP: { Docs_File: 'Joining_Docs', Offer_Letter_File: 'Offer_Letter' },
   CAND: { Psychometric_File: 'Psychometric' }
 };
-const DOC_FOLDERS = { MRF: 'Position documents', CAND: 'Psychometric reports', APP: 'Joining documents' };
+const DOC_FOLDERS = { MRF: 'Position documents', CAND: 'Psychometric reports', APP: 'Joining documents', TEX: 'TAT exemption proofs' };
 const DOC_TYPES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png'];
 
 function docTarget_(entity, id, field) {
-  const def = entity === 'MRF' ? T.MRF : entity === 'CAND' ? T.CAND : entity === 'APP' ? T.APP : null;
+  const def = entity === 'MRF' ? T.MRF : entity === 'CAND' ? T.CAND : entity === 'APP' ? T.APP : entity === 'TEX' ? T.TEX : null;
   if (!def || !DOC_FIELDS[entity][field]) throw new Error('Unknown attachment type.');
   const rec = readTable_(def.name).rows.filter(function (r) { return String(r[def.id]) === String(id); })[0];
   if (!rec) throw new Error('Save the record before attaching a file.');
@@ -206,6 +208,11 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   const t = docTarget_(entity, id, field);
   if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or a TA Lead or the Head of HR can attach files to this position.');
   if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l)) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
+  if (entity === 'TEX') {
+    const l = lineOf_(t.rec.Line_ID);
+    if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
+    if (['Pending', 'Approved'].indexOf(String(t.rec.Status)) < 0) throw new Error('Proof can be attached only to a pending or approved exemption.');
+  }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
   const ext = (String(fileName).match(/\.[a-z0-9]+$/i) || [''])[0];
   const isJd = entity === 'MRF' && field === 'JD_File';

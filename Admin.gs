@@ -72,6 +72,8 @@ function dataChecks_() {
   const c5 = add('mobile', 'Candidates with a missing or invalid mobile number', 'Mobile should be 10 digits.', 'CAND');
   const c6 = add('dup', 'Candidates sharing a mobile number or email', 'Probably the same person entered twice.', 'CAND');
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
+  const c8 = add('notice_proof', 'Notice beyond the grace without proof', 'Notice over 30 days extends the TAT automatically; attach the notice proof or ask the Head of HR to review it (Admin \u2192 TAT exemptions).', 'MRF');
+  const nctx = tatContext_();
   const weekday = function (ymd) { const p = ymd.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay(); };
   readTable_(T.MRF.name).rows.forEach(function (l) {
     if (positionStatus_(l) === 'Removed') return;
@@ -82,6 +84,10 @@ function dataChecks_() {
     if (String(l.Offer_Sent).toUpperCase() === 'YES' && !offer) c2.items.push({ id: l.Line_ID, label: label, detail: 'Offer sent = Yes' });
     const asg = ymd_(l.Assigned_On);
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
+    if (String(l.Notice_Ext_Status || '') !== 'Rejected' && !l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
+      const g = ruleFor_(nctx, l.Grade, tatStart_(l)).grace, n = Number(l.Notice_Period_Days) || 0;
+      if (n > g) c8.items.push({ id: l.Line_ID, label: label, detail: 'Notice ' + n + ' days adds ' + (n - g) + ' days to the TAT' });
+    }
     if (doj) { const w = weekday(doj); if (w !== 1 && w !== 4) c4.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][w] + ')' }); }
   });
   const seen = {};
@@ -178,6 +184,7 @@ function sendSummary_(to, test) {
     .sort(function (a, b) { return (b.Days_Taken - b.Final_TAT) - (a.Days_Taken - a.Final_TAT); });
   const issues = dataChecks_().reduce(function (s, c) { return s + c.count; }, 0);
   const pa = pipelineAlerts_('');
+  const texPending = ss_().getSheetByName(T.TEX.name) ? readTable_(T.TEX.name).rows.filter(function (x) { return String(x.Status) === 'Pending'; }).length : 0;
   const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   const url = ScriptApp.getService().getUrl();
   const kp = snap.kpi;
@@ -205,6 +212,7 @@ function sendSummary_(to, test) {
     + '<h3 style="margin:0 0 6px">Positions past TAT' + (overdue.length > 15 ? ' (15 of ' + overdue.length + ')' : '') + '</h3>'
     + (overdue.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + rowsOverdue + '</table>' : '<p>None \u2014 every open position is within TAT.</p>')
     + '<h3 style="margin:0 0 6px">Pipeline alerts</h3><p style="margin:0 0 6px">' + pa.hodOverdue.length + ' candidates waiting more than 24 hours for department feedback \u00b7 ' + pa.atRisk.length + ' joiners at risk \u00b7 ' + pa.dueToday.length + ' joining follow-ups due' + (pa.unassessed ? ' \u00b7 ' + pa.unassessed + ' joiners never checked on' : '') + '</p>'
+    + (texPending ? '<p style="margin:0 0 16px"><b>' + texPending + ' TAT exemption' + (texPending === 1 ? '' : 's') + ' awaiting the Head of HR\u2019s decision</b> (Admin \u2192 TAT exemptions).</p>' : '')
     + (pa.atRisk.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + pa.atRisk.slice(0, 15).map(function (x) {
       return '<tr><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(x.name) + '<div style="color:#8793A3;font-size:12px">' + esc(x.position) + ' \u00b7 ' + esc(x.why.join('; ')) + '</div></td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(x.recruiter) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2;font-weight:600;color:' + (x.level === 'Red' ? '#C92A2A' : '#B35C00') + '">' + esc(x.level) + '</td></tr>';
     }).join('') + '</table>' : '<p style="margin:0 0 18px"></p>')

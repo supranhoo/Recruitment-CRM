@@ -531,7 +531,8 @@ function apiTaskSummary() {
   const all = allTasks_().filter(function (t) { return !t.hidden && (lead || String(t.recruiter).toLowerCase() === u.recruiter.toLowerCase()); });
   const y = ymd_(new Date(Date.now() - 86400000));
   const missed = missedTasks_(y, lead ? '' : u.recruiter).length;
-  return { team: lead, critical: all.filter(function (t) { return t.level === 'critical'; }).length, due: all.filter(function (t) { return t.level === 'due'; }).length, missedYesterday: missed };
+  const exemptPending = can_(u, 'tat_exempt') && ss_().getSheetByName(T.TEX.name) ? readTable_(T.TEX.name).rows.filter(function (x) { return String(x.Status) === 'Pending'; }).length : 0;
+  return { team: lead, critical: all.filter(function (t) { return t.level === 'critical'; }).length, due: all.filter(function (t) { return t.level === 'due'; }).length, missedYesterday: missed, exemptPending: exemptPending };
 }
 
 /** Task buttons: chased, snooze, done. */

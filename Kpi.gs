@@ -89,20 +89,25 @@ function computeKpis_(fy) {
     return k[month] = k[month] || cell();
   };
   const inFy = function (m) { return months.indexOf(m) >= 0; };
+  const exCtx = { exempt: exemptIndex_() }, exToday = ymd_(new Date());
 
   lines.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
     const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
     const status = positionStatus_(l);
-    const notice = Number(l.Notice_Period_Days) || 0;
-    const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj };
+    // Recruiter clock adjustments, as on the TAT screens: approved exemptions that apply to the recruiter, notice beyond
+    // the grace (unless the Head of HR rejected it) and on-hold / paused days, which are not counted against the recruiter.
+    const ex = exemptFor_(exCtx, l, 'r'), notice = noticeExt_(l, grace), hold = Number(l.Hold_Days) || 0;
+    const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || exToday) : 0;
+    const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
+      hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
 
     // 1. Timely closure — positions filled in the month, within the recruiter's TAT.
     if (status === 'Closed' && receipt && doj && inFy(doj.slice(0, 7))) {
       const m = doj.slice(0, 7), t = targetFor_(targets, rec, 'TIMELY_CLOSURE', m);
       if (t && levelMatch_(t.levels, l.Grade)) {
-        const allowed = t.days + (t.exempt ? Math.max(notice - grace, 0) : 0);
-        const days = daysBetween_(receipt, doj), ok = days <= allowed;
+        const allowed = t.days + (t.exempt ? notice : 0) + ex.days;
+        const days = Math.max(0, daysBetween_(receipt, doj) - hold - paused), ok = days <= allowed;
         const c = bucket(rec, 'TIMELY_CLOSURE', m);
         c.den++; if (ok) c.num++;
         c.items.push(Object.assign({ days: days, allowed: allowed, ok: ok }, brief));
@@ -114,10 +119,10 @@ function computeKpis_(fy) {
       const probe = doj ? doj.slice(0, 7) : receipt.slice(0, 7);
       const t = targetFor_(targets, rec, 'M_FULFILMENT', probe);
       if (t && levelMatch_(t.levels, l.Grade)) {
-        const allowed = t.days + (t.exempt ? Math.max(notice - grace, 0) : 0);
-        const due = addDays_(receipt, allowed), dueM = due.slice(0, 7);
+        const allowed = t.days + (t.exempt ? notice : 0) + ex.days;
+        const due = addDays_(receipt, allowed + hold + paused), dueM = due.slice(0, 7);
         const filledM = doj ? doj.slice(0, 7) : '';
-        const ok = !!doj && doj <= due;
+        const ok = !!doj && Math.max(0, daysBetween_(receipt, doj) - hold - paused) <= allowed;
         const month = filledM && filledM <= dueM ? filledM : dueM;
         if (inFy(month) && month <= ymd_(new Date()).slice(0, 7)) {
           const c = bucket(rec, 'M_FULFILMENT', month);

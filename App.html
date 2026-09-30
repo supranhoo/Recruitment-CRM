@@ -852,9 +852,10 @@ async function viewOverview(v, fresh) {
   pipelineAlertsPanel($('#ovAlerts', v), alertsP);
   sumP.then(s => {
     const host = $('#ovTodo', v); if (!host) return;
-    host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}</div>
+    host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}${s.exemptPending ? ` \u00b7 <button class="linklike miss" data-tex>${s.exemptPending} TAT exemption${s.exemptPending === 1 ? '' : 's'} to decide</button>` : ''}</div>
       <div class="btn-row"><button class="btn sm" data-go="myday">My to-do</button>${s.team ? '<button class="btn sm" data-go="review">Daily review</button>' : ''}</div>`;
     $$('[data-go]', host).forEach(b => b.onclick = () => go(b.dataset.go, true));
+    if ($('[data-tex]', host)) $('[data-tex]', host).onclick = () => { S.adminTab = Object.assign(S.adminTab || { q: '', sheet: '', from: daysAgo(30), to: today() }, { tab: 'tex' }); go('admin', true); };
   }).catch(() => { const host = $('#ovTodo', v); if (host) host.remove(); });
   $('#dashRefresh').onclick = async () => {
     const b = $('#dashRefresh'); busy(b, true, 'Refreshing…');
@@ -921,7 +922,7 @@ async function viewPositions(v) {
     $('#ptbody').innerHTML = slice.length ? slice.map(p => `<tr data-id="${esc(p.Line_ID)}">
       <td class="nw">${esc(p.MRF_No)}<span class="sub">${esc(p.Line_ID)}</span></td>
       <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}${p.Designation ? `<span class="sub">${esc(p.Designation)}</span>` : ''}</td><td>${esc(p.Recruiter)}</td>
-      <td class="nw">${fmtDate(p.Receipt_Date)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}</td>
+      <td class="nw">${fmtDate(p.Receipt_Date)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}${exemptBadge(p)}</td>
       <td class="nw">${p.Actual_DOJ ? fmtDate(p.Actual_DOJ) : p.EDOJ ? fmtDate(p.EDOJ) + '<span class="sub">expected</span>' : ''}</td></tr>`).join('')
       : `<tr><td colspan="8" class="empty">No positions match these filters.</td></tr>`;
     $$('#ptbody tr[data-id]').forEach(tr => tr.addEventListener('click', () => positionDrawer(lineById(tr.dataset.id))));
@@ -963,16 +964,20 @@ function previewTat(d) {
     : a === 'APPROVED' ? (String(d.Offer_Sent).toUpperCase() !== 'YES' ? 'Open' : d.Actual_DOJ ? 'Closed' : 'Offered') : '';
   let end = d.Actual_DOJ || (s === 'No Vacancy' ? d.No_Vacancy_Date : ['Not Needed','On Hold'].includes(s) ? d.Not_Needed_Date : '');
   const hold = Number(d.Hold_Days) || 0;
-  const clock = start => {
-    const rule = tatRuleFor(d.Grade, start), ex = Math.max((Number(d.Notice_Period_Days) || 0) - rule.grace, 0), fin = rule.std + ex;
-    const days = start ? Math.max(0, Math.round((Date.parse(end || today()) - Date.parse(start)) / 86400000) - hold) : '';
+  /* Approved exemptions come from the server (extra days and paused days per clock); the notice extension is recalculated
+     here as it is typed, and drops to 0 if the Head of HR rejected it. */
+  const clock = (start, pos) => {
+    const rule = tatRuleFor(d.Grade, start), notice = d.Notice_Ext_Status === 'Rejected' ? 0 : Math.max((Number(d.Notice_Period_Days) || 0) - rule.grace, 0);
+    const extra = Number(pos ? d.Pos_Exempt_Extra_Days : d.Exempt_Extra_Days) || 0, paused = Number(pos ? d.Pos_Paused_Days : d.Paused_Days) || 0;
+    const ex = notice + extra, fin = rule.std + ex;
+    const days = start ? Math.max(0, Math.round((Date.parse(end || today()) - Date.parse(start)) / 86400000) - hold - paused) : '';
     let r = '';
     if (days !== '') r = ACTIVE.includes(s) ? (days > fin ? 'Overdue' : days >= rule.risk * fin ? 'At risk' : 'On track') : (days > fin ? 'Missed' : 'Achieved');
-    return { std: rule.std, ex, fin, days, r, version: rule.version };
+    return { std: rule.std, ex, fin, days, r, version: rule.version, notice, extra, paused };
   };
   const start = d.TAT_Start_From || d.Assigned_On || d.Approved_On || d.Receipt_Date, pstart = d.TAT_Start_From || d.Approved_On || d.Receipt_Date;
-  const rc = clock(start), pc = clock(pstart);
-  return { Position_Status: s, Standard_TAT: rc.std, Exemption_Days: rc.ex, Final_TAT: rc.fin, Days_Taken: rc.days, TAT_Result: rc.r, _rule: rc.version,
+  const rc = clock(start, false), pc = clock(pstart, true);
+  return { Position_Status: s, Standard_TAT: rc.std, Exemption_Days: rc.ex, Final_TAT: rc.fin, Days_Taken: rc.days, TAT_Result: rc.r, _rule: rc.version, _rc: rc, _pc: pc,
     Pos_Final_TAT: pc.fin, Pos_Days_Taken: pc.days, Pos_TAT_Result: pc.r, _pstart: pstart, _prule: pc.version,
     _start: start, _hold: hold, _basis: d.TAT_Start_From ? 'original MRF start' : d.Assigned_On ? 'position assigned' : d.Approved_On ? 'MRF approved' : 'MRF received' };
 }
@@ -1027,7 +1032,8 @@ function positionFields(isNew, p, orig) {
     { k: 'Offer_Sent', l: 'Offer sent', t: 'select', opts: ['Yes','No'], noBlank: true, ro: pl, hint: pl ? plHint : '' },
     { k: 'Offer_Date', l: 'Offer letter date', t: 'date', ro: pl, hint: pl ? plHint : '' },
     { k: 'EDOJ', l: 'Expected joining date', t: 'date', ro: pl, hint: pl ? plHint : 'Joining days are Monday and Thursday.' },
-    { k: 'Notice_Period_Days', l: 'Notice period (days)', t: 'number', hint: 'Days beyond 30 extend the TAT.' },
+    { k: 'Notice_Period_Days', l: 'Notice period (days)', t: 'number', hint: 'Days beyond 30 extend the TAT, and need proof attached below.' },
+    ...(isNew ? [] : [{ k: 'Notice_Proof_File', l: 'Notice period proof', t: 'file', hint: 'Resignation or offer acceptance showing the notice. Required when the notice is over 30 days.' }]),
     { k: 'Actual_DOJ', l: 'Actual joining date', t: 'date', ro: pl, hint: pl ? plHint : 'Entering this closes the position.' },
     { k: 'Backout_Date', l: 'Backout date', t: 'date', ro: pl, hint: 'Record backouts in the Pipeline: it closes this MRF and raises the replacement (policy 9.5).' },
     { k: 'Candidate_ID', l: 'Selected candidate ID', ro: pl, hint: pl ? plHint : 'Optional, e.g. CAN-01088' },
@@ -1044,6 +1050,94 @@ function positionFields(isNew, p, orig) {
   ];
 }
 
+/* ---------------- TAT exemptions (position drawer) ---------------- */
+function exemptBadge(p) {
+  const r = (Number(p.Exempt_Extra_Days) || 0) + (Number(p.Paused_Days) || 0), q = (Number(p.Pos_Exempt_Extra_Days) || 0) + (Number(p.Pos_Paused_Days) || 0);
+  if (!r && !q && p.Notice_Ext_Status !== 'Rejected') return '';
+  const t = [p.Exempt_Extra_Days ? `+${p.Exempt_Extra_Days} d exemption` : '', p.Paused_Days ? `${p.Paused_Days} d paused` : '', q && !r ? 'position TAT only' : '',
+    p.Notice_Ext_Status === 'Rejected' ? 'notice extension rejected' : '', p.Exempt_Reasons || p.Pos_Exempt_Reasons || ''].filter(Boolean).join(' · ');
+  return ` <span class="badge-pipe" title="${esc(t)}">${p.Notice_Ext_Status === 'Rejected' && !r && !q ? 'Notice rejected' : 'Exempt'}</span>`;
+}
+async function exemptSectionInto(el, p, afterChange) {
+  if (!el) return;
+  let X;
+  const load = async () => { try { X = await api('apiExemptionsForLine', p.Line_ID); } catch (e) { el.innerHTML = `<p class="hint">${esc(e)}</p>`; return; } draw(); };
+  const chip = st => `<span class="tex-st tex-${esc(st)}">${esc(st)}</span>`;
+  const what = x => x.type === 'Days' ? `+${x.days} day${x.days === 1 ? '' : 's'}` : `Paused ${fmtDate(x.from)} – ${fmtDate(x.to)} (${x.days} d)`;
+  const applies = x => x.status === 'Approved' || x.status === 'Revoked' ? [x.r ? 'recruiter TAT and KPI' : '', x.p ? 'position TAT' : ''].filter(Boolean).join(' + ') || 'no TAT effect' : '';
+  const draw = (formOpen) => {
+    if (!el.isConnected) return;
+    const n = X.notice, locked = X.lock.locked;
+    const noticeRow = n.ext > 0 || n.status ? `<div class="tex-notice"><b>Notice ${n.days} days</b> adds ${n.ext} day${n.ext === 1 ? '' : 's'} to the TAT ·
+        ${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener">proof</a>` : '<span class="miss">no proof attached</span>'} ·
+        ${n.status === 'Verified' ? '<span class="ok">verified</span>' : n.status === 'Rejected' ? '<span class="miss">rejected by the Head of HR (not counted)</span>' : 'not reviewed'}${n.note ? ` <span class="sub">${esc(n.note)} · ${esc(n.by)} ${fmtDate(n.on)}</span>` : ''}
+        ${X.canDecide && !locked ? `<span class="btn-row" style="display:inline-flex;margin-left:8px">${n.status !== 'Verified' && n.proof ? '<button class="btn sm" data-nx="Verify">Verify</button>' : ''}${n.status !== 'Rejected' ? '<button class="btn sm" data-nx="Reject">Reject extension</button>' : '<button class="btn sm" data-nx="Reset">Undo rejection</button>'}</span>` : ''}</div>` : '';
+    const rows = X.items.map(x => `<tr style="cursor:default"><td class="nw"><b>${what(x)}</b><span class="sub">${esc(x.id)} · ${fmtDate(x.on)} by ${esc(x.by)}</span></td>
+        <td>${esc(x.reason)}<span class="sub">${esc(x.remark)}</span></td>
+        <td>${x.proof ? `<a href="${esc(x.proof)}" target="_blank" rel="noopener">View</a>` : x.status === 'Pending' || x.status === 'Approved' ? `<label class="linklike tex-up">Attach<input type="file" class="att-input" data-field="Proof_File" data-id="${esc(x.id)}" hidden accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"></label>` : '—'}</td>
+        <td>${chip(x.status)}${applies(x) ? `<span class="sub">${applies(x)}</span>` : ''}${x.decidedBy ? `<span class="sub">${esc(x.decidedBy)} ${fmtDate(x.decidedOn)}${x.note ? ': ' + esc(x.note) : ''}</span>` : ''}</td>
+        <td class="nw">${locked ? '' : [x.status === 'Pending' && X.canDecide ? `<button class="btn sm primary" data-act="Approve" data-id="${esc(x.id)}">Approve</button><button class="btn sm" data-act="Reject" data-id="${esc(x.id)}">Reject</button>` : '',
+          x.status === 'Pending' && X.canRequest ? `<button class="btn sm" data-act="Withdraw" data-id="${esc(x.id)}">Withdraw</button>` : '',
+          x.status === 'Approved' && X.canDecide ? `<button class="btn sm" data-act="Revoke" data-id="${esc(x.id)}">Revoke</button>` : ''].join('')}</td></tr>`).join('');
+    const reasonOpts = X.reasons.map(r => `<option value="${esc(r.reason)}" data-type="${r.type}">${esc(r.reason)}</option>`).join('');
+    el.innerHTML = `<section class="panel tex-sec"><div class="dp-h"><h3>TAT exemptions</h3>
+        ${locked ? `<span class="hint">KPI month locked since ${fmtDate(X.lock.until)}; only the admin can change exemptions.</span>` : X.canRequest || X.canDecide ? `<button class="btn sm" id="texNew">${X.canDecide ? 'Request or grant exemption' : 'Request exemption'}</button>` : ''}</div>
+      ${noticeRow}
+      ${X.items.length ? `<div class="table-wrap"><table><thead><tr><th>Exemption</th><th>Reason and remark</th><th>Proof</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="hint">${n.ext ? '' : 'No exemptions. '}Extra days or a paused period can be requested for reasons outside the recruiter’s control; the Head of HR decides.</p>`}
+      <div id="texForm" ${formOpen ? '' : 'hidden'}><fieldset><legend>New exemption</legend><div class="grid">
+        <div class="field wide"><label for="texReason">Reason *</label><select id="texReason"><option value=""></option>${reasonOpts}</select><span class="hint" id="texReasonHint"></span></div>
+        <div class="field"><label for="texType">Type</label><select id="texType"><option value="Days">Extra days</option><option value="Pause">Pause the clock for dates</option></select></div>
+        <div class="field" data-for="Days"><label for="texDays">Extra days *</label><input id="texDays" type="number" min="1" step="1"></div>
+        <div class="field" data-for="Pause" hidden><label for="texFrom">Paused from *</label><input id="texFrom" type="date" max="${today()}"></div>
+        <div class="field" data-for="Pause" hidden><label for="texTo">Paused to *</label><input id="texTo" type="date" max="${today()}"></div>
+        <div class="field wide"><label for="texRemark">Remark *</label><textarea id="texRemark" placeholder="What happened, when, and who agreed (e.g. HOD on leave 3–10 Oct, feedback on 4 CVs pending)"></textarea></div>
+        <div class="field wide"><label>Proof <span id="texProofReq"></span></label><input type="file" class="att-input" data-field="Proof_File" id="texProof" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Email, HOD note or approval showing the reason. PDF, Word, JPG or PNG.</span></div>
+      </div></fieldset>
+      <div class="btn-row"><button class="btn" id="texCancel">Cancel</button>${X.canRequest ? '<button class="btn" id="texSend">Send for approval</button>' : ''}${X.canDecide ? '<button class="btn primary" id="texGrant">Grant now</button>' : ''}</div></div></section>`;
+    const run = async (b, fn, done) => { if (b) b.disabled = true; try { await fn(); if (done) toast(done); await afterChange(); } catch (e) { toast(e, true); } await load(); };
+    $$('[data-nx]', el).forEach(b => b.onclick = () => { const a = b.dataset.nx; const note = a === 'Reject' ? prompt('Why is the notice extension rejected?') : a === 'Reset' ? prompt('Why is the rejection undone?') || '' : '';
+      if (a === 'Reject' && !note) return; run(b, () => api('apiNoticeExtDecide', p.Line_ID, a, note), a === 'Verify' ? 'Notice extension verified' : a === 'Reject' ? 'Notice extension rejected: it no longer counts' : 'Rejection undone'); });
+    $$('[data-act]', el).forEach(b => b.onclick = () => {
+      const a = b.dataset.act, id = b.dataset.id;
+      if (a === 'Approve') return run(b, () => api('apiExemptionDecide', id, 'Approve', ''), 'Exemption approved; TAT recalculated');
+      if (a === 'Withdraw') return run(b, () => api('apiExemptionWithdraw', id), 'Request withdrawn');
+      const note = prompt(a === 'Reject' ? 'Why is this request rejected?' : 'Why is this exemption revoked?'); if (!note) return;
+      run(b, () => a === 'Reject' ? api('apiExemptionDecide', id, 'Reject', note) : api('apiExemptionRevoke', id, note), a === 'Reject' ? 'Request rejected' : 'Exemption revoked; TAT recalculated');
+    });
+    $$('.tex-up input', el).forEach(inp => inp.onchange = () => { const bad = checkAttachments(inp.closest('label')); if (bad) return toast(bad, true);
+      run(null, () => uploadAttachments('TEX', inp.dataset.id, inp.closest('label')), 'Proof attached'); });
+    if ($('#texNew', el)) $('#texNew', el).onclick = () => { $('#texForm', el).hidden = false; $('#texReason', el).focus(); };
+    if (!$('#texForm', el)) return;
+    const f = $('#texForm', el);
+    const syncType = () => { const t = $('#texType', f).value; $$('[data-for]', f).forEach(x => x.hidden = x.dataset.for !== t); };
+    $('#texType', f).onchange = syncType;
+    $('#texReason', f).onchange = e => {
+      const r = X.reasons.find(x => x.reason === e.target.value);
+      if (r) { $('#texType', f).value = r.type; syncType(); $('#texProofReq', f).textContent = r.proof ? '*' : '(optional)';
+        $('#texReasonHint', f).textContent = [r.r ? 'Extends the recruiter TAT and KPI' : 'Does not change the recruiter KPI', r.p ? 'extends the position TAT' : 'does not change the position TAT', r.max ? 'up to ' + r.max + ' days' : '', r.note].filter(Boolean).join(' · '); }
+    };
+    $('#texCancel', f).onclick = () => { f.hidden = true; };
+    const send = async (grant, b) => {
+      const r = X.reasons.find(x => x.reason === $('#texReason', f).value), file = $('#texProof', f).files[0];
+      if (!r) return toast('Pick a reason.', true);
+      if (r.proof && !file) return toast(r.reason + ' needs proof: attach it.', true);
+      const bad = checkAttachments(f); if (bad) return toast(bad, true);
+      const d = { reason: r.reason, type: $('#texType', f).value, days: $('#texDays', f).value, from: $('#texFrom', f).value, to: $('#texTo', f).value, remark: $('#texRemark', f).value, approveNow: grant, proofComing: !!file };
+      busy(b, true, grant ? 'Granting…' : 'Sending…');
+      try {
+        const res = await api('apiExemptionRequest', p.Line_ID, d);
+        if (file) { try { await uploadAttachments('TEX', res.id, f); } catch (e) { toast('Saved, but the proof upload failed: ' + e + '. Attach it from the list.', true); } }
+        toast(grant ? 'Exemption granted; TAT recalculated' : 'Sent to the Head of HR for approval');
+        if (grant) await afterChange();
+        await load();
+      } catch (e) { toast(e, true); busy(b, false, grant ? 'Grant now' : 'Send for approval'); }
+    };
+    if ($('#texSend', f)) $('#texSend', f).onclick = e => send(false, e.target);
+    if ($('#texGrant', f)) $('#texGrant', f).onclick = e => send(true, e.target);
+  };
+  el.innerHTML = '<p class="hint">Loading exemptions…</p>';
+  await load();
+}
 function positionDrawer(p) {
   const isNew = !p;
   const data = p ? Object.assign({ BGV_Required: 'Auto' }, p) : { Receipt_Date: today(), Approval_Status: 'Approved', Offer_Sent: 'No', Recruiter: S.boot.user.recruiter, BGV_Required: 'Auto', _count: 1 };
@@ -1060,6 +1154,7 @@ function positionDrawer(p) {
       ${isNew ? '' : `<p style="margin:12px 0 0"><button class="btn" id="openPipe">Open candidate pipeline</button></p>`}
       ${isNew ? '' : '<div id="posTasks"></div>'}
       <div class="readout" id="tatReadout"></div>
+      ${isNew ? '' : '<div id="posExempt"></div>'}
       ${!isNew && ['Not Needed', 'No Vacancy', 'On Hold'].includes(p.Position_Status) && p.Closure_Reason ? `<div class="note warn-note">${p.Position_Status === 'On Hold' ? 'On hold since' : 'Closed without a hire on'} ${fmtDate(p.Position_Status === 'No Vacancy' ? p.No_Vacancy_Date : p.Not_Needed_Date)} (${esc(p.Position_Status)}): ${esc(p.Closure_Reason)}${p.Closure_Requested_By ? ` \u00b7 requested by ${esc(p.Closure_Requested_By)}` : ''}</div>` : ''}
       ${!isNew && p.Position_Status === 'Removed' ? `<div class="note warn-note">Removed (created in error) on ${fmtDate(p.Not_Needed_Date)}${p.Closure_Reason ? ': ' + esc(p.Closure_Reason) : ''}${p.Closure_Requested_By ? ' \u00b7 requested by ' + esc(p.Closure_Requested_By) : ''}${isLead() ? ' <button class="btn sm" id="posRestore">Restore position</button>' : ''}</div>` : ''}
       ${!isNew && p.Fill_Type === 'Internal' ? `<div class="note">Filled internally: <b>${esc(p.Internal_Employee)}</b>${p.Internal_Emp_Code ? ' (' + esc(p.Internal_Emp_Code) + ')' : ''}${p.Internal_From_Dept ? ' from ' + esc(p.Internal_From_Dept) : ''} \u00b7 effective ${fmtDate(p.Internal_Effective_Date)} \u00b7 decided ${fmtDate(p.Internal_Decided_On)}${p.Closure_Reason ? ' \u00b7 ' + esc(p.Closure_Reason) : ''}${isLead() ? ' <button class="btn sm" id="posUndoInt">Undo internal fill</button>' : ''}</div>` : ''}
@@ -1071,11 +1166,17 @@ function positionDrawer(p) {
   const readout = () => {
     const t = previewTat(Object.assign({}, data, readForm($('#posForm'))));
     const ruleTag = v => v ? ` \u00b7 rule ${esc(v)}` : '';
+    const parts = c => (c.notice || c.extra || c.paused) ? `<span class="sub tat-parts">${c.std} standard${c.notice ? ` + ${c.notice} notice${d0(data.Notice_Ext_Status)}` : ''}${c.extra ? ` + ${c.extra} exemption` : ''} = ${c.fin} d${c.paused ? ` \u00b7 ${c.paused} d paused` : ''}</span>` : '';
+    const d0 = st => st === 'Verified' ? ' (verified)' : st === 'Rejected' ? '' : '';
     $('#tatReadout').innerHTML = `<div>Status<b>${esc(t.Position_Status || '—')}</b></div>
-      <div>Recruiter TAT<b>${t.Days_Taken === '' ? '—' : t.Days_Taken} / ${t.Final_TAT} d \u00b7 ${esc(t.TAT_Result || '—')}</b>${t._start ? `<span class="sub">from ${fmtDate(t._start)} (${t._basis})${t._hold ? ` \u00b7 ${t._hold} day${t._hold === 1 ? '' : 's'} on hold excluded` : ''}${ruleTag(t._rule)}</span>` : ''}</div>
-      <div>Position TAT<b>${t.Pos_Days_Taken === '' ? '—' : t.Pos_Days_Taken} / ${t.Pos_Final_TAT} d \u00b7 ${esc(t.Pos_TAT_Result || '—')}</b>${t._pstart ? `<span class="sub">from ${fmtDate(t._pstart)} (${t._basis === 'original MRF start' ? 'original MRF start' : 'MRF approved'})${ruleTag(t._prule)}</span>` : ''}</div>`;
+      <div>Recruiter TAT<b>${t.Days_Taken === '' ? '—' : t.Days_Taken} / ${t.Final_TAT} d \u00b7 ${esc(t.TAT_Result || '—')}</b>${parts(t._rc)}${t._start ? `<span class="sub">from ${fmtDate(t._start)} (${t._basis})${t._hold ? ` \u00b7 ${t._hold} day${t._hold === 1 ? '' : 's'} on hold excluded` : ''}${ruleTag(t._rule)}</span>` : ''}</div>
+      <div>Position TAT<b>${t.Pos_Days_Taken === '' ? '—' : t.Pos_Days_Taken} / ${t.Pos_Final_TAT} d \u00b7 ${esc(t.Pos_TAT_Result || '—')}</b>${parts(t._pc)}${t._pstart ? `<span class="sub">from ${fmtDate(t._pstart)} (${t._basis === 'original MRF start' ? 'original MRF start' : 'MRF approved'})${ruleTag(t._prule)}</span>` : ''}</div>`;
   };
   readout();
+  if (!isNew) exemptSectionInto($('#posExempt', body), p, async () => {
+    try { const l = await refreshLine(p.Line_ID); ['Final_TAT', 'Days_Taken', 'TAT_Result', 'Exemption_Days', 'Exempt_Extra_Days', 'Paused_Days', 'Pos_Exempt_Extra_Days', 'Pos_Paused_Days',
+      'Notice_Ext_Status', 'Pos_Final_TAT', 'Pos_Days_Taken', 'Pos_TAT_Result'].forEach(k => { data[k] = l[k]; }); readout(); S.posStale = true; } catch (e) { }
+  });
   if (!isNew) lineTasksInto($('#posTasks', body), p.Line_ID);
   /* The drawer opens from the list in memory; the position itself is re-read from the server so an edit is never saved
      over a colleague's newer change. Untouched, the drawer redraws with the new values; once typed in, it warns instead. */
@@ -1141,6 +1242,7 @@ function positionDrawer(p) {
   $('#pCancel').onclick = closeDrawer;
   $('#pSave').onclick = async () => {
     const d = Object.assign({ Line_ID: isNew ? '' : p.Line_ID }, readForm($('#posForm')));
+    const np = $('.att-input[data-field="Notice_Proof_File"]', $('#posForm')); d._noticeProof = !!(np && np.files[0]);
     const jdId = d._jdFileId; delete d._jdFileId;
     const bad = checkAttachments($('#posForm')); if (bad) return toast(bad, true);
     const btn = $('#pSave'); busy(btn, true, 'Saving…');
@@ -2895,6 +2997,8 @@ const ROLE_MATRIX = [
   ['Withdraw an offer (close a position with a live offer)', 0, 0, 1, 1],
   ['Admin: data checks, change history, task rules, HOD contacts', 0, 1, 1, 1],
   ['Admin: TAT rules', 0, 'view', 'edit', 'edit'],
+  ['Request a TAT exemption', 'own', 'all', 'all', 'all'],
+  ['Approve, grant or revoke TAT exemptions; verify notice extensions', 0, 0, 1, 1],
   ['Admin: users', 0, 0, 'view', 'edit'],
   ['Admin: backups, archive, weekly email, database link', 0, 0, 0, 1],
   ['JD Master: view the library', 1, 1, 1, 1],
@@ -3039,6 +3143,68 @@ async function renderGrades(el) {
   };
   draw();
 }
+/* Admin → TAT exemptions: pending approvals, the register, notice extensions to review and the reasons. */
+async function renderExemptAdmin(el) {
+  let R; try { R = await api('apiExemptionRegister', {}); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const f = S.texF = S.texF || { status: '', reason: '', q: '' };
+  let reasons = R.reasons.map(r => Object.assign({ orig: r.reason }, r));
+  const what = x => x.type === 'Days' ? `+${x.days} d` : `Paused ${fmtDate(x.from)} – ${fmtDate(x.to)} (${x.days} d)`;
+  const age = on => on ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(on)) / 86400000)) : 0;
+  const draw = () => {
+    const pend = R.rows.filter(x => x.status === 'Pending');
+    const reg = R.rows.filter(x => (!f.status || x.status === f.status) && (!f.reason || x.reason === f.reason) && (!f.q || [x.id, x.mrf, x.position, x.dept, x.recruiter, x.remark].join(' ').toLowerCase().includes(f.q)));
+    const row = (x, act) => `<tr data-line="${esc(x.line)}"><td class="nw"><b>${what(x)}</b><span class="sub">${esc(x.id)} · ${fmtDate(x.on)} by ${esc(x.by)}</span></td>
+      <td>${esc(x.position)}<span class="sub">${esc(x.mrf)} · ${esc(x.dept)} · ${esc(x.recruiter)}</span></td><td>${esc(x.reason)}<span class="sub">${esc(x.remark)}</span></td>
+      <td>${x.proof ? `<a href="${esc(x.proof)}" target="_blank" rel="noopener" data-stop>View</a>` : '<span class="miss">none</span>'}</td>
+      <td><span class="tex-st tex-${esc(x.status)}">${esc(x.status)}</span>${x.status === 'Pending' ? `<span class="sub ${age(x.on) > 2 ? 'miss' : ''}">waiting ${age(x.on)} d</span>` : x.decidedBy ? `<span class="sub">${esc(x.decidedBy)} ${fmtDate(x.decidedOn)}${x.note ? ': ' + esc(x.note) : ''}</span>` : ''}</td>
+      ${act ? `<td class="nw">${R.canDecide ? `<button class="btn sm primary" data-act="Approve" data-id="${esc(x.id)}">Approve</button><button class="btn sm" data-act="Reject" data-id="${esc(x.id)}">Reject</button>` : ''}</td>` : ''}</tr>`;
+    el.innerHTML = `
+      <section class="panel"><div class="dp-h"><h2>Awaiting the Head of HR <span class="pcount">${pend.length}</span></h2><span class="hint">Oldest first. Open a row to see the position and its TAT.</span></div>
+        ${pend.length ? `<div class="table-wrap"><table><thead><tr><th>Exemption</th><th>Position</th><th>Reason and remark</th><th>Proof</th><th>Status</th><th></th></tr></thead><tbody>${pend.map(x => row(x, true)).join('')}</tbody></table></div>` : '<p class="hint">Nothing is waiting.</p>'}</section>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Notice extensions to review</h2><span class="hint">Notice beyond the grace adds days to the TAT automatically. Verify it against the proof, or reject it so it no longer counts.</span></div>
+        ${R.notices.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th class="num">Notice</th><th class="num">Adds</th><th>Proof</th><th>Review</th><th></th></tr></thead><tbody>
+          ${R.notices.map(n => `<tr data-line="${esc(n.line)}"><td>${esc(n.position)}<span class="sub">${esc(n.mrf)} · ${esc(n.dept)} · ${esc(n.recruiter)}</span></td><td class="num">${n.days} d</td><td class="num">${n.ext} d</td>
+            <td>${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener" data-stop>View</a>` : '<span class="miss">none</span>'}</td><td>${n.status === 'Verified' ? '<span class="ok">Verified</span>' : n.status === 'Rejected' ? '<span class="miss">Rejected</span>' : 'Not reviewed'}${n.note ? `<span class="sub">${esc(n.note)}</span>` : ''}</td>
+            <td class="nw">${R.canDecide ? `${n.status !== 'Verified' && n.proof ? `<button class="btn sm" data-nx="Verify" data-line="${esc(n.line)}">Verify</button>` : ''}${n.status !== 'Rejected' ? `<button class="btn sm" data-nx="Reject" data-line="${esc(n.line)}">Reject</button>` : ''}` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No open position has a notice beyond the grace.</p>'}</section>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Register</h2><button class="btn sm" id="texCsv">Download CSV</button></div>
+        <div class="filters"><div class="field"><label for="texS">Status</label><select id="texS">${opts(['Pending', 'Approved', 'Rejected', 'Withdrawn', 'Revoked'], f.status)}</select></div>
+          <div class="field"><label for="texR">Reason</label><select id="texR">${opts(R.reasons.map(r => r.reason), f.reason)}</select></div>
+          <div class="field search"><label for="texQ">Search</label><input id="texQ" type="search" value="${esc(f.q)}" placeholder="Position, MRF, department, recruiter, remark"></div></div>
+        ${reg.length ? `<div class="table-wrap"><table><thead><tr><th>Exemption</th><th>Position</th><th>Reason and remark</th><th>Proof</th><th>Status</th></tr></thead><tbody>${reg.map(x => row(x, false)).join('')}</tbody></table></div>` : '<p class="hint">No exemptions match.</p>'}</section>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Reasons</h2><span class="hint">Each reason decides what an approved exemption changes. Changes apply to exemptions decided from now on; earlier ones keep what they had. Reasons cannot be renamed or deleted: deactivate them.</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Reason</th><th>Default</th><th>Recruiter TAT + KPI</th><th>Position TAT</th><th>Proof required</th><th class="num">Max days</th><th>Active</th><th>Note</th></tr></thead><tbody>
+          ${reasons.map((r, i) => `<tr style="cursor:default" data-i="${i}"><td>${r.orig ? `<b>${esc(r.reason)}</b>` : `<input data-f="reason" value="${esc(r.reason)}" maxlength="80" placeholder="New reason" aria-label="Reason">`}</td>
+            <td><select data-f="type" aria-label="Default type" ${R.canDecide ? '' : 'disabled'}>${opts([['Days', 'Extra days'], ['Pause', 'Pause']], r.type, false)}</select></td>
+            ${['r', 'p', 'proof'].map(k => `<td><input type="checkbox" data-f="${k}" ${r[k] ? 'checked' : ''} ${R.canDecide ? '' : 'disabled'} aria-label="${k}"></td>`).join('')}
+            <td class="num"><input data-f="max" type="number" min="1" value="${r.max || ''}" style="width:70px" ${R.canDecide ? '' : 'disabled'} aria-label="Max days"></td>
+            <td><input type="checkbox" data-f="active" ${r.active ? 'checked' : ''} ${R.canDecide ? '' : 'disabled'} aria-label="Active"></td>
+            <td><input data-f="note" value="${esc(r.note)}" maxlength="300" style="min-width:220px" ${R.canDecide ? '' : 'disabled'} aria-label="Note"></td></tr>`).join('')}</tbody></table></div>
+        ${R.canDecide ? '<div class="drawer-actions" style="position:static"><button class="btn" id="texAddR">Add reason</button><button class="btn primary" id="texSaveR">Save reasons</button></div>' : ''}</section>`;
+    const refresh = async msg => { try { R = await api('apiExemptionRegister', {}); reasons = R.reasons.map(r => Object.assign({ orig: r.reason }, r)); if (msg) toast(msg); S.posStale = true; } catch (e) { toast(e, true); } draw(); };
+    $$('[data-stop]', el).forEach(a => a.onclick = e => e.stopPropagation());
+    $$('tr[data-line]', el).forEach(tr => tr.onclick = async e => { if (e.target.closest('button')) return; try { await loadPositions(); const l = lineById(tr.dataset.line); if (l) positionDrawer(l); } catch (err) { toast(err, true); } });
+    $$('[data-act]', el).forEach(b => b.onclick = async () => {
+      const a = b.dataset.act, note = a === 'Reject' ? prompt('Why is this request rejected?') : '';
+      if (a === 'Reject' && !note) return; b.disabled = true;
+      try { await api('apiExemptionDecide', b.dataset.id, a, note || ''); await refresh(a === 'Approve' ? 'Approved; TAT recalculated' : 'Rejected'); } catch (e) { toast(e, true); b.disabled = false; }
+    });
+    $$('[data-nx]', el).forEach(b => b.onclick = async () => {
+      const a = b.dataset.nx, note = a === 'Reject' ? prompt('Why is the notice extension rejected?') : '';
+      if (a === 'Reject' && !note) return; b.disabled = true;
+      try { await api('apiNoticeExtDecide', b.dataset.line, a, note || ''); await refresh(a === 'Verify' ? 'Notice extension verified' : 'Notice extension rejected'); } catch (e) { toast(e, true); b.disabled = false; }
+    });
+    $('#texS').onchange = e => { f.status = e.target.value; draw(); };
+    $('#texR').onchange = e => { f.reason = e.target.value; draw(); };
+    const q = $('#texQ'); q.oninput = debounce(() => { f.q = q.value.trim().toLowerCase(); draw(); const n = $('#texQ'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 200);
+    $('#texCsv').onclick = () => csvSave(`tat-exemptions-${today()}.csv`, ['ID', 'MRF', 'Position', 'Department', 'Recruiter', 'Type', 'Days', 'From', 'To', 'Reason', 'Remark', 'Recruiter TAT + KPI', 'Position TAT', 'Status', 'Requested by', 'Requested on', 'Decided by', 'Decided on', 'Decision note', 'Proof'],
+      reg.map(x => [x.id, x.mrf, x.position, x.dept, x.recruiter, x.type, x.days, x.from, x.to, x.reason, x.remark, x.status === 'Approved' || x.status === 'Revoked' ? (x.r ? 'Yes' : 'No') : '', x.status === 'Approved' || x.status === 'Revoked' ? (x.p ? 'Yes' : 'No') : '', x.status, x.by, x.on, x.decidedBy, x.decidedOn, x.note, x.proof]));
+    $$('tr[data-i]', el).forEach(tr => { const r = reasons[+tr.dataset.i]; $$('[data-f]', tr).forEach(inp => inp.oninput = inp.onchange = () => { r[inp.dataset.f] = inp.type === 'checkbox' ? inp.checked : inp.value; }); });
+    if ($('#texAddR')) $('#texAddR').onclick = () => { reasons.push({ reason: '', type: 'Days', r: true, p: true, proof: true, max: '', active: true, note: '' }); draw(); };
+    if ($('#texSaveR')) $('#texSaveR').onclick = async e => { busy(e.target, true, 'Saving…');
+      try { R = await api('apiSaveExemptionReasons', reasons.filter(r => r.orig || String(r.reason).trim())); reasons = R.reasons.map(r => Object.assign({ orig: r.reason }, r)); toast('Reasons saved'); draw(); } catch (err) { toast(err, true); busy(e.target, false, 'Save reasons'); } };
+  };
+  draw();
+}
 async function viewAdmin(v) {
   const admin = can('system');
   const f = S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() };
@@ -3051,6 +3217,7 @@ async function viewAdmin(v) {
       <button role="tab" data-t="hod" aria-selected="${f.tab === 'hod'}">HOD contacts</button>
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>
+      <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
       <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button></div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
@@ -3059,6 +3226,7 @@ async function viewAdmin(v) {
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
+  if (f.tab === 'tex') return renderExemptAdmin(el);
   if (f.tab === 'dstat') return renderDayStatusAdmin(el);
   if (f.tab === 'hod' || f.tab === 'rules') {
     let cfg; try { cfg = await api('apiTaskAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
@@ -3261,7 +3429,7 @@ function kpiDrill(k, f, kpi, m) {
     head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>MRF date</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
     rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}
       <td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
-      <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
+      <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}${i.extra || i.hold || i.paused ? `<span class="sub" title="${esc(i.reasons || '')}">${[i.extra ? '+' + i.extra + ' d exemption' : '', i.hold ? i.hold + ' d on hold' : '', i.paused ? i.paused + ' d paused' : ''].filter(Boolean).join(' \u00b7 ')}</span>` : ''}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
   }
   openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
     <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : c.pct + '%'}</b></div><div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / offers' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div><div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
