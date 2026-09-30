@@ -3912,12 +3912,13 @@ async function viewCtc(v) {
   const R = await ctcRules();
   const tab = S.ctcTab || 'calc';
   v.innerHTML = `<div class="page-head"><div><h1>CTC calculator</h1><p>Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand. The full structure is worked out on the rules in force.</p></div>
-      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span><button class="btn sm" id="ccHist">Version history</button></div></div>
-    <div class="tabs" role="tablist">${[['calc', 'Calculator'], ['saved', 'Saved calculations']].map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span>${R.versions.filter(x => x.status === 'Active' && x.eff > R.today).map(x => `<span class="badge rs-next">${esc(x.id)} from ${fmtDate(x.eff)}</span>`).join('')}<button class="btn sm" id="ccHist">Version history</button></div></div>
+    <div class="tabs" role="tablist">${[['calc', 'Calculator'], ['saved', 'Saved calculations']].concat(R.canRules ? [['rules', R.draft ? 'Rules \u00b7 draft ' + R.draft.id : 'Rules']] : []).map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
     <div id="ccBody" style="margin-top:16px"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { S.ctcTab = b.dataset.t; viewCtc(v); });
   $('#ccHist').onclick = () => ctcHistory(R);
   if (tab === 'saved') return ctcSaved($('#ccBody'), R, v);
+  if (tab === 'rules' && R.canRules) return ctcRulesTab($('#ccBody'), R, v);
   ctcCalc($('#ccBody'), R, v);
 }
 function ctcCalc(el, R, v) {
@@ -4057,7 +4058,7 @@ function ctcDiffHtml(a, b, secs) {
 }
 function ctcHistory(R) {
   openDrawer('CTC rules: version history', `<p class="hint">Every change to the CTC rules is a new version. Old versions are kept, with who made them, when and why.</p>
-    ${R.versions.map(x => `<div class="ctc-vh ${x.id === R.active.id ? 'on' : ''}"><div class="dp-h"><b>${esc(x.id)}</b><span class="badge">${esc(x.id === R.active.id ? 'In force' : x.status)}</span><span class="hint">from ${fmtDate(x.eff)}</span></div>
+    ${R.versions.map(x => `<div class="ctc-vh ${x.id === R.active.id ? 'on' : ''}"><div class="dp-h"><b>${esc(x.id)}</b><span class="badge">${esc(ctcVerState(x, R))}</span><span class="hint">from ${fmtDate(x.eff)}</span></div>
       <div><span class="sub">Reason</span> ${esc(x.reason)}</div><div><span class="sub">Remark</span> ${esc(x.remark)}</div>${x.summary ? `<div><span class="sub">Changes</span> ${esc(x.summary)}</div>` : ''}
       <div class="sub">Made by ${esc(x.by)}${x.at ? ' on ' + esc(x.at) : ''}${x.activatedBy ? ` · activated by ${esc(x.activatedBy)}${x.activatedAt ? ' on ' + esc(x.activatedAt) : ''}` : ''}</div></div>`).join('')}`);
 }
@@ -4260,6 +4261,207 @@ async function ctcVersionConfig(id, R) {
   S.ctcCfg = S.ctcCfg || {};
   if (!S.ctcCfg[id]) S.ctcCfg[id] = await api('apiCtcVersion', id);
   return S.ctcCfg[id];
+}
+
+/* ---- Rules editor (ctc_rules) ---- */
+const CTC_OPS = [['>', 'above'], ['>=', 'from'], ['<=', 'up to'], ['<', 'below']];
+function ctcVerState(x, R) { return x.status === 'Retired' ? 'Cancelled' : x.id === R.active.id ? 'In force' : x.eff > R.today ? 'Scheduled' : 'Earlier'; }
+async function ctcRulesTab(el, R, v) {
+  const sched = R.versions.filter(x => x.status === 'Active' && x.eff > R.today);
+  const head = `<section class="panel ctc-rules-head"><div class="dp-h"><h2>Rules in force: ${esc(R.active.id)}</h2><span class="hint">from ${fmtDate(R.active.eff)}</span></div>
+      ${sched.length ? sched.map(x => `<div class="ctc-sched"><span class="badge">Scheduled</span> <b>${esc(x.id)}</b> takes effect on ${fmtDate(x.eff)} · ${esc(x.reason)}: ${esc(x.remark)}
+        <span class="ctc-sched-x"><input id="rsX_${esc(x.id)}" placeholder="Why cancel it (required)" maxlength="300"><button class="btn sm" data-retire="${esc(x.id)}">Cancel version</button></span></div>`).join('') : ''}
+      <p class="hint" style="margin:6px 0 0">Changes are made in a draft version, checked on the test bench and then put in force from a date (today or later) with a reason and a remark. Versions already in force are never changed; saved calculations keep the version they were worked out on.</p></section>`;
+  if (!R.draft) {
+    el.innerHTML = head + `<section class="panel ctc-empty" style="margin-top:16px"><b>No draft version.</b><span>Start a new version to change rates, caps, slabs, amounts, allowances, labels, the letter or its terms. It starts as a copy of ${esc(R.active.id)}.</span>
+      <button class="btn primary" id="rsNew" style="margin-top:8px">Start a new version</button></section>`;
+    $('#rsNew').onclick = async e => { busy(e.target, true, 'Starting…'); try { S.ctc = await api('apiCtcDraftNew'); S.ctcDraft = null; viewCtc(v); } catch (err) { toast(err, true); busy(e.target, false, 'Start a new version'); } };
+  } else ctcDraftEditor(el, R, v, head);
+  $$('[data-retire]', el).forEach(b => b.onclick = async () => {
+    const note = $('#rsX_' + CSS.escape(b.dataset.retire)).value.trim();
+    if (note.length < 10) return toast('Write why the version is cancelled (at least 10 characters).', true);
+    busy(b, true, 'Cancelling…');
+    try { S.ctc = await api('apiCtcRetire', b.dataset.retire, note); toast(`${b.dataset.retire} cancelled.`); viewCtc(v); } catch (e) { toast(e, true); busy(b, false, 'Cancel version'); }
+  });
+}
+function ctcDraftEditor(el, R, v, head) {
+  if (!S.ctcDraft || S.ctcDraft.id !== R.draft.id) S.ctcDraft = { id: R.draft.id, cfg: JSON.parse(JSON.stringify(R.draft.config)), dirty: false, changes: R.draft.changes, sub: 'items', onlyChanged: true };
+  const D = S.ctcDraft, cfg = D.cfg, old = R.active.config;
+  const secs = cfg.sections, lbl = {}; cfg.components.forEach(c => { lbl[c.id] = c.label; });
+  const baseTxt = b => [].concat(b || []).map(x => ({ gross: 'Gross', gross_ctc: 'Gross CTC', total_ctc: 'Total CTC' })[x] || lbl[x] || x).join(' + ');
+  const numIn = (p, val, w, ph) => `<input class="rs-n" data-p="${p}" data-t="num" value="${val === undefined || val === null ? '' : esc(val)}" inputmode="decimal" ${w ? `style="width:${w}px"` : ''} ${ph ? `placeholder="${ph}"` : ''}>`;
+  const txtIn = (p, val, cls) => `<input class="rs-t ${cls || ''}" data-p="${p}" data-t="text" value="${esc(val || '')}">`;
+  const cond = (p, w) => w ? `<span class="rs-cond">only when ${esc(baseTxt(w.of || 'gross'))} is <select data-p="${p}.op" data-t="text">${opts(CTC_OPS, w.op, false)}</select> ${numIn(p + '.value', w.value, 90)}</span>` : '';
+  const kindTxt = c => ({ input: 'Amount typed for each person', fixed: 'Fixed amount', pct: 'Share of ' + baseTxt(c.of), choice: 'Chosen for each person', slab: 'Slab by ' + baseTxt(c.of || 'gross'), balancing: 'Balancing figure: Gross minus the other earnings' })[c.kind];
+  const optLabel = (flag, code) => ((cfg.flags[flag] || {}).options || []).find(o => String(o.code) === String(code));
+  const card = (c, i) => {
+    const P = `components.${i}`, fl = cfg.flags[c.flag] || {}, allowance = fl.group === 'allowance';
+    let body = '';
+    if (c.kind === 'fixed') body = `<div class="rs-row">Amount ₹ ${numIn(P + '.amount', c.amount, 110)} ${cond(P + '.when', c.when)}</div>`;
+    if (c.kind === 'pct') body = `<div class="rs-row">${numIn(P + '.pct', c.pct, 80)} % of ${esc(baseTxt(c.of))} ${cond(P + '.when', c.when)}</div>`;
+    if (c.kind === 'choice') {
+      const codes = Object.keys(c.values || {});
+      const amountOnly = codes.every(k => c.values[k].amount !== undefined);
+      body = `<table class="rs-tab"><thead><tr><th>Option</th><th>${amountOnly ? 'Amount (₹)' : 'Works out as'}</th>${allowance ? '<th></th>' : ''}</tr></thead><tbody>
+        ${codes.map(k => { const o = c.values[k], ol = optLabel(c.flag, k), fi = (fl.options || []).indexOf(ol), VP = `${P}.values.${k}`;
+          return `<tr><td>${ol ? txtIn(`flags.${c.flag}.options.${fi}.label`, ol.label, 'rs-wide') : esc(k)}</td>
+            <td>${o.amount !== undefined ? numIn(VP + '.amount', o.amount, 110) : `${numIn(VP + '.pct', o.pct, 70)} % of ${esc(baseTxt(o.base))}${o.cap !== undefined ? `, max ₹ ${numIn(VP + '.cap', o.cap, 90)}` : ''} ${cond(VP + '.when', o.when)}`}</td>
+            ${allowance ? `<td>${String(k) !== '0' ? `<button class="icon-btn sm" data-delopt="${i}:${esc(k)}" aria-label="Remove option" title="Remove option">✕</button>` : ''}</td>` : ''}</tr>`; }).join('')}
+        </tbody></table>${allowance ? `<div class="rs-row"><span class="hint">Add an option:</span> ₹ <input id="rsAdd_${i}" inputmode="numeric" style="width:110px"> <button class="btn sm" data-addopt="${i}">Add</button></div>` : ''}
+        ${codes.length < (fl.options || []).length ? `<p class="hint">Other options of “${esc(fl.label)}” add nothing here.</p>` : ''}`;
+    }
+    if (c.kind === 'slab') {
+      const keys = c.flag ? (cfg.flags[c.flag].options || []).map(o => String(o.code)) : null;
+      body = `${c.when ? `<div class="rs-row">${cond(P + '.when', c.when)}</div>` : ''}<table class="rs-tab"><thead><tr><th>${esc(baseTxt(c.of || 'gross'))} up to (₹)</th>${keys ? keys.map(k => `<th>${esc((optLabel(c.flag, k) || {}).label || k)} (₹)</th>`).join('') : '<th>Amount (₹)</th>'}<th></th></tr></thead><tbody>
+        ${c.slabs.map((s, j) => { const last = j === c.slabs.length - 1; return `<tr><td>${last ? '<span class="hint">above that</span>' : numIn(`${P}.slabs.${j}.upto`, s.upto, 110)}</td>
+          ${keys ? keys.map(k => `<td>${numIn(`${P}.slabs.${j}.amount.${k}`, (s.amount || {})[k], 90)}</td>`).join('') : `<td>${numIn(`${P}.slabs.${j}.amount`, s.amount, 90)}</td>`}
+          <td>${!last && c.slabs.length > 2 ? `<button class="icon-btn sm" data-delslab="${i}:${j}" aria-label="Remove slab" title="Remove slab">✕</button>` : ''}</td></tr>`; }).join('')}</tbody></table>
+        <div class="rs-row"><button class="btn sm" data-addslab="${i}">Add a slab</button></div>`;
+    }
+    const changed = JSON.stringify(c) !== JSON.stringify(old.components.find(x => x.id === c.id) || null) || (c.flag && JSON.stringify(fl) !== JSON.stringify(old.flags[c.flag] || null));
+    return `<div class="rs-card${changed ? ' changed' : ''}"><div class="rs-head">${txtIn(P + '.label', c.label, 'rs-name')}<span class="hint">${esc(kindTxt(c))}</span>${changed ? '<span class="badge rs-ch">Changed</span>' : ''}
+      ${allowance ? `<button class="btn sm" data-delcomp="${i}">Remove allowance</button>` : ''}</div>${body}</div>`;
+  };
+  const items = () => ['earning', 'deduction', 'employer', 'annual'].map(s => `<section class="rs-sec"><h3>${esc(secs[s])}</h3>
+      ${cfg.components.map((c, i) => c.section === s ? card(c, i) : '').join('')}
+      ${s === 'earning' ? `<div class="rs-card rs-new"><b>Add an allowance</b><div class="rs-row"><label>Name <input id="rsNewName" maxlength="60" placeholder="e.g. Shift allowance"></label>
+        <label>Monthly amounts to choose from (₹) <input id="rsNewAmts" placeholder="e.g. 1000, 1500, 2000" style="width:220px"></label><button class="btn sm" id="rsNewAdd">Add allowance</button></div>
+        <span class="hint">It is added before Other allowances, which keeps balancing the Gross. The recruiter picks one of the amounts (or None).</span></div>` : ''}</section>`).join('');
+  const choices = () => `<p class="hint">Names of the choices shown on the calculator and their preselected option. Option names are edited with each item.</p>
+    <div class="table-wrap"><table class="rs-tab"><thead><tr><th>Choice</th><th>Preselected</th><th>Note under it</th></tr></thead><tbody>
+    ${Object.keys(cfg.flags).map(k => { const f = cfg.flags[k]; return `<tr><td>${txtIn(`flags.${k}.label`, f.label, 'rs-wide')}</td>
+      <td><select data-p="flags.${k}.default" data-t="code">${opts(f.options.map(o => [String(o.code), o.label]), String(f.default), false)}</select></td>
+      <td>${txtIn(`flags.${k}.note`, f.note, 'rs-wide')}</td></tr>`; }).join('')}</tbody></table></div>`;
+  const whenOpts = [['', 'Always']].concat(cfg.components.filter(c => c.section !== 'earning' || c.kind === 'choice').map(c => [c.id, 'Only when ' + c.label + ' is paid']));
+  const letter = () => { const L = cfg.letter = cfg.letter || {}; L.accept = L.accept || {}; return `<section class="rs-sec"><h3>Letter</h3><div class="grid">
+      <div class="field"><label>Company name</label>${txtIn('letter.company', L.company)}</div><div class="field"><label>Line under the name</label>${txtIn('letter.subheading', L.subheading)}</div>
+      <div class="field"><label>Signatory</label>${txtIn('letter.signatory', L.signatory)}</div><div class="field"><label>Candidate signature line (English)</label>${txtIn('letter.accept.en', L.accept.en)}</div>
+      <div class="field"><label>Candidate signature line (Hindi)</label>${txtIn('letter.accept.hi', L.accept.hi)}</div></div></section>
+    <section class="rs-sec"><h3>Terms on the letter</h3>${(cfg.notes || []).map((n, i) => `<div class="rs-card"><div class="rs-head"><b>Term ${i + 1}</b><select data-p="notes.${i}.when" data-t="text">${opts(whenOpts, n.when || '', false)}</select><button class="btn sm" data-delnote="${i}">Remove</button></div>
+        <div class="grid"><div class="field"><label>English</label><textarea data-p="notes.${i}.en" data-t="text" rows="3">${esc(n.en)}</textarea></div><div class="field"><label>Hindi</label><textarea data-p="notes.${i}.hi" data-t="text" rows="3" class="hi">${esc(n.hi || '')}</textarea></div></div></div>`).join('')}
+      <button class="btn sm" id="rsAddNote">Add a term</button></section>
+    <section class="rs-sec"><h3>Explanations on the calculator</h3><p class="hint">Shown under the structure when an item comes out nil.</p>${(cfg.explain || []).map((x, i) => `<div class="rs-row">${txtIn(`explain.${i}.text`, x.text, 'rs-full')}</div>`).join('')}</section>`; };
+  const bench = () => {
+    const errs = CTC_ENGINE.validate(cfg);
+    if (errs.length) return `<div class="ctc-status bad">Fix the problems listed above before testing.</div>`;
+    if (ctcBlank(cfg)) return `<div class="ctc-status bad">Fill in every amount, % and \u201cup to\u201d value before testing.</div>`;
+    const base = S.ctcIn && S.ctcIn.codes ? S.ctcIn : null;
+    const codes = c => Object.fromEntries(Object.keys(c.flags).map(k => [k, base && base.codes[k] !== undefined ? base.codes[k] : String(c.flags[k].default)]));
+    const rows = [];
+    [['gross', 'Gross salary'], ['total_ctc', 'Total CTC'], ['net', 'Net in-hand']].forEach(([b, bl]) => [12000, 18000, 21000, 25000, 35000, 50000, 72080, 100000, 200000].forEach(t => {
+      const a = CTC_ENGINE.solve(old, { basis: b, target: t, codes: codes(old), amounts: {} }), n = CTC_ENGINE.solve(cfg, { basis: b, target: t, codes: codes(cfg), amounts: {} });
+      const am = Object.fromEntries(a.lines.map(l => [l.section + ':' + l.id, l])), items = [];
+      n.lines.forEach(l => { const x = am[l.section + ':' + l.id], d = l.monthly - (x ? x.monthly : 0); if (d) items.push(`${l.label} ${d > 0 ? '+' : '\u2212'}${Math.abs(d).toLocaleString('en-IN')}`); });
+      a.lines.forEach(l => { if (!n.lines.some(y => y.section === l.section && y.id === l.id) && l.monthly) items.push(`${l.label} removed`); });
+      rows.push({ bl, t, a, n, items, ch: items.length > 0 || ['totalCtc', 'grossCtc', 'gross', 'net'].some(k => a.totals[k] !== n.totals[k]) });
+    }));
+    const shown = D.onlyChanged ? rows.filter(r => r.ch) : rows;
+    const cell = (x, y) => x === y ? `${inr(y)}` : `${inr(y)} <b class="${y < x ? 'miss' : 'up'}">${y > x ? '+' : '−'}${inr(Math.abs(y - x)).slice(1)}</b>`;
+    return `<p class="hint">${rows.filter(r => r.ch).length} of ${rows.length} sample targets change. Choices used: ${base ? 'the ones set on the Calculator tab' : 'the preselected ones'}. Monthly amounts; the change is against ${esc(R.active.id)}.</p>
+      <label class="hint"><input type="checkbox" id="rsOnly" ${D.onlyChanged ? 'checked' : ''}> Only targets that change</label>
+      <div class="table-wrap" style="margin-top:8px"><table class="ctc-table"><thead><tr><th>Target</th><th class="num">Gross</th><th class="num">Net in-hand</th><th class="num">Gross CTC</th><th class="num">Total CTC</th><th>Items that change</th></tr></thead><tbody>
+      ${shown.length ? shown.map(r => `<tr class="${r.ch ? '' : 'nil'}"><td class="nw">${esc(r.bl)} ${inr(r.t)}</td>${['gross', 'net', 'grossCtc', 'totalCtc'].map(k => `<td class="num">${cell(r.a.totals[k], r.n.totals[k])}</td>`).join('')}<td class="rs-items">${esc(r.items.join(' \u00b7 ')) || '<span class="sub">none</span>'}</td></tr>`).join('') : '<tr class="nil"><td colspan="6">No sample target changes. The change may affect only choices not used here, the letter or labels.</td></tr>'}
+      </tbody></table></div>`;
+  };
+  const activate = () => `<section class="rs-sec"><h3>What changed against ${esc(R.active.id)}</h3>${D.dirty ? '<div class="ctc-status warn">Save the draft to update this list.</div>' : ''}
+      ${D.changes && D.changes.length ? `<ul class="rs-changes">${D.changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : '<p class="hint">No changes yet.</p>'}</section>
+    <section class="rs-sec"><h3>Test bench</h3><div id="rsBench">${bench()}</div></section>
+    <section class="rs-sec rs-act"><h3>Put this version in force</h3><div class="grid">
+      <div class="field"><label for="rsEff">Takes effect from</label><input id="rsEff" type="date" min="${R.today}" value="${esc(D.eff || R.today)}"></div>
+      <div class="field"><label for="rsReason">Reason</label><select id="rsReason">${opts(R.reasons, D.reason || '')}</select></div>
+      <div class="field wide"><label for="rsRemark">Remark (what changed and why; kept with the version)</label><textarea id="rsRemark" rows="3" maxlength="1000">${esc(D.remark || '')}</textarea></div></div>
+      <div class="rs-row"><span class="hint">From that date every new calculation uses this version. Earlier calculations and issued letters are not changed; drafts on older rules must be re-run before issuing.</span>
+      <button class="btn primary" id="rsActivate" ${D.dirty || !(D.changes || []).length ? 'disabled' : ''}>Put in force</button></div></section>`;
+  const draw = () => {
+    const errs = CTC_ENGINE.validate(cfg);
+    el.innerHTML = head + `<section class="panel rs-bar"><div class="dp-h"><h2>Draft ${esc(D.id)}</h2><span class="hint">copied from ${esc(R.active.id)} · started by ${esc(R.draft.by)} ${esc(R.draft.at)}${R.draft.updatedAt ? ' · last saved ' + esc(R.draft.updatedAt) : ''}</span>
+        <span class="badge ${D.dirty ? 'rs-dirty' : ''}">${D.dirty ? 'Unsaved changes' : 'Saved'}</span><button class="btn" id="rsDiscard">Discard draft</button><button class="btn primary" id="rsSave" ${D.dirty ? '' : 'disabled'}>Save draft</button></div>
+        ${errs.length ? `<div class="ctc-status bad"><b>Problems to fix</b><ul>${errs.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+        <div class="tabs" role="tablist">${[['items', 'Items'], ['choices', 'Choices'], ['letter', 'Letter & terms'], ['activate', 'Test & put in force']].map(([k, l]) => `<button role="tab" data-s="${k}" aria-selected="${D.sub === k}">${l}</button>`).join('')}</div></section>
+      <div id="rsBody" class="rs-body">${D.sub === 'choices' ? choices() : D.sub === 'letter' ? letter() : D.sub === 'activate' ? activate() : items()}</div>`;
+    wire();
+  };
+  const mark = () => { if (!D.dirty) { D.dirty = true; const b = $('.rs-bar .badge'); if (b) { b.textContent = 'Unsaved changes'; b.classList.add('rs-dirty'); } if ($('#rsSave')) $('#rsSave').disabled = false; if ($('#rsActivate')) $('#rsActivate').disabled = true; } };
+  const setP = (path, val) => { const k = path.split('.'); let o = cfg; for (let i = 0; i < k.length - 1; i++) { if (o[k[i]] === undefined || o[k[i]] === null) o[k[i]] = {}; o = o[k[i]]; } const last = k[k.length - 1]; if (val === undefined) delete o[last]; else o[last] = val; };
+  const refreshProblems = debounce(() => { const errs = CTC_ENGINE.validate(cfg), box = $('.rs-bar .ctc-status.bad'), html = errs.length ? `<div class="ctc-status bad"><b>Problems to fix</b><ul>${errs.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : '';
+    if (box) box.outerHTML = html || ''; else if (html) $('.rs-bar .dp-h').insertAdjacentHTML('afterend', html); if ($('#rsBench')) $('#rsBench').innerHTML = bench(); wireBench(); }, 250);
+  const wireBench = () => { if ($('#rsOnly')) $('#rsOnly').onchange = e => { D.onlyChanged = e.target.checked; $('#rsBench').innerHTML = bench(); wireBench(); }; };
+  const wire = () => {
+    $$('.rs-bar .tabs button', el).forEach(b => b.onclick = () => { D.sub = b.dataset.s; draw(); });
+    $$('[data-p]', el).forEach(inp => {
+      const on = () => {
+        const t = inp.dataset.t, raw = inp.value;
+        let val = raw;
+        if (t === 'num') { const s = raw.replace(/[,\s₹]/g, ''); val = s === '' ? '' : Number(s); if (s !== '' && !isFinite(val)) val = NaN; }
+        if (t === 'code') { const f = cfg.flags[inp.dataset.p.split('.')[1]]; const o = f.options.find(x => String(x.code) === raw); val = o ? o.code : raw; }
+        if (t === 'text' && /\.when$/.test(inp.dataset.p) && inp.tagName === 'SELECT' && /^notes\./.test(inp.dataset.p)) val = raw || undefined;
+        if (t === 'text' && /\.(note|subheading)$/.test(inp.dataset.p) && !raw) val = undefined;
+        setP(inp.dataset.p, val); mark(); refreshProblems();
+      };
+      inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', on);
+    });
+    $$('[data-addopt]', el).forEach(b => b.onclick = () => {
+      const i = +b.dataset.addopt, c = cfg.components[i], amt = Number(String($('#rsAdd_' + i).value).replace(/[,\s₹]/g, ''));
+      if (!(amt > 0)) return toast('Enter the monthly amount of the new option.', true);
+      const f = cfg.flags[c.flag], code = Math.max(0, ...Object.keys(c.values).map(Number).filter(isFinite), ...f.options.map(o => Number(o.code)).filter(isFinite)) + 1;
+      c.values[code] = { amount: amt }; f.options.push({ code, label: inr(amt) }); mark(); draw();
+    });
+    $$('[data-delopt]', el).forEach(b => b.onclick = () => {
+      const [i, k] = b.dataset.delopt.split(':'), c = cfg.components[+i], f = cfg.flags[c.flag];
+      delete c.values[k]; f.options = f.options.filter(o => String(o.code) !== k); if (String(f.default) === k) f.default = 0; mark(); draw();
+    });
+    $$('[data-addslab]', el).forEach(b => b.onclick = () => {
+      const c = cfg.components[+b.dataset.addslab], sl = c.slabs, prev = sl.length > 1 ? Number(sl[sl.length - 2].upto) || 0 : 0;
+      const tmpl = JSON.parse(JSON.stringify(sl[sl.length - 1])); tmpl.upto = prev + 10000; sl.splice(sl.length - 1, 0, tmpl); mark(); draw();
+    });
+    $$('[data-delslab]', el).forEach(b => b.onclick = () => { const [i, j] = b.dataset.delslab.split(':').map(Number); cfg.components[i].slabs.splice(j, 1); mark(); draw(); });
+    $$('[data-delcomp]', el).forEach(b => twoStep(b, 'Click again to remove', async () => { const c = cfg.components[+b.dataset.delcomp]; cfg.components.splice(+b.dataset.delcomp, 1); delete cfg.flags[c.flag]; cfg.notes = (cfg.notes || []).filter(n => n.when !== c.id); mark(); draw(); }));
+    if ($('#rsNewAdd')) $('#rsNewAdd').onclick = () => {
+      const name = $('#rsNewName').value.trim(), amts = [...new Set($('#rsNewAmts').value.split(/[,;\s]+/).map(x => Number(x.replace(/[^\d.]/g, ''))).filter(x => x > 0))].sort((a, b) => a - b);
+      if (!name) return toast('Enter the name of the allowance.', true);
+      if (!amts.length) return toast('Enter at least one monthly amount, e.g. 1000, 1500.', true);
+      let id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || 'allowance'; if (!/^[a-z]/.test(id)) id = 'a_' + id;
+      while (cfg.components.some(c => c.id === id) || cfg.flags[id]) id += '_2';
+      cfg.flags[id] = { label: name, group: 'allowance', default: 0, options: [{ code: 0, label: 'None' }].concat(amts.map((a, j) => ({ code: j + 1, label: inr(a) }))) };
+      const values = { 0: { amount: 0 } }; amts.forEach((a, j) => { values[j + 1] = { amount: a }; });
+      cfg.components.splice(cfg.components.findIndex(c => c.kind === 'balancing'), 0, { id, label: name, section: 'earning', kind: 'choice', flag: id, values });
+      mark(); draw(); toast(`${name} added. Save the draft to keep it.`);
+    };
+    if ($('#rsAddNote')) $('#rsAddNote').onclick = () => { cfg.notes = cfg.notes || []; cfg.notes.push({ id: 'n' + Date.now().toString(36), en: '', hi: '' }); mark(); draw(); };
+    $$('[data-delnote]', el).forEach(b => twoStep(b, 'Click again to remove', async () => { cfg.notes.splice(+b.dataset.delnote, 1); mark(); draw(); }));
+    wireBench();
+    if ($('#rsEff')) { $('#rsEff').onchange = e => { D.eff = e.target.value; }; $('#rsReason').onchange = e => { D.reason = e.target.value; }; $('#rsRemark').oninput = e => { D.remark = e.target.value; }; }
+    $('#rsSave').onclick = async e => {
+      busy(e.target, true, 'Saving…');
+      try {
+        const r = await api('apiCtcDraftSave', D.id, cfg);
+        if (!r.saved) { toast('Not saved: ' + r.errors[0], true); busy(e.target, false, 'Save draft'); return; }
+        D.dirty = false; D.changes = r.changes; toast(`Draft saved · ${r.changes.length} change${r.changes.length === 1 ? '' : 's'} against ${R.active.id}.`);
+        S.ctc = await api('apiCtcRules'); draw();
+      } catch (err) { toast(err, true); busy(e.target, false, 'Save draft'); }
+    };
+    twoStep($('#rsDiscard'), 'Click again to discard', async () => { try { S.ctc = await api('apiCtcDraftDiscard', D.id); S.ctcDraft = null; toast(`Draft ${D.id} discarded.`); viewCtc(v); } catch (e) { toast(e, true); } });
+    if ($('#rsActivate')) twoStep($('#rsActivate'), 'Click again to put in force', async () => {
+      const eff = $('#rsEff').value, reason = $('#rsReason').value, remark = $('#rsRemark').value.trim();
+      if (!eff || !reason || remark.length < 10) return toast('Pick the date and the reason, and write a remark of at least 10 characters.', true);
+      const b = $('#rsActivate'); busy(b, true, 'Putting in force…');
+      try { S.ctc = await api('apiCtcActivate', D.id, { eff, reason, remark }); S.ctcDraft = null; S.ctcIn = null; S.ctcList = null; S.ctcTab = 'rules'; toast(`${D.id} is in force from ${fmtDate(eff)}.`); viewCtc(v); }
+      catch (e) { toast(e, true); busy(b, false, 'Put in force'); }
+    });
+  };
+  draw();
+}
+/** True when an amount, %, cap, "up to" or condition value is left blank or is not a number. */
+function ctcBlank(cfg) {
+  const keys = { amount: 1, pct: 1, cap: 1, value: 1, upto: 1 };
+  let bad = false;
+  const walk = (o, slabLast) => { if (!o || typeof o !== 'object' || bad) return; Object.keys(o).forEach(k => {
+    const x = o[k];
+    if (keys[k] && (x === '' || (typeof x === 'number' && !isFinite(x))) && !(k === 'upto' && slabLast)) bad = true;
+    else if (k === 'slabs' && Array.isArray(x)) x.forEach((sl, i) => walk(sl, i === x.length - 1));
+    else if (typeof x === 'object') walk(x); }); };
+  cfg.components.forEach(c => walk(c));
+  return bad;
 }
 
 async function viewPipeline(v) {
