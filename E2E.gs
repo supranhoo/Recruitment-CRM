@@ -34,7 +34,7 @@ function e2eRun_(trash) {
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 12; });
+  t('A6 data checks', function () { return apiDataChecks().length === 13; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });
@@ -62,6 +62,23 @@ function e2eRun_(trash) {
   t('B4 edit position', function () { return apiSavePosition(Object.assign({}, L2, { Remarks: 'E2E edited' })).Remarks === 'E2E edited'; });
   t('B5 JD and panel saved on position', function () { _tables = {}; const l = apiListPositions().filter(function (x) { return x.Line_ID === L1.Line_ID; })[0]; return l.JD_Text === 'Test JD' && l.Tech_Panel === 'Jaspal Bhanker'; });
   t('B6 JD file upload', function () { const r = apiUploadDoc('MRF', L1.Line_ID, 'JD_File', 'jd.pdf', 'application/pdf', pdf); trash.push(fid(r.url || r)); return !!fid(r.url || r); });
+  // TAT exemptions (schema 28): request -> pending (no effect) -> approve -> revoke, per-reason clocks, notice proof rule.
+  const posTat = function () { _tables = {}; return apiGetPosition(L1.Line_ID); };
+  const base0 = posTat();
+  const x1 = t('X1 exemption request is pending and changes nothing', function () {
+    const r = apiExemptionRequest(L1.Line_ID, { reason: 'Niche / scarce skill, re-advertised', type: 'Days', days: 5, remark: 'E2E niche re-advertised' });
+    const p = posTat(); return r.line.items[0].status === 'Pending' && p.Final_TAT === base0.Final_TAT && p.Pos_Final_TAT === base0.Pos_Final_TAT ? r.id : false;
+  });
+  t('X2 approved position-only reason extends only the position TAT', function () {
+    apiExemptionDecide(x1, 'Approve', 'E2E'); const p = posTat();
+    return p.Pos_Final_TAT === base0.Pos_Final_TAT + 5 && p.Final_TAT === base0.Final_TAT ? 'pos ' + p.Pos_Final_TAT : false;
+  });
+  err('X3 approval needs proof when the reason asks for it', function () {
+    const r = apiExemptionRequest(L1.Line_ID, { reason: 'Department / HOD delay', type: 'Days', days: 3, remark: 'E2E HOD delay' }); apiExemptionDecide(r.id, 'Approve', '');
+  }, /proof/);
+  t('X4 revoke restores the TAT', function () { apiExemptionRevoke(x1, 'E2E revoke'); return posTat().Pos_Final_TAT === base0.Pos_Final_TAT; });
+  err('X5 notice over 30 days needs proof', function () { apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); }, /proof/);
+  t('X6 exemption register lists the requests', function () { const r = apiExemptionRegister({}); return r.rows.filter(function (x) { return x.line === L1.Line_ID; }).length >= 2 && r.reasons.length >= 4; });
   t('B7 JD file view', function () { return apiGetDoc('MRF', L1.Line_ID, 'JD_File').b64.length > 10; });
   const jd1 = t('J1 uploaded JD lands in the JD folder', function () {
     const r = apiListJds(); const f = r.files.filter(function (x) { return x.usedBy.some(function (u) { return u.line === L1.Line_ID; }); })[0];

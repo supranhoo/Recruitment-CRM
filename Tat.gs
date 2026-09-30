@@ -10,7 +10,7 @@ function tatContext_() {
   const grades = {};
   readTable_('M_Grades').rows.forEach(function (g) { grades[String(g.Grade).trim().toUpperCase()] = Number(g.Standard_TAT_Days) || 50; });
   const s = settings_(), grace = Number(s.NOTICE_GRACE_DAYS) || 30, risk = Number(s.TAT_AT_RISK_PCT) || 0.8;
-  return { grades: grades, riskPct: risk, grace: grace, rules: tatRulesMap_(grace, risk), today: ymd_(new Date()) };
+  return { grades: grades, riskPct: risk, grace: grace, rules: tatRulesMap_(grace, risk), today: ymd_(new Date()), exempt: exemptIndex_() };
 }
 function tatRulesMap_(grace, risk) {
   const rules = {};
@@ -71,12 +71,18 @@ function posStart_(l) {
   return ymd_(l.TAT_Start_From) || ymd_(l.Approved_On) || ymd_(l.Receipt_Date);
 }
 
-function tatClock_(l, ctx, start, status, end) {
+/**
+ * One clock. Allowed = standard days + notice days above the grace (unless the Head of HR rejected it) + approved
+ * extra days that apply to this clock ('r' recruiter, 'p' position). Days taken exclude on-hold days and approved
+ * paused days (a paused day already on hold counts once).
+ */
+function tatClock_(l, ctx, start, status, end, which) {
   const rule = ruleFor_(ctx, l.Grade, start);
-  const notice = Number(l.Notice_Period_Days) || 0;
-  const exemption = Math.max(notice - rule.grace, 0), fin = rule.std + exemption;
-  const hold = Number(l.Hold_Days) || 0;
-  const days = start ? Math.max(0, daysBetween_(start, end || ctx.today) - hold) : '';
+  const ex = exemptFor_(ctx, l, which || 'r'), notice = noticeExt_(l, rule.grace);
+  const exemption = notice + ex.days, fin = rule.std + exemption;
+  const hold = Number(l.Hold_Days) || 0, stop = end || ctx.today;
+  const paused = start ? pausedDays_(l, ex.pauses, start, stop) : 0;
+  const days = start ? Math.max(0, daysBetween_(start, stop) - hold - paused) : '';
   let result = '';
   if (days !== '') {
     if (status === 'Removed') result = '';
@@ -84,7 +90,8 @@ function tatClock_(l, ctx, start, status, end) {
     else if (status === 'Replaced') result = 'Replaced';
     else result = days > fin ? 'Missed' : 'Achieved';
   }
-  return { std: rule.std, exemption: exemption, fin: fin, days: days, result: result, version: rule.version, risk: rule.risk };
+  return { std: rule.std, exemption: exemption, fin: fin, days: days, result: result, version: rule.version, risk: rule.risk,
+    notice: notice, extra: ex.days, paused: paused, reasons: ex.reasons };
 }
 
 /** Returns the computed fields for one position line: the recruiter clock (stored) and the position clock (Pos_*). */
@@ -97,8 +104,10 @@ function computeTat_(l, ctx) {
   if (status === 'Replaced') end = ymd_(l.Replaced_On) || ymd_(l.Backout_Date) || end;
   if (status === 'Removed') end = ymd_(l.Not_Needed_Date) || end;
   const rs = tatStart_(l), ps = posStart_(l);
-  const r = tatClock_(l, ctx, rs, status, end), p = tatClock_(l, ctx, ps, status, end);
+  const r = tatClock_(l, ctx, rs, status, end, 'r'), p = tatClock_(l, ctx, ps, status, end, 'p');
   return { Position_Status: status, Standard_TAT: r.std, Exemption_Days: r.exemption, Final_TAT: r.fin,
     TAT_End_Date: end ? parseYmd_(end) : '', Days_Taken: r.days, TAT_Result: r.result, TAT_Rule: r.version, TAT_Risk: r.risk,
-    Pos_TAT_Start: ps, Pos_Standard_TAT: p.std, Pos_Exemption_Days: p.exemption, Pos_Final_TAT: p.fin, Pos_Days_Taken: p.days, Pos_TAT_Result: p.result, Pos_TAT_Rule: p.version };
+    Pos_TAT_Start: ps, Pos_Standard_TAT: p.std, Pos_Exemption_Days: p.exemption, Pos_Final_TAT: p.fin, Pos_Days_Taken: p.days, Pos_TAT_Result: p.result, Pos_TAT_Rule: p.version,
+    Notice_Ext_Days: r.notice, Exempt_Extra_Days: r.extra, Paused_Days: r.paused, Exempt_Reasons: r.reasons.join('; '),
+    Pos_Exempt_Extra_Days: p.extra, Pos_Paused_Days: p.paused, Pos_Exempt_Reasons: p.reasons.join('; ') };
 }

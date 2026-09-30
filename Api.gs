@@ -53,7 +53,7 @@ function apiGetPosition(lineId) {
  * Stamps are read before the data is built, so a write during the build can only cause an extra refetch.
  */
 const FETCHABLE_ = {
-  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users'], per: 'day', packed: true },
+  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
   apiListFunnel: { tables: ['Daily_Funnel', 'Users'], per: 'day', packed: true },
   apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members'], per: 'hour', packed: false }
@@ -94,6 +94,15 @@ function apiSavePosition(data) {
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;
   checkDesignation_(patch, old);
+  // Notice beyond the grace extends the TAT automatically, so it needs proof; a changed notice resets the Head of HR's check.
+  if ('Notice_Period_Days' in patch) {
+    const was = old ? Number(old.Notice_Period_Days) || 0 : 0, now = Number(patch.Notice_Period_Days) || 0;
+    if (now !== was) {
+      const g = ruleFor_(ctx, patch.Grade || (old && old.Grade), tatStart_(Object.assign({}, old || {}, patch))).grace;
+      if (now > g && !(old && old.Notice_Proof_File) && !data._noticeProof) throw new Error('A notice period over ' + g + ' days extends the TAT, so it needs proof. ' + (old ? 'Attach the notice proof (resignation or offer acceptance showing the notice) in \u201cNotice period proof\u201d and save again.' : 'Save the position first, then enter the notice period with its proof attached.'));
+      Object.assign(patch, { Notice_Ext_Status: '', Notice_Ext_Note: '', Notice_Ext_By: '', Notice_Ext_On: '' });
+    }
+  }
   assignDates_(patch, old, u);
   if (patch.Approval_Status === 'No Vacancy' && !patch.No_Vacancy_Date) throw new Error('Add the date the position was marked No Vacancy.');
   if ((patch.Approval_Status === 'Not Needed' || patch.Approval_Status === 'On Hold') && !patch.Not_Needed_Date) throw new Error('Add the date the position was marked ' + patch.Approval_Status + '.');
