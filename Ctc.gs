@@ -396,6 +396,7 @@ function ctcSchema_() {
     sh.setFrozenRows(1);
   }
   addSheet_(CTC_CALCS_.name, CTC_CALC_COLS_);
+  addColumns_(CTC_RULES_, ['Updated_By', 'Updated_At']);
   if (sh.getLastRow() > 1) return;
   const now = new Date(), eff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const o = { Version_ID: 'CTC-V1', Effective_From: eff, Status: 'Active', Config_JSON: JSON.stringify(ctcSeedConfig_()), Reason: 'Initial setup',
@@ -704,6 +705,8 @@ function apiCtcDraftNew() {
     const open = all.filter(function (v) { return v.status === 'Draft'; })[0];
     if (open) throw new Error('Version ' + open.id + ' is already being drafted by ' + open.by + '. Continue that one or discard it first.');
     const act = ctcActive_();
+    /* V1 was first stored without letter details: start the draft from the standard ones. */
+    act.config.letter = Object.assign({}, ctcSeedConfig_().letter, act.config.letter || {});
     const vid = 'CTC-V' + (all.reduce(function (m, v) { return Math.max(m, v.no); }, 0) + 1), now = new Date();
     const o = { Version_ID: vid, Status: 'Draft', Config_JSON: JSON.stringify(act.config), Change_Summary: 'Draft copied from ' + act.id, Created_By: u.email, Created_At: now, Updated_By: u.email, Updated_At: now };
     const sh = sheet_(CTC_RULES_), heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);

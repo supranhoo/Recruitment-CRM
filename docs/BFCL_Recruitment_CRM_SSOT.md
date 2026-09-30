@@ -274,7 +274,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired / Discarded), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Updated_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
-| **CTC_Calcs** | Calc_ID (CTC-00001…), Status (Draft / Issued / Superseded / Discarded), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 29. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
+| **CTC_Calcs** | Calc_ID (CTC-00001…), Status (Draft / Issued / Superseded / Discarded), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 30. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
@@ -917,11 +917,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
-**Unreleased — CTC calculator, phase 3: rules editor** (schema 29, same release; §11.7)
+**Unreleased — CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
 - Rules tab (Admin): draft version copied from the rules in force; edit items, amounts, percentages, caps, conditions, slabs, choices, allowances (add/remove), letter and terms; live problems; save; test bench with item-level changes; put in force from today or a later date with reason and remark; scheduled versions shown and cancellable; automatic change summary stored with each version.
 - `apiCtcDraftNew`, `apiCtcDraftSave`, `apiCtcDraftDiscard`, `apiCtcActivate`, `apiCtcRetire`; `ctcCheck_`, `ctcDiff_`. Tests: 16 server cases, browser run of the editor, E2E I13–I17.
 
-**Unreleased — CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 29, same release; §11.7)
+**Unreleased — CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 30: adds `CTC_Calcs` and Updated_By/At on `CTC_Rules`; §11.7)
 - Save draft, Letter preview (English / Hindi / both), Issue (PDF kept in Drive "CTC letters", record locked), PDF and PNG downloads for issued letters, Saved calculations tab with search, CSV, re-run with before/now comparison, superseding, discard.
 - `CTC_Calcs` sheet; `apiCtcSave`, `apiCtcIssue`, `apiCtcDiscard`, `apiCtcList`, `apiCtcGet`, `apiCtcVersion`; `letter` block in the rules (company, headings, signatory).
 - Tests: 20 server cases (drafts, ownership, locking, PDF check, supersede, outdated rules, discard, roles), full browser flow including a real PDF and PNG, E2E I8–I12.
@@ -1178,7 +1178,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-29 CTC_Rules (CTC calculator, unreleased) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
