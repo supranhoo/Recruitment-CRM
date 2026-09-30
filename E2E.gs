@@ -214,5 +214,17 @@ function e2eRun_(trash) {
   err('I5 CTC needs a target amount', function () { apiCtcCalc({ basis: 'gross', target: 0 }); }, /target amount/);
   t('I6 CTC calculator is admin-only at launch', function () { return can_({ role: ROLES.ADMIN }, 'ctc_use') && !can_({ role: ROLES.HEAD }, 'ctc_use') && !can_({ role: ROLES.TALEAD }, 'ctc_use') && !can_({ role: ROLES.RECRUITER }, 'ctc_use'); });
   t('I7 page engine script intact', function () { new Function(ctcEngineScript_() + '; return CTC_ENGINE.solve;'); return true; });
+  const ctcPdf = Utilities.base64Encode(Utilities.newBlob('%PDF-1.4\n' + new Array(400).join('x') + '\n%%EOF').getBytes());
+  const ctcA = t('I8 save a CTC draft without name or grade', function () { const r = apiCtcSave({ basis: 'gross', target: 72080, codes: ctcSample, designation: 'E2E Guard' }); return r.status === 'Draft' && r.result.totals.totalCtc === 83082 ? r : false; });
+  if (ctcA) {
+    t('I9 issue the letter (PDF kept in Drive)', function () { const r = apiCtcIssue(ctcA.id, { language: 'both', pdf: ctcPdf }); trash.push(fid(r.letter)); return r.status === 'Issued' && r.letter ? r.id : false; });
+    err('I10 an issued calculation is locked', function () { apiCtcSave({ id: ctcA.id, basis: 'gross', target: 1000, codes: ctcSample }); }, /cannot be changed/);
+    t('I11 re-run and issue supersedes the original', function () {
+      const b = apiCtcSave({ basis: 'total_ctc', target: 90000, codes: ctcSample, rerunOf: ctcA.id });
+      const r = apiCtcIssue(b.id, { language: 'en', pdf: ctcPdf }); trash.push(fid(r.letter));
+      return apiCtcGet(ctcA.id).status === 'Superseded' ? b.id : false;
+    });
+    t('I12 saved calculations list', function () { return apiCtcList({}).rows.length >= 2; });
+  }
   return { pass: pass, fail: fail, log: log };
 }

@@ -3905,9 +3905,23 @@ async function ctcRules(force) {
   if (S.ctc && !force) { api('apiCtcRules').then(r => { S.ctc = r; }).catch(() => { }); return S.ctc; }
   return (S.ctc = await api('apiCtcRules'));
 }
+const CTC_STATUS = { Draft: 'Draft', Issued: 'Issued', Superseded: 'Superseded', Discarded: 'Discarded' };
+function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts]); }
 async function viewCtc(v) {
   if (!can('ctc_use')) { v.innerHTML = '<div class="empty">You do not have access to the CTC calculator.</div>'; return; }
-  const R = await ctcRules(), cfg = R.active.config;
+  const R = await ctcRules();
+  const tab = S.ctcTab || 'calc';
+  v.innerHTML = `<div class="page-head"><div><h1>CTC calculator</h1><p>Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand. The full structure is worked out on the rules in force.</p></div>
+      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span><button class="btn sm" id="ccHist">Version history</button></div></div>
+    <div class="tabs" role="tablist">${[['calc', 'Calculator'], ['saved', 'Saved calculations']].map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+    <div id="ccBody" style="margin-top:16px"></div>`;
+  $$('.tabs button', v).forEach(b => b.onclick = () => { S.ctcTab = b.dataset.t; viewCtc(v); });
+  $('#ccHist').onclick = () => ctcHistory(R);
+  if (tab === 'saved') return ctcSaved($('#ccBody'), R, v);
+  ctcCalc($('#ccBody'), R, v);
+}
+function ctcCalc(el, R, v) {
+  const cfg = R.active.config;
   const flags = cfg.flags, fk = Object.keys(flags);
   const defaults = () => ({ basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', codes: Object.fromEntries(fk.map(k => [k, String(flags[k].default)])), amounts: {} });
   let f = S.ctcIn && S.ctcIn.version === R.active.id ? S.ctcIn : null;
@@ -3917,8 +3931,7 @@ async function viewCtc(v) {
   const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${flags[k].note ? `<span class="hint">${esc(flags[k].note)}</span>` : ''}</div>`;
   const struct = fk.filter(k => flags[k].group === 'structure'), allow = fk.filter(k => flags[k].group === 'allowance');
   const hasStipend = cfg.components.some(c => c.id === 'stipend');
-  v.innerHTML = `<div class="page-head"><div><h1>CTC calculator</h1><p>Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand. The full structure is worked out on the rules in force.</p></div>
-      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span><button class="btn sm" id="ccHist">Version history</button></div></div>
+  el.innerHTML = `${f.rerunOf ? `<div class="ctc-status info">Re-run of <b>${esc(f.rerunOf.id)}</b> (worked out on rules ${esc(f.rerunOf.version)}). The changes against it are listed under the structure. <button class="linklike" id="ccRerunX">Stop comparing</button></div>` : ''}
     <div class="ctc">
       <section class="panel ctc-in" aria-label="Inputs">
         <h2>Target</h2>
@@ -3934,7 +3947,7 @@ async function viewCtc(v) {
         <div class="grid one">${struct.map(sel).join('')}
           ${hasStipend ? `<div class="field" id="ccStipendF"><label for="ccStipend">Stipend (monthly)</label><input id="ccStipend" inputmode="numeric" value="${f.amounts.stipend || ''}"></div>` : ''}</div>
         <details class="ctc-allow" ${allow.some(k => f.codes[k] !== String(flags[k].default)) ? 'open' : ''}><summary>Allowances <span id="ccAllowN" class="sub"></span></summary><div class="grid">${allow.map(sel).join('')}</div></details>
-        <div class="ctc-actions"><button class="btn sm" id="ccReset">Reset</button></div>
+        <div class="ctc-actions"><button class="btn sm" id="ccReset">Start again</button></div>
       </section>
       <section class="ctc-out" id="ccOut" aria-live="polite"></section>
     </div>`;
@@ -3950,8 +3963,8 @@ async function viewCtc(v) {
     $('#ccYear').textContent = t ? `${inr(t * 12)} a year` : '';
     if (!t) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>Enter a monthly amount to see the structure.</b><span>Choose what the amount stands for above, then type it in. The result updates as you type.</span></div>`; return; }
     if (t > 4194303) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>The amount is too large.</b><span>Enter up to ₹41,94,303 a month.</span></div>`; return; }
-    const r = last = CTC_ENGINE.solve(cfg, { basis: f.basis, target: t, codes: f.codes, amounts: { stipend: num(f.amounts.stipend) } });
-    draw(r);
+    last = CTC_ENGINE.solve(cfg, { basis: f.basis, target: t, codes: f.codes, amounts: { stipend: num(f.amounts.stipend) } });
+    draw(last);
   };
   const basisLabel = id => (cfg.basisList.find(b => b.id === id) || {}).label || id;
   const draw = r => {
@@ -3967,8 +3980,14 @@ async function viewCtc(v) {
       return `<tbody><tr class="sec"><th colspan="3">${esc(secs[s])}</th></tr>${rs.length ? rs.map(l => `<tr class="${l.monthly ? '' : 'nil'}${l.monthly < 0 ? ' neg' : ''}"><td>${esc(l.label)}</td><td class="num">${inr(l.monthly)}</td><td class="num">${inr(l.yearly)}</td></tr>`).join('') : `<tr class="nil"><td colspan="3">None</td></tr>`}
         <tr class="tot"><td>${totLabel}</td><td class="num">${inr(tot)}</td><td class="num">${inr(tot * 12)}</td></tr></tbody>`;
     };
+    const saved = f.saved && f.saved.sig === ctcSig(f) ? f.saved : null;
+    const blocked = r.status === 'unsettled' || (r.warnings || []).length;
     $('#ccOut').innerHTML = `<div class="ctc-status ${st[0]}" role="status">${esc(st[1])}</div>${(r.warnings || []).map(w => `<div class="ctc-status warn">${esc(w)}</div>`).join('')}
       <div class="ctc-tiles">${tile('totalCtc', 'Total CTC', 'Gross CTC + other benefits')}${tile('grossCtc', 'Gross CTC', 'Gross + employer contribution')}${tile('gross', 'Gross salary')}${tile('net', 'Net in-hand', 'Gross − deductions')}</div>
+      <div class="ctc-bar"><span class="hint">${saved ? (saved.status === 'Draft' ? `Saved as draft <b>${esc(saved.id)}</b>.` : `<b>${esc(saved.id)}</b> is issued and locked. Changing any input starts a new calculation.`)
+          : f.saved && f.saved.status === 'Draft' ? `Draft <b>${esc(f.saved.id)}</b> has unsaved changes.` : 'Not saved yet.'}</span>
+        <button class="btn" id="ccSave" ${blocked || saved ? 'disabled' : ''}>${f.saved && f.saved.status === 'Draft' ? 'Save changes' : 'Save draft'}</button>
+        <button class="btn primary" id="ccLetter" ${blocked ? 'disabled' : ''}>Letter…</button></div>
       <section class="panel ctc-brk"><div class="dp-h"><h2>Salary structure${f.name ? ' · ' + esc(f.name) : ''}</h2>
         <span class="hint">${[f.designation, f.grade].filter(Boolean).map(esc).join(' · ')}</span>
         <label class="hint"><input type="checkbox" id="ccNil" ${showNil ? 'checked' : ''}> Show nil items</label><button class="btn sm" id="ccCsv">Download CSV</button></div>
@@ -3981,7 +4000,8 @@ async function viewCtc(v) {
           <tbody><tr class="grand main"><td>Total CTC</td><td class="num">${inr(T.totalCtc)}</td><td class="num">${inr(T.totalCtc * 12)}</td></tr></tbody>
         </table></div>
         ${r.notes.length ? `<ul class="ctc-notes">${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
-        <p class="legend">Worked out on rules ${esc(R.active.id)}. Gross entry ${inr(r.grossEntry)}${r.ctcUsed && f.codes.basic === '3' ? `; Basic taken from a Total CTC of ${inr(r.ctcUsed)}` : ''}.</p></section>`;
+        <p class="legend">Worked out on rules ${esc(R.active.id)}. Gross entry ${inr(r.grossEntry)}${r.ctcUsed && f.codes.basic === '3' ? `; Basic taken from a Total CTC of ${inr(r.ctcUsed)}` : ''}.</p></section>
+      ${f.rerunOf ? ctcDiffHtml(f.rerunOf.result, r, secs) : ''}`;
     $('#ccNil').onchange = e => { S.ctcNil = e.target.checked; draw(r); };
     $('#ccCsv').onclick = () => {
       const head = ['Section', 'Component', 'Monthly', 'Yearly'];
@@ -3990,29 +4010,256 @@ async function viewCtc(v) {
       [['Gross salary', T.gross], ['Total deductions', T.deductions], ['Net in-hand', T.net], ['Employer contribution', T.employer], ['Gross CTC', T.grossCtc], ['Other benefits', T.annual], ['Total CTC', T.totalCtc]].forEach(x => out.push(['Totals', x[0], x[1], x[1] * 12]));
       csvSave(`ctc-${(f.name || 'structure').replace(/[^\w]+/g, '-').toLowerCase()}-${today()}.csv`, head, out);
     };
+    const save = async () => {
+      const rec = await api('apiCtcSave', { id: f.saved && f.saved.status === 'Draft' ? f.saved.id : '', rerunOf: f.rerunOf ? f.rerunOf.id : '', basis: f.basis, target: num(f.target),
+        codes: f.codes, amounts: { stipend: num(f.amounts.stipend) }, name: f.name, designation: f.designation, grade: f.grade });
+      if (rec.result.totals.totalCtc !== r.totals.totalCtc) throw new Error('The server worked out a different Total CTC. Reload the page and try again.');
+      f.saved = Object.assign(rec, { sig: ctcSig(f) }); S.ctcList = null;
+      return rec;
+    };
+    $('#ccSave').onclick = async e => { busy(e.target, true, 'Saving…'); try { const x = await save(); toast(`Saved as ${x.id}.`); draw(r); } catch (err) { toast(err, true); busy(e.target, false, 'Save draft'); } };
+    $('#ccLetter').onclick = async e => {
+      busy(e.target, true, 'Saving…');
+      try { const rec = saved || await save(); draw(r); ctcLetter(rec, R, () => draw(r)); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Letter…'); }
+    };
   };
-  $$('input[name="ccBasis"]', v).forEach(el => el.onchange = () => { f.basis = el.value; run(); });
+  $$('input[name="ccBasis"]', el).forEach(x => x.onchange = () => { f.basis = x.value; run(); });
   $('#ccTarget').oninput = e => {
-    const el = e.target, raw = el.value.replace(/[^\d]/g, '').slice(0, 7);
+    const x = e.target, raw = x.value.replace(/[^\d]/g, '').slice(0, 7);
     f.target = raw;
     const txt = raw ? Number(raw).toLocaleString('en-IN') : '';
-    if (el.value !== txt) { const fromEnd = el.value.length - el.selectionEnd; el.value = txt; const p = Math.max(0, txt.length - fromEnd); el.setSelectionRange(p, p); }
+    if (x.value !== txt) { const fromEnd = x.value.length - x.selectionEnd; x.value = txt; const p = Math.max(0, txt.length - fromEnd); x.setSelectionRange(p, p); }
     run();
   };
-  $('#ccName').oninput = e => { f.name = e.target.value; if (last) draw(last); };
-  $('#ccDesig').oninput = e => { f.designation = e.target.value; if (last) draw(last); };
-  $('#ccGrade').onchange = e => { f.grade = e.target.value; fillDesig(); if (last) draw(last); };
+  const redraw = () => { if (last) draw(last); };
+  $('#ccName').oninput = e => { f.name = e.target.value; redraw(); };
+  $('#ccDesig').oninput = e => { f.designation = e.target.value; redraw(); };
+  $('#ccGrade').onchange = e => { f.grade = e.target.value; fillDesig(); redraw(); };
   if ($('#ccStipend')) $('#ccStipend').oninput = e => { f.amounts.stipend = e.target.value.replace(/[^\d]/g, ''); run(); };
-  $$('select[data-flag]', v).forEach(el => el.onchange = () => { f.codes[el.dataset.flag] = el.value; run(); });
-  $('#ccReset').onclick = () => { S.ctcIn = null; viewCtc(v); };
-  $('#ccHist').onclick = () => ctcHistory(R);
+  $$('select[data-flag]', el).forEach(x => x.onchange = () => { f.codes[x.dataset.flag] = x.value; run(); });
+  $('#ccReset').onclick = () => { S.ctcIn = null; ctcCalc(el, R, v); };
+  if ($('#ccRerunX')) $('#ccRerunX').onclick = () => { f.rerunOf = null; ctcCalc(el, R, v); };
   run();
+}
+/** What changed between an earlier calculation and the current one, line by line. */
+function ctcDiffHtml(a, b, secs) {
+  const map = x => Object.fromEntries(x.lines.map(l => [l.section + ':' + l.id, l]));
+  const A = map(a), B = map(b), keys = [...new Set(Object.keys(A).concat(Object.keys(B)))];
+  const rows = keys.map(k => ({ l: B[k] || A[k], a: A[k] ? A[k].monthly : 0, b: B[k] ? B[k].monthly : 0 })).filter(x => x.a !== x.b);
+  const tot = [['Gross salary', 'gross'], ['Net in-hand', 'net'], ['Gross CTC', 'grossCtc'], ['Total CTC', 'totalCtc']].map(([l, k]) => ({ label: l, a: a.totals[k], b: b.totals[k] }));
+  const d = (x, y) => { const n = y - x; return n ? `<b class="${n < 0 ? 'miss' : 'up'}">${n > 0 ? '+' : '−'}${inr(Math.abs(n)).slice(1)}</b>` : '<span class="sub">no change</span>'; };
+  return `<section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Changes against the earlier calculation</h2><span class="hint">Monthly amounts</span></div>
+    <div class="table-wrap"><table class="ctc-table"><thead><tr><th>Item</th><th class="num">Before</th><th class="num">Now</th><th class="num">Change</th></tr></thead><tbody>
+      ${rows.length ? rows.map(x => `<tr><td>${esc(x.l.label)}<span class="sub"> · ${esc(secs[x.l.section] || '')}</span></td><td class="num">${inr(x.a)}</td><td class="num">${inr(x.b)}</td><td class="num">${d(x.a, x.b)}</td></tr>`).join('') : '<tr class="nil"><td colspan="4">No component changed.</td></tr>'}
+      ${tot.map(x => `<tr class="tot"><td>${x.label}</td><td class="num">${inr(x.a)}</td><td class="num">${inr(x.b)}</td><td class="num">${d(x.a, x.b)}</td></tr>`).join('')}
+    </tbody></table></div></section>`;
 }
 function ctcHistory(R) {
   openDrawer('CTC rules: version history', `<p class="hint">Every change to the CTC rules is a new version. Old versions are kept, with who made them, when and why.</p>
     ${R.versions.map(x => `<div class="ctc-vh ${x.id === R.active.id ? 'on' : ''}"><div class="dp-h"><b>${esc(x.id)}</b><span class="badge">${esc(x.id === R.active.id ? 'In force' : x.status)}</span><span class="hint">from ${fmtDate(x.eff)}</span></div>
       <div><span class="sub">Reason</span> ${esc(x.reason)}</div><div><span class="sub">Remark</span> ${esc(x.remark)}</div>${x.summary ? `<div><span class="sub">Changes</span> ${esc(x.summary)}</div>` : ''}
       <div class="sub">Made by ${esc(x.by)}${x.at ? ' on ' + esc(x.at) : ''}${x.activatedBy ? ` · activated by ${esc(x.activatedBy)}${x.activatedAt ? ' on ' + esc(x.activatedAt) : ''}` : ''}</div></div>`).join('')}`);
+}
+
+/* ---- Saved calculations ---- */
+async function ctcSaved(el, R, v) {
+  const f = S.ctcF = S.ctcF || { q: '', status: '' };
+  el.innerHTML = skRows(8, 6);
+  let L;
+  try { L = S.ctcList || (S.ctcList = await api('apiCtcList', {})); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const basisLabel = id => (R.active.config.basisList.find(b => b.id === id) || {}).label || id;
+  const draw = () => {
+    const q = f.q.trim().toLowerCase();
+    const rows = L.rows.filter(r => (!f.status || r.status === f.status) && (!q || [r.id, r.name, r.designation, r.grade, r.by].join(' ').toLowerCase().includes(q)));
+    $('#csList').innerHTML = rows.length ? `<div class="table-wrap"><table class="ctc-list"><thead><tr><th>Ref</th><th>Name</th><th>Designation · grade</th><th>Target</th><th class="num">Total CTC / month</th><th class="num">Net / month</th><th>Rules</th><th>Status</th><th>Made</th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${esc(r.id)}" tabindex="0"><td><b>${esc(r.id)}</b></td><td>${esc(r.name) || '<span class="sub">—</span>'}</td><td>${esc([r.designation, r.grade].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
+        <td>${esc(basisLabel(r.basis))} ${inr(r.target)}</td><td class="num">${inr(r.totalCtc)}</td><td class="num">${inr(r.net)}</td>
+        <td>${esc(r.version)}${r.version !== L.active ? '<span class="sub">older rules</span>' : ''}</td>
+        <td><span class="ctc-st ${esc(r.status)}">${esc(CTC_STATUS[r.status] || r.status)}</span>${r.rerunOf ? `<span class="sub">re-run of ${esc(r.rerunOf)}</span>` : ''}${r.supersededBy ? `<span class="sub">by ${esc(r.supersededBy)}</span>` : ''}</td>
+        <td class="nw">${fmtDate(r.day)}${L.all ? `<span class="sub">${esc(r.by.split('@')[0])}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty">${L.rows.length ? 'No calculation matches.' : 'Nothing saved yet. Save a calculation or make a letter from the Calculator tab.'}</div>`;
+    $$('#csList tr[data-id]').forEach(tr => { tr.onclick = () => ctcOpen(tr.dataset.id, R, v); tr.onkeydown = e => { if (e.key === 'Enter') ctcOpen(tr.dataset.id, R, v); }; });
+  };
+  const older = L.rows.filter(r => r.status !== 'Superseded' && r.version !== L.active).length;
+  el.innerHTML = `${older ? `<div class="ctc-status info">${older} saved calculation${older === 1 ? ' was' : 's were'} worked out on older rules. Open one and choose <b>Re-run on current rules</b> to see what changes.</div>` : ''}
+    <div class="filters"><div class="field"><label for="csQ">Search</label><input id="csQ" value="${esc(f.q)}" placeholder="Ref, name, designation${L.all ? ', made by' : ''}"></div>
+      <div class="field"><label for="csSt">Status</label><select id="csSt">${opts([['', 'All'], ['Draft', 'Draft'], ['Issued', 'Issued'], ['Superseded', 'Superseded']], f.status, false)}</select></div>
+      <div class="field" style="justify-content:flex-end"><button class="btn sm" id="csCsv">Download CSV</button></div></div>
+    <p class="hint">${L.all ? 'Everyone’s calculations.' : 'Your calculations.'} An issued letter is locked; a re-run makes a new calculation, and issuing it marks the earlier one as superseded.</p>
+    <div id="csList"></div>`;
+  $('#csQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
+  $('#csSt').onchange = e => { f.status = e.target.value; draw(); };
+  $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total CTC', 'Gross', 'Net', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
+    L.rows.map(r => [r.id, r.status, r.name, r.designation, r.grade, basisLabel(r.basis), r.target, r.totalCtc, r.gross, r.net, r.version, r.rerunOf, r.supersededBy, r.by, r.at, r.issuedBy, r.issuedAt, r.letter]));
+  draw();
+}
+async function ctcOpen(id, R, v) {
+  openDrawer('Calculation ' + id, '<p class="muted">Loading…</p>');
+  let c; try { c = await api('apiCtcGet', id); } catch (e) { $('#drawerBody').innerHTML = `<p class="miss">${esc(e)}</p>`; return; }
+  const T = c.result.totals, mine = c.by === S.boot.user.email, older = c.version !== R.active.id;
+  $('#drawerBody').innerHTML = `<div class="ctc-vh"><div class="dp-h"><b>${esc(c.name || 'No name given')}</b><span class="ctc-st ${esc(c.status)}">${esc(c.status)}</span></div>
+      <div>${esc([c.designation, c.grade].filter(Boolean).join(' · ')) || '<span class="sub">No designation or grade</span>'}</div>
+      <div class="sub">Rules ${esc(c.version)}${older ? ' (older than the rules in force, ' + esc(R.active.id) + ')' : ''} · made by ${esc(c.by)} on ${esc(c.at)}${c.issuedAt ? ` · issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}` : ''}</div>
+      ${c.rerunOf ? `<div class="sub">Re-run of ${esc(c.rerunOf)}</div>` : ''}${c.supersededBy ? `<div class="sub">Superseded by ${esc(c.supersededBy)}</div>` : ''}</div>
+    <div class="readout"><div><span class="sub">Total CTC</span><b>${inr(T.totalCtc)}</b></div><div><span class="sub">Gross</span><b>${inr(T.gross)}</b></div><div><span class="sub">Net in-hand</span><b>${inr(T.net)}</b></div></div>
+    <div class="drawer-actions" style="position:static;flex-wrap:wrap;gap:8px;justify-content:flex-start;margin-top:14px">
+      ${c.status !== 'Discarded' ? '<button class="btn primary" id="coLetter">Letter…</button>' : ''}
+      ${c.letter ? `<a class="btn" href="${esc(c.letter)}" target="_blank" rel="noopener">Open issued PDF</a>` : ''}
+      ${c.status === 'Draft' && mine ? '<button class="btn" id="coEdit">Edit in calculator</button>' : ''}
+      ${c.status !== 'Draft' && c.status !== 'Discarded' ? `<button class="btn" id="coRerun">Re-run on current rules</button>` : ''}
+      ${c.status === 'Draft' && mine ? '<button class="btn" id="coDiscard">Discard draft</button>' : ''}</div>`;
+  const load = rerun => {
+    const i = c.inputs;
+    S.ctcIn = { version: R.active.id, basis: i.basis, target: String(i.target), name: i.name || '', designation: i.designation || '', grade: i.grade || '', codes: Object.assign({}, i.codes), amounts: Object.assign({}, i.amounts) };
+    const cfg = R.active.config;
+    Object.keys(cfg.flags).forEach(k => { if (S.ctcIn.codes[k] === undefined) S.ctcIn.codes[k] = String(cfg.flags[k].default); });
+    if (rerun) S.ctcIn.rerunOf = { id: c.id, version: c.version, result: c.result };
+    else S.ctcIn.saved = Object.assign({}, c, { sig: ctcSig(S.ctcIn) });
+    closeDrawer(); S.ctcTab = 'calc'; viewCtc(v);
+  };
+  if ($('#coLetter')) $('#coLetter').onclick = () => { closeDrawer(); ctcLetter(c, R, () => { S.ctcList = null; }); };
+  if ($('#coEdit')) $('#coEdit').onclick = () => load(false);
+  if ($('#coRerun')) $('#coRerun').onclick = () => load(true);
+  if ($('#coDiscard')) twoStep($('#coDiscard'), 'Click again to discard', async () => {
+    try { await api('apiCtcDiscard', c.id); toast(`${c.id} discarded.`); S.ctcList = null; closeDrawer(); viewCtc(v); } catch (e) { toast(e, true); }
+  });
+}
+
+/* ---- The letter ---- */
+const CTC_L = {
+  heading: ['Salary structure', 'वेतन संरचना'], ref: ['Ref', 'संदर्भ'], date: ['Date', 'दिनांक'],
+  name: ['Name', 'नाम'], designation: ['Designation', 'पदनाम'], grade: ['Grade', 'ग्रेड'],
+  component: ['Component', 'घटक'], monthly: ['Monthly', 'मासिक'], yearly: ['Yearly', 'वार्षिक'],
+  earning: ['Earnings', 'आय'], deduction: ['Deductions', 'कटौती'], employer: ['Employer contribution', 'नियोक्ता का अंशदान'], annual: ['Other benefits', 'अन्य लाभ'],
+  gross: ['Gross salary', 'सकल वेतन'], ded: ['Total deductions', 'कुल कटौती'], net: ['Net in-hand salary', 'शुद्ध वेतन (हाथ में)'],
+  er: ['Total employer contribution', 'कुल नियोक्ता अंशदान'], grossCtc: ['Gross CTC', 'सकल CTC'], ann: ['Total other benefits', 'कुल अन्य लाभ'],
+  total: ['Total CTC', 'कुल CTC'], words: ['Total CTC in words', 'कुल CTC शब्दों में'], perYear: ['per year', 'प्रति वर्ष'],
+  terms: ['Terms', 'शर्तें'], for: ['For', 'कृते'], dateSign: ['Date', 'दिनांक'], draft: ['DRAFT', 'DRAFT']
+};
+function ctcWords(n) {
+  n = Math.round(Math.abs(n));
+  if (!n) return 'Zero';
+  const a = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const t = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = x => x < 20 ? a[x] : t[Math.floor(x / 10)] + (x % 10 ? '-' + a[x % 10] : '');
+  const three = x => (x >= 100 ? a[Math.floor(x / 100)] + ' Hundred' + (x % 100 ? ' ' : '') : '') + (x % 100 ? two(x % 100) : '');
+  const parts = [], cr = Math.floor(n / 1e7), lk = Math.floor(n / 1e5) % 100, th = Math.floor(n / 1e3) % 100, rest = n % 1000;
+  if (cr) parts.push((cr >= 1000 ? ctcWords(cr) : three(cr)) + ' Crore');
+  if (lk) parts.push(two(lk) + ' Lakh');
+  if (th) parts.push(two(th) + ' Thousand');
+  if (rest) parts.push(three(rest));
+  return parts.join(' ');
+}
+/** The letter as HTML (A4, 794 px wide). lang: 'en', 'hi' or 'both'. */
+function ctcLetterHtml(c, cfg, lang, draft) {
+  const L = k => { const x = CTC_L[k]; return lang === 'hi' ? x[1] : lang === 'both' ? `${x[0]} <span class="hi">/ ${x[1]}</span>` : x[0]; };
+  const lt = Object.assign({ company: 'BFCL', heading: 'Salary structure', subheading: '', signatory: 'Authorised signatory', accept: { en: 'Candidate’s signature', hi: '' } }, cfg.letter || {});
+  const r = c.result, T = r.totals, labelOf = {};
+  cfg.components.forEach(x => { labelOf[x.id] = x.label; });
+  const rows = s => r.lines.filter(l => l.section === s && l.monthly).map(l => `<tr><td>${esc(labelOf[l.id] || l.label)}</td><td class="n">${inr(l.monthly)}</td><td class="n">${inr(l.yearly)}</td></tr>`).join('');
+  const sec = (s, totK, tot) => { const b = rows(s); return b ? `<tr class="s"><th colspan="3">${L(s)}</th></tr>${b}<tr class="t"><td>${L(totK)}</td><td class="n">${inr(tot)}</td><td class="n">${inr(tot * 12)}</td></tr>` : ''; };
+  const val = {}; r.lines.forEach(l => { val[l.id] = l.monthly; });
+  const notes = (cfg.notes || []).filter(n => !n.when || val[n.when] > 0);
+  const note = n => lang === 'en' ? esc(n.en) : lang === 'hi' ? `<span class="hi">${esc(n.hi || n.en)}</span>` : `${esc(n.en)}<br><span class="hi">${esc(n.hi || '')}</span>`;
+  const acc = lang === 'en' ? esc(lt.accept.en) : lang === 'hi' ? `<span class="hi">${esc(lt.accept.hi || lt.accept.en)}</span>` : `${esc(lt.accept.en)} <span class="hi">/ ${esc(lt.accept.hi || '')}</span>`;
+  const day = c.issuedAt ? c.issuedAt.split(',')[0] : fmtDate(today());
+  const det = [['name', c.name, true], ['designation', c.designation], ['grade', c.grade]].filter(x => x[1] || x[2]);
+  return `<div class="ctl${draft ? ' draft' : ''}">
+    ${draft ? `<div class="ctl-wm">DRAFT</div>` : ''}
+    <header><img src="data:image/jpeg;base64,${JDM_LOGO}" alt=""><div class="co"><b>${esc(lt.company)}</b>${lt.subheading ? `<span>${esc(lt.subheading)}</span>` : ''}</div>
+      <dl><dt>${L('ref')}</dt><dd>${esc(c.id)}</dd><dt>${L('date')}</dt><dd>${esc(day)}</dd></dl></header>
+    <h1>${L('heading')}</h1>
+    <div class="det">${det.map(x => `<div><span>${L(x[0])}</span><b>${x[1] ? esc(x[1]) : '<i class="line"></i>'}</b></div>`).join('')}</div>
+    <table><thead><tr><th>${L('component')}</th><th class="n">${L('monthly')} (₹)</th><th class="n">${L('yearly')} (₹)</th></tr></thead><tbody>
+      ${sec('earning', 'gross', T.gross)}${sec('deduction', 'ded', T.deductions)}
+      <tr class="g"><td>${L('net')}</td><td class="n">${inr(T.net)}</td><td class="n">${inr(T.net * 12)}</td></tr>
+      ${sec('employer', 'er', T.employer)}
+      <tr class="g"><td>${L('grossCtc')}</td><td class="n">${inr(T.grossCtc)}</td><td class="n">${inr(T.grossCtc * 12)}</td></tr>
+      ${sec('annual', 'ann', T.annual)}
+      <tr class="gt"><td>${L('total')}</td><td class="n">${inr(T.totalCtc)}</td><td class="n">${inr(T.totalCtc * 12)}</td></tr></tbody></table>
+    <p class="words"><span>${L('words')}</span> Rupees ${ctcWords(T.totalCtc * 12)} only ${L('perYear')}</p>
+    ${notes.length ? `<h2>${L('terms')}</h2><ol>${notes.map(n => `<li>${note(n)}</li>`).join('')}</ol>` : ''}
+    <div class="sign"><div><i class="line"></i><span>${acc}</span><span class="d">${L('dateSign')}:</span></div>
+      <div><i class="line"></i><span>${L('for')} ${esc(lt.company)}</span><span>${esc(lt.signatory)}</span></div></div>
+    <footer>${esc(c.id)} · Rules ${esc(c.version)} · Prepared by ${esc(String(c.issuedBy || c.by).split('@')[0])}${c.issuedAt ? ' · issued ' + esc(c.issuedAt) : ''}</footer>
+  </div>`;
+}
+let ctcFontReady = null;
+function ctcFonts() {
+  if (!ctcFontReady) {
+    ctcFontReady = new Promise(res => {
+      const l = document.createElement('link'); l.rel = 'stylesheet';
+      l.href = 'https:' + String.fromCharCode(47, 47) + 'fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;600&display=swap';
+      l.onload = l.onerror = () => res(); document.head.appendChild(l);
+      setTimeout(res, 4000);
+    }).then(() => Promise.race([Promise.all([document.fonts.load('14px "Noto Sans Devanagari"', 'हिंदी'), document.fonts.load('600 14px "Noto Sans Devanagari"', 'हिंदी')]), new Promise(r => setTimeout(r, 4000))])).catch(() => { });
+  }
+  return ctcFontReady;
+}
+/** Draws the letter off-screen and returns a canvas (2x for print quality). */
+async function ctcCanvas(html) {
+  await Promise.all([loadScript(CDN_NPM + 'html2canvas@1.4.1/dist/html2canvas.min.js'), ctcFonts()]);
+  const host = document.createElement('div'); host.className = 'ctl-host'; host.innerHTML = html; document.body.appendChild(host);
+  try { await document.fonts.ready; return await window.html2canvas(host.firstElementChild, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: true }); }
+  finally { host.remove(); }
+}
+async function ctcPdf(canvas) {
+  const JsPDF = await pdfLib(); const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const pw = 210, ph = 297, pxPerPage = Math.floor(canvas.width * ph / pw);
+  for (let y = 0, p = 0; y < canvas.height; y += pxPerPage, p++) {
+    const h = Math.min(pxPerPage, canvas.height - y), c = document.createElement('canvas'); c.width = canvas.width; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, h); g.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+    if (p) doc.addPage();
+    doc.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pw, h * pw / canvas.width);
+  }
+  return doc;
+}
+function ctcFileName(c, ext) { return `${c.id}-${(c.name || 'salary-structure').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').toLowerCase()}.${ext}`; }
+function ctcLetter(c, R, onIssued) {
+  const cfg = c.version === R.active.id ? R.active.config : null;
+  let d = $('#ctlDialog');
+  if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="ctlDialog" class="pm-dialog wide ctl-dialog" aria-labelledby="ctlTitle"></dialog>'); d = $('#ctlDialog'); }
+  let lang = c.language || S.ctcLang || 'en';
+  const render = async () => {
+    const issued = c.status === 'Issued' || c.status === 'Superseded';
+    const conf = cfg || (await ctcVersionConfig(c.version, R));
+    if (lang !== 'en') await ctcFonts();
+    const html = ctcLetterHtml(c, conf, lang, !issued);
+    d.innerHTML = `<div class="dp-h"><h2 id="ctlTitle">Letter · ${esc(c.id)}</h2><span class="ctc-st ${esc(c.status)}">${esc(c.status)}</span>
+        ${issued ? `<span class="hint">Language: ${esc({ en: 'English', hi: 'Hindi', both: 'English and Hindi' }[lang])}</span>` : `<div class="seg ctl-lang" role="radiogroup" aria-label="Letter language">${[['en', 'English'], ['hi', 'Hindi'], ['both', 'Both']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ctlLang" value="${k}" ${lang === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>`}</div>
+      <div class="ctl-view"><div class="ctl-scale">${html}</div></div>
+      <div class="ctl-foot"><span class="hint">${issued ? `Issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}. The letter is locked.` : 'Check the letter, then issue it. Issuing locks the figures and keeps the PDF in Drive; downloads are available only for issued letters.'}</span>
+        <button class="btn" data-close>Close</button>
+        ${issued ? `<button class="btn" id="ctlPng">Download image</button><button class="btn primary" id="ctlPdf">Download PDF</button>` : `<button class="btn primary" id="ctlIssue">Issue letter</button>`}</div>`;
+    const fit = () => { const box = $('.ctl-view', d), sc = $('.ctl-scale', d); if (!box || !sc) return; const k = Math.min(1, (box.clientWidth - 24) / 794); sc.style.transform = `scale(${k})`; sc.style.height = (sc.firstElementChild.offsetHeight * k) + 'px'; sc.style.width = (794 * k) + 'px'; };
+    requestAnimationFrame(fit); window.onresize = fit;
+    $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+    $$('input[name="ctlLang"]', d).forEach(x => x.onchange = () => { lang = S.ctcLang = x.value; render(); });
+    const make = async btn => { busy(btn, true, 'Preparing…'); try { return await ctcCanvas(ctcLetterHtml(c, conf, lang, false)); } finally { busy(btn, false); } };
+    if ($('#ctlIssue', d)) twoStep($('#ctlIssue', d), 'Click again to issue', async () => {
+      const b = $('#ctlIssue', d);
+      try {
+        const cv = await make(b); busy(b, true, 'Issuing…');
+        const pdf = (await ctcPdf(cv)).output('datauristring').split(',')[1];
+        const rec = await api('apiCtcIssue', c.id, { language: lang, pdf });
+        Object.assign(c, rec); S.ctcList = null; if (onIssued) onIssued(rec);
+        toast(`${c.id} issued. The PDF is saved in Drive.`); render();
+      } catch (e) { toast(e, true); busy(b, false, 'Issue letter'); }
+    });
+    if ($('#ctlPdf', d)) $('#ctlPdf', d).onclick = async e => { try { (await ctcPdf(await make(e.target))).save(ctcFileName(c, 'pdf')); e.target.textContent = 'Download PDF'; } catch (err) { toast(err, true); } };
+    if ($('#ctlPng', d)) $('#ctlPng', d).onclick = async e => { try { const cv = await make(e.target); e.target.textContent = 'Download image'; cv.toBlob(b => saveBlob(b, ctcFileName(c, 'png')), 'image/png'); } catch (err) { toast(err, true); } };
+  };
+  d.innerHTML = '<p class="muted">Preparing the letter…</p>';
+  if (!d.open) d.showModal();
+  d.onclose = () => { window.onresize = null; };
+  render().catch(e => { d.innerHTML = `<p class="miss">${esc(e)}</p><div class="ctl-foot"><button class="btn" data-close>Close</button></div>`; $('[data-close]', d).onclick = () => d.close(); });
+}
+/** The rules a calculation was worked out on (labels, notes and letter details come from that version). */
+async function ctcVersionConfig(id, R) {
+  S.ctcCfg = S.ctcCfg || {};
+  if (!S.ctcCfg[id]) S.ctcCfg[id] = await api('apiCtcVersion', id);
+  return S.ctcCfg[id];
 }
 
 async function viewPipeline(v) {
