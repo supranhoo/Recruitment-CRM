@@ -225,6 +225,10 @@ function e2eRun_(trash) {
       return apiCtcGet(ctcA.id).status === 'Superseded' ? b.id : false;
     });
     t('I12 saved calculations list', function () { return apiCtcList({}).rows.length >= 2; });
+    t('I12a candidate pay and hike kept with the calculation', function () {
+      const r = apiCtcSave({ basis: 'total_ctc', target: 150000, codes: ctcSample, by: 'hike', hike: { per: 'month', ctc: '1,20,000', net: '95000', ask: '160000', askBasis: 'total_ctc', mode: 'total_ctc', pct: '25' } });
+      const h = r.inputs.hike; return r.inputs.by === 'hike' && h.ctc === '120000' && h.pct === '25' && h.ask === '160000' ? 'kept' : false;
+    });
   }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {

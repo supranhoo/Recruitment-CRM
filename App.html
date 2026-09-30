@@ -3906,7 +3906,11 @@ async function ctcRules(force) {
   return (S.ctc = await api('apiCtcRules'));
 }
 const CTC_STATUS = { Draft: 'Draft', Issued: 'Issued', Superseded: 'Superseded', Discarded: 'Discarded' };
-function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts]); }
+function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts, f.by || 'amount', f.hike || null]); }
+function ctcHikeDefaults() { let per = 'month'; try { per = localStorage.getItem('bfcl.ctcPer') || 'month'; } catch (e) { } return { per, ctc: '', gross: '', net: '', ask: '', askBasis: 'total_ctc', mode: 'total_ctc', pct: '', pctNet: '' }; }
+/** "+25.0%" style hike of b over a; blank when a is not known. */
+function ctcPct(a, b) { if (!(a > 0)) return null; return Math.round((b - a) / a * 1000) / 10; }
+function ctcPctTxt(p) { return p === null ? '\u2014' : (p > 0 ? '+' : p < 0 ? '\u2212' : '') + Math.abs(p).toFixed(1) + '%'; }
 async function viewCtc(v) {
   if (!can('ctc_use')) { v.innerHTML = '<div class="empty">You do not have access to the CTC calculator.</div>'; return; }
   const R = await ctcRules();
@@ -3927,6 +3931,8 @@ function ctcCalc(el, R, v) {
   const defaults = () => ({ basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', codes: Object.fromEntries(fk.map(k => [k, String(flags[k].default)])), amounts: {} });
   let f = S.ctcIn && S.ctcIn.version === R.active.id ? S.ctcIn : null;
   if (!f) { f = S.ctcIn = defaults(); f.version = R.active.id; }
+  f.hike = f.hike || ctcHikeDefaults(); f.by = f.by || 'amount';
+  const H = f.hike;
   const grades = (S.boot.grades || []).filter(g => g.active);
   const allDesig = [...new Set(grades.flatMap(g => g.designations || []))].sort();
   const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${flags[k].note ? `<span class="hint">${esc(flags[k].note)}</span>` : ''}</div>`;
@@ -3936,8 +3942,24 @@ function ctcCalc(el, R, v) {
     <div class="ctc">
       <section class="panel ctc-in" aria-label="Inputs">
         <h2>Target</h2>
+        <div class="seg seg-by" role="radiogroup" aria-label="Set the target by">${[['amount', 'An amount'], ['hike', 'A hike on current pay']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ccBy" value="${k}" ${f.by === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+        <div id="ccByAmount" ${f.by === 'hike' ? 'hidden' : ''}>
         <div class="seg" role="radiogroup" aria-label="Calculate on">${cfg.basisList.map(b => `<label class="seg-o"><input type="radio" name="ccBasis" value="${b.id}" ${f.basis === b.id ? 'checked' : ''}><span>${esc(b.label)}</span></label>`).join('')}</div>
-        <div class="field ctc-amt"><label for="ccTarget">Monthly amount</label><div class="amt"><span aria-hidden="true">₹</span><input id="ccTarget" inputmode="numeric" autocomplete="off" placeholder="e.g. 45,000" value="${f.target ? Number(f.target).toLocaleString('en-IN') : ''}"></div><span class="hint" id="ccYear"></span></div>
+        <div class="field ctc-amt"><label for="ccTarget">Monthly amount</label><div class="amt"><span aria-hidden="true">₹</span><input id="ccTarget" inputmode="numeric" autocomplete="off" placeholder="e.g. 45,000" value="${f.target ? Number(f.target).toLocaleString('en-IN') : ''}"></div><span class="hint" id="ccYear"></span></div></div>
+        <div id="ccByHike" ${f.by === 'hike' ? '' : 'hidden'}>
+          <div class="seg seg4" role="radiogroup" aria-label="Hike on">${[['total_ctc', 'CTC'], ['gross', 'Gross'], ['net', 'Net in-hand'], ['both', 'CTC and Net']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ccHikeOn" value="${k}" ${H.mode === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+          <div class="grid"><div class="field"><label for="ccPct" id="ccPctL">Hike on ${H.mode === 'gross' ? 'Gross' : H.mode === 'net' ? 'Net' : 'CTC'} (%)</label><input id="ccPct" inputmode="decimal" value="${esc(H.pct)}" placeholder="e.g. 25"></div>
+            <div class="field" id="ccPctNetF" ${H.mode === 'both' ? '' : 'hidden'}><label for="ccPctNet">Hike on Net (%)</label><input id="ccPctNet" inputmode="decimal" value="${esc(H.pctNet)}" placeholder="e.g. 20"></div></div>
+          <p class="hint" id="ccHikeTxt"></p></div>
+        <h2>Candidate\u2019s pay <span class="opt">optional, for the hike comparison</span></h2>
+        <div class="seg seg-per" role="radiogroup" aria-label="Figures are">${[['month', 'Monthly figures'], ['year', 'Yearly figures']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ccPer" value="${k}" ${H.per === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+        <div class="grid ctc-cur">
+          <div class="field"><label for="ccCurCtc">Current CTC</label><input id="ccCurCtc" data-h="ctc" inputmode="numeric" value="${H.ctc ? Number(H.ctc).toLocaleString('en-IN') : ''}"></div>
+          <div class="field"><label for="ccCurGross">Current Gross</label><input id="ccCurGross" data-h="gross" inputmode="numeric" value="${H.gross ? Number(H.gross).toLocaleString('en-IN') : ''}"></div>
+          <div class="field"><label for="ccCurNet">Current Net in-hand</label><input id="ccCurNet" data-h="net" inputmode="numeric" value="${H.net ? Number(H.net).toLocaleString('en-IN') : ''}"></div>
+          <div class="field"><label for="ccAsk">Candidate asked for</label><input id="ccAsk" data-h="ask" inputmode="numeric" value="${H.ask ? Number(H.ask).toLocaleString('en-IN') : ''}"></div>
+          <div class="field"><label for="ccAskOn">Asked on</label><select id="ccAskOn">${opts([['total_ctc', 'Total CTC'], ['gross', 'Gross salary'], ['net', 'Net in-hand']], H.askBasis, false)}</select></div>
+        </div>
         <h2>Details <span class="opt">optional</span></h2>
         <div class="grid">
           <div class="field wide"><label for="ccName">Name</label><input id="ccName" maxlength="120" value="${esc(f.name)}" autocomplete="off"></div>
@@ -3956,7 +3978,37 @@ function ctcCalc(el, R, v) {
   fillDesig();
   const num = s => Number(String(s || '').replace(/[^\d.]/g, '')) || 0;
   let last = null;
+  const perN = () => H.per === 'year' ? 12 : 1;
+  const mon = x => num(x) / perN();
+  const pctNum = x => { const n = Number(String(x || '').replace(/[^\d.]/g, '')); return isFinite(n) ? n : 0; };
+  const inputs = (basis, target) => ({ basis, target, codes: f.codes, amounts: { stipend: num(f.amounts.stipend) } });
+  /** With "a hike on current pay", the target comes from the current figure and the % (for CTC and Net, the higher offer, so both are met). */
+  const fromHike = () => {
+    const plans = [], miss = [];
+    const add = (b, cur, p, name) => { if (!(mon(cur) > 0)) miss.push(name); else plans.push({ basis: b, cur: Math.round(mon(cur)), curP: num(cur), p: pctNum(p), target: Math.round(mon(cur) * (1 + pctNum(p) / 100)) }); };
+    if (H.mode === 'total_ctc' || H.mode === 'both') add('total_ctc', H.ctc, H.pct, 'current CTC');
+    if (H.mode === 'gross') add('gross', H.gross, H.pct, 'current Gross');
+    if (H.mode === 'net') add('net', H.net, H.mode === 'both' ? H.pctNet : H.pct, 'current Net in-hand');
+    if (H.mode === 'both') add('net', H.net, H.pctNet, 'current Net in-hand');
+    if (miss.length) return { miss };
+    plans.forEach(pl => { pl.r = CTC_ENGINE.solve(cfg, inputs(pl.basis, Math.min(pl.target, 4194303))); });
+    plans.sort((a, b) => b.r.totals.totalCtc - a.r.totals.totalCtc);
+    return { plans };
+  };
   const run = () => {
+    let hk = null;
+    if (f.by === 'hike') {
+      hk = fromHike();
+      const lab = { total_ctc: 'Total CTC', gross: 'Gross', net: 'Net in-hand' };
+      if (hk.miss) {
+        $('#ccHikeTxt').textContent = `Enter the ${hk.miss.join(' and ')} under Candidate\u2019s pay.`;
+        last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>Enter the candidate\u2019s ${esc(hk.miss.join(' and '))}.</b><span>The target is worked out from the current pay and the hike %. Fill it in under Candidate\u2019s pay.</span></div>`; return;
+      }
+      const pl = hk.plans[0];
+      f.basis = pl.basis; f.target = String(pl.target);
+      const yr = perN() === 12;
+      $('#ccHikeTxt').innerHTML = hk.plans.map((x, i) => `${i ? '' : 'Target: '}${esc(lab[x.basis])} ${yr ? inr(Math.round(x.curP * (1 + x.p / 100))) + ' a year' : inr(x.target) + ' a month'} (${ctcPctTxt(x.p)} on ${inr(x.curP)})${yr ? ` \u00b7 ${inr(x.target)} a month` : ''}`).join('<br>') + (hk.plans.length > 1 ? `<br><b>${esc(lab[pl.basis])} decides the offer</b>: it needs the higher CTC, so both hikes are met.` : '');
+    }
     const t = num(f.target);
     if ($('#ccStipendF')) $('#ccStipendF').hidden = f.codes.basic !== '0';
     const nAllow = allow.filter(k => f.codes[k] !== String(flags[k].default)).length;
@@ -3964,10 +4016,11 @@ function ctcCalc(el, R, v) {
     $('#ccYear').textContent = t ? `${inr(t * 12)} a year` : '';
     if (!t) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>Enter a monthly amount to see the structure.</b><span>Choose what the amount stands for above, then type it in. The result updates as you type.</span></div>`; return; }
     if (t > 4194303) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>The amount is too large.</b><span>Enter up to ₹41,94,303 a month.</span></div>`; return; }
-    last = CTC_ENGINE.solve(cfg, { basis: f.basis, target: t, codes: f.codes, amounts: { stipend: num(f.amounts.stipend) } });
+    last = hk ? hk.plans[0].r : CTC_ENGINE.solve(cfg, inputs(f.basis, t));
     draw(last);
   };
   const basisLabel = id => (cfg.basisList.find(b => b.id === id) || {}).label || id;
+  const askRes = () => mon(H.ask) > 0 && mon(H.ask) <= 4194303 ? CTC_ENGINE.solve(cfg, inputs(H.askBasis, Math.round(mon(H.ask)))) : null;
   const draw = r => {
     const T = r.totals, secs = cfg.sections;
     const st = r.status === 'exact' ? ['ok', `✔ Target met: ${basisLabel(r.basis)} ${inr(r.achieved)} a month`]
@@ -3989,6 +4042,7 @@ function ctcCalc(el, R, v) {
           : f.saved && f.saved.status === 'Draft' ? `Draft <b>${esc(f.saved.id)}</b> has unsaved changes.` : 'Not saved yet.'}</span>
         <button class="btn" id="ccSave" ${blocked || saved ? 'disabled' : ''}>${f.saved && f.saved.status === 'Draft' ? 'Save changes' : 'Save draft'}</button>
         <button class="btn primary" id="ccLetter" ${blocked ? 'disabled' : ''}>Letter…</button></div>
+      ${ctcHikeHtml(H, r, askRes(), perN())}
       <section class="panel ctc-brk"><div class="dp-h"><h2>Salary structure${f.name ? ' · ' + esc(f.name) : ''}</h2>
         <span class="hint">${[f.designation, f.grade].filter(Boolean).map(esc).join(' · ')}</span>
         <label class="hint"><input type="checkbox" id="ccNil" ${showNil ? 'checked' : ''}> Show nil items</label><button class="btn sm" id="ccCsv">Download CSV</button></div>
@@ -4003,17 +4057,20 @@ function ctcCalc(el, R, v) {
         ${r.notes.length ? `<ul class="ctc-notes">${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
         <p class="legend">Worked out on rules ${esc(R.active.id)}. Gross entry ${inr(r.grossEntry)}${r.ctcUsed && f.codes.basic === '3' ? `; Basic taken from a Total CTC of ${inr(r.ctcUsed)}` : ''}.</p></section>
       ${f.rerunOf ? ctcDiffHtml(f.rerunOf.result, r, secs) : ''}`;
+    if ($('#ccUseAsk')) $('#ccUseAsk').onclick = () => { f.by = 'amount'; f.basis = H.askBasis; f.target = String(Math.round(mon(H.ask))); ctcCalc(el, R, v); };
     $('#ccNil').onchange = e => { S.ctcNil = e.target.checked; draw(r); };
     $('#ccCsv').onclick = () => {
       const head = ['Section', 'Component', 'Monthly', 'Yearly'];
       const out = [['Details', 'Name', f.name, ''], ['Details', 'Designation', f.designation, ''], ['Details', 'Grade', f.grade, ''], ['Details', 'Target (' + basisLabel(r.basis) + ')', r.target, r.target * 12], ['Details', 'Rules version', R.active.id, '']];
       r.lines.forEach(l => out.push([secs[l.section], l.label, l.monthly, l.yearly]));
+      [['Current CTC', 'ctc'], ['Current Gross', 'gross'], ['Current Net in-hand', 'net'], ['Candidate asked for (' + basisLabel(H.askBasis) + ')', 'ask']].forEach(([l, k]) => { if (mon(H[k]) > 0) out.push(['Candidate', l, Math.round(mon(H[k])), Math.round(mon(H[k]) * 12)]); });
+      [['CTC', 'ctc', 'totalCtc'], ['Gross', 'gross', 'gross'], ['Net in-hand', 'net', 'net']].forEach(([l, k, t]) => { if (mon(H[k]) > 0) out.push(['Hike', 'Hike on ' + l, ctcPctTxt(ctcPct(mon(H[k]), T[t])), '']); });
       [['Gross salary', T.gross], ['Total deductions', T.deductions], ['Net in-hand', T.net], ['Employer contribution', T.employer], ['Gross CTC', T.grossCtc], ['Other benefits', T.annual], ['Total CTC', T.totalCtc]].forEach(x => out.push(['Totals', x[0], x[1], x[1] * 12]));
       csvSave(`ctc-${(f.name || 'structure').replace(/[^\w]+/g, '-').toLowerCase()}-${today()}.csv`, head, out);
     };
     const save = async () => {
       const rec = await api('apiCtcSave', { id: f.saved && f.saved.status === 'Draft' ? f.saved.id : '', rerunOf: f.rerunOf ? f.rerunOf.id : '', basis: f.basis, target: num(f.target),
-        codes: f.codes, amounts: { stipend: num(f.amounts.stipend) }, name: f.name, designation: f.designation, grade: f.grade });
+        codes: f.codes, amounts: { stipend: num(f.amounts.stipend) }, name: f.name, designation: f.designation, grade: f.grade, by: f.by, hike: H });
       if (rec.result.totals.totalCtc !== r.totals.totalCtc) throw new Error('The server worked out a different Total CTC. Reload the page and try again.');
       f.saved = Object.assign(rec, { sig: ctcSig(f) }); S.ctcList = null;
       return rec;
@@ -4026,6 +4083,20 @@ function ctcCalc(el, R, v) {
     };
   };
   $$('input[name="ccBasis"]', el).forEach(x => x.onchange = () => { f.basis = x.value; run(); });
+  $$('input[name="ccBy"]', el).forEach(x => x.onchange = () => { f.by = x.value; $('#ccByAmount').hidden = f.by === 'hike'; $('#ccByHike').hidden = f.by !== 'hike';
+    if (f.by === 'amount') { $$('input[name="ccBasis"]', el).forEach(y => { y.checked = y.value === f.basis; }); $('#ccTarget').value = f.target ? Number(f.target).toLocaleString('en-IN') : ''; }
+    run(); });
+  $$('input[name="ccHikeOn"]', el).forEach(x => x.onchange = () => { H.mode = x.value; $('#ccPctNetF').hidden = H.mode !== 'both'; $('#ccPctL').textContent = `Hike on ${H.mode === 'gross' ? 'Gross' : H.mode === 'net' ? 'Net' : 'CTC'} (%)`; run(); });
+  $$('input[name="ccPer"]', el).forEach(x => x.onchange = () => { H.per = x.value; try { localStorage.setItem('bfcl.ctcPer', H.per); } catch (e) { } run(); });
+  $('#ccPct').oninput = e => { H.pct = e.target.value.replace(/[^\d.]/g, '').slice(0, 6); run(); };
+  $('#ccPctNet').oninput = e => { H.pctNet = e.target.value.replace(/[^\d.]/g, '').slice(0, 6); run(); };
+  $('#ccAskOn').onchange = e => { H.askBasis = e.target.value; run(); };
+  $$('input[data-h]', el).forEach(x => x.oninput = () => {
+    const raw = x.value.replace(/[^\d]/g, '').slice(0, 9); H[x.dataset.h] = raw;
+    const txt = raw ? Number(raw).toLocaleString('en-IN') : '';
+    if (x.value !== txt) { const fromEnd = x.value.length - x.selectionEnd; x.value = txt; const q = Math.max(0, txt.length - fromEnd); x.setSelectionRange(q, q); }
+    run();
+  });
   $('#ccTarget').oninput = e => {
     const x = e.target, raw = x.value.replace(/[^\d]/g, '').slice(0, 7);
     f.target = raw;
@@ -4042,6 +4113,40 @@ function ctcCalc(el, R, v) {
   $('#ccReset').onclick = () => { S.ctcIn = null; ctcCalc(el, R, v); };
   if ($('#ccRerunX')) $('#ccRerunX').onclick = () => { f.rerunOf = null; ctcCalc(el, R, v); };
   run();
+}
+/**
+ * Hike comparison: the candidate's current pay against this offer and against what they asked for, like for like
+ * (CTC to CTC, Gross to Gross, Net to Net) and every other combination. Amounts in the period the figures were given in.
+ */
+function ctcHikeHtml(H, r, ask, per) {
+  const m = x => Number(String(x || '').replace(/[^\d]/g, '')) / per;
+  const cur = { totalCtc: m(H.ctc), gross: m(H.gross), net: m(H.net) };
+  const hasCur = cur.totalCtc > 0 || cur.gross > 0 || cur.net > 0;
+  if (!hasCur && !ask) return '';
+  const P = x => inr(x * per), unit = per === 12 ? 'a year' : 'a month';
+  const rows = [['Total CTC', 'totalCtc'], ['Gross CTC', 'grossCtc'], ['Gross salary', 'gross'], ['Net in-hand', 'net']];
+  const askKey = { total_ctc: 'totalCtc', gross: 'gross', net: 'net' }[H.askBasis];
+  const hk = (a, b) => { const p = ctcPct(a, b); return p === null ? '<span class="sub">\u2014</span>' : `<b class="${p < 0 ? 'miss' : 'up'}">${ctcPctTxt(p)}</b><span class="sub">${b - a >= 0 ? '+' : '\u2212'}${P(Math.abs(b - a)).slice(1)}</span>`; };
+  const amt = (a, b) => { const p = ctcPct(a, b); return `${P(b)}${p === null ? '' : `<span class="sub"><b class="${p < 0 ? 'miss' : 'up'}">${ctcPctTxt(p)}</b> hike</span>`}`; };
+  const vs = (a, b) => { const d = a - b; return d === 0 ? '<span class="sub">same</span>' : `<b class="${d < 0 ? 'miss' : 'up'}">${d > 0 ? '+' : '\u2212'}${P(Math.abs(d)).slice(1)}</b><span class="sub">${ctcPctTxt(ctcPct(b, a))} vs ask</span>`; };
+  const lines = [];
+  if (ask && cur[askKey] > 0) lines.push(`The candidate asked for <b>${P(m(H.ask))}</b> ${askKey === 'totalCtc' ? 'CTC' : askKey === 'gross' ? 'Gross' : 'Net in-hand'}: <b>${ctcPctTxt(ctcPct(cur[askKey], m(H.ask)))}</b> on the current ${askKey === 'totalCtc' ? 'CTC' : askKey === 'gross' ? 'Gross' : 'Net'}.`);
+  const like = [['CTC', 'totalCtc'], ['Gross', 'gross'], ['Net in-hand', 'net']].filter(x => cur[x[1]] > 0).map(x => `${x[0]} ${ctcPctTxt(ctcPct(cur[x[1]], r.totals[x[1]]))}`);
+  if (like.length) lines.push(`This offer: ${like.join(' \u00b7 ')}.`);
+  if (ask) { const d = r.totals[askKey] - ask.totals[askKey]; lines.push(d === 0 ? 'The offer meets the ask exactly.' : `The offer is <b>${P(Math.abs(d))} ${d < 0 ? 'below' : 'above'}</b> the ask on ${askKey === 'totalCtc' ? 'CTC' : askKey === 'gross' ? 'Gross' : 'Net'}.`); }
+  const curKeys = [['Current CTC', 'totalCtc'], ['Current Gross', 'gross'], ['Current Net', 'net']].filter(x => cur[x[1]] > 0);
+  return `<section class="panel ctc-hike"><div class="dp-h"><h2>Hike comparison</h2><span class="hint">Amounts ${unit}</span>${ask ? '<button class="btn sm" id="ccUseAsk">Use the ask as the target</button>' : ''}</div>
+    ${lines.length ? `<p class="ctc-hike-sum">${lines.join(' ')}</p>` : ''}
+    <div class="table-wrap"><table class="ctc-table ctc-hk"><thead><tr><th></th><th class="num">Current</th><th class="num">This offer</th>${ask ? '<th class="num">At the ask</th><th class="num">Offer vs ask</th>' : ''}</tr></thead><tbody>
+      ${rows.map(([l, k]) => `<tr class="${k === askKey && ask ? 'asked' : ''}"><td>${l}${k === askKey && ask ? ' <span class="badge">asked</span>' : ''}</td><td class="num">${cur[k] > 0 ? P(cur[k]) : '<span class="sub">\u2014</span>'}</td>
+        <td class="num">${amt(cur[k], r.totals[k])}</td>
+        ${ask ? `<td class="num">${amt(cur[k], ask.totals[k])}</td><td class="num">${vs(r.totals[k], ask.totals[k])}</td>` : ''}</tr>`).join('')}
+    </tbody></table></div>
+    ${curKeys.length ? `<details class="ctc-cross"><summary>Every combination (current pay against each figure of the offer${ask ? ' and of the ask' : ''})</summary>
+      ${[['This offer', r]].concat(ask ? [['At the candidate\u2019s ask', ask]] : []).map(([t, x]) => `<div class="table-wrap" style="margin-bottom:10px"><table class="ctc-table ctc-hk"><thead><tr><th>${t}</th>${rows.map(([l]) => `<th class="num">${l}<span class="sub">${P(x.totals[rows.find(y => y[0] === l)[1]])}</span></th>`).join('')}</tr></thead><tbody>
+      ${curKeys.map(([cl, ck]) => `<tr><td>${cl} ${P(cur[ck])}</td>${rows.map(([, k]) => `<td class="num${k === ck ? ' like' : ''}">${hk(cur[ck], x.totals[k])}</td>`).join('')}</tr>`).join('')}
+      </tbody></table></div>`).join('')}<p class="hint">Shaded cells compare like with like. The others show, for example, how the offered Gross compares with the current CTC.</p></details>` : ''}
+    ${!hasCur ? '<p class="hint">Enter the candidate\u2019s current pay to see the hike %.</p>' : ''}</section>`;
 }
 /** What changed between an earlier calculation and the current one, line by line. */
 function ctcDiffHtml(a, b, secs) {
@@ -4112,7 +4217,8 @@ async function ctcOpen(id, R, v) {
       ${c.status === 'Draft' && mine ? '<button class="btn" id="coDiscard">Discard draft</button>' : ''}</div>`;
   const load = rerun => {
     const i = c.inputs;
-    S.ctcIn = { version: R.active.id, basis: i.basis, target: String(i.target), name: i.name || '', designation: i.designation || '', grade: i.grade || '', codes: Object.assign({}, i.codes), amounts: Object.assign({}, i.amounts) };
+    S.ctcIn = { version: R.active.id, basis: i.basis, target: String(i.target), name: i.name || '', designation: i.designation || '', grade: i.grade || '', codes: Object.assign({}, i.codes), amounts: Object.assign({}, i.amounts),
+      by: i.by || 'amount', hike: Object.assign(ctcHikeDefaults(), i.hike || {}) };
     const cfg = R.active.config;
     Object.keys(cfg.flags).forEach(k => { if (S.ctcIn.codes[k] === undefined) S.ctcIn.codes[k] = String(cfg.flags[k].default); });
     if (rerun) S.ctcIn.rerunOf = { id: c.id, version: c.version, result: c.result };
