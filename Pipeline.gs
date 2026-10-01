@@ -188,6 +188,7 @@ function apiMoveStage(appId, toStage, data) {
   }
   if (toStage === 'Joined') {
     if (!data.doj) throw new Error('Add the actual joining date.');
+    bgvJoinGuard_(app, data);
     update_(T.CAND, app.Candidate_ID, { DOJ: parseYmd_(data.doj) }, u);
     patch.Actual_DOJ = parseYmd_(data.doj);
     update_(T.MRF, line.Line_ID, { Offer_Sent: 'Yes', Actual_DOJ: parseYmd_(data.doj), Candidate_ID: app.Candidate_ID,

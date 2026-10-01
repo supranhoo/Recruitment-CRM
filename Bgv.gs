@@ -42,8 +42,25 @@ const BGV_NEXT_ = {
 
 /* ---------------------------------------------------------------- rules (versions) -------------------------- */
 
+const BGV_PLACEHOLDERS_ = ['candidate', 'position', 'mrf', 'dept', 'company', 'type', 'case', 'start_by', 'started', 'days', 'vendor', 'vendor_ref', 'vendor_tat', 'checks', 'recruiter'];
+const BGV_TEMPLATE_IDS_ = [['consent', 'Consent request to the candidate', 'candidate'], ['insufficiency', 'Documents needed from the candidate', 'candidate'], ['employer', 'Verification request to an employer', 'employer'],
+  ['vendor_start', 'Start the verification with the vendor', 'vendor'], ['vendor_chaser', 'Chaser to the vendor', 'vendor']];
+function bgvDefaultTemplates_() {
+  return {
+    consent: { subject: 'Background verification: consent needed ({{candidate}}, {{position}})',
+      body: 'Dear {{candidate}},\n\nCongratulations on your selection for {{position}} at {{company}}. As part of our joining process we carry out a background verification of your employment ({{type}}).\n\nPlease reply to this email with:\n1. Your signed consent to the verification (a scanned copy is fine), and\n2. For each employer concerned: the company name, your designation, your dates of joining and leaving, the HR or reporting manager contact, and your last drawn salary.\n\nWe would like to begin by {{start_by}}, so an early reply will help.\n\nRegards,\n{{recruiter}}\n{{company}} HR' },
+    insufficiency: { subject: 'Documents needed to complete your background verification ({{case}})',
+      body: 'Dear {{candidate}},\n\nThe verification agency has told us it cannot complete the following without more information from you:\n{{checks}}\n\nPlease reply with the missing documents or details as soon as you can, so that your verification is not delayed.\n\nRegards,\n{{recruiter}}\n{{company}} HR' },
+    employer: { subject: 'Employment verification request: {{candidate}}',
+      body: 'Dear Sir / Madam,\n\n{{candidate}} has joined / been selected by {{company}} and has given us written consent to verify their employment with your organisation. We would be grateful if you could confirm:\n1. Dates of joining and leaving\n2. Designation(s) held\n3. Last drawn salary (CTC)\n4. Reason for leaving and eligibility for re-employment\n5. Any disciplinary action or conduct concern\n\nA reply by {{start_by}} will be appreciated. This request is confidential and the information will be used only for this verification.\n\nRegards,\n{{recruiter}}\n{{company}} HR' },
+    vendor_start: { subject: 'BGV request {{case}}: {{candidate}} ({{type}})',
+      body: 'Dear {{vendor}} team,\n\nPlease start this background verification for {{company}}:\n\nCase reference: {{case}}\nCandidate: {{candidate}}\nPosition: {{position}} ({{mrf}}), {{dept}}\nType: {{type}}\nChecks:\n{{checks}}\n\nThe candidate\u2019s signed consent is attached. Please acknowledge with your reference number and the expected completion date (standard turnaround {{vendor_tat}} days).\n\nRegards,\n{{recruiter}}\n{{company}} HR' },
+    vendor_chaser: { subject: 'Status needed: {{case}} / {{vendor_ref}} ({{candidate}})',
+      body: 'Dear {{vendor}} team,\n\nThe verification for {{candidate}} (reference {{vendor_ref}}, our case {{case}}) was started on {{started}}, {{days}} days ago, and we have not had a final report.\n\nPlease share the current status of each check:\n{{checks}}\n\nand the date we can expect the report.\n\nRegards,\n{{recruiter}}\n{{company}} HR' }
+  };
+}
 function bgvDefaultRules_() {
-  return { scope: { managerPlus: true, flagged: true }, prevInitDays: 3, currInitDays: 2, resultBeforeJoinDays: 2, shortGapDays: 5, vendorTatDays: 7,
+  return { company: 'BFCL', joinWarning: true, templates: bgvDefaultTemplates_(), scope: { managerPlus: true, flagged: true }, prevInitDays: 3, currInitDays: 2, resultBeforeJoinDays: 2, shortGapDays: 5, vendorTatDays: 7,
     chaserDays: 3, reviewDays: 2, decisionDays: 2, amberPct: 80, retentionReportYears: 3, retentionNonJoinerMonths: 6,
     defaultChecks: ['Employment', 'Conduct', 'Last drawn pay'], optionalChecks: ['Education', 'Identity', 'Address', 'Criminal'] };
 }
@@ -67,6 +84,8 @@ function bgvRules_(day) {
   try { v = bgvRulesRows_().filter(function (x) { return x.status === 'Active' && x.eff && x.eff <= d; }).sort(function (a, b) { return a.eff < b.eff ? 1 : a.eff > b.eff ? -1 : b.no - a.no; })[0]; } catch (e) { }
   const cfg = Object.assign(bgvDefaultRules_(), v ? v.cfg : {});
   cfg.scope = Object.assign({ managerPlus: true, flagged: true }, cfg.scope || {});
+  const dt = bgvDefaultTemplates_(), mine = (v && v.cfg && v.cfg.templates) || {};
+  cfg.templates = {}; Object.keys(dt).forEach(function (k) { cfg.templates[k] = Object.assign({}, dt[k], mine[k] || {}); });
   return { id: v ? v.id : 'built-in', eff: v ? v.eff : '', cfg: cfg };
 }
 
@@ -314,7 +333,8 @@ function apiBgvCase(id) {
   const o = bgvOut_(c, u, cfg, today, true);
   o.next = BGV_NEXT_[o.status] || [];
   return { c: o, checks: checks, log: log, vendors: bgvVendorsOut_(), decide: can_(u, 'bgv_decide'), lead: isLead_(u), decisions: BGV_DECISIONS_[o.type] || [], outcomes: BGV_OUTCOMES_,
-    checkStatuses: BGV_CHECK_STATUSES_, logKinds: BGV_LOG_KINDS_, optionalChecks: cfg.optionalChecks, rules: cfg };
+    checkStatuses: BGV_CHECK_STATUSES_, logKinds: BGV_LOG_KINDS_, optionalChecks: cfg.optionalChecks, rules: cfg,
+    templates: BGV_TEMPLATE_IDS_.map(function (t) { return { id: t[0], label: t[1], to: t[2], subject: cfg.templates[t[0]].subject, body: cfg.templates[t[0]].body }; }) };
 }
 
 /* ---------------------------------------------------------------- working a case ---------------------------- */
@@ -505,7 +525,8 @@ function apiBgvVendorSave(d) {
 function apiBgvRules() {
   const u = currentUser_(); ensureSchema_();
   const act = bgvRules_();
-  return { active: { id: act.id, eff: act.eff, cfg: act.cfg }, canEdit: u.role === ROLES.ADMIN, nums: BGV_RULE_NUMS_, today: ymd_(new Date()),
+  return { active: { id: act.id, eff: act.eff, cfg: act.cfg }, canEdit: u.role === ROLES.ADMIN, nums: BGV_RULE_NUMS_, placeholders: BGV_PLACEHOLDERS_,
+    templateList: BGV_TEMPLATE_IDS_.map(function (t) { return { id: t[0], label: t[1], to: t[2] }; }), today: ymd_(new Date()),
     versions: bgvRulesRows_().sort(function (a, b) { return b.no - a.no; }).map(function (v) { return { id: v.id, eff: v.eff, status: v.status, reason: v.reason, remark: v.remark, by: v.by, at: v.at, cfg: v.cfg }; }) };
 }
 /** Saves a new version of the rules. d: { values, scope: {managerPlus, flagged}, eff, reason, remark }. Admin only. */
@@ -521,6 +542,20 @@ function apiBgvRulesSave(d) {
     cfg[n[0]] = v;
   });
   if (d.scope) cfg.scope = { managerPlus: d.scope.managerPlus !== false, flagged: d.scope.flagged !== false };
+  if ('joinWarning' in d) cfg.joinWarning = d.joinWarning !== false;
+  if ('company' in d) { const co = clean_(String(d.company || '')).trim(); if (co.length < 2 || co.length > 60) throw new Error('Company name for the emails: 2 to 60 characters.'); cfg.company = co; }
+  const tplChanged = [];
+  if (d.templates) {
+    BGV_TEMPLATE_IDS_.forEach(function (t) {
+      const n = (d.templates || {})[t[0]]; if (!n) return;
+      const subject = clean_(String(n.subject || '')).trim(), body = String(n.body || '').replace(/\r\n/g, '\n').trim();
+      if (subject.length < 3 || subject.length > 200) throw new Error(t[1] + ': the subject must be 3 to 200 characters.');
+      if (body.length < 20 || body.length > 3000) throw new Error(t[1] + ': the message must be 20 to 3,000 characters.');
+      [subject, body].join(' ').replace(/\{\{\s*([a-z_]+)\s*\}\}/g, function (m, k) { if (BGV_PLACEHOLDERS_.indexOf(k) < 0) throw new Error(t[1] + ': {{' + k + '}} is not a known placeholder. Use: ' + BGV_PLACEHOLDERS_.map(function (x) { return '{{' + x + '}}'; }).join(' ') + '.'); return m; });
+      const was = cfg.templates && cfg.templates[t[0]];
+      if (!was || was.subject !== subject || was.body !== body) { cfg.templates = cfg.templates || {}; cfg.templates[t[0]] = { subject: subject, body: body }; tplChanged.push(t[1]); }
+    });
+  }
   const eff = ymd_(d.eff), today = ymd_(new Date());
   if (!eff) throw new Error('Pick the date the new rules take effect.');
   if (eff < today) throw new Error('The rules can take effect from today or a later date, not the past.');
@@ -530,6 +565,9 @@ function apiBgvRulesSave(d) {
   if (remark.length < 10) throw new Error('Write a remark of at least 10 characters: what changed and why.');
   const changes = BGV_RULE_NUMS_.filter(function (n) { return cfg[n[0]] !== cur[n[0]]; }).map(function (n) { return n[1] + ': ' + cur[n[0]] + ' → ' + cfg[n[0]]; });
   if (JSON.stringify(cfg.scope) !== JSON.stringify(cur.scope)) changes.push('Scope changed');
+  if (cfg.joinWarning !== cur.joinWarning) changes.push('Warning when joining with BGV open: ' + (cfg.joinWarning ? 'on' : 'off'));
+  if (cfg.company !== cur.company) changes.push('Company name in emails: ' + cur.company + ' \u2192 ' + cfg.company);
+  tplChanged.forEach(function (t) { changes.push('Email template changed: ' + t); });
   if (!changes.length) throw new Error('Nothing changed.');
   const id = withLock_(function () {
     const rows = bgvRulesRows_(), vid = 'BGR-V' + (rows.reduce(function (m, r) { return Math.max(m, r.no); }, 0) + 1);
@@ -684,4 +722,175 @@ function bgvLateCases_() {
   const cfg = bgvRules_().cfg, today = ymd_(new Date());
   return readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Not started', 'Awaiting consent'].indexOf(String(c.Status)) >= 0 && bgvRag_(c, cfg, today).rag === 'Red'; })
     .map(function (c) { return { id: String(c.Line_ID), label: String(c.MRF_No || '') + ' · ' + String(c.Position || '') + ' (' + String(c.Recruiter || '') + ')', detail: c.Type + ': ' + bgvRag_(c, cfg, today).why + ' [' + c.Case_ID + ']' }; });
+}
+
+/* ---------------------------------------------------------------- vendor spreadsheet import (phase 3) ----------- */
+
+/** Names the vendor may use for a check, mapped to this tracker's check types. */
+const BGV_CHECK_WORDS_ = [['Last drawn pay', /\b(pay|salary|ctc|compensation|last drawn)\b/i], ['Conduct', /conduct|reference|behaviou?r|re-?hire|integrity|disciplin/i], ['Employment', /employ|previous (job|company|employer|organi[sz]ation)|tenure|designation|experience/i],
+  ['Education', /educat|degree|qualification|academic/i], ['Identity', /identity|id proof|aadh?aar|\bpan\b|passport/i], ['Address', /address|residen/i], ['Criminal', /crimin|court|police|record/i]];
+function bgvCheckType_(text, known) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  const exact = known.filter(function (k) { return k.toLowerCase() === t.toLowerCase(); })[0];
+  if (exact) return exact;
+  const hit = BGV_CHECK_WORDS_.filter(function (w) { return w[1].test(t) && known.indexOf(w[0]) >= 0; })[0];
+  return hit ? hit[0] : '';
+}
+/** A vendor's status wording as one of the tracker's check statuses; insuff = the vendor is waiting for the candidate. */
+function bgvCheckStatus_(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  if (/insuff|need(ed)?\s+(more\s+)?(doc|info|detail)|awaiting\s+(doc|candidate)|document(s)?\s+required/i.test(t)) return { status: 'In progress', insuff: true };
+  if (/unable|unverif|not\s+(verified|clear|confirmed|traceable)|no\s+response|not\s+respond|could\s+not|cannot|untraceable|refus|non[- ]?cooperat/i.test(t)) return { status: 'Unable to verify' };
+  if (/discrep|mismatch|negative|adverse|\bred\b|not\s+match|variation|inconsisten|false|fake|forg/i.test(t)) return { status: 'Discrepancy' };
+  if (/not\s+applicable|^n\.?\/?a\.?$/i.test(t)) return { status: 'Not applicable' };
+  if (/verified|clear|positive|green|matched?|complete|confirmed|\bok\b|satisf/i.test(t)) return { status: 'Verified' };
+  if (/pending/i.test(t)) return { status: 'Pending' };
+  if (/progress|wip|initiated|open|awaiting|processing|ongoing|yet\s+to|started/i.test(t)) return { status: 'In progress' };
+  return null;
+}
+const BGV_MONTHS_ = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+/** Dates as vendors send them: 2026-09-30, 30/09/2026 (day first), 30-Sep-26, 30 September 2026, or an Excel serial number. */
+function bgvParseDate_(v) {
+  if (v instanceof Date) return isNaN(v) ? null : ymd_(v);
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return '';
+  let y, m, d, mt;
+  if (/^\d{5}(\.\d+)?$/.test(t) && Number(t) > 30000 && Number(t) < 80000) { const x = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(t)) * 86400000); y = x.getUTCFullYear(); m = x.getUTCMonth() + 1; d = x.getUTCDate(); }
+  else if ((mt = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
+  else if ((mt = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))) { d = +mt[1]; m = +mt[2]; y = +mt[3]; if (y < 100) y += 2000; }
+  else if ((mt = t.match(/^(\d{1,2})[\s\-.,]+([A-Za-z]{3,9})[\s\-.,]+(\d{2,4})$/))) { d = +mt[1]; m = BGV_MONTHS_[mt[2].slice(0, 4).toLowerCase()] || BGV_MONTHS_[mt[2].slice(0, 3).toLowerCase()]; y = +mt[3]; if (y < 100) y += 2000; }
+  else return null;
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 2000 && y <= 2100)) return null;
+  const x = new Date(Date.UTC(y, m - 1, d));
+  if (x.getUTCMonth() !== m - 1) return null;
+  return x.toISOString().slice(0, 10);
+}
+
+/**
+ * Applies a vendor's status sheet to many cases at once. rows: [{ ref, check, status, finding, date }] already read from the
+ * file by the page (ref = our case number BGV-00012 or the vendor's own reference). Checks only what the recruiter may work
+ * on, never touches a case that has not started or is closed, and writes nothing unless opts.apply is true: call it first
+ * as a check ("dry run"), then again with apply. opts.advance (default yes) moves a case to "Report received" once every
+ * check is back, or to "Insufficiency" when the vendor is waiting for the candidate.
+ */
+function apiBgvImport(rows, opts) {
+  const u = currentUser_(); ensureSchema_();
+  opts = opts || {};
+  rows = Array.isArray(rows) ? rows : [];
+  if (!rows.length) throw new Error('The file has no rows to import.');
+  if (rows.length > 120) throw new Error('Import up to 120 rows at a time (this file has ' + rows.length + '). Split it and import each part.');
+  const apply = opts.apply === true, advance = opts.advance !== false, cfg = bgvRules_().cfg, today = ymd_(new Date());
+  const known = cfg.defaultChecks.concat(cfg.optionalChecks);
+  const cases = readTable_(BGV_CASES_.name).rows, byId = {}, byRef = {};
+  cases.forEach(function (c) {
+    byId[String(c.Case_ID).toLowerCase()] = c;
+    const r = String(c.Vendor_Ref || '').trim().toLowerCase();
+    if (r) (byRef[r] = byRef[r] || []).push(c);
+  });
+  const checksBy = {};
+  readTable_(BGV_CHECKS_.name).rows.forEach(function (k) { (checksBy[k.Case_ID] = checksBy[k.Case_ID] || []).push(k); });
+  const results = [], plan = {};
+  rows.forEach(function (raw, i) {
+    const res = { row: i + 1, ref: String(raw.ref || '').trim(), check: String(raw.check || '').trim(), error: '', warn: '', caseId: '', candidate: '', type: '', action: '', status: '', finding: '', date: '' };
+    results.push(res);
+    try {
+      if (!res.ref) throw new Error('No case number or vendor reference on this row.');
+      let c = byId[res.ref.toLowerCase()];
+      if (!c) {
+        const list = byRef[res.ref.toLowerCase()] || [];
+        if (list.length > 1) throw new Error('The reference matches ' + list.length + ' cases (' + list.map(function (x) { return x.Case_ID; }).join(', ') + '). Use our case number instead.');
+        c = list[0];
+      }
+      if (!c) throw new Error('No case has this number or vendor reference.');
+      res.caseId = String(c.Case_ID); res.candidate = String(c.Candidate_Name || ''); res.type = String(c.Type);
+      if (!bgvCanWork_(u, c)) throw new Error('This case belongs to ' + c.Recruiter + ': only they, a TA Lead or the Head of HR can update it.');
+      const st = String(c.Status);
+      if (['Not started', 'Awaiting consent'].indexOf(st) >= 0) throw new Error('This case has not been started yet. Start it first (consent and vendor).');
+      if (['Closed', 'Cancelled', 'Under review'].indexOf(st) >= 0) throw new Error('This case is ' + st.toLowerCase() + '.');
+      const type = bgvCheckType_(res.check, known);
+      if (!type) throw new Error(res.check ? '“' + res.check + '” is not one of the checks (' + known.join(', ') + ').' : 'No check named on this row.');
+      res.check = type;
+      const status = bgvCheckStatus_(raw.status);
+      if (!status) throw new Error(String(raw.status || '').trim() ? 'The status “' + raw.status + '” is not understood (use verified, discrepancy, unable to verify, in progress, insufficiency or not applicable).' : 'No status on this row.');
+      res.status = status.status;
+      res.finding = clean_(String(raw.finding || '')).trim().slice(0, 600);
+      if (['Discrepancy', 'Unable to verify'].indexOf(status.status) >= 0 && res.finding.length < 3) throw new Error('A ' + status.status.toLowerCase() + ' needs the vendor’s finding or remark.');
+      const done = ['Verified', 'Discrepancy', 'Unable to verify'].indexOf(status.status) >= 0;
+      let date = '';
+      if (String(raw.date == null ? '' : raw.date).trim()) { date = bgvParseDate_(raw.date); if (date === null) throw new Error('The date “' + raw.date + '” is not understood (use dd/mm/yyyy or yyyy-mm-dd).'); }
+      if (date && date > today) throw new Error('The date ' + date + ' is in the future.');
+      if (date && ymd_(c.Initiated_On) && date < ymd_(c.Initiated_On)) throw new Error('The date ' + date + ' is before the case was started (' + ymd_(c.Initiated_On) + ').');
+      res.date = done ? (date || today) : '';
+      const existing = (checksBy[c.Case_ID] || []).filter(function (k) { return String(k.Check_Type) === type; })[0];
+      res.action = existing ? 'Update the ' + type + ' check' : 'Add the ' + type + ' check';
+      const g = plan[c.Case_ID] = plan[c.Case_ID] || { c: c, updates: {}, insuff: false };
+      if (g.updates[type]) { const prev = results[g.updates[type].row - 1]; prev.warn = 'Replaced by row ' + res.row + ' for the same check.'; prev.action = 'Skipped'; }
+      g.updates[type] = { row: res.row, type: type, existing: existing || null, status: status.status, finding: res.finding, date: res.date };
+      if (status.insuff) g.insuff = true;
+    } catch (e) { res.error = String(e && e.message || e); }
+  });
+  // what each case will become after the changes
+  const caseOut = [];
+  Object.keys(plan).forEach(function (id) {
+    const g = plan[id], c = g.c, mine = {};
+    (checksBy[id] || []).forEach(function (k) { mine[k.Check_Type] = String(k.Status); });
+    Object.keys(g.updates).forEach(function (t) { mine[t] = g.updates[t].status; });
+    const open = Object.keys(mine).filter(function (t) { return ['Not applicable', 'Verified', 'Discrepancy', 'Unable to verify'].indexOf(mine[t]) < 0; });
+    const from = String(c.Status);
+    let to = from, reportOn = '';
+    if (advance && ['Initiated', 'In progress', 'Insufficiency'].indexOf(from) >= 0) {
+      if (!open.length && ymd_(c.Initiated_On)) {
+        to = 'Report received';
+        const dates = Object.keys(g.updates).map(function (t) { return g.updates[t].date; }).filter(Boolean);
+        reportOn = dates.sort().slice(-1)[0] || today; if (reportOn < ymd_(c.Initiated_On)) reportOn = ymd_(c.Initiated_On);
+      } else if (g.insuff && from !== 'Insufficiency') to = 'Insufficiency';
+      else if (from === 'Initiated') to = 'In progress';
+    }
+    g.to = to; g.reportOn = reportOn;
+    caseOut.push({ id: id, candidate: String(c.Candidate_Name || ''), type: String(c.Type), from: from, to: to, checks: Object.keys(g.updates).length, stillOpen: open.length });
+  });
+  const counts = { rows: rows.length, ok: results.filter(function (r) { return !r.error && r.action !== 'Skipped'; }).length, errors: results.filter(function (r) { return r.error; }).length, cases: caseOut.length };
+  if (!apply) return { applied: false, rows: results, cases: caseOut, counts: counts };
+  if (counts.errors && opts.skipErrors !== true) throw new Error(counts.errors + ' row' + (counts.errors === 1 ? ' has' : 's have') + ' a problem. Fix the file, or choose to apply the rows that are fine.');
+  Object.keys(plan).forEach(function (id) {
+    const g = plan[id], c = g.c, notes = [];
+    Object.keys(g.updates).forEach(function (t) {
+      const x = g.updates[t];
+      const patch = { Status: x.status, Finding: x.finding, Verified_On: x.date ? parseYmd_(x.date) : '', Updated_By: u.email };
+      if (x.existing) update_(BGV_CHECKS_, String(x.existing.Check_ID), patch, u);
+      else insert_(BGV_CHECKS_, Object.assign({ Case_ID: id, Check_Type: t, Subject: '', Period: '' }, patch), u);
+      notes.push(t + ': ' + x.status.toLowerCase());
+    });
+    bgvLog_(u, id, 'Vendor update', '', '', 'Imported from the vendor’s file. ' + notes.join('; '));
+    if (g.to !== String(c.Status)) {
+      const cp = { Status: g.to, Updated_By: u.email };
+      if (g.to === 'Report received') cp.Report_On = parseYmd_(g.reportOn);
+      update_(BGV_CASES_, id, cp, u);
+      bgvLog_(u, id, 'Status', String(c.Status), g.to, g.to === 'Report received' ? 'Every check is back (vendor file).' : g.to === 'Insufficiency' ? 'The vendor is waiting for documents from the candidate.' : 'Vendor file received.');
+    } else update_(BGV_CASES_, id, { Updated_By: u.email }, u);
+  });
+  return { applied: true, rows: results, cases: caseOut, counts: counts };
+}
+
+/* ---------------------------------------------------------------- moving to Joined with BGV open (phase 3) ---- */
+
+/**
+ * Called when a card is moved to Joined. If the previous-employer BGV for that candidate is still open the move needs the
+ * recruiter's confirmation (data.bgvAck), so the Head of HR's decisions and the open case are not overlooked. Rule: joinWarning.
+ */
+function bgvJoinGuard_(app, data) {
+  let open = [];
+  try {
+    if (!bgvSheet_() || bgvRules_().cfg.joinWarning === false) return;
+    open = readTable_(BGV_CASES_.name).rows.filter(function (c) {
+      return c.Line_ID === app.Line_ID && c.Type === BGV_TYPES_[0] && String(c.Candidate_ID || '') === String(app.Candidate_ID || '') && ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0;
+    });
+  } catch (e) { return; }
+  if (!open.length || (data && data.bgvAck === true)) return;
+  const c = open[0], dec = String(c.Decision || '');
+  const hold = /hold|withdraw/i.test(dec);
+  throw new Error('BGV open: The previous-employer background verification (' + c.Case_ID + ') is not closed yet. Status: ' + c.Status + (c.Outcome ? ', result: ' + c.Outcome : '') + '.'
+    + (hold ? ' The Head of HR decided to ' + dec.toLowerCase() + '.' : '') + ' Moving the candidate to Joined does not close the case; ' + c.Recruiter + ' keeps chasing it.');
 }

@@ -280,6 +280,9 @@ function e2eRun_(trash) {
     t('K12 Overview counts and weekly block include BGV', function () { const s = apiTaskSummary(); const w = bgvWeekly_(); return typeof s.bgvDecide === 'number' && typeof s.bgvLate === 'number' && w && typeof w.open === 'number' ? 'late ' + s.bgvLate : false; });
     t('K13 BGV to-dos are generated without error', function () { const r = computeTasks_(); return Array.isArray(r) ? r.filter(function (x) { return /^bgv/.test(x.rule); }).length + ' BGV to-dos' : false; });
     t('K14 the KPI scorecard still scores BGV from the cases', function () { const k = apiKpi(fy, true); return k.defs.BGV ? 'ok' : false; });
+    t('K15 BGV email templates and company name are served and editable', function () { const r = apiBgvRules(); return r.templateList.length === 5 && r.active.cfg.company && r.active.cfg.templates.consent.subject ? 'ok' : false; });
+    err('K16 a vendor import with no rows is refused', function () { apiBgvImport([], {}); }, /no rows/);
+    t('K17 a vendor import dry run changes nothing', function () { const r = apiBgvImport([{ ref: 'NO-SUCH-CASE', check: 'Employment', status: 'Verified' }], {}); return r.applied === false && r.counts.errors === 1 ? 'ok' : false; });
   }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {

@@ -158,7 +158,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
-| `Bgv.gs` | BGV tracker (schema 33; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
+| `Bgv.gs` | BGV tracker (schema 33; efficiency: `apiBgvImport`, `bgvJoinGuard_`, email templates; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
 | `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
@@ -772,7 +772,12 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 - **Weekly email:** a BGV line (open, past a limit, awaiting the Head of HR's decision, worst recruiters). **Data check** "BGV not started past the start-by date" (14 checks).
 - **KPI scorecard reads the BGV cases:** the start dates come from the case (the position's fields mirror it, so scoring is **identical**; verified on mixed cases), a case a lead **waived** is not a miss, a cancelled case is ignored. The scoring (5 / 2 / 0) and who is scored (the recruiter, for starting on time) are unchanged; the other measures above are monitoring only.
 
-**Still to come:** vendor spreadsheet import, email templates, warnings when a card moves to Joined with BGV open, the restricted Drive folder, retention purge, audit export.
+**Efficiency** (phase 3; no schema change):
+- **Vendor spreadsheet import** (button on the tracker; `apiBgvImport`): upload an Excel or CSV file, or paste the rows. Columns are guessed from the headings and can be changed. Each row names a case (our case number or the vendor's reference), the check, its status and optionally a remark and a date. Vendor words are mapped (completed/clear → Verified, pending, in progress, insufficient/awaiting candidate, discrepancy, unable to verify, not applicable); dates are read day-first. **Check the file** is a dry run that writes nothing; **Apply** writes, with one "Vendor update" timeline entry per case. When every check is back the case moves to Report received (or to Insufficiency); this can be switched off. Rows that are wrong can be left out with "apply the rows that are fine". Up to 120 rows at a time. Not-started, closed, cancelled and under-review cases and other recruiters' cases are refused (leads may update any).
+- **Email templates** (Rules tab, versioned with the rules; Admin edits): consent request and insufficiency request to the candidate, employer verification request, vendor start and vendor chaser, with placeholders such as `{{candidate}}`, `{{position}}`, `{{case}}`, `{{start_by}}`, `{{checks}}`, `{{vendor}}`. In a case, **Email…** fills a template, the recruiter edits it and opens it in their own email app or copies it. **Nothing is sent from the CRM**; each use is noted in the case timeline.
+- **Joined warning** (rule `joinWarning`, on by default): moving a card to Joined while a previous-employer case is not closed or cancelled shows the open case (and any Head of HR hold or withdraw decision) and asks to confirm; accepting records the move as usual.
+
+**Still to come (phase 4, governance):** the restricted Drive folder, retention purge, audit export.
 
 ## 12. Administration, settings, jobs and operations
 
@@ -978,6 +983,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — BGV tracker, phase 3: efficiency** (no schema change; §11.8)
+- Vendor spreadsheet import (dry run, then apply), email templates with a company name and placeholders (Rules tab), Email… in the case, and a confirmation when a card is moved to Joined with the previous-employer BGV still open.
+- Tests: 93 server cases (dates, statuses, check names, dry-run and apply import, template and rules save, join guard), browser run (paste, CSV and xlsx import, mapping, dry run, apply with skip, email dialog, Rules editors, 1500 px and 390 px), E2E K15–K17.
 
 **Unreleased — BGV tracker, phase 2: monitoring** (no schema change; §11.8)
 - To-dos (consent, chaser, report before joining, review) that open the case; Overview strip and tracker tile for results to decide and cases past a limit; Reports tab (recruiter scorecard, type, month, vendor scorecard, departments, discrepancies, CSV); weekly email line; data check (14); KPI scorecard reads the BGV cases with identical scoring and treats a waived case as not a miss.
