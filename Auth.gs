@@ -7,7 +7,7 @@ function currentUser_() {
   })[0];
   if (!u) throw new Error('ACCESS: ' + email + ' is not on the recruitment team list. Ask the admin to add you in Admin \u2192 Users.');
   const role = normRole_(u.Role);
-  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: (PERMS_[role] || []).slice() };
+  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: effectivePerms_(role) };
 }
 
 /** Accepts older or informal role names from the Users sheet: "Head", "Head HR", "Lead TA" and so on. */
@@ -18,7 +18,15 @@ function normRole_(r) {
   if (s === 'talead' || s === 'leadta' || s === 'tl' || s === 'lead') return ROLES.TALEAD;
   return ROLES.RECRUITER;
 }
-function can_(u, perm) { return (PERMS_[u.role] || []).indexOf(perm) >= 0; }
+/** A role's built-in permissions plus the CTC permissions the admin has given it (CTC calculator > Access). */
+function effectivePerms_(role) {
+  const base = (PERMS_[role] || []).slice();
+  if (typeof ctcGrants_ === 'function') {
+    try { (ctcGrants_()[role] || []).forEach(function (p) { if (base.indexOf(p) < 0) base.push(p); }); } catch (e) { }
+  }
+  return base;
+}
+function can_(u, perm) { return (u.perms || PERMS_[u.role] || []).indexOf(perm) >= 0; }
 function isLead_(u) { return can_(u, 'lead'); }
 
 function requireAdmin_(u) {
