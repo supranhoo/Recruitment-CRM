@@ -158,7 +158,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
-| `Bgv.gs` | BGV tracker (schema 33): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
+| `Bgv.gs` | BGV tracker (schema 33; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
 | `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
@@ -616,6 +616,10 @@ Scorecard derivation (`pipelineEvents_`, from `PIPELINE_CUTOVER`): HR 1st round 
 | dept_reply (v52) | Chase the department: JD / questions reply | 24 | 48 | ✓ | Department validates within 24 h (the *reply time*; change it in Admin → To-do rules) |
 | revise_doc (v52) | Revise with the department’s changes | 0 | 24 | ✓ | Changes requested: share the revised version |
 | share_questions (v52) | Share (or re-confirm) screening questions | 0 | 24 | ✓ | Questions from the final JD, validated before posting |
+| bgv_consent | Get the candidate's consent for BGV | 24 | — | | BGV tracker: nothing is checked without consent (not for carried-over cases) |
+| bgv_chase | Chase the vendor: BGV update | 72 | 168 | | BGV tracker: chaser after 3 days without an update; critical past the vendor limit (7 days) |
+| bgv_result | Previous-employer BGV report is needed before joining | 0 | 24 | ✓ | BGV tracker: report 2 days before joining (1 day when the offer is close to joining); due the day before |
+| bgv_review | Review the BGV report and close the case | 0 | 48 | ✓ | BGV tracker: review and close within 2 days of the report |
 | bgv_join (v55) | Start current-employer BGV | 0 | 48 | ✓ | Current-employer BGV within 2 days of joining; Manager+ or BGV required = Yes (never No); joinings in the last 30 days; closes when “Current employer BGV started on” is filled; missed judged by that date |
 | share_cvs | Share CVs with the department | 48 | 72 | ✓ | App. A step 2: CVs within 72 h of MRF approval |
 | hod_feedback | Chase HOD feedback | 24 | 48 | ✓ | App. A step 3: feedback within 24 h |
@@ -761,7 +765,14 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 
 **Vendors** (TA Lead, Head of HR, Admin): name, contact, checks offered, standard turnaround, contract end, active (deactivated, never deleted). **Rules** (view: leads; change: Admin, as a new version with a reason and a remark, from today or later): the numbers above (start-within days, report-before-joining days, short-gap days, vendor turnaround, chaser, review, decision, amber %, retention years / months) and the scope. Retention (reports 3 years, non-joiners 6 months) is recorded; the purge is part of a later phase.
 
-**Still to come:** to-dos and Overview alerts for the new steps, weekly email and reports, the leads' scorecard, vendor spreadsheet import, email templates, the restricted Drive folder, retention purge, and moving the KPI to read from cases.
+**Monitoring** (phase 2):
+- **To-dos for the position's recruiter** (Admin → To-do rules can change the hours, as for every rule; each opens the case): **bgv_consent** (consent not recorded 24 h after the offer / joining; not for carried-over cases), **bgv_chase** (no update for 3 days after the start; critical once the vendor limit of 7 days is passed; chasing the candidate when the case is in Insufficiency), **bgv_result** (previous-employer report needed by its date: due the day before, critical on the day), **bgv_review** (report received: review and close within 2 days; not shown while the Head of HR's decision is awaited). The existing `bgv` and `bgv_join` to-dos now open the case. The to-dos of the Head of HR are on the Overview.
+- **Overview strip:** "N BGV results to decide" (Head of HR / Admin: discrepancies and unverified results with no decision) and "N BGV cases past a limit" (own, or all for leads); each opens the tracker filtered. The tracker shows a **Result to decide** tile and filter, and "All cases · N to decide" for those who can decide.
+- **Reports** tab (TA Lead, Head of HR, Admin; `apiBgvReports`; period on the date the case opened, default 180 days): team scorecard by recruiter, by type, by month, **vendor scorecard**, open cases by department, and the discrepancies with their checks (opens the case). Columns: cases, started on time %, late, overdue and not started, average days to start, average vendor days, % within the vendor limit, average review days, previous-employer report before joining %, open, red, discrepancies. CSV for the scorecard, vendors and discrepancies.
+- **Weekly email:** a BGV line (open, past a limit, awaiting the Head of HR's decision, worst recruiters). **Data check** "BGV not started past the start-by date" (14 checks).
+- **KPI scorecard reads the BGV cases:** the start dates come from the case (the position's fields mirror it, so scoring is **identical**; verified on mixed cases), a case a lead **waived** is not a miss, a cancelled case is ignored. The scoring (5 / 2 / 0) and who is scored (the recruiter, for starting on time) are unchanged; the other measures above are monitoring only.
+
+**Still to come:** vendor spreadsheet import, email templates, warnings when a card moves to Joined with BGV open, the restricted Drive folder, retention purge, audit export.
 
 ## 12. Administration, settings, jobs and operations
 
@@ -967,6 +978,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — BGV tracker, phase 2: monitoring** (no schema change; §11.8)
+- To-dos (consent, chaser, report before joining, review) that open the case; Overview strip and tracker tile for results to decide and cases past a limit; Reports tab (recruiter scorecard, type, month, vendor scorecard, departments, discrepancies, CSV); weekly email line; data check (14); KPI scorecard reads the BGV cases with identical scoring and treats a waived case as not a miss.
+- Tests: 66 server cases (to-dos, summary, reports, weekly, data check), KPI parity test (identical scoring from fields and from cases, waived, cancelled), browser run of the Overview links, decision filter, Reports and task opening; E2E K10–K14.
 
 **Unreleased — BGV tracker, phase 1: foundation** (schema 33; new `Bgv.gs`; ADR-042; §11.8)
 - BGV tracker page (My BGV / All cases / Vendors / Rules), case drawer (next step with consent, vendor and report rules, checks, outcome and the Head of HR's decision, documents, timeline), cases opened automatically at Offer and Joined and carried over from the position fields, status lines on the pipeline card, candidate and position, read-only BGV fields on the position form with the start dates mirrored.

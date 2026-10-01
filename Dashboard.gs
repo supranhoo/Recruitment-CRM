@@ -61,7 +61,7 @@ function buildSnapshot_(by) {
 function markDashDirty_(sheetName) {
   const props = PropertiesService.getScriptProperties();
   if (sheetName === T.MRF.name || sheetName === T.FUNNEL.name) props.setProperty('DASH_DIRTY_AT', String(Date.now()));
-  if ([T.MRF.name, T.CAND.name, 'Observations', 'Audit_Checks'].indexOf(sheetName) >= 0) props.setProperty('KPI_DIRTY_AT', String(Date.now()));
+  if ([T.MRF.name, T.CAND.name, 'Observations', 'Audit_Checks', 'BGV_Cases'].indexOf(sheetName) >= 0) props.setProperty('KPI_DIRTY_AT', String(Date.now()));
 }
 
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */

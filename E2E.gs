@@ -34,7 +34,7 @@ function e2eRun_(trash) {
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 13; });
+  t('A6 data checks', function () { return apiDataChecks().length === 14; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });
@@ -201,7 +201,7 @@ function e2eRun_(trash) {
 
   t('H1 recalculate TAT', function () { return Number(apiRecomputeAll()) > 300; });
   t('H2 change history records test edits', function () { _tables = {}; return apiAuditLog({ q: 'E2E' }).length >= 3; });
-  t('H3 data checks run', function () { return dataChecks_().length === 12; });
+  t('H3 data checks run', function () { return dataChecks_().length === apiDataChecks().length; });
   t('H4 weekly summary recipients', function () { return summaryRecipients_().length > 0; });
   t('H5 dashboard rebuild', function () { _tables = {}; return typeof apiRefreshDashboard().kpi.open === 'number'; });
   t('H6 served page intact', function () { const app = include('App'); const js = app.slice(app.indexOf('<script>') + 8, app.lastIndexOf('</script>')); new Function(js); return true; });
@@ -275,6 +275,11 @@ function e2eRun_(trash) {
     }
     t('K8 BGV rules readable, edited only by the admin', function () { const r = apiBgvRules(); return r.active.cfg.prevInitDays === 3 && r.canEdit ? r.active.id : false; });
     t('K9 BGV status lines for a position', function () { return Array.isArray(apiBgvFor('line', L1.Line_ID)); });
+    t('K10 BGV reports for leads (scorecard, vendors, departments, discrepancies)', function () { const r = apiBgvReports({}); return r.byRecruiter && r.byVendor && Array.isArray(r.discrepancies) && r.total.cases >= 0 ? r.total.cases + ' cases' : false; });
+    err('K11 a report period must be valid', function () { apiBgvReports({ from: today, to: '2000-01-01' }); }, /after its end/);
+    t('K12 Overview counts and weekly block include BGV', function () { const s = apiTaskSummary(); const w = bgvWeekly_(); return typeof s.bgvDecide === 'number' && typeof s.bgvLate === 'number' && w && typeof w.open === 'number' ? 'late ' + s.bgvLate : false; });
+    t('K13 BGV to-dos are generated without error', function () { const r = computeTasks_(); return Array.isArray(r) ? r.filter(function (x) { return /^bgv/.test(x.rule); }).length + ' BGV to-dos' : false; });
+    t('K14 the KPI scorecard still scores BGV from the cases', function () { const k = apiKpi(fy, true); return k.defs.BGV ? 'ok' : false; });
   }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {

@@ -255,7 +255,7 @@ function bgvOut_(c, u, cfg, today, full) {
     legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On) };
   if (worker) {
     o.outcome = String(c.Outcome || ''); o.decision = String(c.Decision || ''); o.report = d(c.Report_On); o.vendor = String(c.Vendor_ID || ''); o.vendorRef = String(c.Vendor_Ref || '');
-    o.consent = d(c.Consent_On);
+    o.consent = d(c.Consent_On); o.needsDecision = bgvNeedsDecision_(c);
   }
   if (full && worker) {
     o.remarks = String(c.Remarks || ''); o.decisionBy = String(c.Decision_By || ''); o.decisionOn = d(c.Decision_On); o.decisionNote = String(c.Decision_Note || '');
@@ -285,6 +285,7 @@ function apiBgvList() {
       red: open(list).filter(function (r) { return r.rag === 'Red'; }).length, amber: open(list).filter(function (r) { return r.rag === 'Amber'; }).length,
       inProgress: list.filter(function (r) { return ['Initiated', 'In progress', 'Insufficiency'].indexOf(r.status) >= 0; }).length,
       toReview: list.filter(function (r) { return ['Report received', 'Under review'].indexOf(r.status) >= 0; }).length,
+      toDecide: list.filter(function (r) { return r.needsDecision; }).length,
       closedMonth: list.filter(function (r) { return r.status === 'Closed' && String(r.closed).slice(0, 7) === month; }).length };
   };
   return { rules: { id: rules.id, cfg: cfg }, today: today, lead: isLead_(u), decide: can_(u, 'bgv_decide'), admin: u.role === ROLES.ADMIN, me: u.recruiter,
@@ -540,4 +541,147 @@ function apiBgvRulesSave(d) {
   });
   audit_(u, BGV_RULES_, id, 'Create', 'rules', '', reason + ' from ' + eff + ': ' + changes.join('; '));
   return apiBgvRules();
+}
+
+/* ---------------------------------------------------------------- monitoring (phase 2) ---------------------- */
+
+const BGV_DISCREPANT_ = ['Minor discrepancy', 'Major discrepancy', 'Unable to verify'];
+/** A reported discrepancy (or an unverified result) that the Head of HR has not decided yet. */
+function bgvNeedsDecision_(c) {
+  return ['Report received', 'Under review'].indexOf(String(c.Status)) >= 0 && BGV_DISCREPANT_.indexOf(String(c.Outcome)) >= 0 && !c.Decision;
+}
+function bgvSheet_() { return !!ss_().getSheetByName(BGV_CASES_.name); }
+
+/** Counts for the Overview: decisions waiting for the Head of HR, and cases past a limit (the user's own, or all for leads). */
+function bgvSummary_(u) {
+  const out = { decide: 0, late: 0 };
+  if (!bgvSheet_()) return out;
+  const cfg = bgvRules_().cfg, today = ymd_(new Date()), lead = isLead_(u);
+  readTable_(BGV_CASES_.name).rows.forEach(function (c) {
+    if (['Closed', 'Cancelled'].indexOf(String(c.Status)) >= 0) return;
+    if (can_(u, 'bgv_decide') && bgvNeedsDecision_(c)) out.decide++;
+    if ((lead || bgvIsOwner_(u, c)) && bgvRag_(c, cfg, today).rag === 'Red') out.late++;
+  });
+  return out;
+}
+
+/** Cases that block a to-do's target: { 'LINE|Type': caseId } for open cases (so a task can open the case itself). */
+function bgvOpenCaseMap_() {
+  const m = {};
+  if (!bgvSheet_()) return m;
+  readTable_(BGV_CASES_.name).rows.forEach(function (c) { if (['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0) m[c.Line_ID + '|' + c.Type] = String(c.Case_ID); });
+  return m;
+}
+
+/** To-dos for the position's recruiter (called by the to-do engine): consent, chaser, report before joining, review. */
+function bgvTasks_(add) {
+  if (!bgvSheet_()) return;
+  const cfg = bgvRules_().cfg, now = Date.now();
+  const logs = {};
+  readTable_(BGV_LOG_.name).rows.forEach(function (g) {
+    const t = g.At instanceof Date ? g.At.getTime() : 0, id = String(g.Case_ID);
+    if (String(g.By) !== 'system' && t > (logs[id] || 0)) logs[id] = t;
+  });
+  const lbl = function (c) { return [c.Candidate_Name || 'Candidate', c.Position, c.MRF_No].filter(Boolean).join(' · '); };
+  readTable_(BGV_CASES_.name).rows.forEach(function (c) {
+    const st = String(c.Status), id = String(c.Case_ID), base = { recruiter: String(c.Recruiter || ''), line: String(c.Line_ID), app: String(c.App_ID || ''), open: { type: 'bgv', id: id } };
+    const mk = function (kind, extra) { return Object.assign({ key: kind + '|' + id }, base, extra); };
+    const ms = function (v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; };
+    if (['Not started', 'Awaiting consent'].indexOf(st) >= 0 && !c.Consent_On && String(c.Legacy) !== 'Yes' && ms(c.Trigger_Date)) {
+      add('bgv_consent', mk('bgv_consent', { title: 'Get the candidate’s consent for BGV (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · start by ' + ymd_(c.Due_Date), startMs: ms(c.Trigger_Date) }));
+    }
+    if (['Initiated', 'In progress', 'Insufficiency'].indexOf(st) >= 0 && ms(c.Initiated_On)) {
+      const last = Math.max(ms(c.Initiated_On), logs[id] || 0), days = Math.floor((now - ms(c.Initiated_On)) / 86400000);
+      add('bgv_chase', mk('bgv_chase', { title: (st === 'Insufficiency' ? 'Chase the candidate: BGV insufficiency' : 'Chase the vendor: BGV update') + ' (' + c.Type.toLowerCase() + ')',
+        context: lbl(c) + ' · started ' + days + ' day' + (days === 1 ? '' : 's') + ' ago' + (c.Vendor_Ref ? ' · ref ' + c.Vendor_Ref : ''), startMs: last, forceCritical: days > cfg.vendorTatDays, critAt: ms(c.Initiated_On) + (cfg.vendorTatDays + 1) * 86400000 }));
+    }
+    if (c.Type === BGV_TYPES_[0] && c.Result_Due && ['Initiated', 'In progress', 'Insufficiency'].indexOf(st) >= 0) {
+      add('bgv_result', mk('bgv_result', { title: 'Previous-employer BGV report is needed before joining', context: lbl(c) + ' · report needed by ' + ymd_(c.Result_Due), startMs: ms(c.Result_Due) - 86400000 }));
+    }
+    if (['Report received', 'Under review'].indexOf(st) >= 0 && !bgvNeedsDecision_(c) && ms(c.Report_On)) {
+      add('bgv_review', mk('bgv_review', { title: 'Review the BGV report and close the case (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · report received ' + ymd_(c.Report_On), startMs: ms(c.Report_On) }));
+    }
+  });
+}
+
+/* ---- reports (TA Lead, Head of HR, Admin) ---- */
+
+function bgvDay_(v) { return v instanceof Date && !isNaN(v) ? ymd_(v) : ''; }
+function bgvAvg_(a) { return a.length ? Math.round(a.reduce(function (s, x) { return s + x; }, 0) / a.length * 10) / 10 : null; }
+function bgvPct_(n, d) { return d ? Math.round(n / d * 1000) / 10 : null; }
+
+/** The numbers for a group of cases: start on time, days to start, verification and review time, results, open and red. */
+function bgvAgg_(list, cfg, today) {
+  const o = { cases: list.length, onTime: 0, late: 0, overdue: 0, pending: 0, open: 0, red: 0, amber: 0, discrepancies: 0, decisionWaiting: 0, resultOk: 0, resultLate: 0 };
+  const start = [], ver = [], rev = [], within = [];
+  list.forEach(function (c) {
+    const due = bgvDay_(c.Due_Date), init = bgvDay_(c.Initiated_On), rep = bgvDay_(c.Report_On), trig = bgvDay_(c.Trigger_Date), closed = bgvDay_(c.Closed_On), rd = bgvDay_(c.Result_Due);
+    if (init) { if (due && init > due) o.late++; else o.onTime++; if (trig) start.push(daysBetween_(trig, init)); }
+    else if (due && today > due) o.overdue++; else o.pending++;
+    if (init && rep) { const d = daysBetween_(init, rep); ver.push(d); within.push(d <= cfg.vendorTatDays ? 1 : 0); }
+    if (rep && closed) rev.push(daysBetween_(rep, closed));
+    if (c.Type === BGV_TYPES_[0] && rd) { if (rep) { if (rep <= rd) o.resultOk++; else o.resultLate++; } else if (today > rd) o.resultLate++; }
+    const st = String(c.Status);
+    if (['Closed', 'Cancelled'].indexOf(st) < 0) { o.open++; const r = bgvRag_(c, cfg, today).rag; if (r === 'Red') o.red++; else if (r === 'Amber') o.amber++; }
+    if (BGV_DISCREPANT_.indexOf(String(c.Outcome)) >= 0) o.discrepancies++;
+    if (bgvNeedsDecision_(c)) o.decisionWaiting++;
+  });
+  o.pctOnTime = bgvPct_(o.onTime, o.onTime + o.late + o.overdue);
+  o.avgStart = bgvAvg_(start); o.avgVerify = bgvAvg_(ver); o.avgReview = bgvAvg_(rev);
+  o.pctWithinVendor = bgvPct_(within.reduce(function (s, x) { return s + x; }, 0), within.length);
+  o.pctResultOk = bgvPct_(o.resultOk, o.resultOk + o.resultLate);
+  return o;
+}
+function bgvGroup_(list, keyFn, cfg, today) {
+  const g = {};
+  list.forEach(function (c) { const k = keyFn(c); (g[k] = g[k] || []).push(c); });
+  return Object.keys(g).sort().map(function (k) { return Object.assign({ key: k }, bgvAgg_(g[k], cfg, today)); });
+}
+
+/**
+ * BGV reports for leads: a scorecard by recruiter, by month and by type; vendor scorecard; open cases by department;
+ * discrepancies with their checks. f = { from, to } on the date the case opened (default: the last 180 days).
+ */
+function apiBgvReports(f) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can see the BGV reports.');
+  f = f || {};
+  const cfg = bgvRules_().cfg, today = ymd_(new Date()), to = ymd_(f.to) || today, from = ymd_(f.from) || addDays_(today, -180);
+  if (from > to) throw new Error('The start of the period is after its end.');
+  const all = readTable_(BGV_CASES_.name).rows;
+  const list = all.filter(function (c) { const t = bgvDay_(c.Trigger_Date); return String(c.Status) !== 'Cancelled' && t >= from && t <= to; });
+  const vendors = {}; bgvVendorsOut_().forEach(function (v) { vendors[v.id] = v.name; });
+  const checks = {}; readTable_(BGV_CHECKS_.name).rows.forEach(function (k) { (checks[k.Case_ID] = checks[k.Case_ID] || []).push(k); });
+  const disc = list.filter(function (c) { return BGV_DISCREPANT_.indexOf(String(c.Outcome)) >= 0; }).map(function (c) {
+    return { id: String(c.Case_ID), type: String(c.Type), candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), recruiter: String(c.Recruiter || ''), outcome: String(c.Outcome),
+      decision: String(c.Decision || ''), decisionBy: String(c.Decision_By || ''), status: String(c.Status),
+      checks: (checks[c.Case_ID] || []).filter(function (k) { return ['Discrepancy', 'Unable to verify'].indexOf(String(k.Status)) >= 0; }).map(function (k) { return { type: String(k.Check_Type), subject: String(k.Subject || ''), status: String(k.Status), finding: String(k.Finding || '') }; }) };
+  });
+  const dept = bgvGroup_(list.filter(function (c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; }), function (c) { return String(c.Dept || '(none)'); }, cfg, today)
+    .map(function (x) { return { dept: x.key, open: x.open, red: x.red, amber: x.amber }; });
+  return { from: from, to: to, cfg: cfg, total: bgvAgg_(list, cfg, today),
+    byRecruiter: bgvGroup_(list, function (c) { return String(c.Recruiter || 'Unassigned'); }, cfg, today),
+    byType: bgvGroup_(list, function (c) { return String(c.Type); }, cfg, today),
+    byMonth: bgvGroup_(list, function (c) { return bgvDay_(c.Trigger_Date).slice(0, 7); }, cfg, today),
+    byVendor: bgvGroup_(list, function (c) { const v = String(c.Vendor_ID || ''); return v === 'DIRECT' ? 'Direct (no vendor)' : v ? (vendors[v] || v) : 'No vendor yet'; }, cfg, today),
+    byDept: dept, discrepancies: disc };
+}
+
+/** One paragraph block for the weekly email (open, past a limit, awaiting a decision, worst recruiters). */
+function bgvWeekly_() {
+  if (!bgvSheet_()) return null;
+  const cfg = bgvRules_().cfg, today = ymd_(new Date());
+  const open = readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; });
+  const red = open.filter(function (c) { return bgvRag_(c, cfg, today).rag === 'Red'; });
+  const by = {}; red.forEach(function (c) { by[c.Recruiter] = (by[c.Recruiter] || 0) + 1; });
+  return { open: open.length, red: red.length, decide: open.filter(bgvNeedsDecision_).length,
+    byRecruiter: Object.keys(by).map(function (k) { return { recruiter: k, red: by[k] }; }).sort(function (a, b) { return b.red - a.red; }).slice(0, 8) };
+}
+
+/** Cases past their start-by date and not started, for Admin > Data checks (opens the position). */
+function bgvLateCases_() {
+  if (!bgvSheet_()) return [];
+  const cfg = bgvRules_().cfg, today = ymd_(new Date());
+  return readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Not started', 'Awaiting consent'].indexOf(String(c.Status)) >= 0 && bgvRag_(c, cfg, today).rag === 'Red'; })
+    .map(function (c) { return { id: String(c.Line_ID), label: String(c.MRF_No || '') + ' · ' + String(c.Position || '') + ' (' + String(c.Recruiter || '') + ')', detail: c.Type + ': ' + bgvRag_(c, cfg, today).why + ' [' + c.Case_ID + ']' }; });
 }

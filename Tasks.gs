@@ -33,6 +33,10 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'release_offer', title: 'Release the offer', due: 24, crit: 72, missed: true, policy: 'Appendix A step 7: offer within 72 h of finalisation' },
   { id: 'bgv', title: 'Start background verification', due: 0, crit: 72, missed: true, policy: '9.1.1: BGV within 3 days of the offer (Manager and above)' },
   { id: 'bgv_join', title: 'Start current-employer BGV', due: 0, crit: 48, missed: true, policy: 'Current-employer BGV within 2 days of joining (Manager and above, or flagged)' },
+  { id: 'bgv_consent', title: 'Get the candidate\u2019s consent for BGV', due: 24, crit: null, missed: false, policy: 'BGV tracker: nothing is checked without the candidate\u2019s consent' },
+  { id: 'bgv_chase', title: 'Chase the vendor: BGV update', due: 72, crit: 168, missed: false, policy: 'BGV tracker: chaser after 3 days without an update; vendor limit 7 days per check' },
+  { id: 'bgv_result', title: 'Previous-employer BGV report is needed before joining', due: 0, crit: 24, missed: true, policy: 'BGV tracker: report 2 days before joining (1 day when the offer is close to joining)' },
+  { id: 'bgv_review', title: 'Review the BGV report and close the case', due: 0, crit: 48, missed: true, policy: 'BGV tracker: review and close within 2 days of the report' },
   { id: 'offer_acceptance', title: 'Chase offer acceptance', due: 72, crit: null, missed: false, policy: '9.1.2: acceptance within 3 days' },
   { id: 'followup', title: 'Joining follow-up', due: 0, crit: null, missed: true, policy: 'Check-in due; Red risk is critical' },
   { id: 'joining', title: 'Record the joining', due: 0, crit: 24, missed: true, policy: 'Joining day' },
@@ -286,13 +290,14 @@ function computeTasks_() {
   });
 
   // 9. BGV for offered positions (Manager and above, or flagged).
+  const bgvOpen = (function () { try { return bgvOpenCaseMap_(); } catch (e) { return {}; } })();
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Offered' || l.BGV_Prev_Org_Date || !l.Offer_Date) return;
     const flag = String(l.BGV_Required || 'Auto');
     if (!(flag === 'Yes' || (flag !== 'No' && managerPlus_(l.Grade, l.Position)))) return;
     add('bgv', { key: 'bgv|' + id, recruiter: String(l.Recruiter), line: id, app: '', title: 'Start background verification',
-      context: lineLabel(l) + ' \u00b7 offer ' + ymd_(l.Offer_Date), startMs: ms_(l.Offer_Date), open: { type: 'line', line: id } });
+      context: lineLabel(l) + ' \u00b7 offer ' + ymd_(l.Offer_Date), startMs: ms_(l.Offer_Date), open: bgvOpen[id + '|Previous employer'] ? { type: 'bgv', id: bgvOpen[id + '|Previous employer'] } : { type: 'line', line: id } });
   });
 
   // 9b. Current-employer BGV within 2 days of joining (same scope as 9; joinings in the last 30 days).
@@ -304,8 +309,11 @@ function computeTasks_() {
     const flag = String(l.BGV_Required || 'Auto');
     if (!(flag === 'Yes' || (flag !== 'No' && managerPlus_(l.Grade, l.Position)))) return;
     add('bgv_join', { key: 'bgv_join|' + id, recruiter: String(l.Recruiter), line: id, app: '', title: 'Start current-employer BGV (joined ' + fmt_(l.Actual_DOJ, TZ, 'd MMM yyyy') + ')',
-      context: lineLabel(l) + ' \u00b7 record \u201cCurrent employer BGV started on\u201d by ' + fmt_(parseYmd_(addDays_(doj, 2)), TZ, 'd MMM yyyy'), startMs: parseYmd_(doj).getTime(), open: { type: 'line', line: id } });
+      context: lineLabel(l) + ' \u00b7 start it by ' + fmt_(parseYmd_(addDays_(doj, 2)), TZ, 'd MMM yyyy'), startMs: parseYmd_(doj).getTime(), open: bgvOpen[id + '|Current employer'] ? { type: 'bgv', id: bgvOpen[id + '|Current employer'] } : { type: 'line', line: id } });
   });
+
+  // 9c. BGV tracker cases: consent, chaser, report before joining, review (v-next).
+  try { bgvTasks_(add); } catch (e) { console.error('BGV to-dos: ' + e); }
 
   // Replacement MRFs (policy 9.5): move the next candidate forward.
   Object.keys(lines).forEach(function (id) {
@@ -532,7 +540,8 @@ function apiTaskSummary() {
   const y = ymd_(new Date(Date.now() - 86400000));
   const missed = missedTasks_(y, lead ? '' : u.recruiter).length;
   const exemptPending = can_(u, 'tat_exempt') && ss_().getSheetByName(T.TEX.name) ? readTable_(T.TEX.name).rows.filter(function (x) { return String(x.Status) === 'Pending'; }).length : 0;
-  return { team: lead, critical: all.filter(function (t) { return t.level === 'critical'; }).length, due: all.filter(function (t) { return t.level === 'due'; }).length, missedYesterday: missed, exemptPending: exemptPending };
+  const bg = (function () { try { return bgvSummary_(u); } catch (e) { return { decide: 0, late: 0 }; } })();
+  return { team: lead, critical: all.filter(function (t) { return t.level === 'critical'; }).length, due: all.filter(function (t) { return t.level === 'due'; }).length, missedYesterday: missed, exemptPending: exemptPending, bgvDecide: bg.decide, bgvLate: bg.late };
 }
 
 /** Task buttons: chased, snooze, done. */
