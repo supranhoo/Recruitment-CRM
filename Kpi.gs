@@ -164,16 +164,26 @@ function computeKpis_(fy) {
 
   // 5. BGV — new hires (Manager+ or flagged) without previous-employer BGV initiated within 3 days after the offer (policy 9.1.1),
   //    or without current-employer BGV started within 2 days of joining.
+  const bgvCase = {};
+  try {
+    if (ss_().getSheetByName('BGV_Cases')) readTable_('BGV_Cases').rows.forEach(function (c) {
+      if (String(c.Status) === 'Cancelled') return;
+      const k = c.Line_ID + '|' + c.Type, cur = bgvCase[k], lc = lineById[c.Line_ID];
+      if (!cur || (lc && String(c.Candidate_ID || '') === String(lc.Candidate_ID || '') && String(cur.Candidate_ID || '') !== String(lc.Candidate_ID || ''))) bgvCase[k] = c;
+    });
+  } catch (e) { }
   lines.forEach(function (l) {
     const doj = ymd_(l.Actual_DOJ);
     if (!doj || positionStatus_(l) !== 'Closed' || !tracked(doj.slice(0, 7))) return;
     const flag = String(l.BGV_Required || 'Auto');
     const required = flag === 'Yes' || (flag !== 'No' && managerPlus_(l.Grade, l.Position));
     if (!required) return;
-    const offer = ymd_(l.Offer_Date), prev = ymd_(l.BGV_Prev_Org_Date), curr = ymd_(l.BGV_Current_Org_Date);
+    const offer = ymd_(l.Offer_Date), cp = bgvCase[l.Line_ID + '|Previous employer'], cc = bgvCase[l.Line_ID + '|Current employer'];
+    // the BGV case holds the dates (the position's fields mirror it); a case a lead waived is not a miss
+    const prev = ymd_(cp ? cp.Initiated_On : '') || ymd_(l.BGV_Prev_Org_Date), curr = ymd_(cc ? cc.Initiated_On : '') || ymd_(l.BGV_Current_Org_Date);
     const deadline = addDays_(doj, 2);
-    const prevOk = !!prev && (!offer || prev <= addDays_(offer, 3));
-    const currOk = !!curr && curr <= deadline;
+    const prevOk = !!prev && (!offer || prev <= addDays_(offer, 3)) || !!(cp && String(cp.Outcome) === 'Waived');
+    const currOk = (!!curr && curr <= deadline) || !!(cc && String(cc.Outcome) === 'Waived');
     const currPending = !curr && today <= deadline;
     const miss = !prevOk || (!currOk && !currPending);
     const rec = String(l.Recruiter || 'Unassigned').trim();

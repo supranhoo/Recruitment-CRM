@@ -112,6 +112,8 @@ function dataChecks_() {
   reconcileScan_('', false).forEach(function (it) {
     it.issues.forEach(function (x) { rc[x.code].items.push({ id: it.line.Line_ID, label: it.line.MRF_No + ' \u00b7 ' + it.line.Position + ' (' + it.line.Recruiter + ')', detail: x.text }); });
   });
+  const bl = add('bgv_late', 'BGV not started past the start-by date', 'The recruiter owns the case: open the BGV tracker, start it, or record why it is not needed.', 'MRF');
+  try { bgvLateCases_().forEach(function (x) { bl.items.push(x); }); } catch (e) { }
   return checks.map(function (c) { c.count = c.items.length; c.items = c.items.slice(0, 200); return c; });
 }
 
@@ -184,6 +186,7 @@ function sendSummary_(to, test) {
     .sort(function (a, b) { return (b.Days_Taken - b.Final_TAT) - (a.Days_Taken - a.Final_TAT); });
   const issues = dataChecks_().reduce(function (s, c) { return s + c.count; }, 0);
   const pa = pipelineAlerts_('');
+  const bgvW = (function () { try { return bgvWeekly_(); } catch (e) { return null; } })();
   const texPending = ss_().getSheetByName(T.TEX.name) ? readTable_(T.TEX.name).rows.filter(function (x) { return String(x.Status) === 'Pending'; }).length : 0;
   const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   const url = ScriptApp.getService().getUrl();
@@ -212,6 +215,8 @@ function sendSummary_(to, test) {
     + '<h3 style="margin:0 0 6px">Positions past TAT' + (overdue.length > 15 ? ' (15 of ' + overdue.length + ')' : '') + '</h3>'
     + (overdue.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + rowsOverdue + '</table>' : '<p>None \u2014 every open position is within TAT.</p>')
     + '<h3 style="margin:0 0 6px">Pipeline alerts</h3><p style="margin:0 0 6px">' + pa.hodOverdue.length + ' candidates waiting more than 24 hours for department feedback \u00b7 ' + pa.atRisk.length + ' joiners at risk \u00b7 ' + pa.dueToday.length + ' joining follow-ups due' + (pa.unassessed ? ' \u00b7 ' + pa.unassessed + ' joiners never checked on' : '') + '</p>'
+    + (bgvW && (bgvW.open || bgvW.decide) ? '<p style="margin:0 0 16px"><b>Background verification:</b> ' + bgvW.open + ' open case' + (bgvW.open === 1 ? '' : 's') + ' \u00b7 <span style="color:' + (bgvW.red ? '#D9480F' : '#18222F') + '">' + bgvW.red + ' past a limit</span> \u00b7 ' + bgvW.decide + ' awaiting the Head of HR\u2019s decision'
+      + (bgvW.byRecruiter.length ? '<br><span style="color:#8793A3;font-size:13px">Past a limit: ' + bgvW.byRecruiter.map(function (x) { return esc(x.recruiter) + ' ' + x.red; }).join(' \u00b7 ') + '</span>' : '') + ' (BGV tracker).</p>' : '')
     + (texPending ? '<p style="margin:0 0 16px"><b>' + texPending + ' TAT exemption' + (texPending === 1 ? '' : 's') + ' awaiting the Head of HR\u2019s decision</b> (Admin \u2192 TAT exemptions).</p>' : '')
     + (pa.atRisk.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + pa.atRisk.slice(0, 15).map(function (x) {
       return '<tr><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(x.name) + '<div style="color:#8793A3;font-size:12px">' + esc(x.position) + ' \u00b7 ' + esc(x.why.join('; ')) + '</div></td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(x.recruiter) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2;font-weight:600;color:' + (x.level === 'Red' ? '#C92A2A' : '#B35C00') + '">' + esc(x.level) + '</td></tr>';

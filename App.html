@@ -371,6 +371,7 @@ function taskOpen(o) {
   if (o.type === 'app') { S.pipe = Object.assign(S.pipe || {}, { line: o.line, openApp: o.app }); go('pipeline', true); }
   else if (o.type === 'line') loadPositions().then(() => { const p = lineById(o.line); if (p) positionDrawer(p); });
   else if (o.type === 'candidate') openCandidate(o.id);
+  else if (o.type === 'bgv') { S.bgvOpenId = o.id; S.bgvF = Object.assign(S.bgvF || {}, { tab: 'mine' }); go('bgv', true); }
   else if (o.type === 'positions') go('positions', true);
   else if (o.type === 'reconcile') go('reconcile', true);
   else if (o.type === 'pipeline') { S.pipe = Object.assign(S.pipe || {}, { line: o.line }); go('pipeline', true); }
@@ -854,9 +855,10 @@ async function viewOverview(v, fresh) {
   pipelineAlertsPanel($('#ovAlerts', v), alertsP);
   sumP.then(s => {
     const host = $('#ovTodo', v); if (!host) return;
-    host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}${s.exemptPending ? ` \u00b7 <button class="linklike miss" data-tex>${s.exemptPending} TAT exemption${s.exemptPending === 1 ? '' : 's'} to decide</button>` : ''}</div>
+    host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}${s.exemptPending ? ` \u00b7 <button class="linklike miss" data-tex>${s.exemptPending} TAT exemption${s.exemptPending === 1 ? '' : 's'} to decide</button>` : ''}${s.bgvDecide ? ` \u00b7 <button class="linklike miss" data-bgv="decision">${s.bgvDecide} BGV result${s.bgvDecide === 1 ? '' : 's'} to decide</button>` : ''}${s.bgvLate ? ` \u00b7 <button class="linklike miss" data-bgv="red">${s.bgvLate} BGV case${s.bgvLate === 1 ? '' : 's'} past a limit</button>` : ''}</div>
       <div class="btn-row"><button class="btn sm" data-go="myday">My to-do</button>${s.team ? '<button class="btn sm" data-go="review">Daily review</button>' : ''}</div>`;
     $$('[data-go]', host).forEach(b => b.onclick = () => go(b.dataset.go, true));
+    $$('[data-bgv]', host).forEach(b => b.onclick = () => { S.bgvF = { type: '', q: '', rec: '', status: b.dataset.bgv === 'decision' ? 'decision' : 'open', rag: b.dataset.bgv === 'red' ? 'Red' : '', tab: b.dataset.bgv === 'decision' ? 'all' : 'mine' }; go('bgv', true); });
     if ($('[data-tex]', host)) $('[data-tex]', host).onclick = () => { S.adminTab = Object.assign(S.adminTab || { q: '', sheet: '', from: daysAgo(30), to: today() }, { tab: 'tex' }); go('admin', true); };
   }).catch(() => { const host = $('#ovTodo', v); if (host) host.remove(); });
   $('#dashRefresh').onclick = async () => {
@@ -3016,6 +3018,7 @@ const ROLE_MATRIX = [
   ['BGV tracker: see the status of every case (findings: owner and leads only)', 1, 1, 1, 1],
   ['BGV: decide on a discrepancy', 0, 0, 1, 1],
   ['BGV: vendors', 0, 1, 1, 1],
+  ['BGV: team reports and scorecard', 0, 1, 1, 1],
   ['BGV: change the rules', 0, 0, 0, 1],
   ['Admin: users', 0, 0, 'view', 'edit'],
   ['Admin: backups, archive, weekly email, database link', 0, 0, 0, 1],
@@ -3922,12 +3925,13 @@ const BGV_TYPE_NOTE = { 'Previous employer': 'Earlier employers · start within 
 async function viewBgv(v) {
   const f = S.bgvF = S.bgvF || { tab: 'mine', type: '', status: '', rag: '', q: '', rec: '' };
   let B; try { B = S.bgv = await api('apiBgvList'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  if (!B.lead && ['vendors', 'rules'].includes(f.tab)) f.tab = 'mine';
-  const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', 'All cases']].concat(B.lead ? [['vendors', 'Vendors'], ['rules', 'Rules']] : []);
+  if (!B.lead && ['vendors', 'rules', 'reports'].includes(f.tab)) f.tab = 'mine';
+  const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', `All cases${B.all.toDecide && (B.decide || B.lead) ? ' · ' + B.all.toDecide + ' to decide' : ''}`]].concat(B.lead ? [['reports', 'Reports'], ['vendors', 'Vendors'], ['rules', 'Rules']] : []);
   v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div></div>
     <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${f.tab === k}">${esc(l)}</button>`).join('')}</div><div id="bgBody" style="margin-top:16px"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewBgv(v); });
   if (S.bgvOpenId) { const id = S.bgvOpenId; S.bgvOpenId = null; setTimeout(() => openBgvCase(id, () => viewBgv(v)), 0); }
+  if (f.tab === 'reports') return bgvReports($('#bgBody'), B, v);
   if (f.tab === 'vendors') return bgvVendors($('#bgBody'), B, v);
   if (f.tab === 'rules') return bgvRulesTab($('#bgBody'), B, v);
   bgvCases($('#bgBody'), B, v);
@@ -3941,12 +3945,13 @@ function bgvCases(el, B, v) {
       <div class="kpi ${sum.toStart ? 'alert' : ''}"><div class="v">${sum.toStart}</div><div class="l">To start</div></div>
       <div class="kpi"><div class="v">${sum.inProgress}</div><div class="l">With the vendor</div></div>
       <div class="kpi"><div class="v">${sum.toReview}</div><div class="l">Report to review</div></div>
+      ${B.decide || B.lead ? `<div class="kpi ${sum.toDecide ? 'alert' : ''}"><div class="v">${sum.toDecide || 0}</div><div class="l">Result to decide (Head of HR)</div></div>` : ''}
       <div class="kpi ${sum.red ? 'alert' : ''}"><div class="v">${sum.red}</div><div class="l">Red: past the limit</div></div>
       <div class="kpi"><div class="v">${sum.amber}</div><div class="l">Amber: close to it</div></div>
       <div class="kpi"><div class="v">${sum.closedMonth}</div><div class="l">Closed this month</div></div></div>
     <div class="filters"><div class="field"><label for="bgQ">Search</label><input id="bgQ" value="${esc(f.q)}" placeholder="Candidate, position, MRF"></div>
       <div class="field"><label for="bgType">Type</label><select id="bgType">${opts([['', 'Both'], ...B.types.map(t => [t, t])], f.type, false)}</select></div>
-      <div class="field"><label for="bgSt">Status</label><select id="bgSt">${opts([['', 'All'], ['open', 'Open'], ...B.statuses.map(s => [s, s])], f.status, false)}</select></div>
+      <div class="field"><label for="bgSt">Status</label><select id="bgSt">${opts([['', 'All'], ['open', 'Open'], ['decision', 'Result to decide'], ...B.statuses.map(s => [s, s])], f.status, false)}</select></div>
       <div class="field"><label for="bgRag">Warning</label><select id="bgRag">${opts([['', 'Any'], ['Red', 'Red'], ['Amber', 'Amber'], ['Green', 'Green']], f.rag, false)}</select></div>
       ${own ? '' : `<div class="field"><label for="bgRec">Recruiter</label><select id="bgRec">${opts(recs, f.rec)}</select></div>`}
       <div class="field" style="justify-content:flex-end"><button class="btn sm" id="bgCsv">Download CSV</button></div></div>
@@ -3954,13 +3959,13 @@ function bgvCases(el, B, v) {
   const rank = { Red: 0, Amber: 1, Green: 2, '': 3 };
   const draw = () => {
     const q = f.q.trim().toLowerCase();
-    const rows = scope.filter(r => (!f.type || r.type === f.type) && (!f.status || (f.status === 'open' ? !['Closed', 'Cancelled'].includes(r.status) : r.status === f.status)) && (!f.rag || r.rag === f.rag)
+    const rows = scope.filter(r => (!f.type || r.type === f.type) && (!f.status || (f.status === 'open' ? !['Closed', 'Cancelled'].includes(r.status) : f.status === 'decision' ? !!r.needsDecision : r.status === f.status)) && (!f.rag || r.rag === f.rag)
       && (!f.rec || r.recruiter === f.rec) && (!q || [r.candidate, r.position, r.mrf, r.id].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => rank[a.rag] - rank[b.rag] || String(a.due).localeCompare(String(b.due)));
     $('#bgList').innerHTML = rows.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Candidate</th><th>Position</th><th>Type</th><th>Recruiter</th><th>Status</th><th>Start by</th><th>Started</th><th>Report needed</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="${r.canWork ? 'click' : 'ro'}" data-id="${esc(r.id)}" ${r.canWork ? 'tabindex="0"' : `title="Status only: this case belongs to ${esc(r.recruiter)}"`}><td><b>${esc(r.candidate) || '<span class="sub">Candidate not linked</span>'}</b><span class="sub">${esc(r.id)}${r.legacy ? ' · carried over' : ''}</span></td>
         <td>${esc(r.position)}<span class="sub">${esc(r.mrf)} · ${esc(r.dept)} · ${esc(r.grade)}</span></td><td>${esc(r.type)}</td><td>${esc(r.recruiter)}</td>
-        <td>${bgvStChip(r.status)} ${bgvRag(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
+        <td>${bgvStChip(r.status)} ${bgvRag(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : r.needsDecision ? ' · <b class="miss">waiting for the Head of HR</b>' : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
         <td class="nw">${fmtDate(r.due)}</td><td class="nw">${r.initiated ? fmtDate(r.initiated) : '<span class="sub">—</span>'}</td><td class="nw">${r.resultDue ? fmtDate(r.resultDue) : '<span class="sub">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${scope.length ? 'No case matches.' : own ? 'You have no BGV cases yet. A case opens automatically when a candidate for one of your Manager-and-above (or flagged) positions reaches the Offer stage, and a second one when they join.' : 'No BGV cases yet.'}</div>`;
     $$('#bgList tr.click', el).forEach(tr => { tr.onclick = () => openBgvCase(tr.dataset.id, () => viewBgv(v)); tr.onkeydown = e => { if (e.key === 'Enter') openBgvCase(tr.dataset.id, () => viewBgv(v)); }; });
@@ -4052,6 +4057,37 @@ async function bgvChips(el, o) {
   el.innerHTML = `<section class="app-sec bgv-sec"><h3>Background verification</h3><ul class="bgv-chips">${rows.map(r => `<li><b>${esc(r.type)}</b> ${bgvStChip(r.status)} ${bgvRag(r)}
     <span class="sub">${['Not started', 'Awaiting consent'].includes(r.status) && r.due ? 'start by ' + fmtDate(r.due) : esc(r.recruiter)}${r.canWork && r.outcome ? ' · ' + esc(r.outcome) : ''}</span>${r.canWork ? ` <button class="linklike" data-bgv="${esc(r.id)}">Open</button>` : ''}</li>`).join('')}</ul></section>`;
   $$('[data-bgv]', el).forEach(b => b.onclick = () => { S.bgvOpenId = b.dataset.bgv; S.bgvF = S.bgvF || {}; S.bgvF.tab = 'mine'; closeDrawer(); try { $$('dialog[open]').forEach(x => x.close()); } catch (e) { } go('bgv', true); });
+}
+
+/* ---- Reports (leads) ---- */
+async function bgvReports(el, B, v) {
+  const f = S.bgvRep = S.bgvRep || { from: daysAgo(180), to: today() };
+  el.innerHTML = `<div class="filters"><div class="field"><label for="rpFrom">Cases opened from</label><input id="rpFrom" type="date" value="${f.from}" max="${today()}"></div><div class="field"><label for="rpTo">to</label><input id="rpTo" type="date" value="${f.to}" max="${today()}"></div></div><div id="rpBody">${skRows(6, 6)}</div>`;
+  const load = async () => {
+    let R; try { R = await api('apiBgvReports', { from: f.from, to: f.to }); } catch (e) { if ($('#rpBody')) $('#rpBody').innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+    if (!$('#rpBody')) return;
+    const n = x => x == null ? '—' : x, pc = x => x == null ? '—' : x + '%', dd = x => x == null ? '—' : x + ' d';
+    const row = x => `<td class="num">${x.cases}</td><td class="num">${pc(x.pctOnTime)}</td><td class="num">${n(x.late)}</td><td class="num">${n(x.overdue)}</td><td class="num">${dd(x.avgStart)}</td><td class="num">${dd(x.avgVerify)}</td><td class="num">${pc(x.pctWithinVendor)}</td><td class="num">${dd(x.avgReview)}</td><td class="num">${pc(x.pctResultOk)}</td><td class="num">${x.open}</td><td class="num">${x.red ? `<b class="miss">${x.red}</b>` : 0}</td><td class="num">${x.discrepancies}</td>`;
+    const head = k => `<thead><tr><th>${k}</th><th class="num">Cases</th><th class="num">Started on time</th><th class="num">Late</th><th class="num">Overdue, not started</th><th class="num">Days to start</th><th class="num">Vendor days</th><th class="num">Within ${R.cfg.vendorTatDays} d</th><th class="num">Review days</th><th class="num">Report before joining</th><th class="num">Open</th><th class="num">Red</th><th class="num">Discrepancies</th></tr></thead>`;
+    const tbl = (k, list) => list.length ? `<div class="table-wrap"><table class="bgv-table">${head(k)}<tbody>${list.map(x => `<tr><td><b>${esc(x.key)}</b></td>${row(x)}</tr>`).join('')}<tr class="tot"><td><b>All</b></td>${row(R.total)}</tr></tbody></table></div>` : '<div class="empty">No cases opened in this period.</div>';
+    $('#rpBody').innerHTML = `<p class="hint">Started on time = started by the start-by date (3 days after the offer for previous employers; 2 days after joining for the current employer). Vendor days run from the start to the report; review days from the report to closing. Cases opened ${fmtDate(R.from)} to ${fmtDate(R.to)}.</p>
+      <section class="panel"><div class="dp-h"><h2>Team scorecard by recruiter</h2><button class="btn sm" id="rpCsv1">Download CSV</button></div>${tbl('Recruiter', R.byRecruiter)}</section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>By type</h2></div>${tbl('Type', R.byType)}</section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>By month the case opened</h2></div>${tbl('Month', R.byMonth)}</section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Vendor scorecard</h2><button class="btn sm" id="rpCsv2">Download CSV</button></div>${tbl('Vendor', R.byVendor)}</section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Open cases by department</h2></div>${R.byDept.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Department</th><th class="num">Open</th><th class="num">Red</th><th class="num">Amber</th></tr></thead><tbody>${R.byDept.map(d => `<tr><td>${esc(d.dept)}</td><td class="num">${d.open}</td><td class="num">${d.red ? `<b class="miss">${d.red}</b>` : 0}</td><td class="num">${d.amber}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No open cases.</div>'}</section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Discrepancies and unverified results</h2><button class="btn sm" id="rpCsv3">Download CSV</button></div>${R.discrepancies.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Case</th><th>Candidate</th><th>Recruiter</th><th>Result</th><th>Decision</th><th>What was found</th></tr></thead><tbody>${R.discrepancies.map(d => `<tr class="click" data-case="${esc(d.id)}"><td>${esc(d.id)}<span class="sub">${esc(d.type)}</span></td><td>${esc(d.candidate)}<span class="sub">${esc(d.position)}</span></td><td>${esc(d.recruiter)}</td><td>${esc(d.outcome)}</td><td>${d.decision ? esc(d.decision) + `<span class="sub">${esc(String(d.decisionBy).split('@')[0])}</span>` : '<span class="miss">Waiting</span>'}</td><td>${d.checks.map(k => `${esc(k.type)}${k.subject ? ' (' + esc(k.subject) + ')' : ''}: ${esc(k.finding) || esc(k.status)}`).join('<br>') || '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">None in this period.</div>'}</section>`;
+    $$('#rpBody tr[data-case]').forEach(tr => tr.onclick = () => openBgvCase(tr.dataset.case, null));
+    const cols = ['Cases', 'Started on time %', 'Late', 'Overdue not started', 'Avg days to start', 'Avg vendor days', 'Within vendor limit %', 'Avg review days', 'Report before joining %', 'Open', 'Red', 'Discrepancies'];
+    const flat = x => [x.cases, x.pctOnTime, x.late, x.overdue, x.avgStart, x.avgVerify, x.pctWithinVendor, x.avgReview, x.pctResultOk, x.open, x.red, x.discrepancies];
+    const tag = `${R.from}-to-${R.to}`;
+    $('#rpCsv1').onclick = () => csvSave(`bgv-scorecard-${tag}.csv`, ['Recruiter'].concat(cols), R.byRecruiter.map(x => [x.key].concat(flat(x))).concat([['All'].concat(flat(R.total))]));
+    $('#rpCsv2').onclick = () => csvSave(`bgv-vendors-${tag}.csv`, ['Vendor'].concat(cols), R.byVendor.map(x => [x.key].concat(flat(x))));
+    $('#rpCsv3').onclick = () => csvSave(`bgv-discrepancies-${tag}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'Recruiter', 'Result', 'Decision', 'Decided by', 'Findings'], R.discrepancies.map(d => [d.id, d.type, d.candidate, d.position, d.recruiter, d.outcome, d.decision, d.decisionBy, d.checks.map(k => `${k.type}: ${k.finding || k.status}`).join('; ')]));
+  };
+  $('#rpFrom').onchange = e => { f.from = e.target.value; load(); };
+  $('#rpTo').onchange = e => { f.to = e.target.value; load(); };
+  load();
 }
 
 /* ---- Vendors and rules ---- */
