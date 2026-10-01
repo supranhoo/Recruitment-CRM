@@ -15,7 +15,7 @@ const CTC_REASONS_ = ['Statutory change', 'Company policy change', 'Correction',
 const CTC_CALCS_ = { name: 'CTC_Calcs', id: 'Calc_ID', prefix: 'CTC-', width: 5, dates: [], editable: [] };
 const CTC_CALC_COLS_ = ['Calc_ID', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total_CTC', 'Gross', 'Net', 'Rule_Version',
   'Inputs_JSON', 'Result_JSON', 'Language', 'Letter_File', 'Rerun_Of', 'Superseded_By', 'Issued_By', 'Issued_At', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At',
-  'Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note'];
+  'Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note', 'Candidate_ID', 'Line_ID'];
 /** Who may do what with the calculator, by role (Role_Access sheet), and whether letters need approval (setting CTC_APPROVAL). */
 const CTC_GRANTABLE_ = ['ctc_use', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve'];
 const CTC_GRANT_ROLES_ = ['Head of HR', 'TA Lead', 'Recruiter'];
@@ -401,7 +401,7 @@ function ctcSchema_() {
     sh.setFrozenRows(1);
   }
   addSheet_(CTC_CALCS_.name, CTC_CALC_COLS_);
-  addColumns_(CTC_CALCS_.name, ['Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note']);
+  addColumns_(CTC_CALCS_.name, ['Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note', 'Candidate_ID', 'Line_ID']);
   addSheet_('Role_Access', CTC_ACCESS_COLS_);
   addColumns_(CTC_RULES_, ['Updated_By', 'Updated_At']);
   if (sh.getLastRow() > 1) return;
@@ -503,7 +503,8 @@ function ctcOut_(r, full) {
     version: String(r.Rule_Version), language: String(r.Language || ''), letter: String(r.Letter_File || ''), rerunOf: String(r.Rerun_Of || ''),
     supersededBy: String(r.Superseded_By || ''), by: String(r.Created_By || ''), at: at(r.Created_At), day: r.Created_At instanceof Date ? ymd_(r.Created_At) : '',
     issuedBy: String(r.Issued_By || ''), issuedAt: at(r.Issued_At), submittedBy: String(r.Submitted_By || ''), submittedAt: at(r.Submitted_At),
-    decidedBy: String(r.Decided_By || ''), decidedAt: at(r.Decided_At), decisionNote: String(r.Decision_Note || '') };
+    decidedBy: String(r.Decided_By || ''), decidedAt: at(r.Decided_At), decisionNote: String(r.Decision_Note || ''),
+    candidateId: String(r.Candidate_ID || ''), lineId: String(r.Line_ID || '') };
   if (full) { o.inputs = JSON.parse(String(r.Inputs_JSON || '{}')); o.result = JSON.parse(String(r.Result_JSON || '{}')); }
   return o;
 }
@@ -528,7 +529,8 @@ function apiCtcSave(d) {
   const r = ctcEngine_().solve(act.config, inp);
   if (r.status === 'unsettled') throw new Error('The structure did not settle, so it cannot be saved. Check the Basic choice.');
   if ((r.warnings || []).length) throw new Error(r.warnings[0]);
-  const patch = { Status: 'Draft', Name: inp.name, Designation: inp.designation, Grade: inp.grade, Basis: inp.basis, Target: inp.target,
+  const link = ctcLinkIds_(d, d.id ? ctcRow_(d.id) : null);
+  const patch = { Status: 'Draft', Candidate_ID: link.candidateId, Line_ID: link.lineId, Name: inp.name, Designation: inp.designation, Grade: inp.grade, Basis: inp.basis, Target: inp.target,
     Total_CTC: r.totals.totalCtc, Gross: r.totals.gross, Net: r.totals.net, Rule_Version: act.id,
     Inputs_JSON: JSON.stringify(inp), Result_JSON: JSON.stringify(r), Rerun_Of: rerunOf };
   let rec;
@@ -650,7 +652,7 @@ function apiCtcList(f) {
   const rows = readTable_(CTC_CALCS_.name).rows.filter(function (r) { return ctcCanSee_(u, r) && (f.discarded || String(r.Status) !== 'Discarded'); })
     .map(function (r) { return ctcOut_(r, false); })
     .sort(function (a, b) { return Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')); });
-  return { all: can_(u, 'ctc_view_all'), active: ctcActive_().id, rows: rows.slice(0, 1000) };
+  return { all: can_(u, 'ctc_view_all'), active: ctcActive_().id, rows: ctcLabels_(rows.slice(0, 1000)) };
 }
 
 /** One version's rules (for letters worked out on earlier rules). */
@@ -667,7 +669,7 @@ function apiCtcGet(id) {
   ctcRequire_(u, 'ctc_use');
   const r = ctcRow_(id);
   if (!ctcCanSee_(u, r)) throw new Error('You can open only your own calculations.');
-  return ctcOut_(r, true);
+  return ctcLabels_([ctcOut_(r, true)])[0];
 }
 
 /** Drive folder for issued letters, inside the documents folder. */
@@ -964,4 +966,50 @@ function apiCtcAccessSave(d) {
   changes.forEach(function (c) { audit_(u, c[0] === 'CTC_APPROVAL' ? 'Settings' : 'Role_Access', c[0], 'Update', 'Granted', c[1], c[2] + ' (' + reason.slice(0, 150) + ')'); });
   ctcDropGrants_();
   return apiCtcAccess();
+}
+
+/* ---------------------------------------------------------------- link to a candidate or position ---------- */
+
+/**
+ * The candidate and position a calculation is for (both optional). A value not sent keeps what the record has; an
+ * empty value removes the link. Candidates and positions must exist.
+ */
+function ctcLinkIds_(d, old) {
+  const pick = function (sent, was) { return sent === undefined ? String(was || '') : String(sent || '').trim(); };
+  const cid = pick(d.candidateId, old && old.Candidate_ID), lid = pick(d.lineId, old && old.Line_ID);
+  if (cid && !readTable_(T.CAND.name).rows.some(function (r) { return r.Candidate_ID === cid; })) throw new Error('Candidate ' + cid + ' was not found.');
+  if (lid && !lineOf_(lid)) throw new Error('Position ' + lid + ' was not found.');
+  return { candidateId: cid, lineId: lid };
+}
+
+/** Candidate names and position labels for a list of calculations. */
+function ctcLabels_(rows) {
+  const out = { cand: {}, line: {} };
+  if (rows.some(function (r) { return r.candidateId; })) readTable_(T.CAND.name).rows.forEach(function (c) { out.cand[c.Candidate_ID] = String(c.Name || ''); });
+  if (rows.some(function (r) { return r.lineId; })) readTable_(T.MRF.name).rows.forEach(function (l) { out.line[l.Line_ID] = [l.MRF_No, l.Position].filter(Boolean).join(' · '); });
+  rows.forEach(function (r) { r.candidate = out.cand[r.candidateId] || ''; r.position = out.line[r.lineId] || ''; });
+  return rows;
+}
+
+/** Calculations linked to a candidate or a position (kind 'candidate' or 'line'), newest first, those the caller may see. */
+function apiCtcFor(kind, id) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const col = kind === 'candidate' ? 'Candidate_ID' : kind === 'line' ? 'Line_ID' : '';
+  if (!col || !id) throw new Error('Say which candidate or position.');
+  const rows = readTable_(CTC_CALCS_.name).rows.filter(function (r) { return String(r[col]) === String(id) && String(r.Status) !== 'Discarded' && ctcCanSee_(u, r); })
+    .map(function (r) { return ctcOut_(r, false); })
+    .sort(function (a, b) { return Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')); }).slice(0, 50);
+  return { active: ctcActive_().id, rows: ctcLabels_(rows) };
+}
+
+/** Attaches (or removes) the link on a calculation that is already saved, issued ones included (the figures do not change). */
+function apiCtcLink(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  const r = ctcRow_(id);
+  if (!ctcCanSee_(u, r) || (String(r.Created_By).toLowerCase() !== u.email && !can_(u, 'ctc_view_all'))) throw new Error('Only the person who made this calculation can link it.');
+  if (String(r.Status) === 'Discarded') throw new Error('A discarded calculation cannot be linked.');
+  const link = ctcLinkIds_(d || {}, r);
+  return ctcLabels_([ctcOut_(update_(CTC_CALCS_, id, { Candidate_ID: link.candidateId, Line_ID: link.lineId }, u), false)])[0];
 }

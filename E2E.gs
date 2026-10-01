@@ -244,6 +244,19 @@ function e2eRun_(trash) {
     try { const d = apiCtcSave({ basis: 'gross', target: 20000, codes: ctcSample }); apiCtcSubmit(d.id, { language: 'en' }); }
     finally { apiCtcAccessSave({ roles: {}, approval: false, reason: 'E2E approval test: undo' }); }
   }, /can approve letters/);
+  if (typeof L1 !== 'undefined' && L1.Line_ID) {
+    const cand = apiListCandidates()[0];
+    t('I12g a calculation linked to a candidate and a position shows on both', function () {
+      const r = apiCtcSave({ basis: 'gross', target: 30000, codes: ctcSample, candidateId: cand.Candidate_ID, lineId: L1.Line_ID });
+      const a = apiCtcFor('candidate', cand.Candidate_ID).rows, b = apiCtcFor('line', L1.Line_ID).rows;
+      return a.some(function (x) { return x.id === r.id; }) && b.some(function (x) { return x.id === r.id && x.candidate; }) ? 'linked ' + r.id : false;
+    });
+    err('I12h a calculation cannot be linked to an unknown candidate', function () { apiCtcSave({ basis: 'gross', target: 30000, codes: ctcSample, candidateId: 'CAN-99999' }); }, /not found/);
+    t('I12i an issued calculation can be linked afterwards and unlinked', function () {
+      const x = apiCtcLink(ctcA.id, { candidateId: cand.Candidate_ID, lineId: L1.Line_ID }), y = apiCtcLink(ctcA.id, { candidateId: '', lineId: '' });
+      return x.candidateId === cand.Candidate_ID && !y.candidateId && !y.lineId ? 'ok' : false;
+    });
+  }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {
     t('I14 save a change and see it listed', function () {
