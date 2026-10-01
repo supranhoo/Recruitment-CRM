@@ -3925,8 +3925,8 @@ const BGV_TYPE_NOTE = { 'Previous employer': 'Earlier employers · start within 
 async function viewBgv(v) {
   const f = S.bgvF = S.bgvF || { tab: 'mine', type: '', status: '', rag: '', q: '', rec: '' };
   let B; try { B = S.bgv = await api('apiBgvList'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  if (!B.lead && ['vendors', 'rules', 'reports'].includes(f.tab)) f.tab = 'mine';
-  const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', `All cases${B.all.toDecide && (B.decide || B.lead) ? ' · ' + B.all.toDecide + ' to decide' : ''}`]].concat(B.lead ? [['reports', 'Reports'], ['vendors', 'Vendors'], ['rules', 'Rules']] : []);
+  if (!B.lead && ['vendors', 'rules', 'reports', 'govern'].includes(f.tab)) f.tab = 'mine';
+  const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', `All cases${B.all.toDecide && (B.decide || B.lead) ? ' · ' + B.all.toDecide + ' to decide' : ''}`]].concat(B.lead ? [['reports', 'Reports'], ['vendors', 'Vendors'], ['rules', 'Rules'], ['govern', 'Governance']] : []);
   v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div><div class="page-actions"><button class="btn" id="bgImport">Import vendor update</button></div></div>
     <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${f.tab === k}">${esc(l)}</button>`).join('')}</div><div id="bgBody" style="margin-top:16px"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewBgv(v); });
@@ -3935,6 +3935,7 @@ async function viewBgv(v) {
   if (f.tab === 'reports') return bgvReports($('#bgBody'), B, v);
   if (f.tab === 'vendors') return bgvVendors($('#bgBody'), B, v);
   if (f.tab === 'rules') return bgvRulesTab($('#bgBody'), B, v);
+  if (f.tab === 'govern') return bgvGovernTab($('#bgBody'), B, v);
   bgvCases($('#bgBody'), B, v);
 }
 function bgvCases(el, B, v) {
@@ -3991,7 +3992,7 @@ async function openBgvCase(id, after) {
     const dt = (l, v, sub) => `<div><span class="sub">${l}</span><b>${v ? fmtDate(v) : '—'}</b>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`;
     body.innerHTML = `<div class="bgv-head"><div><h3 style="margin:0">${c.candidate ? esc(c.candidate) : 'Candidate not linked'}</h3><div class="sub">${esc(c.position)} · ${esc(c.mrf)} · ${esc(c.dept)} · ${esc(c.grade)} · recruiter ${esc(c.recruiter)}</div>
         <div class="sub"><b>${esc(c.type)}</b> — ${esc(BGV_TYPE_NOTE[c.type] || '')}</div></div><div>${bgvStChip(c.status)} ${bgvRag(c)}</div></div>
-      ${c.why && c.rag !== 'Green' && c.rag ? `<div class="note ${c.rag === 'Red' ? 'warn-note' : ''}">${esc(c.why)}</div>` : ''}${c.legacy ? '<div class="note">Carried over from the position’s BGV fields. Check the status and add the checks.</div>' : ''}
+      ${c.why && c.rag !== 'Green' && c.rag ? `<div class="note ${c.rag === 'Red' ? 'warn-note' : ''}">${esc(c.why)}</div>` : ''}${c.purged ? `<div class="note">Purged under the retention rule on ${fmtDate(c.purged)}: the files and personal details were deleted. The dates, status and result stay for the reports.</div>` : ''}${c.legacy ? '<div class="note">Carried over from the position’s BGV fields. Check the status and add the checks.</div>' : ''}
       <div class="bgv-dates">${dt(c.type === 'Previous employer' ? 'Offer' : 'Joined', c.trigger)}${dt('Start by', c.due)}${c.type === 'Previous employer' ? dt('Report needed by', c.resultDue) : ''}${dt('Consent', c.consent)}${dt('Started', c.initiated, c.vendor ? esc(vend[c.vendor] || (c.vendor === 'DIRECT' ? 'Direct' : c.vendor)) + (c.vendorRef ? ' · ' + esc(c.vendorRef) : '') : '')}${dt('Report received', c.report)}</div>
       ${c.candId ? `<p style="margin:8px 0"><button class="linklike" id="bcCand">Open candidate</button> · <button class="linklike" id="bcPos">Open position</button></p>` : ''}
       ${!closed ? `<fieldset class="bgv-move"><legend>Next step</legend>
@@ -4013,8 +4014,8 @@ async function openBgvCase(id, after) {
         <div class="drawer-actions" style="position:static"><button class="btn primary" id="bdSave">Record decision</button></div></fieldset>` : ''}
       <div class="field wide" style="margin-top:10px"><label for="boRemarks">Remarks</label><textarea id="boRemarks" rows="2" maxlength="1000" ${closed && !X.lead ? 'disabled' : ''}>${esc(c.remarks)}</textarea></div>
       <div class="drawer-actions" style="position:static;margin-top:0"><button class="btn" id="boSave">Save outcome and remarks</button></div>
-      <h4>Documents</h4><div id="bgDocs">${wrapForm(form([fileField('Consent_File', 'Candidate consent (signed)'), fileField('Report_File', 'Vendor / employer report'), fileField('Initiation_Proof_File', 'Proof that the verification was started')], { Consent_File: c.consentFile, Report_File: c.reportFile, Initiation_Proof_File: c.proofFile }))}</div>
-      <div class="drawer-actions" style="position:static;margin-top:0"><button class="btn" id="bdUp">Upload chosen files</button></div>
+      ${c.purged ? '' : `<h4>Documents</h4>`}<div id="bgDocs" ${c.purged ? 'hidden' : ''}>${wrapForm(form([fileField('Consent_File', 'Candidate consent (signed)'), fileField('Report_File', 'Vendor / employer report'), fileField('Initiation_Proof_File', 'Proof that the verification was started')], { Consent_File: c.consentFile, Report_File: c.reportFile, Initiation_Proof_File: c.proofFile }))}</div>
+      <div class="drawer-actions" style="position:static;margin-top:0" ${c.purged ? 'hidden' : ''}><button class="btn" id="bdUp">Upload chosen files</button></div>
       <h4>Timeline</h4>
       ${(X.templates || []).length ? `<div class="rs-row"><select id="bmTpl" aria-label="Email template">${opts(X.templates.map(t => [t.id, t.label]), '', true)}</select><button class="btn sm" id="bmMail" disabled>Email\u2026</button><span class="hint">Fills the wording in; you send it from your own email.</span></div>` : ''}
       <div class="rs-row"><select id="blKind" aria-label="Kind of entry">${opts(X.logKinds, 'Note', false)}</select><input id="blNote" placeholder="What happened, who was spoken to, when to chase next" style="flex:1;min-width:220px" maxlength="500"><button class="btn sm" id="blAdd">Add</button></div>
@@ -4208,6 +4209,49 @@ async function bgvEmailDialog(X, tpl, after) {
     window.location.href = url; log('opened in the email app');
   };
   if (!d.open) d.showModal();
+}
+
+/* ---- Governance: Drive access, retention, audit export ---- */
+async function bgvGovernTab(el, B, v) {
+  let G; try { G = await api('apiBgvGovern'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const R = G.retention, row = (x, box) => `<tr>${box ? `<td><input type="checkbox" class="gv-pick" value="${esc(x.id)}" aria-label="Select ${esc(x.id)}"></td>` : ''}<td><b>${esc(x.id)}</b><span class="sub">${esc(x.type)}</span></td><td>${esc(x.candidate)}<span class="sub">${esc(x.position)}</span></td><td>${esc(x.recruiter)}</td><td>${esc(x.kind)}</td><td class="nw">${fmtDate(x.closed)}</td><td class="nw">${fmtDate(x.due)}${x.late > 0 ? `<span class="sub">${x.late} d ago</span>` : ''}</td><td class="num">${x.files}</td></tr>`;
+  const head = box => `<thead><tr>${box ? '<th></th>' : ''}<th>Case</th><th>Candidate</th><th>Recruiter</th><th>Kept as</th><th>Closed</th><th>Keep until</th><th class="num">Files</th></tr></thead>`;
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Who can open BGV files</h2></div>
+      <p class="hint" style="margin-top:0">BGV files are not kept in the shared CV folder. They sit in a restricted Drive folder with one folder per recruiter: a recruiter opens only the files of their own cases; TA Leads, the Head of HR and the admin open all. Drive access is checked every night; it also follows a new recruiter or a change of owner.</p>
+      <div class="rs-row"><span>${G.drive.ready ? `<b>Folder ready</b> · ${G.drive.folders} recruiter folder${G.drive.folders === 1 ? '' : 's'}` : '<b class="miss">Not set up yet</b>'}</span><span class="hint">${G.drive.last ? 'Last sync: ' + esc(G.drive.last) : ''}</span>
+        ${G.admin ? `<button class="btn sm" id="gvSync">Sync Drive access now</button>${G.drive.url ? `<a class="btn sm" href="${esc(G.drive.url)}" target="_blank" rel="noopener">Open the folder</a>` : ''}` : ''}</div></section>
+    <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Retention</h2><button class="btn sm" id="gvCsv">Download list</button></div>
+      <p class="hint" style="margin-top:0">Reports are kept <b>${R.years} years</b> after the case closes; data of candidates who did not join <b>${R.months} months</b> (Rules tab). A purge deletes the files (they go to the Drive bin), blanks the candidate’s name, findings and notes, and keeps the dates, status and result so the reports still add up. ${R.purged ? `${R.purged} case${R.purged === 1 ? ' is' : 's are'} already purged.` : ''}</p>
+      ${R.due.length ? `<div class="table-wrap"><table class="bgv-table">${head(G.admin)}<tbody>${R.due.map(x => row(x, G.admin)).join('')}</tbody></table></div>
+        ${G.admin ? `<div class="rs-row"><label class="chk"><input type="checkbox" id="gvAll"> Select all (${R.due.length})</label><input id="gvReason" placeholder="Reason or approval reference (needed)" maxlength="200" style="flex:1;min-width:240px"><button class="btn primary" id="gvPurge" disabled>Purge now</button></div>` : '<p class="hint">Only the admin can purge.</p>'}`
+        : '<div class="empty">Nothing is past retention.</div>'}
+      ${R.upcoming.length ? `<details style="margin-top:12px"><summary>${R.upcoming.length} more due within 60 days</summary><div class="table-wrap"><table class="bgv-table">${head(false)}<tbody>${R.upcoming.map(x => row(x, false)).join('')}</tbody></table></div></details>` : ''}</section>
+    ${G.audit ? `<section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Audit export</h2></div>
+      <p class="hint" style="margin-top:0">Every step of the BGV timeline and every change to cases, checks, vendors and rules, with who and when; opening a BGV file is recorded too. Up to one year at a time. The export itself is logged.</p>
+      <div class="filters"><div class="field"><label for="auFrom">From</label><input id="auFrom" type="date" value="${daysAgo(90)}" max="${today()}"></div><div class="field"><label for="auTo">To</label><input id="auTo" type="date" value="${today()}" max="${today()}"></div>
+        <div class="field"><label for="auCase">One case <span class="opt">(optional)</span></label><input id="auCase" placeholder="BGV-00012" maxlength="12"></div><div class="field"><label>&nbsp;</label><button class="btn primary" id="auGo">Download CSV</button></div></div></section>` : ''}`;
+  if ($('#gvSync')) $('#gvSync').onclick = async e => { busy(e.target, true, 'Syncing…'); try { await api('apiBgvDriveSync'); toast('Drive access synced.'); bgvGovernTab(el, B, v); } catch (err) { toast(err, true); busy(e.target, false, 'Sync Drive access now'); } };
+  $('#gvCsv').onclick = () => csvSave(`bgv-retention-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'Recruiter', 'Kept as', 'Closed', 'Keep until', 'Files', 'Status'], R.due.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.due, x.files, 'Due']).concat(R.upcoming.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.due, x.files, 'Due within 60 days'])));
+  if ($('#gvPurge')) {
+    const picks = () => $$('.gv-pick', el).filter(b => b.checked).map(b => b.value), sync = () => { const n = picks().length; $('#gvPurge').disabled = !n; $('#gvPurge').textContent = n ? `Purge ${n} now` : 'Purge now'; };
+    $$('.gv-pick', el).forEach(b => b.onchange = sync); $('#gvAll').onchange = e => { $$('.gv-pick', el).forEach(b => { b.checked = e.target.checked; }); sync(); };
+    $('#gvPurge').onclick = async e => {
+      const ids = picks(), reason = $('#gvReason').value.trim();
+      if (reason.length < 10) return toast('Give the reason or approval reference (at least 10 characters).', true);
+      if (!confirm(`Purge ${ids.length} case${ids.length === 1 ? '' : 's'}?\n\nTheir files go to the Drive bin and the candidate’s name, findings and notes are blanked. This cannot be undone from the CRM.`)) return;
+      busy(e.target, true, 'Purging…');
+      try { const r = await api('apiBgvPurge', ids, reason); toast(`Purged ${r.purged} case${r.purged === 1 ? '' : 's'}, ${r.files} file${r.files === 1 ? '' : 's'} deleted.` + (r.failed.length ? ' Not purged: ' + r.failed.join('; ') : ''), !!r.failed.length); bgvGovernTab(el, B, v); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Purge now'); }
+    };
+  }
+  if ($('#auGo')) $('#auGo').onclick = async e => {
+    busy(e.target, true, 'Preparing…');
+    try { const A = await api('apiBgvAudit', { from: $('#auFrom').value, to: $('#auTo').value, caseId: $('#auCase').value.trim() });
+      csvSave(`bgv-audit-${A.from}-to-${A.to}${A.caseId ? '-' + A.caseId : ''}.csv`, ['When', 'Who', 'Source', 'Case', 'Candidate', 'Recruiter', 'Action', 'Field', 'From', 'To', 'Note'], A.rows.map(r => [r.at, r.by, r.source, r.caseId, r.candidate, r.recruiter, r.action, r.field, r.from, r.to, r.note]));
+      toast(`${A.total} row${A.total === 1 ? '' : 's'} exported${A.truncated ? ' (the first 20,000; narrow the dates)' : ''}.`, A.truncated); }
+    catch (err) { toast(err, true); }
+    busy(e.target, false, 'Download CSV');
+  };
 }
 
 /* ---- Vendors and rules ---- */

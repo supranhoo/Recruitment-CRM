@@ -283,6 +283,9 @@ function e2eRun_(trash) {
     t('K15 BGV email templates and company name are served and editable', function () { const r = apiBgvRules(); return r.templateList.length === 5 && r.active.cfg.company && r.active.cfg.templates.consent.subject ? 'ok' : false; });
     err('K16 a vendor import with no rows is refused', function () { apiBgvImport([], {}); }, /no rows/);
     t('K17 a vendor import dry run changes nothing', function () { const r = apiBgvImport([{ ref: 'NO-SUCH-CASE', check: 'Employment', status: 'Verified' }], {}); return r.applied === false && r.counts.errors === 1 ? 'ok' : false; });
+    t('K18 BGV governance shows the Drive status and the retention list', function () { const g = apiBgvGovern(); return g.retention && Array.isArray(g.retention.due) && g.drive ? g.retention.due.length + ' due' : false; });
+    t('K19 the BGV audit export works for the admin and is logged', function () { const r = apiBgvAudit({}); return Array.isArray(r.rows) && r.from <= r.to ? r.total + ' rows' : false; });
+    err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
   }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {

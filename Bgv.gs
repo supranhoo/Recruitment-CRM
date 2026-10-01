@@ -15,7 +15,7 @@ const BGV_RULES_ = 'BGV_Rules';
 const BGV_CASE_COLS_ = ['Case_ID', 'Type', 'Line_ID', 'MRF_No', 'App_ID', 'Candidate_ID', 'Candidate_Name', 'Position', 'Grade', 'Dept', 'Recruiter',
   'Trigger_Date', 'Due_Date', 'Result_Due', 'Consent_On', 'Consent_File', 'Vendor_ID', 'Vendor_Ref', 'Initiated_On', 'Initiation_Proof_File', 'Status',
   'Outcome', 'Report_On', 'Report_File', 'Decision', 'Decision_By', 'Decision_On', 'Decision_Note', 'Closed_On', 'Remarks', 'Legacy', 'Rules_Version',
-  'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
+  'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Purged_On', 'Purged_By'];
 const BGV_CHECK_COLS_ = ['Check_ID', 'Case_ID', 'Check_Type', 'Subject', 'Period', 'Status', 'Finding', 'Verified_On', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
 const BGV_LOG_COLS_ = ['Log_ID', 'Case_ID', 'At', 'By', 'Kind', 'Old_Status', 'New_Status', 'Note'];
 const BGV_VENDOR_COLS_ = ['Vendor_ID', 'Name', 'Contact_Person', 'Email', 'Phone', 'Checks_Offered', 'Std_TAT_Days', 'Active', 'Contract_End', 'Note',
@@ -93,6 +93,7 @@ function bgvRules_(day) {
 
 function bgvSchema_() {
   addSheet_(BGV_CASES_.name, BGV_CASE_COLS_);
+  addColumns_(BGV_CASES_.name, ['Purged_On', 'Purged_By']);
   addSheet_(BGV_CHECKS_.name, BGV_CHECK_COLS_);
   addSheet_(BGV_LOG_.name, BGV_LOG_COLS_);
   addSheet_(BGV_VENDORS_.name, BGV_VENDOR_COLS_);
@@ -271,7 +272,7 @@ function bgvOut_(c, u, cfg, today, full) {
   const o = { id: String(c.Case_ID), type: String(c.Type), line: String(c.Line_ID), mrf: String(c.MRF_No || ''), app: String(c.App_ID || ''), candId: String(c.Candidate_ID || ''),
     candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), grade: String(c.Grade || ''), dept: String(c.Dept || ''), recruiter: String(c.Recruiter || ''),
     trigger: d(c.Trigger_Date), due: d(c.Due_Date), resultDue: d(c.Result_Due), initiated: d(c.Initiated_On), status: String(c.Status), rag: rag.rag, why: rag.why, mine: bgvIsOwner_(u, c), canWork: worker,
-    legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On) };
+    legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On), purged: ymd_(c.Purged_On) };
   if (worker) {
     o.outcome = String(c.Outcome || ''); o.decision = String(c.Decision || ''); o.report = d(c.Report_On); o.vendor = String(c.Vendor_ID || ''); o.vendorRef = String(c.Vendor_Ref || '');
     o.consent = d(c.Consent_On); o.needsDecision = bgvNeedsDecision_(c);

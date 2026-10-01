@@ -503,6 +503,7 @@ function recomputeAllTat_() {
 /** Nightly job installed by setup(): keeps TAT columns in the sheet current for anyone reading it directly. */
 function nightlyJob() {
   try { backupDb_(); } catch (e) { console.error('Backup failed: ' + e); }
+  try { bgvSyncFolders_(); } catch (e) { console.error('BGV folders: ' + e); }
   recomputeAllTat_();
   _tables = {};
   buildSnapshot_('nightly refresh');
