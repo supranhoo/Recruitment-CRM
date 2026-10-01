@@ -201,6 +201,7 @@ function apiMoveStage(appId, toStage, data) {
   }
   update_(T.APP, appId, patch, u);
   appendHistory_(app, from, toStage, outcome, data.note, u);
+  if (toStage === 'Offer' || toStage === 'Joined') bgvTouchLine_(app.Line_ID);
   return apiPipeline(app.Line_ID);
 }
 
@@ -230,6 +231,7 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
   }
   update_(T.APP, appId, patch, u);
   appendHistory_(app, stage, stage, backout ? 'Backout' : status, reason, u);
+  if (backout) bgvTouchLine_(app.Line_ID);
   if (backout) {
     const repl = createReplacement_(line, app, when, String(reason || ''), u);
     const out = apiPipeline(repl.Line_ID);
