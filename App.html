@@ -1156,6 +1156,7 @@ function positionDrawer(p) {
       ${isNew ? '' : '<div id="posTasks"></div>'}
       <div class="readout" id="tatReadout"></div>
       ${isNew ? '' : '<div id="posExempt"></div>'}
+      ${isNew || !can('ctc_use') ? '' : '<div id="posCtc"></div>'}
       ${!isNew && ['Not Needed', 'No Vacancy', 'On Hold'].includes(p.Position_Status) && p.Closure_Reason ? `<div class="note warn-note">${p.Position_Status === 'On Hold' ? 'On hold since' : 'Closed without a hire on'} ${fmtDate(p.Position_Status === 'No Vacancy' ? p.No_Vacancy_Date : p.Not_Needed_Date)} (${esc(p.Position_Status)}): ${esc(p.Closure_Reason)}${p.Closure_Requested_By ? ` \u00b7 requested by ${esc(p.Closure_Requested_By)}` : ''}</div>` : ''}
       ${!isNew && p.Position_Status === 'Removed' ? `<div class="note warn-note">Removed (created in error) on ${fmtDate(p.Not_Needed_Date)}${p.Closure_Reason ? ': ' + esc(p.Closure_Reason) : ''}${p.Closure_Requested_By ? ' \u00b7 requested by ' + esc(p.Closure_Requested_By) : ''}${isLead() ? ' <button class="btn sm" id="posRestore">Restore position</button>' : ''}</div>` : ''}
       ${!isNew && p.Fill_Type === 'Internal' ? `<div class="note">Filled internally: <b>${esc(p.Internal_Employee)}</b>${p.Internal_Emp_Code ? ' (' + esc(p.Internal_Emp_Code) + ')' : ''}${p.Internal_From_Dept ? ' from ' + esc(p.Internal_From_Dept) : ''} \u00b7 effective ${fmtDate(p.Internal_Effective_Date)} \u00b7 decided ${fmtDate(p.Internal_Decided_On)}${p.Closure_Reason ? ' \u00b7 ' + esc(p.Closure_Reason) : ''}${isLead() ? ' <button class="btn sm" id="posUndoInt">Undo internal fill</button>' : ''}</div>` : ''}
@@ -1174,6 +1175,7 @@ function positionDrawer(p) {
       <div>Position TAT<b>${t.Pos_Days_Taken === '' ? '—' : t.Pos_Days_Taken} / ${t.Pos_Final_TAT} d \u00b7 ${esc(t.Pos_TAT_Result || '—')}</b>${parts(t._pc)}${t._pstart ? `<span class="sub">from ${fmtDate(t._pstart)} (${t._basis === 'original MRF start' ? 'original MRF start' : 'MRF approved'})${ruleTag(t._prule)}</span>` : ''}</div>`;
   };
   readout();
+  if ($('#posCtc', body)) ctcLinkSection($('#posCtc', body), { kind: 'line', id: p.Line_ID, lineId: p.Line_ID });
   if (!isNew) exemptSectionInto($('#posExempt', body), p, async () => {
     try { const l = await refreshLine(p.Line_ID); ['Final_TAT', 'Days_Taken', 'TAT_Result', 'Exemption_Days', 'Exempt_Extra_Days', 'Paused_Days', 'Pos_Exempt_Extra_Days', 'Pos_Paused_Days',
       'Notice_Ext_Status', 'Pos_Final_TAT', 'Pos_Days_Taken', 'Pos_TAT_Result'].forEach(k => { data[k] = l[k]; }); readout(); S.posStale = true; } catch (e) { }
@@ -1533,8 +1535,10 @@ function candidateDrawer(c, preset, parsedIn) {
       <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
         <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
     </fieldset>
+    ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawer;
+  if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
   initMulti(body);
   const showParsed = res => {
     parsed = res;
@@ -3907,7 +3911,7 @@ async function ctcRules(force) {
   return (S.ctc = await api('apiCtcRules'));
 }
 const CTC_STATUS = { Draft: 'Draft', 'Pending approval': 'Waiting for approval', Issued: 'Issued', Superseded: 'Superseded', Discarded: 'Discarded' };
-function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts, f.by || 'amount', f.hike || null]); }
+function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts, f.by || 'amount', f.hike || null, (f.link || {}).candidateId || '', (f.link || {}).lineId || '']); }
 /** Permissions as the page shows them: when the admin previews a role, that role's CTC permissions instead of their own. */
 function ctcCan(p) { const pr = S.ctcPreview; return pr && S.ctc && S.ctc.access ? (S.ctc.access[pr] || []).includes(p) : can(p); }
 function ctcStClass(s) { return String(s || '').replace(/\W+/g, ''); }
@@ -3944,9 +3948,11 @@ async function viewCtc(v) {
     const n = L.rows.filter(r => r.status === 'Pending approval').length, btn = $('.tabs button[data-t="saved"]', v);
     if (btn && n) btn.innerHTML = `Saved calculations <span class="badge rs-next">${n} waiting</span>`;
   }).catch(() => { });
+  if (S.ctcOpenId) { const id = S.ctcOpenId; S.ctcOpenId = null; setTimeout(() => ctcOpen(id, R, v), 0); }
   if (tab === 'saved') return ctcSaved($('#ccBody'), R, v);
   if (tab === 'rules') return ctcRulesTab($('#ccBody'), R, v);
   if (tab === 'access') return ctcAccessTab($('#ccBody'), R, v);
+  if (S.ctcFrom) await ctcApplyFrom(R);
   ctcCalc($('#ccBody'), R, v);
 }
 function ctcCalc(el, R, v) {
@@ -3955,7 +3961,7 @@ function ctcCalc(el, R, v) {
   const defaults = () => ({ basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', codes: Object.fromEntries(fk.map(k => [k, String(flags[k].default)])), amounts: {} });
   let f = S.ctcIn && S.ctcIn.version === R.active.id ? S.ctcIn : null;
   if (!f) { f = S.ctcIn = defaults(); f.version = R.active.id; }
-  f.hike = f.hike || ctcHikeDefaults(); f.by = f.by || 'amount';
+  f.hike = f.hike || ctcHikeDefaults(); f.by = f.by || 'amount'; f.link = f.link || { candidateId: '', candidate: '', lineId: '', position: '' };
   const H = f.hike;
   const canCodes = ctcCan('ctc_codes'), canLetter = ctcCan('ctc_issue'), pvOn = !!S.ctcPreview;
   /* Without ctc_codes the structure is the rules' preselected options (or that of the calculation being re-run). */
@@ -3980,6 +3986,7 @@ function ctcCalc(el, R, v) {
           <p class="hint" id="ccHikeTxt"></p></div>
         <h2>Candidate\u2019s pay <span class="opt">optional, for the hike comparison</span></h2>
         <div class="seg seg-per" role="radiogroup" aria-label="Figures are">${[['month', 'Monthly figures'], ['year', 'Yearly figures']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ccPer" value="${k}" ${H.per === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+        ${f.hikeNote ? `<p class="hint" style="margin:0 0 8px">On the candidate\u2019s record: ${esc(f.hikeNote)}. Filled in where the amount was clear; check it.</p>` : ''}
         <div class="grid ctc-cur">
           <div class="field"><label for="ccCurCtc">Current CTC</label><input id="ccCurCtc" data-h="ctc" inputmode="numeric" value="${H.ctc ? Number(H.ctc).toLocaleString('en-IN') : ''}"></div>
           <div class="field"><label for="ccCurGross">Current Gross</label><input id="ccCurGross" data-h="gross" inputmode="numeric" value="${H.gross ? Number(H.gross).toLocaleString('en-IN') : ''}"></div>
@@ -3988,6 +3995,10 @@ function ctcCalc(el, R, v) {
           <div class="field"><label for="ccAskOn">Asked on</label><select id="ccAskOn">${opts([['total_ctc', 'Total CTC'], ['gross', 'Gross salary'], ['net', 'Net in-hand']], H.askBasis, false)}</select></div>
         </div>
         <h2>Details <span class="opt">optional</span></h2>
+        <div class="field ctc-link" id="ccLinkBox"><label for="ccFind">Linked to</label>
+          <div class="ccl-chips">${f.link.candidateId ? `<span class="ccl-chip">Candidate: <b>${esc(f.link.candidate || f.link.candidateId)}</b> <button type="button" data-unlink="c" aria-label="Remove candidate link">\u2715</button></span>` : ''}${f.link.lineId ? `<span class="ccl-chip">Position: <b>${esc(f.link.position || f.link.lineId)}</b> <button type="button" data-unlink="l" aria-label="Remove position link">\u2715</button></span>` : ''}</div>
+          <div class="ccl-find"><input id="ccFind" autocomplete="off" placeholder="Find a candidate or a position\u2026" ${f.saved && f.saved.status !== 'Draft' ? 'disabled' : ''}><div id="ccFound" class="ccl-found" hidden></div></div>
+          <span class="hint">Optional. The calculation then shows on that candidate\u2019s card and the position, and fills the name, designation and current CTC.</span></div>
         <div class="grid">
           <div class="field wide"><label for="ccName">Name</label><input id="ccName" maxlength="120" value="${esc(f.name)}" autocomplete="off"></div>
           <div class="field"><label for="ccGrade">Grade</label><select id="ccGrade">${opts(grades.map(g => g.grade), f.grade)}</select></div>
@@ -4005,6 +4016,7 @@ function ctcCalc(el, R, v) {
     </div>`;
   const fillDesig = () => { const g = grades.find(x => x.grade === f.grade); $('#ccDesigList').innerHTML = (g && g.designations.length ? g.designations : allDesig).map(d => `<option value="${esc(d)}">`).join(''); };
   fillDesig();
+  ctcLinkPicker($('#ccLinkBox'), f, () => ctcCalc(el, R, v));
   const num = s => Number(String(s || '').replace(/[^\d.]/g, '')) || 0;
   let last = null;
   const perN = () => H.per === 'year' ? 12 : 1;
@@ -4100,7 +4112,7 @@ function ctcCalc(el, R, v) {
     };
     const save = async () => {
       const rec = await api('apiCtcSave', { id: f.saved && f.saved.status === 'Draft' ? f.saved.id : '', rerunOf: f.rerunOf ? f.rerunOf.id : '', basis: f.basis, target: num(f.target),
-        codes: f.codes, amounts: { stipend: num(f.amounts.stipend) }, name: f.name, designation: f.designation, grade: f.grade, by: f.by, hike: H });
+        codes: f.codes, amounts: { stipend: num(f.amounts.stipend) }, name: f.name, designation: f.designation, grade: f.grade, by: f.by, hike: H, candidateId: f.link.candidateId, lineId: f.link.lineId });
       if (rec.result.totals.totalCtc !== r.totals.totalCtc) throw new Error('The server worked out a different Total CTC. Reload the page and try again.');
       f.saved = Object.assign(rec, { sig: ctcSig(f) }); S.ctcList = null;
       return rec;
@@ -4198,6 +4210,102 @@ function ctcHistory(R) {
       <div class="sub">Made by ${esc(x.by)}${x.at ? ' on ' + esc(x.at) : ''}${x.activatedBy ? ` · activated by ${esc(x.activatedBy)}${x.activatedAt ? ' on ' + esc(x.activatedAt) : ''}` : ''}</div></div>`).join('')}`);
 }
 
+/* ---- Link to a candidate or position ---- */
+/** "6.5 LPA", "12 lakh", "85000 pm" -> { amount, per }; anything unclear (a bare number) is left for the recruiter to enter. */
+function ctcParseMoney(text) {
+  const t = String(text || '').trim(); if (!t) return null;
+  const m = t.replace(/,/g, '').match(/\d+(\.\d+)?/); if (!m) return null;
+  const n = parseFloat(m[0]); if (!(n > 0)) return null;
+  if (/(\d)\s*(lpa|lakhs?|lacs?|l)\b/i.test(t.replace(/,/g, ''))) return { amount: Math.round(n * 1e5), per: 'year' };
+  if (/\b(pm|p\.m\.?|per month|monthly|\/m|\/month)\b/i.test(t)) return { amount: Math.round(n), per: 'month' };
+  if (/\b(pa|p\.a\.?|per annum|yearly|annual|\/year)\b/i.test(t)) return { amount: Math.round(n), per: 'year' };
+  return null;
+}
+function ctcNewInput(R) {
+  const cfg = R.active.config, fk = Object.keys(cfg.flags);
+  return { version: R.active.id, basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', by: 'amount', hike: ctcHikeDefaults(), amounts: {},
+    codes: Object.fromEntries(fk.map(k => [k, String(cfg.flags[k].default)])), link: { candidateId: '', candidate: '', lineId: '', position: '' } };
+}
+function ctcLineLabel(l) { return [l.MRF_No, l.Position].filter(Boolean).join(' · '); }
+function ctcFillFromLine(f, l) {
+  f.link.lineId = l.Line_ID; f.link.position = ctcLineLabel(l);
+  if (!f.designation) f.designation = l.Designation || l.Position || '';
+  if (!f.grade) f.grade = l.Grade || '';
+}
+/** Name, and the current and expected CTC on file as the hike comparison's current pay and ask (only when the text is clear). */
+function ctcFillFromCandidate(f, c) {
+  f.link.candidateId = c.Candidate_ID; f.link.candidate = c.Name || '';
+  if (!f.name) f.name = c.Name || '';
+  const H = f.hike = f.hike || ctcHikeDefaults(), cur = ctcParseMoney(c.Current_CTC), ask = ctcParseMoney(c.Expected_CTC);
+  f.hikeNote = [c.Current_CTC ? `current “${c.Current_CTC}”` : '', c.Expected_CTC ? `expected “${c.Expected_CTC}”` : ''].filter(Boolean).join(', ');
+  const per = (cur || ask || {}).per;
+  if (per && !H.ctc && !H.ask) H.per = per;
+  const to = x => !x ? '' : String(H.per === x.per ? x.amount : H.per === 'year' ? x.amount * 12 : Math.round(x.amount / 12));
+  if (cur && !H.ctc) H.ctc = to(cur);
+  if (ask && !H.ask) { H.ask = to(ask); H.askBasis = 'total_ctc'; }
+}
+/** Starts a calculation from a candidate's card or a position (Calculator tab, link and details filled in). */
+function ctcStart(from) { S.ctcFrom = from; S.ctcTab = 'calc'; S.ctcIn = null; closeDrawer(); try { $$('dialog[open]').forEach(x => x.close()); } catch (e) { } go('ctc', true); }
+async function ctcApplyFrom(R) {
+  const from = S.ctcFrom; S.ctcFrom = null; if (!from) return;
+  const f = S.ctcIn = ctcNewInput(R);
+  try { if (from.lineId) { await loadPositions(); const l = lineById(from.lineId); if (l) ctcFillFromLine(f, l); } } catch (e) { }
+  try { if (from.candId) { const c = await api('apiGetCandidate', from.candId); ctcFillFromCandidate(f, c); } } catch (e) { }
+}
+/** One search box over candidates and positions; picking one sets the link and fills what is empty. */
+function ctcLinkPicker(root, f, changed) {
+  const inp = $('#ccFind', root), list = $('#ccFound', root);
+  let loading = null;
+  const load = () => loading || (loading = Promise.all([loadCandidates().catch(() => []), loadPositions().catch(() => [])]));
+  const show = async () => {
+    const q = inp.value.trim().toLowerCase(); if (!q) { list.hidden = true; return; }
+    await load();
+    const cs = (S.candidates || []).filter(c => [c.Candidate_ID, c.Name, c.Mobile, c.Position].join(' ').toLowerCase().includes(q)).slice(0, 6);
+    const ls = (S.positions || []).filter(l => [l.MRF_No, l.Position, l.Dept, l.Line_ID].join(' ').toLowerCase().includes(q)).sort((a, b) => (a.Position_Status === 'Open' ? 0 : 1) - (b.Position_Status === 'Open' ? 0 : 1)).slice(0, 6);
+    list.innerHTML = (cs.length ? '<div class="ccf-h">Candidates</div>' + cs.map(c => `<button type="button" data-c="${esc(c.Candidate_ID)}"><b>${esc(c.Name)}</b><span>${esc(c.Candidate_ID)}${c.Position ? ' · ' + esc(c.Position) : ''}</span></button>`).join('') : '')
+      + (ls.length ? '<div class="ccf-h">Positions</div>' + ls.map(l => `<button type="button" data-l="${esc(l.Line_ID)}"><b>${esc(ctcLineLabel(l))}</b><span>${esc(l.Dept || '')} · ${esc(l.Position_Status || '')}</span></button>`).join('') : '')
+      || '<div class="ccf-h">Nothing found</div>';
+    list.hidden = false;
+    $$('button[data-c]', list).forEach(b => b.onclick = async () => {
+      list.hidden = true; inp.value = '';
+      try { const c = await api('apiGetCandidate', b.dataset.c); ctcFillFromCandidate(f, c); if (c.Line_ID && !f.link.lineId) { await loadPositions(); const l = lineById(c.Line_ID); if (l) ctcFillFromLine(f, l); } }
+      catch (e) { toast(e, true); return; }
+      changed();
+    });
+    $$('button[data-l]', list).forEach(b => b.onclick = () => { list.hidden = true; inp.value = ''; const l = lineById(b.dataset.l); if (l) ctcFillFromLine(f, l); changed(); });
+  };
+  inp.oninput = debounce(show, 150); inp.onfocus = () => { load(); };
+  $$('[data-unlink]', root).forEach(b => b.onclick = () => { if (b.dataset.unlink === 'c') { f.link.candidateId = ''; f.link.candidate = ''; } else { f.link.lineId = ''; f.link.position = ''; } changed(); });
+}
+/** The "CTC" block on a candidate's card, a candidate profile or a position: linked calculations, Calculate CTC, attach a saved one. */
+async function ctcLinkSection(el, o) {
+  if (!el || !can('ctc_use')) return;
+  el.innerHTML = '<section class="app-sec ctc-link-sec"><h3>CTC</h3><p class="hint">Loading…</p></section>';
+  let L; try { L = await api('apiCtcFor', o.kind, o.id); } catch (e) { el.innerHTML = ''; return; }
+  if (!el.isConnected) return;
+  const rows = L.rows.slice().sort((a, b) => (o.lineId && b.lineId === o.lineId) - (o.lineId && a.lineId === o.lineId));
+  const open = id => { S.ctcOpenId = id; S.ctcTab = 'saved'; closeDrawer(); try { $$('dialog[open]').forEach(x => x.close()); } catch (e) { } go('ctc', true); };
+  el.innerHTML = `<section class="app-sec ctc-link-sec"><h3>CTC <span class="hint">calculations linked to this ${o.kind === 'line' ? 'position' : 'candidate'}</span></h3>
+    ${rows.length ? `<ul class="ctc-link-list">${rows.map(r => `<li><button type="button" class="linklike" data-open="${esc(r.id)}"><b>${esc(r.id)}</b></button> <span class="ctc-st ${ctcStClass(r.status)}">${esc(CTC_STATUS[r.status] || r.status)}</span>
+        <span class="ctc-ll-n">${inr(r.totalCtc)} CTC · ${inr(r.net)} net a month</span><span class="sub">${o.kind === 'line' ? esc(r.candidate || r.name || 'No candidate') : esc(r.position || 'No position')} · rules ${esc(r.version)}${r.version !== L.active ? ' (older)' : ''} · ${fmtDate(r.day)}${r.lineId && o.lineId && r.lineId !== o.lineId ? ' · another position' : ''}</span></li>`).join('')}</ul>`
+      : '<p class="hint" style="margin:0 0 8px">No calculation linked yet.</p>'}
+    <div class="btn-row"><button class="btn sm primary" data-new>Calculate CTC</button><button class="btn sm" data-att>Attach a saved calculation</button></div><div data-attbox></div></section>`;
+  $$('[data-open]', el).forEach(b => b.onclick = () => open(b.dataset.open));
+  $('[data-new]', el).onclick = () => ctcStart({ candId: o.candId || '', lineId: o.lineId || '' });
+  $('[data-att]', el).onclick = async e => {
+    const box = $('[data-attbox]', el); box.innerHTML = '<p class="hint">Loading…</p>';
+    try { S.ctcList = S.ctcList || await api('apiCtcList', {}); } catch (err) { box.innerHTML = `<p class="miss">${esc(err)}</p>`; return; }
+    const mine = S.ctcList.rows.filter(r => !r.candidateId && !r.lineId && r.by === S.boot.user.email);
+    if (!mine.length) { box.innerHTML = '<p class="hint">You have no saved calculation that is not linked to someone yet.</p>'; return; }
+    box.innerHTML = `<div class="rs-row"><select aria-label="Saved calculation">${opts(mine.map(r => [r.id, `${r.id} · ${r.name || 'no name'} · ${inr(r.totalCtc)} CTC · ${r.status}`]), '', false)}</select><button class="btn sm primary">Attach</button></div>`;
+    $('button', box).onclick = async b => {
+      busy(b.target, true, 'Attaching…');
+      try { await api('apiCtcLink', $('select', box).value, Object.assign(o.candId ? { candidateId: o.candId } : {}, o.lineId ? { lineId: o.lineId } : {})); S.ctcList = null; toast('Attached.'); ctcLinkSection(el, o); }
+      catch (err) { toast(err, true); busy(b.target, false, 'Attach'); }
+    };
+  };
+}
+
 /* ---- Saved calculations ---- */
 async function ctcSaved(el, R, v) {
   const f = S.ctcF = S.ctcF || { q: '', status: '' };
@@ -4207,9 +4315,9 @@ async function ctcSaved(el, R, v) {
   const basisLabel = id => (R.active.config.basisList.find(b => b.id === id) || {}).label || id;
   const draw = () => {
     const q = f.q.trim().toLowerCase();
-    const rows = L.rows.filter(r => (!f.status || r.status === f.status) && (!q || [r.id, r.name, r.designation, r.grade, r.by].join(' ').toLowerCase().includes(q)));
-    $('#csList').innerHTML = rows.length ? `<div class="table-wrap"><table class="ctc-list"><thead><tr><th>Ref</th><th>Name</th><th>Designation · grade</th><th>Target</th><th class="num">Total CTC / month</th><th class="num">Net / month</th><th>Rules</th><th>Status</th><th>Made</th></tr></thead><tbody>
-      ${rows.map(r => `<tr data-id="${esc(r.id)}" tabindex="0"><td><b>${esc(r.id)}</b></td><td>${esc(r.name) || '<span class="sub">—</span>'}</td><td>${esc([r.designation, r.grade].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
+    const rows = L.rows.filter(r => (!f.status || r.status === f.status) && (!q || [r.id, r.name, r.designation, r.grade, r.by, r.candidate, r.position].join(' ').toLowerCase().includes(q)));
+    $('#csList').innerHTML = rows.length ? `<div class="table-wrap"><table class="ctc-list"><thead><tr><th>Ref</th><th>Name</th><th>For</th><th>Designation · grade</th><th>Target</th><th class="num">Total CTC / month</th><th class="num">Net / month</th><th>Rules</th><th>Status</th><th>Made</th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${esc(r.id)}" tabindex="0"><td><b>${esc(r.id)}</b></td><td>${esc(r.name) || '<span class="sub">—</span>'}</td><td>${r.candidate || r.position ? `${esc(r.candidate)}${r.position ? `<span class="sub">${esc(r.position)}</span>` : ''}` : '<span class="sub">—</span>'}</td><td>${esc([r.designation, r.grade].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
         <td>${esc(basisLabel(r.basis))} ${inr(r.target)}</td><td class="num">${inr(r.totalCtc)}</td><td class="num">${inr(r.net)}</td>
         <td>${esc(r.version)}${r.version !== L.active ? '<span class="sub">older rules</span>' : ''}</td>
         <td><span class="ctc-st ${ctcStClass(r.status)}">${esc(CTC_STATUS[r.status] || r.status)}</span>${r.rerunOf ? `<span class="sub">re-run of ${esc(r.rerunOf)}</span>` : ''}${r.supersededBy ? `<span class="sub">by ${esc(r.supersededBy)}</span>` : ''}</td>
@@ -4229,8 +4337,8 @@ async function ctcSaved(el, R, v) {
   if ($('#csWait')) $('#csWait').onclick = () => { f.status = 'Pending approval'; $('#csSt').value = f.status; draw(); };
   $('#csQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
   $('#csSt').onchange = e => { f.status = e.target.value; draw(); };
-  $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total CTC', 'Gross', 'Net', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
-    L.rows.map(r => [r.id, r.status, r.name, r.designation, r.grade, basisLabel(r.basis), r.target, r.totalCtc, r.gross, r.net, r.version, r.rerunOf, r.supersededBy, r.by, r.at, r.issuedBy, r.issuedAt, r.letter]));
+  $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Candidate', 'Position', 'Designation', 'Grade', 'Basis', 'Target', 'Total CTC', 'Gross', 'Net', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
+    L.rows.map(r => [r.id, r.status, r.name, r.candidate, r.position, r.designation, r.grade, basisLabel(r.basis), r.target, r.totalCtc, r.gross, r.net, r.version, r.rerunOf, r.supersededBy, r.by, r.at, r.issuedBy, r.issuedAt, r.letter]));
   draw();
 }
 async function ctcOpen(id, R, v) {
@@ -4240,6 +4348,7 @@ async function ctcOpen(id, R, v) {
   $('#drawerBody').innerHTML = `<div class="ctc-vh"><div class="dp-h"><b>${esc(c.name || 'No name given')}</b><span class="ctc-st ${ctcStClass(c.status)}">${esc(c.status)}</span></div>
       <div>${esc([c.designation, c.grade].filter(Boolean).join(' · ')) || '<span class="sub">No designation or grade</span>'}</div>
       <div class="sub">Rules ${esc(c.version)}${older ? ' (older than the rules in force, ' + esc(R.active.id) + ')' : ''} · made by ${esc(c.by)} on ${esc(c.at)}${c.issuedAt ? ` · issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}` : ''}</div>
+      ${c.candidate || c.position ? `<div class="sub">For ${[c.candidate ? 'candidate ' + esc(c.candidate) : '', c.position ? 'position ' + esc(c.position) : ''].filter(Boolean).join(' \u00b7 ')} <button class="linklike" id="coUnlink">Remove link</button></div>` : ''}
       ${c.rerunOf ? `<div class="sub">Re-run of ${esc(c.rerunOf)}</div>` : ''}${c.supersededBy ? `<div class="sub">Superseded by ${esc(c.supersededBy)}</div>` : ''}</div>
     <div class="readout"><div><span class="sub">Total CTC</span><b>${inr(T.totalCtc)}</b></div><div><span class="sub">Gross</span><b>${inr(T.gross)}</b></div><div><span class="sub">Net in-hand</span><b>${inr(T.net)}</b></div></div>
     ${c.status === 'Draft' && c.decisionNote ? `<div class="ctc-status warn" style="margin-top:12px">Returned by ${esc(c.decidedBy)} on ${esc(c.decidedAt)}: ${esc(c.decisionNote)}</div>` : ''}
@@ -4253,13 +4362,14 @@ async function ctcOpen(id, R, v) {
   const load = rerun => {
     const i = c.inputs;
     S.ctcIn = { version: R.active.id, basis: i.basis, target: String(i.target), name: i.name || '', designation: i.designation || '', grade: i.grade || '', codes: Object.assign({}, i.codes), amounts: Object.assign({}, i.amounts),
-      by: i.by || 'amount', hike: Object.assign(ctcHikeDefaults(), i.hike || {}) };
+      by: i.by || 'amount', hike: Object.assign(ctcHikeDefaults(), i.hike || {}), link: { candidateId: c.candidateId || '', candidate: c.candidate || '', lineId: c.lineId || '', position: c.position || '' } };
     const cfg = R.active.config;
     Object.keys(cfg.flags).forEach(k => { if (S.ctcIn.codes[k] === undefined) S.ctcIn.codes[k] = String(cfg.flags[k].default); });
     if (rerun) S.ctcIn.rerunOf = { id: c.id, version: c.version, result: c.result };
     else S.ctcIn.saved = Object.assign({}, c, { sig: ctcSig(S.ctcIn) });
     closeDrawer(); S.ctcTab = 'calc'; viewCtc(v);
   };
+  if ($('#coUnlink')) $('#coUnlink').onclick = async e => { busy(e.target, true); try { await api('apiCtcLink', c.id, { candidateId: '', lineId: '' }); S.ctcList = null; toast('Link removed.'); ctcOpen(id, R, v); } catch (err) { toast(err, true); busy(e.target, false); } };
   if ($('#coLetter')) $('#coLetter').onclick = () => { closeDrawer(); ctcLetter(c, R, () => { S.ctcList = null; }); };
   if ($('#coEdit')) $('#coEdit').onclick = () => load(false);
   if ($('#coRerun')) $('#coRerun').onclick = () => load(true);
@@ -4911,6 +5021,7 @@ async function viewPipeline(v) {
             : P.hasFinalSq && canEdit && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
+          ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
           ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
           <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.by)}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
@@ -4925,6 +5036,7 @@ async function viewPipeline(v) {
     };
     bindAttachmentViews('APP', a.App_ID, d);
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
+    if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });
     if ($('#apScrShare', d)) $('#apScrShare', d).onclick = () => { d.close(); openShareDept(a.App_ID, refreshBoard); };
