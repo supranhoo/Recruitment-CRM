@@ -3927,9 +3927,10 @@ async function viewBgv(v) {
   let B; try { B = S.bgv = await api('apiBgvList'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   if (!B.lead && ['vendors', 'rules', 'reports'].includes(f.tab)) f.tab = 'mine';
   const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', `All cases${B.all.toDecide && (B.decide || B.lead) ? ' · ' + B.all.toDecide + ' to decide' : ''}`]].concat(B.lead ? [['reports', 'Reports'], ['vendors', 'Vendors'], ['rules', 'Rules']] : []);
-  v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div></div>
+  v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div><div class="page-actions"><button class="btn" id="bgImport">Import vendor update</button></div></div>
     <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${f.tab === k}">${esc(l)}</button>`).join('')}</div><div id="bgBody" style="margin-top:16px"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewBgv(v); });
+  $('#bgImport').onclick = () => openBgvImport(() => viewBgv(v));
   if (S.bgvOpenId) { const id = S.bgvOpenId; S.bgvOpenId = null; setTimeout(() => openBgvCase(id, () => viewBgv(v)), 0); }
   if (f.tab === 'reports') return bgvReports($('#bgBody'), B, v);
   if (f.tab === 'vendors') return bgvVendors($('#bgBody'), B, v);
@@ -4015,6 +4016,7 @@ async function openBgvCase(id, after) {
       <h4>Documents</h4><div id="bgDocs">${wrapForm(form([fileField('Consent_File', 'Candidate consent (signed)'), fileField('Report_File', 'Vendor / employer report'), fileField('Initiation_Proof_File', 'Proof that the verification was started')], { Consent_File: c.consentFile, Report_File: c.reportFile, Initiation_Proof_File: c.proofFile }))}</div>
       <div class="drawer-actions" style="position:static;margin-top:0"><button class="btn" id="bdUp">Upload chosen files</button></div>
       <h4>Timeline</h4>
+      ${(X.templates || []).length ? `<div class="rs-row"><select id="bmTpl" aria-label="Email template">${opts(X.templates.map(t => [t.id, t.label]), '', true)}</select><button class="btn sm" id="bmMail" disabled>Email\u2026</button><span class="hint">Fills the wording in; you send it from your own email.</span></div>` : ''}
       <div class="rs-row"><select id="blKind" aria-label="Kind of entry">${opts(X.logKinds, 'Note', false)}</select><input id="blNote" placeholder="What happened, who was spoken to, when to chase next" style="flex:1;min-width:220px" maxlength="500"><button class="btn sm" id="blAdd">Add</button></div>
       <ol class="hist bgv-log">${X.log.map(l => `<li><b>${esc(l.kind)}</b>${l.to ? ` · ${l.from ? esc(l.from) + ' → ' : ''}${esc(l.to)}` : ''} <span class="sub">${esc(l.at)} · ${esc(String(l.by).split('@')[0])}</span>${l.note ? `<div>${esc(l.note)}</div>` : ''}</li>`).join('')}</ol>`;
     wire(X);
@@ -4037,6 +4039,7 @@ async function openBgvCase(id, after) {
     if ($('#bkAdd')) $('#bkAdd').onclick = () => { if (!$('#bkType').value) return toast('Choose the check to add.', true); run(() => api('apiBgvCheckSave', c.id, { type: $('#bkType').value, subject: $('#bkSubject').value }), 'Check added.'); };
     $('#boSave').onclick = () => run(() => api('apiBgvSave', c.id, { outcome: $('#boOutcome').value, remarks: $('#boRemarks').value }), 'Saved.');
     if ($('#bdSave')) $('#bdSave').onclick = () => run(() => api('apiBgvDecide', c.id, { decision: $('#bdDec').value, note: $('#bdNote').value }), 'Decision recorded.');
+    if ($('#bmTpl')) { $('#bmTpl').onchange = () => { $('#bmMail').disabled = !$('#bmTpl').value; }; $('#bmMail').onclick = () => { const t = X.templates.find(x => x.id === $('#bmTpl').value); if (t) bgvEmailDialog(X, t, async () => { try { draw(await api('apiBgvCase', c.id)); } catch (e) { } }); }; }
     $('#blAdd').onclick = () => run(() => api('apiBgvNote', c.id, $('#blKind').value, $('#blNote').value), 'Added.');
     bindAttachmentViews('BGV', c.id, body);
     $('#bdUp').onclick = async e => {
@@ -4090,6 +4093,123 @@ async function bgvReports(el, B, v) {
   load();
 }
 
+/* ---- Vendor spreadsheet import ---- */
+/** Splits pasted or uploaded text into rows of cells (tab, semicolon or comma separated; quoted cells allowed). */
+function bgvSplitText(text) {
+  const t = String(text || '').replace(/\r\n?/g, '\n').replace(/^﻿/, '');
+  const first = t.split('\n').find(l => l.trim()) || '';
+  const delim = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"' && !cell) q = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.map(r => r.map(c => String(c).trim())).filter(r => r.some(c => c));
+}
+const BGV_COLS = [['ref', 'Case number or vendor reference', /case|ref|request|bgv\s*id|file\s*(no|number)|application\s*(no|id)/i], ['check', 'Check', /check|component|verification|module|type of/i],
+  ['status', 'Status', /status|result|outcome|verdict/i], ['finding', 'Remarks / finding', /remark|finding|comment|detail|observation|note/i], ['date', 'Date (done on)', /date|completed|closed|verified\s*on|report/i]];
+/** Which column holds what, from the header names. Returns { ref: 0, check: 2, ... } (-1 when not found). */
+function bgvGuessCols(header) {
+  const used = new Set(), out = {};
+  BGV_COLS.forEach(([k, , re]) => { const i = header.findIndex((h, j) => !used.has(j) && re.test(h)); out[k] = i; if (i >= 0) used.add(i); });
+  return out;
+}
+async function bgvReadFile(file) {
+  if (/\.xlsx?$/i.test(file.name)) {
+    await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js');
+    const wb = window.XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' }).map(r => r.map(c => String(c).trim())).filter(r => r.some(c => c));
+  }
+  return bgvSplitText(await file.text());
+}
+function openBgvImport(after) {
+  const st = { rows: [], header: [], map: {}, result: null };
+  const body = openDrawer('Import a vendor update', `<p class="hint" style="margin-top:0">Update many cases at once from the vendor’s status sheet. Each row names a case (our case number, e.g. BGV-00012, or the vendor’s own reference), the check, its status and, for a discrepancy or an unverified result, the vendor’s remark. Nothing is saved until you check the file and apply it.</p>
+    <div class="field wide"><label for="biFile">Spreadsheet or CSV file</label><input id="biFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt"></div>
+    <div class="field wide"><label for="biPaste">…or paste the rows (copy the cells from Excel, with the heading row)</label><textarea id="biPaste" rows="5" placeholder="Reference\tCheck\tStatus\tRemarks\tDate"></textarea></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" id="biRead">Read the file</button></div>
+    <div id="biMap"></div><div id="biOut"></div>`, 'bgv-drawer');
+  const readRows = rows => {
+    if (!rows.length) { toast('The file has no rows.', true); return; }
+    const hdr = rows[0], looksHeader = hdr.filter(c => /[A-Za-z]{3,}/.test(c)).length >= 2;
+    st.header = looksHeader ? hdr : hdr.map((_, i) => 'Column ' + (i + 1)); st.rows = looksHeader ? rows.slice(1) : rows; st.map = bgvGuessCols(st.header); st.result = null;
+    drawMap();
+  };
+  const drawMap = () => {
+    $('#biOut', body).innerHTML = '';
+    $('#biMap', body).innerHTML = `<h4>${st.rows.length} row${st.rows.length === 1 ? '' : 's'} read. Which column is which?</h4>
+      <div class="grid">${BGV_COLS.map(([k, l]) => `<div class="field"><label for="bm_${k}">${l}${k === 'finding' || k === 'date' ? ' (optional)' : ''}</label><select id="bm_${k}" data-k="${k}">${opts(st.header.map((h, i) => [String(i), h || ('Column ' + (i + 1))]), st.map[k] >= 0 ? String(st.map[k]) : '', true)}</select></div>`).join('')}</div>
+      <label class="chk"><input type="checkbox" id="biAdv" checked> Move a case to “Report received” when every check is back, or to “Insufficiency” when the vendor waits for the candidate</label>
+      <div class="drawer-actions" style="position:static"><button class="btn primary" id="biCheck">Check the file</button></div>`;
+    $$('select[data-k]', body).forEach(s => s.onchange = () => { st.map[s.dataset.k] = s.value === '' ? -1 : Number(s.value); });
+    $('#biCheck', body).onclick = () => run(false);
+  };
+  const payload = () => st.rows.map(r => { const g = k => st.map[k] >= 0 ? (r[st.map[k]] == null ? '' : r[st.map[k]]) : ''; return { ref: g('ref'), check: g('check'), status: g('status'), finding: g('finding'), date: g('date') }; });
+  const run = async apply => {
+    if (st.map.ref < 0 || st.map.check < 0 || st.map.status < 0) return toast('Choose the case reference, check and status columns.', true);
+    const b = $(apply ? '#biApply' : '#biCheck', body); busy(b, true, apply ? 'Applying…' : 'Checking…');
+    try {
+      const R = await api('apiBgvImport', payload(), { apply, advance: $('#biAdv', body).checked, skipErrors: apply && !!$('#biSkip', body) && $('#biSkip', body).checked });
+      st.result = R; if (apply) { toast(`Applied: ${R.counts.ok} row${R.counts.ok === 1 ? '' : 's'} on ${R.counts.cases} case${R.counts.cases === 1 ? '' : 's'}.`); if (after) after(); }
+      drawResult(R); busy(b, false, apply ? 'Apply' : 'Check the file');
+    } catch (e) { toast(e, true); busy(b, false, apply ? 'Apply' : 'Check the file'); }
+  };
+  const drawResult = R => {
+    const bad = R.counts.errors, ok = R.counts.ok;
+    $('#biOut', body).innerHTML = `<h4>${R.applied ? 'Applied' : 'Check result'}</h4>
+      <div class="ctc-status ${bad ? (ok ? 'warn' : 'bad') : 'ok'}">${R.applied ? '✔ Done. ' : ''}${ok} row${ok === 1 ? '' : 's'} fine on ${R.counts.cases} case${R.counts.cases === 1 ? '' : 's'}${bad ? `, <b>${bad} with a problem</b>` : ''}.</div>
+      ${R.cases.length ? `<ul class="bgv-imp-cases">${R.cases.map(c => `<li><b>${esc(c.id)}</b> ${esc(c.candidate)} · ${esc(c.type)}: ${c.checks} check${c.checks === 1 ? '' : 's'} updated · ${c.from === c.to ? esc(c.from) : `${esc(c.from)} → <b>${esc(c.to)}</b>`}${c.stillOpen ? ` · ${c.stillOpen} check${c.stillOpen === 1 ? '' : 's'} still open` : ''}</li>`).join('')}</ul>` : ''}
+      <div class="table-wrap"><table class="bgv-table"><thead><tr><th>Row</th><th>Case</th><th>Check</th><th>Status</th><th>Date</th><th>Result</th></tr></thead><tbody>
+        ${R.rows.map(r => `<tr class="${r.error ? 'bad' : ''}"><td>${r.row}</td><td>${esc(r.caseId || r.ref)}<span class="sub">${esc(r.candidate)}</span></td><td>${esc(r.check)}</td><td>${esc(r.status)}</td><td class="nw">${r.date ? fmtDate(r.date) : ''}</td><td>${r.error ? `<span class="miss">${esc(r.error)}</span>` : esc(r.warn || r.action)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="drawer-actions" style="position:static">${R.applied ? '' : `${bad && ok ? '<label class="chk"><input type="checkbox" id="biSkip"> Apply the rows that are fine and leave the others</label>' : ''}<button class="btn primary" id="biApply" ${ok && !bad ? '' : (ok ? '' : 'disabled')}>Apply${ok ? ` ${ok} row${ok === 1 ? '' : 's'}` : ''}</button>`}<button class="btn" id="biCsv">Download this result</button></div>`;
+    if ($('#biApply', body)) $('#biApply', body).onclick = () => { if (bad && !$('#biSkip', body).checked) return toast('Fix the problems in the file, or tick “Apply the rows that are fine”.', true); run(true); };
+    $('#biCsv', body).onclick = () => csvSave(`bgv-import-${today()}.csv`, ['Row', 'Case', 'Candidate', 'Check', 'Status', 'Date', 'Result'], R.rows.map(r => [r.row, r.caseId || r.ref, r.candidate, r.check, r.status, r.date, r.error || r.warn || r.action]));
+  };
+  $('#biRead', body).onclick = async () => {
+    const f = $('#biFile', body).files[0], pasted = $('#biPaste', body).value;
+    try { readRows(f ? await bgvReadFile(f) : bgvSplitText(pasted)); } catch (e) { toast(String(e && e.message || e), true); }
+  };
+}
+
+/* ---- Emails (prepared in the recruiter's own email app; nothing is sent from the CRM) ---- */
+function bgvMailFill(text, X, to) {
+  const c = X.c, vend = X.vendors.find(v => v.id === c.vendor) || {}, days = c.initiated ? Math.max(0, Math.round((Date.parse(today()) - Date.parse(c.initiated)) / 86400000)) : '';
+  const checks = X.checks.filter(k => k.status !== 'Not applicable').map(k => `- ${k.type}${k.subject ? ' (' + k.subject + ')' : ''}${['Pending', 'In progress'].includes(k.status) ? '' : ': ' + k.status.toLowerCase()}`).join('\n') || '- (no checks added yet)';
+  const v = { candidate: c.candidate || 'the candidate', position: c.position, mrf: c.mrf, dept: c.dept, company: X.rules.company || 'BFCL', type: c.type.toLowerCase(), case: c.id, start_by: c.due ? fmtDate(c.due) : '', started: c.initiated ? fmtDate(c.initiated) : 'not yet',
+    days: String(days), vendor: vend.name || (c.vendor === 'DIRECT' ? 'verification' : 'vendor'), vendor_ref: c.vendorRef || '(awaited)', vendor_tat: String(X.rules.vendorTatDays), checks, recruiter: c.recruiter };
+  return String(text).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => k in v ? v[k] : m);
+}
+async function bgvEmailDialog(X, tpl, after) {
+  const c = X.c; let to = '';
+  try { if (tpl.to === 'candidate' && c.candId) to = (await api('apiGetCandidate', c.candId)).Email || ''; } catch (e) { }
+  if (tpl.to === 'vendor') to = (X.vendors.find(v => v.id === c.vendor) || {}).email || '';
+  let d = $('#bgmDialog');
+  if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="bgmDialog" class="pm-dialog mid" aria-labelledby="bgmTitle"></dialog>'); d = $('#bgmDialog'); }
+  d.innerHTML = `<h2 id="bgmTitle">${esc(tpl.label)}</h2><p class="hint" style="margin-top:0">${tpl.to === 'employer' ? 'Add the employer’s HR email address.' : !to ? 'No email address on file: type it in.' : ''} The message opens in your own email app; add the signed consent or other attachments there. Nothing is sent from here.</p>
+    <div class="grid"><div class="field wide"><label for="bgmTo">To</label><input id="bgmTo" value="${esc(to)}" type="email"></div><div class="field wide"><label for="bgmSub">Subject</label><input id="bgmSub" value="${esc(bgvMailFill(tpl.subject, X))}"></div>
+      <div class="field wide"><label for="bgmBody">Message</label><textarea id="bgmBody" rows="14">${esc(bgvMailFill(tpl.body, X))}</textarea></div></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn" id="bgmCopy">Copy</button><button class="btn primary" id="bgmOpen">Open in my email app</button></div>`;
+  $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+  const log = async how => { try { await api('apiBgvNote', c.id, 'Email', `${tpl.label}: ${how}${$('#bgmTo', d).value ? ' to ' + $('#bgmTo', d).value : ''}`); if (after) after(); } catch (e) { } };
+  $('#bgmCopy', d).onclick = async () => {
+    const txt = `To: ${$('#bgmTo', d).value}\nSubject: ${$('#bgmSub', d).value}\n\n${$('#bgmBody', d).value}`;
+    try { await navigator.clipboard.writeText(txt); toast('Copied.'); } catch (e) { const ta = $('#bgmBody', d); ta.select(); document.execCommand && document.execCommand('copy'); toast('Copied the message.'); }
+    log('copied');
+  };
+  $('#bgmOpen', d).onclick = () => {
+    const url = `mailto:${encodeURIComponent($('#bgmTo', d).value)}?subject=${encodeURIComponent($('#bgmSub', d).value)}&body=${encodeURIComponent($('#bgmBody', d).value)}`;
+    if (url.length > 1900) toast('This message is long for some email apps. If it does not open, use Copy.', true);
+    window.location.href = url; log('opened in the email app');
+  };
+  if (!d.open) d.showModal();
+}
+
 /* ---- Vendors and rules ---- */
 function bgvVendors(el, B, v) {
   const vend = B.vendors;
@@ -4120,6 +4240,10 @@ async function bgvRulesTab(el, B, v) {
     <div class="grid">${R.nums.map(([k, l, lo, hi]) => `<div class="field"><label for="br_${k}">${esc(l)}</label><input id="br_${k}" data-k="${k}" type="number" min="${lo}" max="${hi}" step="1" value="${esc(cfg[k])}" ${R.canEdit ? '' : 'disabled'}></div>`).join('')}
       <div class="field wide"><label>Who is in scope</label><div class="rs-row"><label class="chk"><input type="checkbox" id="brMgr" ${cfg.scope.managerPlus ? 'checked' : ''} ${R.canEdit ? '' : 'disabled'}> Manager and above (M1–M4)</label>
         <label class="chk"><input type="checkbox" id="brFlag" ${cfg.scope.flagged ? 'checked' : ''} ${R.canEdit ? '' : 'disabled'}> Positions flagged “BGV required: Yes”</label></div></div></div>
+    <h3 style="margin:16px 0 6px">Emails</h3><div class="grid"><div class="field"><label for="brCompany">Company name in the emails</label><input id="brCompany" maxlength="60" value="${esc(cfg.company || '')}" ${R.canEdit ? '' : 'disabled'}></div>
+      <div class="field wide"><label class="chk"><input type="checkbox" id="brJoin" ${cfg.joinWarning !== false ? 'checked' : ''} ${R.canEdit ? '' : 'disabled'}> Warn when a card is moved to Joined while the previous-employer BGV is still open</label></div></div>
+    <p class="hint">Wording for the emails recruiters send. Placeholders: ${R.placeholders.map(x => '<code>{{' + esc(x) + '}}</code>').join(' ')}</p>
+    ${R.templateList.map(t => { const tp = (cfg.templates || {})[t.id] || { subject: '', body: '' }; return `<fieldset class="bgv-move" data-tpl="${esc(t.id)}"><legend>${esc(t.label)} <span class="sub">to the ${esc(t.to)}</span></legend><div class="field wide"><label for="bt_s_${esc(t.id)}">Subject</label><input id="bt_s_${esc(t.id)}" class="bt-s" maxlength="200" value="${esc(tp.subject)}" ${R.canEdit ? '' : 'disabled'}></div><div class="field wide"><label for="bt_b_${esc(t.id)}">Message</label><textarea id="bt_b_${esc(t.id)}" class="bt-b" rows="6" maxlength="3000" ${R.canEdit ? '' : 'disabled'}>${esc(tp.body)}</textarea></div></fieldset>`; }).join('')}
     ${R.canEdit ? `<div class="grid" style="margin-top:12px"><div class="field"><label for="brEff">Takes effect from</label><input id="brEff" type="date" min="${R.today}" value="${R.today}"></div>
       <div class="field"><label for="brReason">Reason</label><select id="brReason">${opts(['Policy change', 'Correction', 'Other'], '')}</select></div>
       <div class="field wide"><label for="brRemark">Remark (what changed and why)</label><textarea id="brRemark" rows="2" maxlength="600"></textarea></div></div>
@@ -4128,7 +4252,7 @@ async function bgvRulesTab(el, B, v) {
   if ($('#brSave')) $('#brSave').onclick = async e => {
     busy(e.target, true, 'Saving…');
     try { const values = {}; $$('input[data-k]', el).forEach(i => { values[i.dataset.k] = i.value; });
-      await api('apiBgvRulesSave', { values, scope: { managerPlus: $('#brMgr').checked, flagged: $('#brFlag').checked }, eff: $('#brEff').value, reason: $('#brReason').value, remark: $('#brRemark').value.trim() });
+      await api('apiBgvRulesSave', { values, scope: { managerPlus: $('#brMgr').checked, flagged: $('#brFlag').checked }, company: $('#brCompany').value, joinWarning: $('#brJoin').checked, templates: Object.fromEntries($$('fieldset[data-tpl]', el).map(fs => [fs.dataset.tpl, { subject: $('.bt-s', fs).value, body: $('.bt-b', fs).value }])), eff: $('#brEff').value, reason: $('#brReason').value, remark: $('#brRemark').value.trim() });
       toast('Rules saved.'); viewBgv(v); }
     catch (err) { toast(err, true); busy(e.target, false, 'Save as a new version'); }
   };
@@ -5278,7 +5402,13 @@ async function viewPipeline(v) {
       const payload = collectStage(next, root, a);
       const b = $('#apMove'); busy(b, true, 'Saving\u2026');
       try {
-        let np = await api('apiMoveStage', a.App_ID, next, payload);
+        let np;
+        try { np = await api('apiMoveStage', a.App_ID, next, payload); }
+        catch (e0) {
+          const m0 = String((e0 && e0.message) || e0).replace(/^Error:\s*/, '');
+          if (!m0.startsWith('BGV open:') || !confirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
+          payload.bgvAck = true; np = await api('apiMoveStage', a.App_ID, next, payload);
+        }
         if ($$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
         await refreshLine(a.Line_ID);
         toast(`${a.cand.name} moved to ${P_NAMES[next]}`); after(np);
