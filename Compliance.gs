@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '33';
+const SCHEMA_VERSION = '34';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -217,11 +217,11 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
     if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
     if (['Pending', 'Approved'].indexOf(String(t.rec.Status)) < 0) throw new Error('Proof can be attached only to a pending or approved exemption.');
   }
-  if (entity === 'BGV') bgvRequireWork_(u, t.rec);
+  if (entity === 'BGV') { bgvRequireWork_(u, t.rec); if (t.rec.Purged_On) throw new Error('This case was purged under the retention rule. Files cannot be added.'); }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
   const ext = (String(fileName).match(/\.[a-z0-9]+$/i) || [''])[0];
   const isJd = entity === 'MRF' && field === 'JD_File';
-  const folder = isJd ? jdFolder_() : docFolder_(entity);
+  const folder = isJd ? jdFolder_() : entity === 'BGV' ? bgvUploadFolder_(t.rec) : docFolder_(entity);
   let name = isJd ? jdName_(t.rec, ext) : id + '_' + DOC_FIELDS[entity][field] + '_' + fmt_(new Date(), TZ, 'yyyyMMdd') + ext;
   if (isJd && folder.getFilesByName(name).hasNext()) name = name.slice(0, name.length - ext.length) + ' - ' + fmt_(new Date(), TZ, 'yyyy-MM-dd HHmm') + ext;
   const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), mimeType, name));
@@ -240,7 +240,8 @@ function apiGetDoc(entity, id, field) {
   if (!fid) throw new Error('No file is attached here yet.');
   let file;
   try { file = DriveApp.getFileById(fid); }
-  catch (e) { throw new Error('You do not have access to this file. Ask the CRM admin to run shareWithTeam.'); }
+  catch (e) { throw new Error(entity === 'BGV' ? 'You do not have access to this file. BGV files sit in a restricted folder; ask the admin to press "Sync Drive access" on the BGV tracker.' : 'You do not have access to this file. Ask the CRM admin to run shareWithTeam.'); }
+  if (entity === 'BGV') audit_(u, BGV_CASES_.name, id, 'File viewed', field, '', file.getName());
   const blob = file.getBlob();
   if (blob.getBytes().length > 15 * 1024 * 1024) throw new Error('This file is larger than 15 MB. Open it from Drive instead.');
   return { name: file.getName(), mime: blob.getContentType(), b64: Utilities.base64Encode(blob.getBytes()), url: file.getUrl() };
