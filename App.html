@@ -43,7 +43,7 @@ function apiCall(fn, args) {
     run[fn](...args);
   });
 }
-const SK_HEADS = {"ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
+const SK_HEADS = {"bgv": ["BGV tracker", "Background verification of new hires: previous employers and the current employer, owned by the position\u2019s recruiter."], "ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
 function skb(w, h, x) { return `<span class="sk" style="width:${w};height:${h}px;${x || ''}"></span>`; }
 function skw(a, b) { return (a + Math.floor(Math.random() * (b - a + 1))) + '%'; }
 function skHead(view, right) {
@@ -154,6 +154,7 @@ const NAV_ICON = {
   compliance: '<path d="M12 3 4.5 6v5.6c0 4.6 3.1 7.8 7.5 9.4 4.4-1.6 7.5-4.8 7.5-9.4V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
   panel: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h3"/>',
   jdm: '<path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14.5 3.5V8H19"/><path d="M10 12h6M10 15.5h6M10 19h3.5"/><path d="M4.5 7v14h11"/>',
+  bgv: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/><path d="m8.2 10.5 1.8 1.8 3-3.3"/>',
   ctc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01M8.5 14.5h.01M12 14.5h.01M15.5 14.5h.01M8.5 18h.01M12 18h.01"/><path d="M15.5 16.5V18"/>',
   admin: '<path d="M4 6.5h9M17 6.5h3M4 12h3M11 12h9M4 17.5h11M19 17.5h1"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17.5" r="2"/>',
 };
@@ -161,7 +162,7 @@ function navSvg(k) { return `<svg viewBox="0 0 24 24" fill="none" stroke="curren
 function buildRail(user) {
   const lead = (user.perms || []).includes('lead');
   const groups = [
-    ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], (user.perms || []).includes('ctc_use') && ['ctc', 'CTC calculator'], ['daily', 'Daily log']]],
+    ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], ['bgv', 'BGV tracker'], (user.perms || []).includes('ctc_use') && ['ctc', 'CTC calculator'], ['daily', 'Daily log']]],
     ['Reports', [['kpi', 'KPI scorecard'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
     ['Setup', [['panel', 'Interview panel'], ['jdm', 'JD Master'], lead && ['admin', 'Admin']]]];
   const initials = String(user.name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -183,7 +184,7 @@ function setRail(mini, save) {
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
-const VIEWS = { depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin, ctc: viewCtc };
+const VIEWS = { depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
   S.view = view; S.candStale = true;
@@ -1040,12 +1041,12 @@ function positionFields(isNew, p, orig) {
     { k: 'Candidate_ID', l: 'Selected candidate ID', ro: pl, hint: pl ? plHint : 'Optional, e.g. CAN-01088' },
     { section: 'Background verification' },
     { k: 'BGV_Required', l: 'BGV required', t: 'select', noBlank: true, opts: [['Auto', 'Auto (Manager & above)'], ['Yes', 'Yes, flagged case'], ['No', 'Not required']] },
-    { k: 'BGV_Prev_Org_Date', l: 'Previous employer BGV initiated on', t: 'date', hint: 'Within 3 days after the offer letter date (policy 9.1.1).' },
-    { k: 'BGV_Current_Org_Date', l: 'Current employer BGV started on', t: 'date', hint: 'Within 2 days of joining.' },
-    { k: 'BGV_Remarks', l: 'BGV remarks' },
+    { k: 'BGV_Prev_Org_Date', l: 'Previous employer BGV initiated on', t: 'date', ro: !isNew, hint: isNew ? 'Within 3 days after the offer letter date (policy 9.1.1).' : 'Kept by the BGV tracker (BGV case).' },
+    { k: 'BGV_Current_Org_Date', l: 'Current employer BGV started on', t: 'date', ro: !isNew, hint: isNew ? 'Within 2 days of joining.' : 'Kept by the BGV tracker (BGV case).' },
+    { k: 'BGV_Remarks', l: 'BGV remarks', ro: !isNew },
     ...(isNew ? [] : [
-      { k: 'BGV_Prev_Org_File', l: 'Previous employer BGV report', t: 'file' },
-      { k: 'BGV_Current_Org_File', l: 'Current employer BGV initiation proof', t: 'file' }]),
+      { k: 'BGV_Prev_Org_File', l: 'Previous employer BGV report', t: 'file', ro: true },
+      { k: 'BGV_Current_Org_File', l: 'Current employer BGV initiation proof', t: 'file', ro: true }]),
     { section: 'Remarks' },
     { k: 'Remarks', l: 'Remarks', t: 'textarea', wide: true }
   ];
@@ -1156,6 +1157,7 @@ function positionDrawer(p) {
       ${isNew ? '' : '<div id="posTasks"></div>'}
       <div class="readout" id="tatReadout"></div>
       ${isNew ? '' : '<div id="posExempt"></div>'}
+      ${isNew ? '' : '<div id="posBgv"></div>'}
       ${isNew || !can('ctc_use') ? '' : '<div id="posCtc"></div>'}
       ${!isNew && ['Not Needed', 'No Vacancy', 'On Hold'].includes(p.Position_Status) && p.Closure_Reason ? `<div class="note warn-note">${p.Position_Status === 'On Hold' ? 'On hold since' : 'Closed without a hire on'} ${fmtDate(p.Position_Status === 'No Vacancy' ? p.No_Vacancy_Date : p.Not_Needed_Date)} (${esc(p.Position_Status)}): ${esc(p.Closure_Reason)}${p.Closure_Requested_By ? ` \u00b7 requested by ${esc(p.Closure_Requested_By)}` : ''}</div>` : ''}
       ${!isNew && p.Position_Status === 'Removed' ? `<div class="note warn-note">Removed (created in error) on ${fmtDate(p.Not_Needed_Date)}${p.Closure_Reason ? ': ' + esc(p.Closure_Reason) : ''}${p.Closure_Requested_By ? ' \u00b7 requested by ' + esc(p.Closure_Requested_By) : ''}${isLead() ? ' <button class="btn sm" id="posRestore">Restore position</button>' : ''}</div>` : ''}
@@ -1175,6 +1177,7 @@ function positionDrawer(p) {
       <div>Position TAT<b>${t.Pos_Days_Taken === '' ? '—' : t.Pos_Days_Taken} / ${t.Pos_Final_TAT} d \u00b7 ${esc(t.Pos_TAT_Result || '—')}</b>${parts(t._pc)}${t._pstart ? `<span class="sub">from ${fmtDate(t._pstart)} (${t._basis === 'original MRF start' ? 'original MRF start' : 'MRF approved'})${ruleTag(t._prule)}</span>` : ''}</div>`;
   };
   readout();
+  if ($('#posBgv', body)) bgvChips($('#posBgv', body), { kind: 'line', id: p.Line_ID });
   if ($('#posCtc', body)) ctcLinkSection($('#posCtc', body), { kind: 'line', id: p.Line_ID, lineId: p.Line_ID });
   if (!isNew) exemptSectionInto($('#posExempt', body), p, async () => {
     try { const l = await refreshLine(p.Line_ID); ['Final_TAT', 'Days_Taken', 'TAT_Result', 'Exemption_Days', 'Exempt_Extra_Days', 'Paused_Days', 'Pos_Exempt_Extra_Days', 'Pos_Paused_Days',
@@ -1535,9 +1538,11 @@ function candidateDrawer(c, preset, parsedIn) {
       <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
         <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
     </fieldset>
+    ${isNew ? '' : '<div id="candBgv"></div>'}
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawer;
+  if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
   initMulti(body);
   const showParsed = res => {
@@ -3007,6 +3012,11 @@ const ROLE_MATRIX = [
   ['CTC calculator (Admin only at launch)', 0, 0, 0, 1],
   ['CTC rules: change and activate versions', 0, 0, 0, 1],
   ['CTC calculator for other roles: set by the admin in CTC calculator \u2192 Access', 0, 0, 0, 1],
+  ['BGV tracker: work the BGV cases of own positions', 'own', 'all', 'all', 'all'],
+  ['BGV tracker: see the status of every case (findings: owner and leads only)', 1, 1, 1, 1],
+  ['BGV: decide on a discrepancy', 0, 0, 1, 1],
+  ['BGV: vendors', 0, 1, 1, 1],
+  ['BGV: change the rules', 0, 0, 0, 1],
   ['Admin: users', 0, 0, 'view', 'edit'],
   ['Admin: backups, archive, weekly email, database link', 0, 0, 0, 1],
   ['JD Master: view the library', 1, 1, 1, 1],
@@ -3902,6 +3912,190 @@ async function viewDepts(v) {
     $('#dpCsvR').onclick = () => csvSave(`recruiter-time-waiting-${tag}.csv`, ['Recruiter', 'Positions', 'Days waiting on departments', 'Beyond norms', 'Share of TAT %', 'Waiting now'], r.recruiters.map(x => [x.recruiter, x.positions, x.waitDays, x.lossDays, x.share, x.cvPending + x.docPending]));
   };
   await load();
+}
+
+/* ---------------- BGV tracker ---------------- */
+const bgvCls = s => String(s || '').replace(/\W+/g, '');
+const bgvRag = r => r.rag ? `<span class="bgv-rag ${r.rag}" title="${esc(r.why || '')}">${r.rag}</span>` : '';
+const bgvStChip = s => `<span class="bgv-st ${bgvCls(s)}">${esc(s)}</span>`;
+const BGV_TYPE_NOTE = { 'Previous employer': 'Earlier employers · start within 3 days of the offer', 'Current employer': 'The employer being left · start within 2 days of joining' };
+async function viewBgv(v) {
+  const f = S.bgvF = S.bgvF || { tab: 'mine', type: '', status: '', rag: '', q: '', rec: '' };
+  let B; try { B = S.bgv = await api('apiBgvList'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  if (!B.lead && ['vendors', 'rules'].includes(f.tab)) f.tab = 'mine';
+  const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', 'All cases']].concat(B.lead ? [['vendors', 'Vendors'], ['rules', 'Rules']] : []);
+  v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div></div>
+    <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${f.tab === k}">${esc(l)}</button>`).join('')}</div><div id="bgBody" style="margin-top:16px"></div>`;
+  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewBgv(v); });
+  if (S.bgvOpenId) { const id = S.bgvOpenId; S.bgvOpenId = null; setTimeout(() => openBgvCase(id, () => viewBgv(v)), 0); }
+  if (f.tab === 'vendors') return bgvVendors($('#bgBody'), B, v);
+  if (f.tab === 'rules') return bgvRulesTab($('#bgBody'), B, v);
+  bgvCases($('#bgBody'), B, v);
+}
+function bgvCases(el, B, v) {
+  const f = S.bgvF, own = f.tab === 'mine', sum = own ? B.mine : B.all;
+  const scope = B.rows.filter(r => own ? r.mine : true);
+  const recs = [...new Set(B.rows.map(r => r.recruiter))].sort();
+  el.innerHTML = `<div class="kpis bgv-kpis">
+      <div class="kpi"><div class="v">${sum.open}</div><div class="l">Open cases</div></div>
+      <div class="kpi ${sum.toStart ? 'alert' : ''}"><div class="v">${sum.toStart}</div><div class="l">To start</div></div>
+      <div class="kpi"><div class="v">${sum.inProgress}</div><div class="l">With the vendor</div></div>
+      <div class="kpi"><div class="v">${sum.toReview}</div><div class="l">Report to review</div></div>
+      <div class="kpi ${sum.red ? 'alert' : ''}"><div class="v">${sum.red}</div><div class="l">Red: past the limit</div></div>
+      <div class="kpi"><div class="v">${sum.amber}</div><div class="l">Amber: close to it</div></div>
+      <div class="kpi"><div class="v">${sum.closedMonth}</div><div class="l">Closed this month</div></div></div>
+    <div class="filters"><div class="field"><label for="bgQ">Search</label><input id="bgQ" value="${esc(f.q)}" placeholder="Candidate, position, MRF"></div>
+      <div class="field"><label for="bgType">Type</label><select id="bgType">${opts([['', 'Both'], ...B.types.map(t => [t, t])], f.type, false)}</select></div>
+      <div class="field"><label for="bgSt">Status</label><select id="bgSt">${opts([['', 'All'], ['open', 'Open'], ...B.statuses.map(s => [s, s])], f.status, false)}</select></div>
+      <div class="field"><label for="bgRag">Warning</label><select id="bgRag">${opts([['', 'Any'], ['Red', 'Red'], ['Amber', 'Amber'], ['Green', 'Green']], f.rag, false)}</select></div>
+      ${own ? '' : `<div class="field"><label for="bgRec">Recruiter</label><select id="bgRec">${opts(recs, f.rec)}</select></div>`}
+      <div class="field" style="justify-content:flex-end"><button class="btn sm" id="bgCsv">Download CSV</button></div></div>
+    <div id="bgList"></div><p class="legend">Red means a limit has passed (start date, vendor turnaround of ${B.rules.cfg.vendorTatDays} days, or review within ${B.rules.cfg.reviewDays} days of the report); amber means 80% of it is used. Findings and files are visible to the owner, TA Leads and the Head of HR; others see the status only.</p>`;
+  const rank = { Red: 0, Amber: 1, Green: 2, '': 3 };
+  const draw = () => {
+    const q = f.q.trim().toLowerCase();
+    const rows = scope.filter(r => (!f.type || r.type === f.type) && (!f.status || (f.status === 'open' ? !['Closed', 'Cancelled'].includes(r.status) : r.status === f.status)) && (!f.rag || r.rag === f.rag)
+      && (!f.rec || r.recruiter === f.rec) && (!q || [r.candidate, r.position, r.mrf, r.id].join(' ').toLowerCase().includes(q)))
+      .sort((a, b) => rank[a.rag] - rank[b.rag] || String(a.due).localeCompare(String(b.due)));
+    $('#bgList').innerHTML = rows.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Candidate</th><th>Position</th><th>Type</th><th>Recruiter</th><th>Status</th><th>Start by</th><th>Started</th><th>Report needed</th></tr></thead><tbody>
+      ${rows.map(r => `<tr class="${r.canWork ? 'click' : 'ro'}" data-id="${esc(r.id)}" ${r.canWork ? 'tabindex="0"' : `title="Status only: this case belongs to ${esc(r.recruiter)}"`}><td><b>${esc(r.candidate) || '<span class="sub">Candidate not linked</span>'}</b><span class="sub">${esc(r.id)}${r.legacy ? ' · carried over' : ''}</span></td>
+        <td>${esc(r.position)}<span class="sub">${esc(r.mrf)} · ${esc(r.dept)} · ${esc(r.grade)}</span></td><td>${esc(r.type)}</td><td>${esc(r.recruiter)}</td>
+        <td>${bgvStChip(r.status)} ${bgvRag(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
+        <td class="nw">${fmtDate(r.due)}</td><td class="nw">${r.initiated ? fmtDate(r.initiated) : '<span class="sub">—</span>'}</td><td class="nw">${r.resultDue ? fmtDate(r.resultDue) : '<span class="sub">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty">${scope.length ? 'No case matches.' : own ? 'You have no BGV cases yet. A case opens automatically when a candidate for one of your Manager-and-above (or flagged) positions reaches the Offer stage, and a second one when they join.' : 'No BGV cases yet.'}</div>`;
+    $$('#bgList tr.click', el).forEach(tr => { tr.onclick = () => openBgvCase(tr.dataset.id, () => viewBgv(v)); tr.onkeydown = e => { if (e.key === 'Enter') openBgvCase(tr.dataset.id, () => viewBgv(v)); }; });
+    $('#bgCsv').onclick = () => csvSave(`bgv-cases-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'MRF', 'Department', 'Grade', 'Recruiter', 'Status', 'Warning', 'Why', 'Start by', 'Started', 'Report needed', 'Outcome', 'Decision'],
+      rows.map(r => [r.id, r.type, r.candidate, r.position, r.mrf, r.dept, r.grade, r.recruiter, r.status, r.rag, r.why, r.due, r.initiated, r.resultDue, r.outcome || '', r.decision || '']));
+  };
+  $('#bgQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
+  $('#bgType').onchange = e => { f.type = e.target.value; draw(); };
+  $('#bgSt').onchange = e => { f.status = e.target.value; draw(); };
+  $('#bgRag').onchange = e => { f.rag = e.target.value; draw(); };
+  if ($('#bgRec')) $('#bgRec').onchange = e => { f.rec = e.target.value; draw(); };
+  draw();
+}
+
+/* ---- One case ---- */
+async function openBgvCase(id, after) {
+  const body = openDrawer('BGV case ' + id, '<p class="muted">Loading…</p>', 'bgv-drawer');
+  let X; try { X = await api('apiBgvCase', id); } catch (e) { body.innerHTML = `<p class="miss">${esc(e)}</p>`; return; }
+  const draw = X => {
+    S.bgvLast = X; const c = X.c, vend = Object.fromEntries(X.vendors.map(v => [v.id, v.name])), closed = ['Closed', 'Cancelled'].includes(c.status);
+    const fileField = (k, l) => ({ k, l, t: 'file', ro: closed && !X.lead });
+    const dt = (l, v, sub) => `<div><span class="sub">${l}</span><b>${v ? fmtDate(v) : '—'}</b>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`;
+    body.innerHTML = `<div class="bgv-head"><div><h3 style="margin:0">${c.candidate ? esc(c.candidate) : 'Candidate not linked'}</h3><div class="sub">${esc(c.position)} · ${esc(c.mrf)} · ${esc(c.dept)} · ${esc(c.grade)} · recruiter ${esc(c.recruiter)}</div>
+        <div class="sub"><b>${esc(c.type)}</b> — ${esc(BGV_TYPE_NOTE[c.type] || '')}</div></div><div>${bgvStChip(c.status)} ${bgvRag(c)}</div></div>
+      ${c.why && c.rag !== 'Green' && c.rag ? `<div class="note ${c.rag === 'Red' ? 'warn-note' : ''}">${esc(c.why)}</div>` : ''}${c.legacy ? '<div class="note">Carried over from the position’s BGV fields. Check the status and add the checks.</div>' : ''}
+      <div class="bgv-dates">${dt(c.type === 'Previous employer' ? 'Offer' : 'Joined', c.trigger)}${dt('Start by', c.due)}${c.type === 'Previous employer' ? dt('Report needed by', c.resultDue) : ''}${dt('Consent', c.consent)}${dt('Started', c.initiated, c.vendor ? esc(vend[c.vendor] || (c.vendor === 'DIRECT' ? 'Direct' : c.vendor)) + (c.vendorRef ? ' · ' + esc(c.vendorRef) : '') : '')}${dt('Report received', c.report)}</div>
+      ${c.candId ? `<p style="margin:8px 0"><button class="linklike" id="bcCand">Open candidate</button> · <button class="linklike" id="bcPos">Open position</button></p>` : ''}
+      ${!closed ? `<fieldset class="bgv-move"><legend>Next step</legend>
+        <div class="grid"><div class="field"><label for="bmTo">Move to</label><select id="bmTo">${opts(c.next.map(n => [n, n]), '', true)}</select></div><div class="field" id="bmDate" hidden><label for="bmOn" id="bmOnL">Date</label><input id="bmOn" type="date" value="${today()}" max="${today()}"></div>
+          <div class="field" id="bmConsentF" hidden><label for="bmConsent">Consent given on</label><input id="bmConsent" type="date" value="${esc(c.consent || '')}" max="${today()}"><span class="hint">The signed consent file is attached below.</span></div>
+          <div class="field" id="bmVendorF" hidden><label for="bmVendor">Vendor</label><select id="bmVendor">${opts([['DIRECT', 'Direct (no vendor)']].concat(X.vendors.filter(v => v.active).map(v => [v.id, v.name])), c.vendor, true)}</select></div>
+          <div class="field" id="bmRefF" hidden><label for="bmRef">Vendor reference</label><input id="bmRef" value="${esc(c.vendorRef || '')}" maxlength="80"></div>
+          <div class="field wide"><label for="bmNote">Note ${'<span class="opt">(needed to cancel)</span>'}</label><input id="bmNote" maxlength="400"></div></div>
+        <div class="drawer-actions" style="position:static"><button class="btn primary" id="bmGo" disabled>Move</button></div></fieldset>` : (c.status === 'Closed' && X.lead ? `<div class="drawer-actions" style="position:static"><button class="btn" id="bmReopen">Reopen for review</button></div>` : '')}
+      <h4>Checks</h4>
+      <div class="table-wrap"><table class="bgv-checks"><thead><tr><th>Check</th><th>About (employer, institute, address)</th><th>Period</th><th>Status</th><th>Finding</th><th></th></tr></thead><tbody>
+        ${X.checks.map(k => `<tr data-ck="${esc(k.id)}"><td><b>${esc(k.type)}</b></td><td><input class="ck-subject" value="${esc(k.subject)}" ${closed ? 'disabled' : ''}></td><td><input class="ck-period" value="${esc(k.period)}" ${closed ? 'disabled' : ''}></td>
+          <td><select class="ck-status" ${closed ? 'disabled' : ''}>${opts(X.checkStatuses, k.status, false)}</select></td><td><input class="ck-finding" value="${esc(k.finding)}" ${closed ? 'disabled' : ''}></td><td>${closed ? '' : '<button class="btn sm ck-save">Save</button>'}</td></tr>`).join('')}</tbody></table></div>
+      ${closed ? '' : `<div class="rs-row"><select id="bkType" aria-label="Add a check">${opts(X.optionalChecks.concat(X.rules.defaultChecks).filter((t, i, a) => a.indexOf(t) === i).map(t => [t, t]), '', true)}</select><input id="bkSubject" placeholder="About (employer, institute, address)" style="flex:1;min-width:200px"><button class="btn sm" id="bkAdd">Add check</button></div>`}
+      <h4>Result</h4>
+      <div class="grid"><div class="field"><label for="boOutcome">Outcome</label><select id="boOutcome" ${closed && !X.lead ? 'disabled' : ''}>${opts(X.outcomes, c.outcome, true)}</select></div>
+        <div class="field"><label>Decision (Head of HR)</label><div class="bgv-dec">${c.decision ? `<b>${esc(c.decision)}</b><span class="sub">${esc(String(c.decisionBy).split('@')[0])} · ${fmtDate(c.decisionOn)}${c.decisionNote ? ' · ' + esc(c.decisionNote) : ''}</span>` : ['Minor discrepancy', 'Major discrepancy', 'Unable to verify'].includes(c.outcome) ? '<span class="miss">Waiting for the Head of HR</span>' : '<span class="sub">Not needed for a clear result</span>'}</div></div></div>
+      ${X.decide && ['Report received', 'Under review'].includes(c.status) && ['Minor discrepancy', 'Major discrepancy', 'Unable to verify'].includes(c.outcome) ? `<fieldset class="bgv-move"><legend>Your decision</legend><div class="grid"><div class="field"><label for="bdDec">Decision</label><select id="bdDec">${opts(X.decisions, c.decision, true)}</select></div><div class="field wide"><label for="bdNote">Reason</label><input id="bdNote" maxlength="500" value="${esc(c.decisionNote || '')}"></div></div>
+        <div class="drawer-actions" style="position:static"><button class="btn primary" id="bdSave">Record decision</button></div></fieldset>` : ''}
+      <div class="field wide" style="margin-top:10px"><label for="boRemarks">Remarks</label><textarea id="boRemarks" rows="2" maxlength="1000" ${closed && !X.lead ? 'disabled' : ''}>${esc(c.remarks)}</textarea></div>
+      <div class="drawer-actions" style="position:static;margin-top:0"><button class="btn" id="boSave">Save outcome and remarks</button></div>
+      <h4>Documents</h4><div id="bgDocs">${wrapForm(form([fileField('Consent_File', 'Candidate consent (signed)'), fileField('Report_File', 'Vendor / employer report'), fileField('Initiation_Proof_File', 'Proof that the verification was started')], { Consent_File: c.consentFile, Report_File: c.reportFile, Initiation_Proof_File: c.proofFile }))}</div>
+      <div class="drawer-actions" style="position:static;margin-top:0"><button class="btn" id="bdUp">Upload chosen files</button></div>
+      <h4>Timeline</h4>
+      <div class="rs-row"><select id="blKind" aria-label="Kind of entry">${opts(X.logKinds, 'Note', false)}</select><input id="blNote" placeholder="What happened, who was spoken to, when to chase next" style="flex:1;min-width:220px" maxlength="500"><button class="btn sm" id="blAdd">Add</button></div>
+      <ol class="hist bgv-log">${X.log.map(l => `<li><b>${esc(l.kind)}</b>${l.to ? ` · ${l.from ? esc(l.from) + ' → ' : ''}${esc(l.to)}` : ''} <span class="sub">${esc(l.at)} · ${esc(String(l.by).split('@')[0])}</span>${l.note ? `<div>${esc(l.note)}</div>` : ''}</li>`).join('')}</ol>`;
+    wire(X);
+  };
+  const run = async (fn, ok) => { try { const r = await fn(); S.bgv = null; draw(r); if (ok) toast(ok); if (after) after(); } catch (e) { toast(e, true); } };
+  const wire = X => {
+    const c = X.c;
+    if ($('#bcCand')) { $('#bcCand').onclick = () => openCandidate(c.candId); $('#bcPos').onclick = async () => { try { await loadPositions(); const l = lineById(c.line); if (l) positionDrawer(l); } catch (e) { toast(e, true); } }; }
+    const to = $('#bmTo'); if (to) {
+      const upd = () => {
+        const t = to.value; $('#bmGo').disabled = !t;
+        $('#bmDate').hidden = !['Initiated', 'Report received'].includes(t); $('#bmOnL').textContent = t === 'Initiated' ? 'Started on' : 'Report received on';
+        $('#bmConsentF').hidden = t !== 'Initiated'; $('#bmVendorF').hidden = t !== 'Initiated'; $('#bmRefF').hidden = t !== 'Initiated';
+      };
+      to.onchange = upd; upd();
+      $('#bmGo').onclick = () => run(() => api('apiBgvStatus', c.id, to.value, { on: $('#bmOn').value, consentOn: $('#bmConsent').value, vendor: $('#bmVendor').value, vendorRef: $('#bmRef').value, note: $('#bmNote').value, outcome: $('#boOutcome').value }), 'Moved.');
+    }
+    if ($('#bmReopen')) $('#bmReopen').onclick = () => run(() => api('apiBgvStatus', c.id, 'Under review', { note: 'Reopened' }), 'Reopened.');
+    $$('tr[data-ck]', body).forEach(tr => { const b = $('.ck-save', tr); if (b) b.onclick = () => run(() => api('apiBgvCheckSave', c.id, { id: tr.dataset.ck, subject: $('.ck-subject', tr).value, period: $('.ck-period', tr).value, status: $('.ck-status', tr).value, finding: $('.ck-finding', tr).value }), 'Check saved.'); });
+    if ($('#bkAdd')) $('#bkAdd').onclick = () => { if (!$('#bkType').value) return toast('Choose the check to add.', true); run(() => api('apiBgvCheckSave', c.id, { type: $('#bkType').value, subject: $('#bkSubject').value }), 'Check added.'); };
+    $('#boSave').onclick = () => run(() => api('apiBgvSave', c.id, { outcome: $('#boOutcome').value, remarks: $('#boRemarks').value }), 'Saved.');
+    if ($('#bdSave')) $('#bdSave').onclick = () => run(() => api('apiBgvDecide', c.id, { decision: $('#bdDec').value, note: $('#bdNote').value }), 'Decision recorded.');
+    $('#blAdd').onclick = () => run(() => api('apiBgvNote', c.id, $('#blKind').value, $('#blNote').value), 'Added.');
+    bindAttachmentViews('BGV', c.id, body);
+    $('#bdUp').onclick = async e => {
+      busy(e.target, true, 'Uploading…');
+      try { const bad = checkAttachments($('#bgDocs')); if (bad) throw bad; await uploadAttachments('BGV', c.id, $('#bgDocs')); draw(await api('apiBgvCase', c.id)); toast('Files uploaded.'); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Upload chosen files'); }
+    };
+  };
+  draw(X);
+}
+
+/** Status lines for a candidate's card, a profile or a position (everyone sees the status). */
+async function bgvChips(el, o) {
+  if (!el) return;
+  let rows; try { rows = await api('apiBgvFor', o.kind, o.id); } catch (e) { return; }
+  if (!el.isConnected) return;
+  if (!rows.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<section class="app-sec bgv-sec"><h3>Background verification</h3><ul class="bgv-chips">${rows.map(r => `<li><b>${esc(r.type)}</b> ${bgvStChip(r.status)} ${bgvRag(r)}
+    <span class="sub">${['Not started', 'Awaiting consent'].includes(r.status) && r.due ? 'start by ' + fmtDate(r.due) : esc(r.recruiter)}${r.canWork && r.outcome ? ' · ' + esc(r.outcome) : ''}</span>${r.canWork ? ` <button class="linklike" data-bgv="${esc(r.id)}">Open</button>` : ''}</li>`).join('')}</ul></section>`;
+  $$('[data-bgv]', el).forEach(b => b.onclick = () => { S.bgvOpenId = b.dataset.bgv; S.bgvF = S.bgvF || {}; S.bgvF.tab = 'mine'; closeDrawer(); try { $$('dialog[open]').forEach(x => x.close()); } catch (e) { } go('bgv', true); });
+}
+
+/* ---- Vendors and rules ---- */
+function bgvVendors(el, B, v) {
+  const vend = B.vendors;
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>BGV vendors</h2><span class="hint">Deactivate a vendor instead of deleting it; its past cases keep the name.</span></div>
+    ${vend.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Vendor</th><th>Contact</th><th>Checks</th><th class="num">Turnaround</th><th>Contract ends</th><th>Active</th><th></th></tr></thead><tbody>
+      ${vend.map(x => `<tr><td><b>${esc(x.name)}</b><span class="sub">${esc(x.id)}</span></td><td>${esc(x.contact)}<span class="sub">${esc([x.email, x.phone].filter(Boolean).join(' · '))}</span></td><td>${esc(x.checks)}</td><td class="num">${x.tat ? x.tat + ' d' : '—'}</td><td class="nw">${x.end ? fmtDate(x.end) : '—'}</td><td>${x.active ? 'Yes' : '<span class="sub">No</span>'}</td><td><button class="btn sm" data-ve="${esc(x.id)}">Edit</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No vendors yet. Add the vendors BFCL uses.</div>'}
+    <div class="drawer-actions" style="position:static"><button class="btn primary" id="vnAdd">Add a vendor</button></div></section>`;
+  const edit = x => {
+    const d = x || { active: true };
+    const dlg = openDrawer(x ? 'Edit vendor' : 'Add a vendor', `<div id="vnForm">${wrapForm(form([{ k: 'name', l: 'Name', req: true }, { k: 'contact', l: 'Contact person' }, { k: 'email', l: 'Email', t: 'email' }, { k: 'phone', l: 'Phone' },
+      { k: 'checks', l: 'Checks offered', hint: 'e.g. Employment, Conduct, Education', wide: true }, { k: 'tat', l: 'Standard turnaround (days)', t: 'number' }, { k: 'end', l: 'Contract ends', t: 'date' },
+      { k: 'active', l: 'Active', t: 'select', noBlank: true, opts: [['Yes', 'Yes'], ['No', 'No']] }, { k: 'note', l: 'Note', wide: true }], Object.assign({}, d, { active: d.active ? 'Yes' : 'No' })))}</div>
+      <div class="drawer-actions"><button class="btn" id="vnX">Cancel</button><button class="btn primary" id="vnSave">Save vendor</button></div>`);
+    $('#vnX', dlg).onclick = closeDrawer;
+    $('#vnSave', dlg).onclick = async e => {
+      busy(e.target, true, 'Saving…');
+      try { const r = readForm($('#vnForm', dlg)); await api('apiBgvVendorSave', Object.assign({ id: d.id || '' }, r, { active: r.active !== 'No' })); toast('Vendor saved.'); closeDrawer(); viewBgv(v); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Save vendor'); }
+    };
+  };
+  $('#vnAdd', el).onclick = () => edit(null);
+  $$('[data-ve]', el).forEach(b => b.onclick = () => edit(vend.find(x => x.id === b.dataset.ve)));
+}
+async function bgvRulesTab(el, B, v) {
+  let R; try { R = await api('apiBgvRules'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const cfg = R.active.cfg;
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Rules in force: ${esc(R.active.id)}</h2><span class="hint">${R.active.eff ? 'from ' + fmtDate(R.active.eff) : 'built-in defaults'}${R.canEdit ? '' : ' · only the admin can change them'}</span></div>
+    <div class="grid">${R.nums.map(([k, l, lo, hi]) => `<div class="field"><label for="br_${k}">${esc(l)}</label><input id="br_${k}" data-k="${k}" type="number" min="${lo}" max="${hi}" step="1" value="${esc(cfg[k])}" ${R.canEdit ? '' : 'disabled'}></div>`).join('')}
+      <div class="field wide"><label>Who is in scope</label><div class="rs-row"><label class="chk"><input type="checkbox" id="brMgr" ${cfg.scope.managerPlus ? 'checked' : ''} ${R.canEdit ? '' : 'disabled'}> Manager and above (M1–M4)</label>
+        <label class="chk"><input type="checkbox" id="brFlag" ${cfg.scope.flagged ? 'checked' : ''} ${R.canEdit ? '' : 'disabled'}> Positions flagged “BGV required: Yes”</label></div></div></div>
+    ${R.canEdit ? `<div class="grid" style="margin-top:12px"><div class="field"><label for="brEff">Takes effect from</label><input id="brEff" type="date" min="${R.today}" value="${R.today}"></div>
+      <div class="field"><label for="brReason">Reason</label><select id="brReason">${opts(['Policy change', 'Correction', 'Other'], '')}</select></div>
+      <div class="field wide"><label for="brRemark">Remark (what changed and why)</label><textarea id="brRemark" rows="2" maxlength="600"></textarea></div></div>
+      <div class="rs-row"><span class="hint">New cases use the rules in force when they open; cases already open keep their dates.</span><button class="btn primary" id="brSave">Save as a new version</button></div>` : ''}</section>
+    <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Versions</h2></div><ul class="rs-changes">${R.versions.map(x => `<li><b>${esc(x.id)}</b> · from ${fmtDate(x.eff)} · ${esc(x.reason)} · ${esc(String(x.by).split('@')[0])} ${esc(x.at)}<div class="sub">${esc(x.remark)}</div></li>`).join('')}</ul></section>`;
+  if ($('#brSave')) $('#brSave').onclick = async e => {
+    busy(e.target, true, 'Saving…');
+    try { const values = {}; $$('input[data-k]', el).forEach(i => { values[i.dataset.k] = i.value; });
+      await api('apiBgvRulesSave', { values, scope: { managerPlus: $('#brMgr').checked, flagged: $('#brFlag').checked }, eff: $('#brEff').value, reason: $('#brReason').value, remark: $('#brRemark').value.trim() });
+      toast('Rules saved.'); viewBgv(v); }
+    catch (err) { toast(err, true); busy(e.target, false, 'Save as a new version'); }
+  };
 }
 
 /* ---------------- CTC calculator ---------------- */
@@ -5021,6 +5215,7 @@ async function viewPipeline(v) {
             : P.hasFinalSq && canEdit && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
+          <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
           ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
@@ -5036,6 +5231,7 @@ async function viewPipeline(v) {
     };
     bindAttachmentViews('APP', a.App_ID, d);
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
+    bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });

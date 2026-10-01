@@ -257,6 +257,25 @@ function e2eRun_(trash) {
       return x.candidateId === cand.Candidate_ID && !y.candidateId && !y.lineId ? 'ok' : false;
     });
   }
+  const bgvL = t('K1 BGV tracker opens (cases are created for hires in scope)', function () { const l = apiBgvList(); return Array.isArray(l.rows) && l.rules.cfg.vendorTatDays === 7 ? l.rows.length + ' cases' : false; });
+  if (bgvL) {
+    t('K2 add a BGV vendor', function () { const v = apiBgvVendorSave({ name: 'E2E Verify Co', tat: 5, checks: 'Employment, Conduct', active: true }); return v.some(function (x) { return x.name === 'E2E Verify Co'; }) ? 'ok' : false; });
+    err('K3 a vendor needs a name', function () { apiBgvVendorSave({ name: '' }); }, /name/);
+    const ven = apiBgvList().vendors.filter(function (x) { return x.name === 'E2E Verify Co'; })[0] || {};
+    const open = apiBgvList().rows.filter(function (r) { return r.status === 'Not started' && r.canWork; })[0];
+    if (open) {
+      err('K4 BGV cannot start without the candidate\u2019s consent', function () { apiBgvStatus(open.id, 'Initiated', { vendor: ven.id }); }, /consent/);
+      t('K5 start a BGV case and see the start date on the position', function () {
+        const r = apiBgvStatus(open.id, 'Initiated', { consentOn: today, vendor: ven.id, vendorRef: 'E2E-1' });
+        _tables = {}; const l = lineOf_(open.line); const col = open.type === 'Previous employer' ? 'BGV_Prev_Org_Date' : 'BGV_Current_Org_Date';
+        return r.c.status === 'Initiated' && ymd_(l[col]) === today ? open.id : false;
+      });
+      err('K6 a decision is recorded only once the report is in', function () { apiBgvDecide(open.id, { decision: 'Proceed with the offer', note: 'Not allowed yet at this stage' }); }, /report is in/);
+      t('K7 add a check and a chaser note', function () { apiBgvCheckSave(open.id, { type: 'Education', subject: 'E2E University' }); return apiBgvNote(open.id, 'Chaser', 'E2E chaser').log.length >= 3 ? 'ok' : false; });
+    }
+    t('K8 BGV rules readable, edited only by the admin', function () { const r = apiBgvRules(); return r.active.cfg.prevInitDays === 3 && r.canEdit ? r.active.id : false; });
+    t('K9 BGV status lines for a position', function () { return Array.isArray(apiBgvFor('line', L1.Line_ID)); });
+  }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {
     t('I14 save a change and see it listed', function () {

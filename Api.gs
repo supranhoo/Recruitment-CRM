@@ -121,6 +121,7 @@ function apiSavePosition(data) {
   }
   const oldText = old ? String(old.JD_Text || '').trim() : '', newText = String(rec.JD_Text || '').trim();
   if (newText && newText !== oldText && 'JD_Text' in patch) pdocAddJd_(u, rec.Line_ID, { content: newText, source: 'Typed on the position form' });
+  bgvTouchLine_(rec.Line_ID);
   const o = toClient_(lineOf_(rec.Line_ID) || rec); o._canEdit = true; delete o._row;
   return o;
 }
