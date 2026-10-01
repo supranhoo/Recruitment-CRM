@@ -96,9 +96,12 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `users_edit` | Add, change, deactivate users; Fix access | – | – | – | ✓ |
 | `jd_manage` | Sign off and edit the JD Master (grades, competency departments, duplicate groups, responsibilities, skills, department map) | – | ✓ | ✓ | ✓ |
 | `system` | Backups, candidate archive run, system tools, JD library import | – | – | – | ✓ |
-| `ctc_use` | Use the CTC calculator (§11.7) | – | – | – | ✓ |
+| `ctc_use` | Use the CTC calculator (§11.7). The `ctc_*` permissions other than `ctc_rules` can be given to other roles in CTC calculator → Access (Role_Access sheet, ADR-041); the table shows the launch defaults | – | – | – | ✓ |
 | `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
-| `ctc_view_all` | See everyone's CTC calculations (saved calculations arrive with the letter) | – | – | – | ✓ |
+| `ctc_view_all` | See everyone's CTC calculations | – | – | – | ✓ |
+| `ctc_codes` | Change the structure choices and allowances (without it the structure follows the rules' preselected options) | – | – | – | ✓ |
+| `ctc_issue` | Make letters (preview, issue, download) | – | – | – | ✓ |
+| `ctc_approve` | Approve or return letters when approval is on; issue own letters directly | – | – | – | ✓ |
 
 Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)` (role = Admin; used by Recalculate TAT). Client checks: `can(perm)` / `isLead()` from `S.boot.user.perms`. The Admin → **Roles & permissions** tab shows this matrix read-only.
 
@@ -154,7 +157,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
-| `Ctc.gs` | CTC calculator (schema 29): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
+| `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
 | `Api.gs` (file_6) | Bootstrap, positions, daily log, candidates, CV upload/view, panel unavailability, dashboard computation, recompute/nightly job, version-check fetch (`apiFetch`), packed lists (`apiPacked`) |
 | `Setup.gs` (file_7) | One-time `setup()` (sheets check, CV folder, admin user, nightly trigger), `shareWithTeam()` |
 | `Import.gs` (file_8) | One-time `importDatabase()` from the migrated Excel data |
@@ -274,7 +277,8 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired / Discarded), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Updated_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
-| **CTC_Calcs** | Calc_ID (CTC-00001…), Status (Draft / Issued / Superseded / Discarded), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 30. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
+| **CTC_Calcs** | Calc_ID (CTC-00001…), Status (Draft / Pending approval / Issued / Superseded / Discarded), Submitted_By/At, Decided_By/At, Decision_Note (schema 31), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 30. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
+| **Role_Access** | Role, Permission, Granted (Yes / No), Reason, Updated_By, Updated_At | Schema 31 (ADR-041). One row per role and CTC permission the admin has set; only Head of HR, TA Lead and Recruiter, only ctc_use / ctc_view_all / ctc_codes / ctc_issue / ctc_approve. Read into `effectivePerms_` (cached 5 minutes). Setting **CTC_APPROVAL** (Yes / No) switches approval of letters |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
@@ -679,7 +683,7 @@ Grouped likely errors, each record clickable: positions missing key details; off
 
 Audit_Log newest first (max 300 rows per view) with filters; every field change with old/new value, user and time.
 
-### 11.7 CTC calculator (`Ctc.gs`; `ctc_use`, Admin only at launch; ADR-040)
+### 11.7 CTC calculator (`Ctc.gs`; `ctc_use`, Admin only at launch, configurable per role from phase 4; ADR-040, ADR-041)
 
 **Page:** Daily work → CTC calculator.
 - **Target:** choose what the amount stands for (Total CTC, Gross CTC, Gross salary or Net in-hand) and type the monthly amount. The result updates as you type.
@@ -722,7 +726,12 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 - **Put in force** (`apiCtcActivate`): effective date today or later (never in the past), a reason (Statutory change, Company policy change, Correction, Other) and a remark of at least 10 characters. The version's Change_Summary stores every change against the version it replaces, e.g. "Conveyance › amount: 1600 → 1800", "ESIC (Deductions) › option 1 › condition: 21000 → 25000", "Added item: Shift allowance". A future-dated version shows as **Scheduled** (on the calculator badge and in Version history) and can be **cancelled** before it takes effect with a remark (`apiCtcRetire`, status Retired); a version in force is never withdrawn, only replaced by a new one. **Discard draft** keeps the row as Discarded.
 - Every step is in the change history (`audit_`). Calculations keep the version they were made on; a draft made on older rules must be re-run before its letter can be issued.
 
-**Still to come (planned phase):** role access settings with "Preview as role" and optional approval before sharing.
+**Access, preview and approval** (phase 4; **Access** tab, Admin):
+- **Who can do what** (`apiCtcAccess`, `apiCtcAccessSave`): a table of five options by role (Head of HR, TA Lead, Recruiter): use the calculator; see everyone's calculations; change the structure and allowances; make letters; approve letters. Admin always has all and **changing the CTC rules is never given away**. Ticking an option also ticks "use the calculator"; unticking that clears the rest. A reason of at least 10 characters is required; every change is written to the change history (Role_Access / CTC_APPROVAL) and listed under Recent changes. Takes effect within about 5 minutes (grants are cached).
+- **Without `ctc_codes`** the page shows the structure as a read-only summary and the server ignores any choices sent: the structure is the rules' preselected options, or that of the calculation being re-run. **Without `ctc_issue`** there is no Letter button (and the server refuses to issue or submit): the role can work out and save calculations and use the hike comparison.
+- **Preview as a role** (Admin; the select in the header and buttons on the Access tab): the page shows what that role would see (tabs, structure panel, letter buttons, saved-list scope notes) from the role's real permissions; Save and Letter are switched off. A banner says so; Stop previewing returns.
+- **Approval** (switch on the Access tab; setting CTC_APPROVAL, off at launch): with it on, a person who can make letters but not approve them sees **Submit for approval** instead of Issue (`apiCtcSubmit`: status *Pending approval*; the maker cannot change it and can **Withdraw**). Approvers see "N waiting" on the Saved calculations tab, can open any pending letter (even without see-everyone) and **Approve and issue** (their browser makes the PDF; `apiCtcReview`, Issued_By = approver, Decided_By/At) or **Return** it with a note of at least 5 characters (back to a draft showing "Returned by … : note"). The letter footer reads "Prepared by <maker> · approved by <approver>". Approval needs the rules to be the version the calculation was made on. People who can approve issue their own letters directly. Turning approval off leaves pending letters reviewable.
+- Fixed: editing a draft that is a re-run now keeps its link to the original.
 
 ## 12. Administration, settings, jobs and operations
 
@@ -893,6 +902,9 @@ Decision: experience is always at least the Appendix F minimum (designation-awar
 **ADR-033 — JD Maker composes, it does not invent** (27 Sep)
 Context: the library is white-collar heavy and department JDs vary; a generated JD must not borrow the wrong trade's duties or state requirements below the policy. Decision: rank library profiles by department, designation and grade with a minimum evidence rule; workmen use a profile only for the same department, band and trade; duties are reused only within the same band family and flagged when re-levelled; competencies come from the framework at the position's grade; experience follows ADR-032; every gap (unmapped department, no profile, inferred qualification, HOD confirmations) is shown as a flag rather than filled silently. Consequences: some JDs (notably workmen) start as standards plus HOD-supplied duties; nothing in a generated JD is unexplained.
 
+**ADR-041 — CTC calculator access is configured per role; approval of letters is optional** (1 Oct, user decisions)
+Context: the calculator starts Admin-only but must be opened to other roles without a code release, with control over what each role can do, a way to check what they will see, and an optional check before a letter leaves the building. Decision: five grantable permissions (`ctc_use`, `ctc_view_all`, `ctc_codes`, `ctc_issue`, `ctc_approve`) stored by role in `Role_Access` and merged into a user's permissions on every request (`effectivePerms_`); `ctc_rules` and the Admin role cannot be changed there; every change needs a reason and is audited; "Preview as a role" renders the page from the role's permissions without acting as that role; approval is a setting, off at launch, where makers submit and approvers issue or return with a note. Grade presets for people without `ctc_codes` were not built: they follow the rules' preselected options, and the Admin can give `ctc_codes` to a role that needs different structures. Consequences: access changes need no deployment; the first load after a grant takes up to 5 minutes to reach every user; a role granted `ctc_codes` can make any structure the rules allow.
+
 **ADR-040 — CTC rules are versioned data run by one shared engine** (30 Sep, user decisions)
 Context: salary structures were worked out in an Excel sheet with a helper Solver tab; the calculator must look professional, be used first by the admin only, and any change to the logic must record who, when, the reason and a remark, with history kept. Decision: only the "CTC Calculator" sheet is reproduced; the logic is stored as JSON versions in `CTC_Rules` (never overwritten; reason and remark required), built from a fixed set of item kinds so the admin can change rates, caps, slabs, amounts, labels and notes but not type free formulas; one self-contained engine runs on the server and is embedded in the page; Employee Code is dropped and Name, Grade and Designation are optional; access is by named permissions (`ctc_use`, `ctc_rules`, `ctc_view_all`), Admin only at launch; letter language is English, Hindi or both, chosen per letter; approval before sharing is off at launch. Consequences: figures on screen and on the server cannot differ; a new *kind* of rule needs a code release; later phases add letters, saved calculations and re-runs, the rules editor and role access settings.
 
@@ -922,6 +934,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — CTC calculator, phase 4: access, preview and approval** (schema 31; ADR-041)
+- Access tab (Admin): five permissions by role with reasons and history; no-codes and no-letters roles; Preview as a role; optional approval of letters (submit, approve and issue, return with a note, withdraw); letter footer shows who prepared and approved; re-run link kept when a re-run draft is edited.
+- `Role_Access` sheet; `CTC_Calcs` gains Submitted_By/At, Decided_By/At, Decision_Note; setting CTC_APPROVAL; `effectivePerms_`, `ctcGrants_`; `apiCtcAccess`, `apiCtcAccessSave`, `apiCtcSubmit`, `apiCtcReview`. Tests: 43 server cases (roles, enforcement, approval flow, outdated rules), browser run of the Access tab, preview, submit, return and approve; E2E I12b–I12f.
 
 **Unreleased — CTC calculator: hike on current pay**
 - Candidate's current CTC / Gross / Net and ask (monthly or yearly); target by a hike % on CTC, Gross, Net or CTC and Net; hike comparison panel with like-for-like and every-combination hikes for the offer and the ask; use the ask as the target; saved with the calculation; E2E I12a.
@@ -1187,7 +1203,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
@@ -1519,6 +1535,11 @@ Generated mechanically from the v46 source: every message the server can show a 
 - The draft has problems: {…} / The draft is the same as {…}. Change something or discard it.
 - Only a version that has not taken effect yet can be cancelled. To change rules in force, make a new version.
 - (save) {item}: enter a number from 0 to 1,00,00,000. / {…}: enter the text. / {…}: keep it under {n} characters. / "{choice}": option code {…} is used twice.
+- You can work out and save calculations, but you do not have access to make letters. / Only someone who approves CTC letters can do this.
+- Letters need approval before they are issued. Submit it for approval. / Letters do not need approval at the moment. You can issue it yourself. / You can approve letters, so you can issue this one yourself.
+- Only the person who made this calculation can submit it. / … can withdraw it. / Calculation {…} is {…} and cannot be submitted. / Calculation {…} is not waiting for approval.
+- Write a note for the person who made it: what to change. / Choose Approve or Return. / Calculation {…} was changed meanwhile. Reload and try again.
+- Write a reason of at least 10 characters: why access is being changed. / "{…}" cannot be given to a role here. / {role}: to use the other options the role also needs access to the calculator. / Nothing changed.
 - Only a draft can be discarded. / Calculation {…} was not found. / You can open only your own calculations. / Rules version {…} was not found.
 - (page) Other allowances comes out negative ({…}): the chosen allowances add up to more than this gross allows. Lower the allowances or raise the target.
 

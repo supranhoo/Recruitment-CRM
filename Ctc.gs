@@ -14,7 +14,12 @@ const CTC_REASONS_ = ['Statutory change', 'Company policy change', 'Correction',
 /** Saved calculations. A Draft can be replaced by its maker; an Issued one is never changed (a re-run makes a new record). */
 const CTC_CALCS_ = { name: 'CTC_Calcs', id: 'Calc_ID', prefix: 'CTC-', width: 5, dates: [], editable: [] };
 const CTC_CALC_COLS_ = ['Calc_ID', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total_CTC', 'Gross', 'Net', 'Rule_Version',
-  'Inputs_JSON', 'Result_JSON', 'Language', 'Letter_File', 'Rerun_Of', 'Superseded_By', 'Issued_By', 'Issued_At', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
+  'Inputs_JSON', 'Result_JSON', 'Language', 'Letter_File', 'Rerun_Of', 'Superseded_By', 'Issued_By', 'Issued_At', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At',
+  'Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note'];
+/** Who may do what with the calculator, by role (Role_Access sheet), and whether letters need approval (setting CTC_APPROVAL). */
+const CTC_GRANTABLE_ = ['ctc_use', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve'];
+const CTC_GRANT_ROLES_ = ['Head of HR', 'TA Lead', 'Recruiter'];
+const CTC_ACCESS_COLS_ = ['Role', 'Permission', 'Granted', 'Reason', 'Updated_By', 'Updated_At'];
 const CTC_LANGS_ = ['en', 'hi', 'both'];
 
 /* ---------------------------------------------------------------- engine (shared with the page) ------------ */
@@ -396,6 +401,8 @@ function ctcSchema_() {
     sh.setFrozenRows(1);
   }
   addSheet_(CTC_CALCS_.name, CTC_CALC_COLS_);
+  addColumns_(CTC_CALCS_.name, ['Submitted_By', 'Submitted_At', 'Decided_By', 'Decided_At', 'Decision_Note']);
+  addSheet_('Role_Access', CTC_ACCESS_COLS_);
   addColumns_(CTC_RULES_, ['Updated_By', 'Updated_At']);
   if (sh.getLastRow() > 1) return;
   const now = new Date(), eff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -427,7 +434,9 @@ function ctcActive_(day) {
 }
 
 function ctcRequire_(u, perm) {
-  if (!can_(u, perm)) throw new Error(perm === 'ctc_rules' ? 'Only the admin can change the CTC rules.' : 'You do not have access to the CTC calculator.');
+  if (!can_(u, perm)) throw new Error(perm === 'ctc_rules' ? 'Only the admin can change the CTC rules.'
+    : perm === 'ctc_issue' ? 'You can work out and save calculations, but you do not have access to make letters.'
+    : perm === 'ctc_approve' ? 'Only someone who approves CTC letters can do this.' : 'You do not have access to the CTC calculator.');
 }
 
 /* ---------------------------------------------------------------- API -------------------------------------- */
@@ -441,7 +450,7 @@ function apiCtcRules() {
   const versions = all.filter(function (v) { return v.status !== 'Draft' && v.status !== 'Discarded'; }).map(function (v) { const o = Object.assign({}, v); delete o.json; delete o._row; return o; });
   const d = rules ? all.filter(function (v) { return v.status === 'Draft'; })[0] : null;
   const draft = d ? { id: d.id, by: d.by, at: d.at, updatedBy: d.updatedBy, updatedAt: d.updatedAt, config: JSON.parse(d.json), changes: ctcDiff_(act.config, JSON.parse(d.json)) } : null;
-  return { canRules: rules, today: fmt_(new Date(), TZ, 'yyyy-MM-dd'), active: act, versions: versions, draft: draft,
+  return { canRules: rules, today: fmt_(new Date(), TZ, 'yyyy-MM-dd'), active: act, versions: versions, draft: draft, approval: ctcApprovalOn_(), access: rules ? ctcAccessMatrix_() : null,
     reasons: CTC_REASONS_.filter(function (x) { return x !== 'Initial setup'; }) };
 }
 
@@ -479,7 +488,9 @@ function ctcInput_(d) {
 
 /* ---------------------------------------------------------------- saved calculations and letters ----------- */
 
-function ctcCanSee_(u, r) { return can_(u, 'ctc_view_all') || String(r.Created_By).toLowerCase() === u.email; }
+function ctcCanSee_(u, r) {
+  return can_(u, 'ctc_view_all') || String(r.Created_By).toLowerCase() === u.email || (String(r.Status) === 'Pending approval' && can_(u, 'ctc_approve'));
+}
 function ctcRow_(id) {
   const r = readTable_(CTC_CALCS_.name).rows.filter(function (x) { return String(x.Calc_ID) === String(id); })[0];
   if (!r) throw new Error('Calculation ' + id + ' was not found.');
@@ -491,7 +502,8 @@ function ctcOut_(r, full) {
     basis: String(r.Basis), target: Number(r.Target) || 0, totalCtc: Number(r.Total_CTC) || 0, gross: Number(r.Gross) || 0, net: Number(r.Net) || 0,
     version: String(r.Rule_Version), language: String(r.Language || ''), letter: String(r.Letter_File || ''), rerunOf: String(r.Rerun_Of || ''),
     supersededBy: String(r.Superseded_By || ''), by: String(r.Created_By || ''), at: at(r.Created_At), day: r.Created_At instanceof Date ? ymd_(r.Created_At) : '',
-    issuedBy: String(r.Issued_By || ''), issuedAt: at(r.Issued_At) };
+    issuedBy: String(r.Issued_By || ''), issuedAt: at(r.Issued_At), submittedBy: String(r.Submitted_By || ''), submittedAt: at(r.Submitted_At),
+    decidedBy: String(r.Decided_By || ''), decidedAt: at(r.Decided_At), decisionNote: String(r.Decision_Note || '') };
   if (full) { o.inputs = JSON.parse(String(r.Inputs_JSON || '{}')); o.result = JSON.parse(String(r.Result_JSON || '{}')); }
   return o;
 }
@@ -505,11 +517,17 @@ function apiCtcSave(d) {
   ctcRequire_(u, 'ctc_use');
   d = d || {};
   const inp = ctcInput_(d), act = ctcActive_();
+  /* Editing a draft that is a re-run keeps its link to the original. */
+  const rerunOf = d.rerunOf ? String(d.rerunOf) : (d.id ? String(ctcRow_(d.id).Rerun_Of || '') : '');
+  if (rerunOf && !ctcCanSee_(u, ctcRow_(rerunOf))) throw new Error('You can re-run only your own calculations.');
+  if (!can_(u, 'ctc_codes')) {
+    /* Without ctc_codes the structure is the rules' preselected options, or that of the calculation being re-run. */
+    const from = rerunOf ? JSON.parse(String(ctcRow_(rerunOf).Inputs_JSON || '{}')) : {};
+    inp.codes = from.codes || {}; inp.amounts = from.amounts || {};
+  }
   const r = ctcEngine_().solve(act.config, inp);
   if (r.status === 'unsettled') throw new Error('The structure did not settle, so it cannot be saved. Check the Basic choice.');
   if ((r.warnings || []).length) throw new Error(r.warnings[0]);
-  const rerunOf = d.rerunOf ? String(d.rerunOf) : '';
-  if (rerunOf && !ctcCanSee_(u, ctcRow_(rerunOf))) throw new Error('You can re-run only your own calculations.');
   const patch = { Status: 'Draft', Name: inp.name, Designation: inp.designation, Grade: inp.grade, Basis: inp.basis, Target: inp.target,
     Total_CTC: r.totals.totalCtc, Gross: r.totals.gross, Net: r.totals.net, Rule_Version: act.id,
     Inputs_JSON: JSON.stringify(inp), Result_JSON: JSON.stringify(r), Rerun_Of: rerunOf };
@@ -523,28 +541,20 @@ function apiCtcSave(d) {
   return ctcOut_(rec, true);
 }
 
-/**
- * Issues a draft: stores the letter PDF made on the page in Drive and locks the record. The rules must still be the
- * ones it was worked out on. Issuing a re-run marks the calculation it replaces as superseded.
- */
-function apiCtcIssue(id, d) {
-  const u = currentUser_(); ensureSchema_();
-  ctcRequire_(u, 'ctc_use');
-  d = d || {};
-  const r = ctcRow_(id);
-  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can issue it.');
-  if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is already ' + String(r.Status).toLowerCase() + '.');
-  const act = ctcActive_();
-  if (String(r.Rule_Version) !== act.id) throw new Error('The CTC rules changed to ' + act.id + ' after this was saved. Re-run it on the new rules first.');
-  const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : 'en';
-  const b64 = String(d.pdf || '');
+/** Checks the letter PDF sent by the page and keeps it in Drive; returns its link. */
+function ctcStoreLetter_(r, id, b64) {
+  b64 = String(b64 || '');
   if (b64.length < 200 || b64.length > 20 * 1024 * 1024) throw new Error('The letter PDF did not arrive. Try again.');
   const bytes = Utilities.base64Decode(b64);
   if (String.fromCharCode.apply(null, bytes.slice(0, 5)) !== '%PDF-') throw new Error('The letter file is not a PDF.');
   const name = id + ' - ' + (String(r.Name || '').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'Salary structure') + '.pdf';
-  const file = ctcFolder_().createFile(Utilities.newBlob(bytes, 'application/pdf', name));
-  const rec = update_(CTC_CALCS_, id, { Status: 'Issued', Language: lang, Letter_File: file.getUrl(), Issued_By: u.email, Issued_At: new Date() }, u, function (x) {
-    if (String(x.Status) !== 'Draft') throw new Error('Calculation ' + id + ' was issued meanwhile.');
+  return ctcFolder_().createFile(Utilities.newBlob(bytes, 'application/pdf', name)).getUrl();
+}
+/** Locks a calculation as issued; a re-run's issue marks the calculation it replaces as superseded. */
+function ctcFinish_(u, r, id, lang, url, extra, from) {
+  const patch = Object.assign({ Status: 'Issued', Language: lang, Letter_File: url, Issued_By: u.email, Issued_At: new Date() }, extra || {});
+  const rec = update_(CTC_CALCS_, id, patch, u, function (x) {
+    if (String(x.Status) !== from) throw new Error('Calculation ' + id + ' was changed meanwhile. Reload and try again.');
   });
   const prev = String(r.Rerun_Of || '');
   if (prev) {
@@ -554,6 +564,71 @@ function apiCtcIssue(id, d) {
     } catch (e) { }
   }
   return ctcOut_(rec, true);
+}
+function ctcSameRules_(r) {
+  const act = ctcActive_();
+  if (String(r.Rule_Version) !== act.id) throw new Error('The CTC rules changed to ' + act.id + ' after this was saved. Re-run it on the new rules first.');
+}
+
+/**
+ * Issues a draft: stores the letter PDF made on the page in Drive and locks the record. Needs ctc_issue; when
+ * approval is on, only an approver (ctc_approve) issues directly, others submit it. The rules must still be the
+ * ones it was worked out on.
+ */
+function apiCtcIssue(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use'); ctcRequire_(u, 'ctc_issue');
+  d = d || {};
+  const r = ctcRow_(id);
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can issue it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is already ' + String(r.Status).toLowerCase() + '.');
+  if (ctcApprovalOn_() && !can_(u, 'ctc_approve')) throw new Error('Letters need approval before they are issued. Submit it for approval.');
+  ctcSameRules_(r);
+  const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : 'en';
+  return ctcFinish_(u, r, id, lang, ctcStoreLetter_(r, id, d.pdf), null, 'Draft');
+}
+
+/** Sends a draft to the approvers (only while approval is on, for someone who cannot approve). */
+function apiCtcSubmit(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use'); ctcRequire_(u, 'ctc_issue');
+  const r = ctcRow_(id);
+  if (!ctcApprovalOn_()) throw new Error('Letters do not need approval at the moment. You can issue it yourself.');
+  if (can_(u, 'ctc_approve')) throw new Error('You can approve letters, so you can issue this one yourself.');
+  if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can submit it.');
+  if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is ' + String(r.Status).toLowerCase() + ' and cannot be submitted.');
+  ctcSameRules_(r);
+  const lang = CTC_LANGS_.indexOf((d || {}).language) >= 0 ? d.language : 'en';
+  const rec = update_(CTC_CALCS_, id, { Status: 'Pending approval', Language: lang, Submitted_By: u.email, Submitted_At: new Date(), Decision_Note: '' }, u, function (x) {
+    if (String(x.Status) !== 'Draft') throw new Error('Calculation ' + id + ' was changed meanwhile. Reload and try again.');
+  });
+  return ctcOut_(rec, true);
+}
+
+/**
+ * An approver decides a submitted letter: Approve (issues it with the PDF made on their page) or Return (back to
+ * a draft with a note for the maker). The maker can Withdraw their own submission.
+ */
+function apiCtcReview(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_use');
+  d = d || {};
+  const r = ctcRow_(id), action = String(d.action || '');
+  if (String(r.Status) !== 'Pending approval') throw new Error('Calculation ' + id + ' is not waiting for approval.');
+  if (action === 'Withdraw') {
+    if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can withdraw it.');
+    return ctcOut_(update_(CTC_CALCS_, id, { Status: 'Draft', Submitted_By: '', Submitted_At: '' }, u), true);
+  }
+  ctcRequire_(u, 'ctc_approve');
+  if (action === 'Return') {
+    const note = clean_(String(d.note || '')).trim();
+    if (note.length < 5) throw new Error('Write a note for the person who made it: what to change.');
+    return ctcOut_(update_(CTC_CALCS_, id, { Status: 'Draft', Decided_By: u.email, Decided_At: new Date(), Decision_Note: note.slice(0, 500), Submitted_By: '', Submitted_At: '' }, u), true);
+  }
+  if (action !== 'Approve') throw new Error('Choose Approve or Return.');
+  ctcSameRules_(r);
+  const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : (CTC_LANGS_.indexOf(String(r.Language)) >= 0 ? String(r.Language) : 'en');
+  return ctcFinish_(u, r, id, lang, ctcStoreLetter_(r, id, d.pdf), { Decided_By: u.email, Decided_At: new Date(), Decision_Note: '' }, 'Pending approval');
 }
 
 /** Drops the caller's own draft (kept in the sheet as Discarded, for the record). */
@@ -801,4 +876,92 @@ function apiCtcRetire(id, remark) {
   });
   audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Active', 'Retired (' + remark.slice(0, 200) + ')');
   return apiCtcRules();
+}
+
+/* ---------------------------------------------------------------- access (Role_Access; Admin) -------------- */
+
+function ctcApprovalOn_() { return String(settings_().CTC_APPROVAL || '') === 'Yes'; }
+function ctcDropGrants_() { try { CacheService.getScriptCache().remove('ctc_grants_v1'); } catch (e) { } dropStale_('Role_Access'); }
+
+/** What each role has been given: { role: [permissions] }. Read for every request, so it is cached for 5 minutes. */
+function ctcGrants_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('ctc_grants_v1');
+  if (hit) return JSON.parse(hit);
+  const g = {};
+  try {
+    readTable_('Role_Access').rows.forEach(function (r) {
+      if (String(r.Granted) !== 'Yes' || CTC_GRANTABLE_.indexOf(String(r.Permission)) < 0 || CTC_GRANT_ROLES_.indexOf(String(r.Role)) < 0) return;
+      (g[r.Role] = g[r.Role] || []).push(String(r.Permission));
+    });
+  } catch (e) { return {}; }
+  Object.keys(g).forEach(function (k) { if (g[k].indexOf('ctc_use') < 0) delete g[k]; });
+  cache.put('ctc_grants_v1', JSON.stringify(g), 300);
+  return g;
+}
+
+/** All four roles' CTC permissions, for the Access tab and "Preview as". */
+function ctcAccessMatrix_() {
+  const g = ctcGrants_(), out = {};
+  ROLE_LIST.forEach(function (role) {
+    out[role] = (PERMS_[role] || []).filter(function (p) { return /^ctc_/.test(p); }).concat((g[role] || []).filter(function (p) { return (PERMS_[role] || []).indexOf(p) < 0; }));
+  });
+  return out;
+}
+
+function apiCtcAccess() {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  const since = fmt_(new Date(Date.now() - 365 * 86400000), TZ, 'yyyy-MM-dd');
+  const log = readTableFrom_('Audit_Log', 'Timestamp', since).rows.filter(function (a) { return String(a.Sheet) === 'Role_Access' || (String(a.Sheet) === 'Settings' && String(a.Record_ID) === 'CTC_APPROVAL'); })
+    .slice(-60).reverse().map(function (a) {
+      return { at: a.Timestamp instanceof Date ? fmt_(a.Timestamp, TZ, 'd MMM yyyy, HH:mm') : String(a.Timestamp || ''), by: String(a.User || ''), what: String(a.Record_ID) + ': ' + String(a.Old_Value) + ' → ' + String(a.New_Value) };
+    });
+  return { roles: ctcAccessMatrix_(), approval: ctcApprovalOn_(), log: log };
+}
+
+/**
+ * Saves who may do what and whether letters need approval. d = { roles: { 'TA Lead': [perms] }, approval: bool, reason }.
+ * Only Head of HR, TA Lead and Recruiter can be changed; Admin always keeps everything and ctc_rules is never given away.
+ * A reason is required and every change is written to the change history.
+ */
+function apiCtcAccessSave(d) {
+  const u = currentUser_(); ensureSchema_();
+  ctcRequire_(u, 'ctc_rules');
+  d = d || {};
+  const reason = clean_(String(d.reason || '')).trim();
+  if (reason.length < 10) throw new Error('Write a reason of at least 10 characters: why access is being changed.');
+  const want = {};
+  CTC_GRANT_ROLES_.forEach(function (role) {
+    const list = ((d.roles || {})[role] || []).map(String);
+    list.forEach(function (p) { if (CTC_GRANTABLE_.indexOf(p) < 0) throw new Error('"' + p + '" cannot be given to a role here.'); });
+    const uniq = CTC_GRANTABLE_.filter(function (p) { return list.indexOf(p) >= 0; });
+    if (uniq.length && uniq.indexOf('ctc_use') < 0) throw new Error(role + ': to use the other options the role also needs access to the calculator.');
+    want[role] = uniq;
+  });
+  const approval = d.approval === true || d.approval === 'Yes';
+  const cur = ctcGrants_(), changes = [];
+  withLock_(function () {
+    const t = readTable_('Role_Access', true), sh = t.sheet, heads = t.headers;
+    CTC_GRANT_ROLES_.forEach(function (role) {
+      CTC_GRANTABLE_.forEach(function (p) {
+        const was = (cur[role] || []).indexOf(p) >= 0, now = want[role].indexOf(p) >= 0;
+        const row = t.rows.filter(function (r) { return r.Role === role && r.Permission === p; })[0];
+        if (was === now && row) return;
+        if (was === now && !now) return;
+        const vals = { Role: role, Permission: p, Granted: now ? 'Yes' : 'No', Reason: reason.slice(0, 300), Updated_By: u.email, Updated_At: new Date() };
+        if (row) heads.forEach(function (h, j) { if (vals[h] !== undefined) sh.getRange(row._row, j + 1).setValue(vals[h]); });
+        else sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return vals[h] === undefined ? '' : vals[h]; })]);
+        changes.push([role + ': ' + p, was ? 'Yes' : 'No', now ? 'Yes' : 'No']);
+      });
+    });
+    if (approval !== ctcApprovalOn_()) {
+      setSetting_('CTC_APPROVAL', approval ? 'Yes' : 'No', 'CTC letters need approval before they are issued (Yes / No)');
+      changes.push(['CTC_APPROVAL', approval ? 'No' : 'Yes', approval ? 'Yes' : 'No']);
+    }
+    if (!changes.length) throw new Error('Nothing changed.');
+  });
+  changes.forEach(function (c) { audit_(u, c[0] === 'CTC_APPROVAL' ? 'Settings' : 'Role_Access', c[0], 'Update', 'Granted', c[1], c[2] + ' (' + reason.slice(0, 150) + ')'); });
+  ctcDropGrants_();
+  return apiCtcAccess();
 }

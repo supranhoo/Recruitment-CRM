@@ -230,6 +230,20 @@ function e2eRun_(trash) {
       const h = r.inputs.hike; return r.inputs.by === 'hike' && h.ctc === '120000' && h.pct === '25' && h.ask === '160000' ? 'kept' : false;
     });
   }
+  t('I12b the Access tab lists every role (Admin keeps all)', function () { const a = apiCtcAccess(); return a.roles.Admin.indexOf('ctc_rules') >= 0 && a.roles.Admin.indexOf('ctc_approve') >= 0 && a.roles.Recruiter.length === 0 ? 'ok' : false; });
+  err('I12c giving access needs a reason', function () { apiCtcAccessSave({ roles: { Recruiter: ['ctc_use'] }, reason: 'x' }); }, /at least 10/);
+  err('I12d the CTC rules cannot be given to another role', function () { apiCtcAccessSave({ roles: { Recruiter: ['ctc_use', 'ctc_rules'] }, reason: 'let recruiters change the rules' }); }, /cannot be given/);
+  t('I12e give the Recruiter role the calculator and see it take effect', function () {
+    apiCtcAccessSave({ roles: { Recruiter: ['ctc_use'] }, approval: true, reason: 'E2E access test, undone below' });
+    const p = effectivePerms_('Recruiter'); const ok1 = p.indexOf('ctc_use') >= 0 && p.indexOf('ctc_rules') < 0 && ctcApprovalOn_();
+    apiCtcAccessSave({ roles: { Recruiter: [] }, approval: false, reason: 'E2E access test: undo' });
+    return ok1 && effectivePerms_('Recruiter').indexOf('ctc_use') < 0 && !ctcApprovalOn_() ? 'granted and revoked' : false;
+  });
+  err('I12f an admin cannot submit a letter for approval (can approve it directly)', function () {
+    apiCtcAccessSave({ roles: {}, approval: true, reason: 'E2E approval test, undone below' });
+    try { const d = apiCtcSave({ basis: 'gross', target: 20000, codes: ctcSample }); apiCtcSubmit(d.id, { language: 'en' }); }
+    finally { apiCtcAccessSave({ roles: {}, approval: false, reason: 'E2E approval test: undo' }); }
+  }, /can approve letters/);
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {
     t('I14 save a change and see it listed', function () {

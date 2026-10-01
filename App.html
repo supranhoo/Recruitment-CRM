@@ -3002,6 +3002,7 @@ const ROLE_MATRIX = [
   ['Approve, grant or revoke TAT exemptions; verify notice extensions', 0, 0, 1, 1],
   ['CTC calculator (Admin only at launch)', 0, 0, 0, 1],
   ['CTC rules: change and activate versions', 0, 0, 0, 1],
+  ['CTC calculator for other roles: set by the admin in CTC calculator \u2192 Access', 0, 0, 0, 1],
   ['Admin: users', 0, 0, 'view', 'edit'],
   ['Admin: backups, archive, weekly email, database link', 0, 0, 0, 1],
   ['JD Master: view the library', 1, 1, 1, 1],
@@ -3905,8 +3906,17 @@ async function ctcRules(force) {
   if (S.ctc && !force) { api('apiCtcRules').then(r => { S.ctc = r; }).catch(() => { }); return S.ctc; }
   return (S.ctc = await api('apiCtcRules'));
 }
-const CTC_STATUS = { Draft: 'Draft', Issued: 'Issued', Superseded: 'Superseded', Discarded: 'Discarded' };
+const CTC_STATUS = { Draft: 'Draft', 'Pending approval': 'Waiting for approval', Issued: 'Issued', Superseded: 'Superseded', Discarded: 'Discarded' };
 function ctcSig(f) { return JSON.stringify([f.basis, String(f.target), f.name, f.designation, f.grade, f.codes, f.amounts, f.by || 'amount', f.hike || null]); }
+/** Permissions as the page shows them: when the admin previews a role, that role's CTC permissions instead of their own. */
+function ctcCan(p) { const pr = S.ctcPreview; return pr && S.ctc && S.ctc.access ? (S.ctc.access[pr] || []).includes(p) : can(p); }
+function ctcStClass(s) { return String(s || '').replace(/\W+/g, ''); }
+const CTC_PERM_INFO = [
+  ['ctc_use', 'Use the calculator', 'Work out structures, save calculations and use the hike comparison. They see their own saved calculations.'],
+  ['ctc_view_all', 'See everyone\u2019s calculations', 'Open and re-run calculations made by other people.'],
+  ['ctc_codes', 'Change the structure and allowances', 'Without this the structure follows the rules\u2019 preselected options (shown, not editable).'],
+  ['ctc_issue', 'Make letters', 'Preview, issue and download the letter. Without this a role can only work out and save calculations.'],
+  ['ctc_approve', 'Approve letters', 'Approve or return letters that others submit when approval is on. They issue their own letters directly.']];
 function ctcHikeDefaults() { let per = 'month'; try { per = localStorage.getItem('bfcl.ctcPer') || 'month'; } catch (e) { } return { per, ctc: '', gross: '', net: '', ask: '', askBasis: 'total_ctc', mode: 'total_ctc', pct: '', pctNet: '' }; }
 /** "+25.0%" style hike of b over a; blank when a is not known. */
 function ctcPct(a, b) { if (!(a > 0)) return null; return Math.round((b - a) / a * 1000) / 10; }
@@ -3914,15 +3924,29 @@ function ctcPctTxt(p) { return p === null ? '\u2014' : (p > 0 ? '+' : p < 0 ? '\
 async function viewCtc(v) {
   if (!can('ctc_use')) { v.innerHTML = '<div class="empty">You do not have access to the CTC calculator.</div>'; return; }
   const R = await ctcRules();
-  const tab = S.ctcTab || 'calc';
+  if (!can('ctc_rules')) S.ctcPreview = null;
+  const pv = S.ctcPreview;
+  const tabs = [['calc', 'Calculator'], ['saved', 'Saved calculations']];
+  if (ctcCan('ctc_rules')) tabs.push(['rules', R.draft ? 'Rules · draft ' + R.draft.id : 'Rules'], ['access', 'Access']);
+  let tab = S.ctcTab || 'calc'; if (!tabs.some(t => t[0] === tab)) tab = 'calc';
   v.innerHTML = `<div class="page-head"><div><h1>CTC calculator</h1><p>Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand. The full structure is worked out on the rules in force.</p></div>
-      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span>${R.versions.filter(x => x.status === 'Active' && x.eff > R.today).map(x => `<span class="badge rs-next">${esc(x.id)} from ${fmtDate(x.eff)}</span>`).join('')}<button class="btn sm" id="ccHist">Version history</button></div></div>
-    <div class="tabs" role="tablist">${[['calc', 'Calculator'], ['saved', 'Saved calculations']].concat(R.canRules ? [['rules', R.draft ? 'Rules \u00b7 draft ' + R.draft.id : 'Rules']] : []).map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+      <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span>${R.versions.filter(x => x.status === 'Active' && x.eff > R.today).map(x => `<span class="badge rs-next">${esc(x.id)} from ${fmtDate(x.eff)}</span>`).join('')}
+        ${can('ctc_rules') ? `<select id="ccPv" class="ctc-pv" aria-label="Preview as a role"><option value="">Preview as…</option>${['Head of HR', 'TA Lead', 'Recruiter'].map(r => `<option value="${r}" ${pv === r ? 'selected' : ''}>${r}</option>`).join('')}</select>` : ''}
+        <button class="btn sm" id="ccHist">Version history</button></div></div>
+    ${pv ? `<div class="ctc-status info">Previewing as <b>${esc(pv)}</b>: you see the screens as that role would, with what they can and cannot do. Saving and issuing are switched off in the preview. <button class="linklike" id="ccPvX">Stop previewing</button></div>` : ''}
+    <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${esc(l)}</button>`).join('')}</div>
     <div id="ccBody" style="margin-top:16px"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { S.ctcTab = b.dataset.t; viewCtc(v); });
   $('#ccHist').onclick = () => ctcHistory(R);
+  if ($('#ccPv')) $('#ccPv').onchange = e => { S.ctcPreview = e.target.value || null; if (S.ctcPreview) S.ctcTab = 'calc'; viewCtc(v); };
+  if ($('#ccPvX')) $('#ccPvX').onclick = () => { S.ctcPreview = null; viewCtc(v); };
+  if (R.approval && ctcCan('ctc_approve') && !pv) (S.ctcList ? Promise.resolve(S.ctcList) : api('apiCtcList', {}).then(x => (S.ctcList = x))).then(L => {
+    const n = L.rows.filter(r => r.status === 'Pending approval').length, btn = $('.tabs button[data-t="saved"]', v);
+    if (btn && n) btn.innerHTML = `Saved calculations <span class="badge rs-next">${n} waiting</span>`;
+  }).catch(() => { });
   if (tab === 'saved') return ctcSaved($('#ccBody'), R, v);
-  if (tab === 'rules' && R.canRules) return ctcRulesTab($('#ccBody'), R, v);
+  if (tab === 'rules') return ctcRulesTab($('#ccBody'), R, v);
+  if (tab === 'access') return ctcAccessTab($('#ccBody'), R, v);
   ctcCalc($('#ccBody'), R, v);
 }
 function ctcCalc(el, R, v) {
@@ -3933,6 +3957,9 @@ function ctcCalc(el, R, v) {
   if (!f) { f = S.ctcIn = defaults(); f.version = R.active.id; }
   f.hike = f.hike || ctcHikeDefaults(); f.by = f.by || 'amount';
   const H = f.hike;
+  const canCodes = ctcCan('ctc_codes'), canLetter = ctcCan('ctc_issue'), pvOn = !!S.ctcPreview;
+  /* Without ctc_codes the structure is the rules' preselected options (or that of the calculation being re-run). */
+  if (!canCodes && !f.rerunOf) f.codes = Object.fromEntries(fk.map(k => [k, String(flags[k].default)]));
   const grades = (S.boot.grades || []).filter(g => g.active);
   const allDesig = [...new Set(grades.flatMap(g => g.designations || []))].sort();
   const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${flags[k].note ? `<span class="hint">${esc(flags[k].note)}</span>` : ''}</div>`;
@@ -3966,10 +3993,12 @@ function ctcCalc(el, R, v) {
           <div class="field"><label for="ccGrade">Grade</label><select id="ccGrade">${opts(grades.map(g => g.grade), f.grade)}</select></div>
           <div class="field"><label for="ccDesig">Designation</label><input id="ccDesig" list="ccDesigList" maxlength="120" value="${esc(f.designation)}" autocomplete="off"><datalist id="ccDesigList"></datalist></div>
         </div>
-        <h2>Structure</h2>
+        ${canCodes ? `<h2>Structure</h2>
         <div class="grid one">${struct.map(sel).join('')}
           ${hasStipend ? `<div class="field" id="ccStipendF"><label for="ccStipend">Stipend (monthly)</label><input id="ccStipend" inputmode="numeric" value="${f.amounts.stipend || ''}"></div>` : ''}</div>
-        <details class="ctc-allow" ${allow.some(k => f.codes[k] !== String(flags[k].default)) ? 'open' : ''}><summary>Allowances <span id="ccAllowN" class="sub"></span></summary><div class="grid">${allow.map(sel).join('')}</div></details>
+        <details class="ctc-allow" ${allow.some(k => f.codes[k] !== String(flags[k].default)) ? 'open' : ''}><summary>Allowances <span id="ccAllowN" class="sub"></span></summary><div class="grid">${allow.map(sel).join('')}</div></details>`
+        : `<h2>Structure <span class="opt">set by the admin</span></h2><dl class="ctc-sum">${struct.map(k => `<dt>${esc(flags[k].label)}</dt><dd>${esc((flags[k].options.find(o => String(o.code) === String(f.codes[k])) || {}).label || '')}</dd>`).join('')}
+          ${allow.filter(k => String(f.codes[k]) !== '0').map(k => `<dt>${esc(flags[k].label)}</dt><dd>${esc((flags[k].options.find(o => String(o.code) === String(f.codes[k])) || {}).label || '')}</dd>`).join('')}</dl>`}
         <div class="ctc-actions"><button class="btn sm" id="ccReset">Start again</button></div>
       </section>
       <section class="ctc-out" id="ccOut" aria-live="polite"></section>
@@ -4012,7 +4041,7 @@ function ctcCalc(el, R, v) {
     const t = num(f.target);
     if ($('#ccStipendF')) $('#ccStipendF').hidden = f.codes.basic !== '0';
     const nAllow = allow.filter(k => f.codes[k] !== String(flags[k].default)).length;
-    $('#ccAllowN').textContent = nAllow ? `· ${nAllow} set` : '· none set';
+    if ($('#ccAllowN')) $('#ccAllowN').textContent = nAllow ? `· ${nAllow} set` : '· none set';
     $('#ccYear').textContent = t ? `${inr(t * 12)} a year` : '';
     if (!t) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>Enter a monthly amount to see the structure.</b><span>Choose what the amount stands for above, then type it in. The result updates as you type.</span></div>`; return; }
     if (t > 4194303) { last = null; $('#ccOut').innerHTML = `<div class="panel ctc-empty"><b>The amount is too large.</b><span>Enter up to ₹41,94,303 a month.</span></div>`; return; }
@@ -4040,8 +4069,9 @@ function ctcCalc(el, R, v) {
       <div class="ctc-tiles">${tile('totalCtc', 'Total CTC', 'Gross CTC + other benefits')}${tile('grossCtc', 'Gross CTC', 'Gross + employer contribution')}${tile('gross', 'Gross salary')}${tile('net', 'Net in-hand', 'Gross − deductions')}</div>
       <div class="ctc-bar"><span class="hint">${saved ? (saved.status === 'Draft' ? `Saved as draft <b>${esc(saved.id)}</b>.` : `<b>${esc(saved.id)}</b> is issued and locked. Changing any input starts a new calculation.`)
           : f.saved && f.saved.status === 'Draft' ? `Draft <b>${esc(f.saved.id)}</b> has unsaved changes.` : 'Not saved yet.'}</span>
-        <button class="btn" id="ccSave" ${blocked || saved ? 'disabled' : ''}>${f.saved && f.saved.status === 'Draft' ? 'Save changes' : 'Save draft'}</button>
-        <button class="btn primary" id="ccLetter" ${blocked ? 'disabled' : ''}>Letter…</button></div>
+        <button class="btn" id="ccSave" ${blocked || saved || pvOn ? 'disabled' : ''} ${pvOn ? 'title="Preview only"' : ''}>${f.saved && f.saved.status === 'Draft' ? 'Save changes' : 'Save draft'}</button>
+        ${canLetter ? `<button class="btn primary" id="ccLetter" ${blocked || pvOn ? 'disabled' : ''} ${pvOn ? 'title="Preview only"' : ''}>Letter…</button>` : ''}</div>
+      ${!canLetter ? '<p class="hint" style="margin:-8px 0 14px">You can work out and save calculations. Letters are made by the people who have access to issue them.</p>' : ''}
       ${ctcHikeHtml(H, r, askRes(), perN())}
       <section class="panel ctc-brk"><div class="dp-h"><h2>Salary structure${f.name ? ' · ' + esc(f.name) : ''}</h2>
         <span class="hint">${[f.designation, f.grade].filter(Boolean).map(esc).join(' · ')}</span>
@@ -4076,7 +4106,7 @@ function ctcCalc(el, R, v) {
       return rec;
     };
     $('#ccSave').onclick = async e => { busy(e.target, true, 'Saving…'); try { const x = await save(); toast(`Saved as ${x.id}.`); draw(r); } catch (err) { toast(err, true); busy(e.target, false, 'Save draft'); } };
-    $('#ccLetter').onclick = async e => {
+    if ($('#ccLetter')) $('#ccLetter').onclick = async e => {
       busy(e.target, true, 'Saving…');
       try { const rec = saved || await save(); draw(r); ctcLetter(rec, R, () => draw(r)); }
       catch (err) { toast(err, true); busy(e.target, false, 'Letter…'); }
@@ -4110,7 +4140,7 @@ function ctcCalc(el, R, v) {
   $('#ccGrade').onchange = e => { f.grade = e.target.value; fillDesig(); redraw(); };
   if ($('#ccStipend')) $('#ccStipend').oninput = e => { f.amounts.stipend = e.target.value.replace(/[^\d]/g, ''); run(); };
   $$('select[data-flag]', el).forEach(x => x.onchange = () => { f.codes[x.dataset.flag] = x.value; run(); });
-  $('#ccReset').onclick = () => { S.ctcIn = null; ctcCalc(el, R, v); };
+  $('#ccReset').onclick = () => { S.ctcIn = null; S.ctcCfgSeen = null; ctcCalc(el, R, v); };
   if ($('#ccRerunX')) $('#ccRerunX').onclick = () => { f.rerunOf = null; ctcCalc(el, R, v); };
   run();
 }
@@ -4182,18 +4212,21 @@ async function ctcSaved(el, R, v) {
       ${rows.map(r => `<tr data-id="${esc(r.id)}" tabindex="0"><td><b>${esc(r.id)}</b></td><td>${esc(r.name) || '<span class="sub">—</span>'}</td><td>${esc([r.designation, r.grade].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
         <td>${esc(basisLabel(r.basis))} ${inr(r.target)}</td><td class="num">${inr(r.totalCtc)}</td><td class="num">${inr(r.net)}</td>
         <td>${esc(r.version)}${r.version !== L.active ? '<span class="sub">older rules</span>' : ''}</td>
-        <td><span class="ctc-st ${esc(r.status)}">${esc(CTC_STATUS[r.status] || r.status)}</span>${r.rerunOf ? `<span class="sub">re-run of ${esc(r.rerunOf)}</span>` : ''}${r.supersededBy ? `<span class="sub">by ${esc(r.supersededBy)}</span>` : ''}</td>
+        <td><span class="ctc-st ${ctcStClass(r.status)}">${esc(CTC_STATUS[r.status] || r.status)}</span>${r.rerunOf ? `<span class="sub">re-run of ${esc(r.rerunOf)}</span>` : ''}${r.supersededBy ? `<span class="sub">by ${esc(r.supersededBy)}</span>` : ''}</td>
         <td class="nw">${fmtDate(r.day)}${L.all ? `<span class="sub">${esc(r.by.split('@')[0])}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${L.rows.length ? 'No calculation matches.' : 'Nothing saved yet. Save a calculation or make a letter from the Calculator tab.'}</div>`;
     $$('#csList tr[data-id]').forEach(tr => { tr.onclick = () => ctcOpen(tr.dataset.id, R, v); tr.onkeydown = e => { if (e.key === 'Enter') ctcOpen(tr.dataset.id, R, v); }; });
   };
   const older = L.rows.filter(r => r.status !== 'Superseded' && r.version !== L.active).length;
-  el.innerHTML = `${older ? `<div class="ctc-status info">${older} saved calculation${older === 1 ? ' was' : 's were'} worked out on older rules. Open one and choose <b>Re-run on current rules</b> to see what changes.</div>` : ''}
+  const waiting = L.rows.filter(r => r.status === 'Pending approval');
+  el.innerHTML = `${waiting.length && ctcCan('ctc_approve') ? `<div class="ctc-status info"><b>${waiting.length}</b> letter${waiting.length === 1 ? ' is' : 's are'} waiting for approval. <button class="linklike" id="csWait">Show them</button></div>` : ''}
+    ${older ? `<div class="ctc-status info">${older} saved calculation${older === 1 ? ' was' : 's were'} worked out on older rules. Open one and choose <b>Re-run on current rules</b> to see what changes.</div>` : ''}
     <div class="filters"><div class="field"><label for="csQ">Search</label><input id="csQ" value="${esc(f.q)}" placeholder="Ref, name, designation${L.all ? ', made by' : ''}"></div>
-      <div class="field"><label for="csSt">Status</label><select id="csSt">${opts([['', 'All'], ['Draft', 'Draft'], ['Issued', 'Issued'], ['Superseded', 'Superseded']], f.status, false)}</select></div>
+      <div class="field"><label for="csSt">Status</label><select id="csSt">${opts([['', 'All'], ['Draft', 'Draft'], ['Pending approval', 'Waiting for approval'], ['Issued', 'Issued'], ['Superseded', 'Superseded']], f.status, false)}</select></div>
       <div class="field" style="justify-content:flex-end"><button class="btn sm" id="csCsv">Download CSV</button></div></div>
     <p class="hint">${L.all ? 'Everyone’s calculations.' : 'Your calculations.'} An issued letter is locked; a re-run makes a new calculation, and issuing it marks the earlier one as superseded.</p>
     <div id="csList"></div>`;
+  if ($('#csWait')) $('#csWait').onclick = () => { f.status = 'Pending approval'; $('#csSt').value = f.status; draw(); };
   $('#csQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
   $('#csSt').onchange = e => { f.status = e.target.value; draw(); };
   $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Designation', 'Grade', 'Basis', 'Target', 'Total CTC', 'Gross', 'Net', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
@@ -4204,13 +4237,15 @@ async function ctcOpen(id, R, v) {
   openDrawer('Calculation ' + id, '<p class="muted">Loading…</p>');
   let c; try { c = await api('apiCtcGet', id); } catch (e) { $('#drawerBody').innerHTML = `<p class="miss">${esc(e)}</p>`; return; }
   const T = c.result.totals, mine = c.by === S.boot.user.email, older = c.version !== R.active.id;
-  $('#drawerBody').innerHTML = `<div class="ctc-vh"><div class="dp-h"><b>${esc(c.name || 'No name given')}</b><span class="ctc-st ${esc(c.status)}">${esc(c.status)}</span></div>
+  $('#drawerBody').innerHTML = `<div class="ctc-vh"><div class="dp-h"><b>${esc(c.name || 'No name given')}</b><span class="ctc-st ${ctcStClass(c.status)}">${esc(c.status)}</span></div>
       <div>${esc([c.designation, c.grade].filter(Boolean).join(' · ')) || '<span class="sub">No designation or grade</span>'}</div>
       <div class="sub">Rules ${esc(c.version)}${older ? ' (older than the rules in force, ' + esc(R.active.id) + ')' : ''} · made by ${esc(c.by)} on ${esc(c.at)}${c.issuedAt ? ` · issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}` : ''}</div>
       ${c.rerunOf ? `<div class="sub">Re-run of ${esc(c.rerunOf)}</div>` : ''}${c.supersededBy ? `<div class="sub">Superseded by ${esc(c.supersededBy)}</div>` : ''}</div>
     <div class="readout"><div><span class="sub">Total CTC</span><b>${inr(T.totalCtc)}</b></div><div><span class="sub">Gross</span><b>${inr(T.gross)}</b></div><div><span class="sub">Net in-hand</span><b>${inr(T.net)}</b></div></div>
+    ${c.status === 'Draft' && c.decisionNote ? `<div class="ctc-status warn" style="margin-top:12px">Returned by ${esc(c.decidedBy)} on ${esc(c.decidedAt)}: ${esc(c.decisionNote)}</div>` : ''}
+    ${c.status === 'Pending approval' ? `<div class="ctc-status info" style="margin-top:12px">Submitted by ${esc(c.submittedBy)} on ${esc(c.submittedAt)}, waiting for approval.</div>` : ''}
     <div class="drawer-actions" style="position:static;flex-wrap:wrap;gap:8px;justify-content:flex-start;margin-top:14px">
-      ${c.status !== 'Discarded' ? '<button class="btn primary" id="coLetter">Letter…</button>' : ''}
+      ${(c.status === 'Pending approval' ? (ctcCan('ctc_approve') || mine) : c.status === 'Draft' ? ctcCan('ctc_issue') : c.status !== 'Discarded') ? `<button class="btn primary" id="coLetter">${c.status === 'Pending approval' && ctcCan('ctc_approve') ? 'Review and approve…' : 'Letter…'}</button>` : ''}
       ${c.letter ? `<a class="btn" href="${esc(c.letter)}" target="_blank" rel="noopener">Open issued PDF</a>` : ''}
       ${c.status === 'Draft' && mine ? '<button class="btn" id="coEdit">Edit in calculator</button>' : ''}
       ${c.status !== 'Draft' && c.status !== 'Discarded' ? `<button class="btn" id="coRerun">Re-run on current rules</button>` : ''}
@@ -4289,7 +4324,7 @@ function ctcLetterHtml(c, cfg, lang, draft) {
     ${notes.length ? `<h2>${L('terms')}</h2><ol>${notes.map(n => `<li>${note(n)}</li>`).join('')}</ol>` : ''}
     <div class="sign"><div><i class="line"></i><span>${acc}</span><span class="d">${L('dateSign')}:</span></div>
       <div><i class="line"></i><span>${L('for')} ${esc(lt.company)}</span><span>${esc(lt.signatory)}</span></div></div>
-    <footer>${esc(c.id)} · Rules ${esc(c.version)} · Prepared by ${esc(String(c.issuedBy || c.by).split('@')[0])}${c.issuedAt ? ' · issued ' + esc(c.issuedAt) : ''}</footer>
+    <footer>${esc(c.id)} · Rules ${esc(c.version)} · Prepared by ${esc(String(c.by).split('@')[0])}${c.decidedBy ? ' · approved by ' + esc(String(c.decidedBy).split('@')[0]) : c.issuedBy && c.issuedBy !== c.by ? ' · issued by ' + esc(String(c.issuedBy).split('@')[0]) : ''}${c.issuedAt ? ' · issued ' + esc(c.issuedAt) : ''}</footer>
   </div>`;
 }
 let ctcFontReady = null;
@@ -4328,32 +4363,58 @@ function ctcLetter(c, R, onIssued) {
   let d = $('#ctlDialog');
   if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="ctlDialog" class="pm-dialog wide ctl-dialog" aria-labelledby="ctlTitle"></dialog>'); d = $('#ctlDialog'); }
   let lang = c.language || S.ctcLang || 'en';
+  const mine = c.by === S.boot.user.email;
   const render = async () => {
-    const issued = c.status === 'Issued' || c.status === 'Superseded';
+    const issued = c.status === 'Issued' || c.status === 'Superseded', pending = c.status === 'Pending approval';
+    const approver = ctcCan('ctc_approve'), needsApproval = R.approval && !approver;
     const conf = cfg || (await ctcVersionConfig(c.version, R));
     if (lang !== 'en') await ctcFonts();
     const html = ctcLetterHtml(c, conf, lang, !issued);
-    d.innerHTML = `<div class="dp-h"><h2 id="ctlTitle">Letter · ${esc(c.id)}</h2><span class="ctc-st ${esc(c.status)}">${esc(c.status)}</span>
-        ${issued ? `<span class="hint">Language: ${esc({ en: 'English', hi: 'Hindi', both: 'English and Hindi' }[lang])}</span>` : `<div class="seg ctl-lang" role="radiogroup" aria-label="Letter language">${[['en', 'English'], ['hi', 'Hindi'], ['both', 'Both']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ctlLang" value="${k}" ${lang === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>`}</div>
+    const picker = (issued || (pending && !approver)) ? `<span class="hint">Language: ${esc({ en: 'English', hi: 'Hindi', both: 'English and Hindi' }[lang] || '')}</span>`
+      : `<div class="seg ctl-lang" role="radiogroup" aria-label="Letter language">${[['en', 'English'], ['hi', 'Hindi'], ['both', 'Both']].map(([k, l]) => `<label class="seg-o"><input type="radio" name="ctlLang" value="${k}" ${lang === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>`;
+    const hint = issued ? `Issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}${c.decidedBy ? `, approved by ${esc(c.decidedBy)}` : ''}. The letter is locked.`
+      : pending ? (approver ? `Submitted by ${esc(c.submittedBy)} on ${esc(c.submittedAt)}. Check the letter, then approve it (it is issued and kept in Drive) or return it with a note.` : `Waiting for approval since ${esc(c.submittedAt)}.`)
+      : needsApproval ? 'Check the letter, then submit it. An approver issues it; you will see it as issued once they do.'
+      : 'Check the letter, then issue it. Issuing locks the figures and keeps the PDF in Drive; downloads are available only for issued letters.';
+    const note = c.status === 'Draft' && c.decisionNote ? `<div class="ctc-status warn" style="margin:0 0 10px">Returned by ${esc(c.decidedBy)}: ${esc(c.decisionNote)}</div>` : '';
+    const btns = issued ? `<button class="btn" id="ctlPng">Download image</button><button class="btn primary" id="ctlPdf">Download PDF</button>`
+      : pending ? `${approver ? `<input id="ctlNote" class="ctl-note" placeholder="Note to the maker (needed to return it)" maxlength="500"><button class="btn" id="ctlReturn">Return</button><button class="btn primary" id="ctlApprove">Approve and issue</button>` : ''}${mine ? '<button class="btn" id="ctlWithdraw">Withdraw</button>' : ''}`
+      : needsApproval ? '<button class="btn primary" id="ctlSubmit">Submit for approval</button>' : '<button class="btn primary" id="ctlIssue">Issue letter</button>';
+    d.innerHTML = `<div class="dp-h"><h2 id="ctlTitle">Letter · ${esc(c.id)}</h2><span class="ctc-st ${ctcStClass(c.status)}">${esc(CTC_STATUS[c.status] || c.status)}</span>${picker}</div>${note}
       <div class="ctl-view"><div class="ctl-scale">${html}</div></div>
-      <div class="ctl-foot"><span class="hint">${issued ? `Issued by ${esc(c.issuedBy)} on ${esc(c.issuedAt)}. The letter is locked.` : 'Check the letter, then issue it. Issuing locks the figures and keeps the PDF in Drive; downloads are available only for issued letters.'}</span>
-        <button class="btn" data-close>Close</button>
-        ${issued ? `<button class="btn" id="ctlPng">Download image</button><button class="btn primary" id="ctlPdf">Download PDF</button>` : `<button class="btn primary" id="ctlIssue">Issue letter</button>`}</div>`;
+      <div class="ctl-foot"><span class="hint">${hint}</span><button class="btn" data-close>Close</button>${btns}</div>`;
     const fit = () => { const box = $('.ctl-view', d), sc = $('.ctl-scale', d); if (!box || !sc) return; const k = Math.min(1, (box.clientWidth - 24) / 794); sc.style.transform = `scale(${k})`; sc.style.height = (sc.firstElementChild.offsetHeight * k) + 'px'; sc.style.width = (794 * k) + 'px'; };
     requestAnimationFrame(fit); window.onresize = fit;
     $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
     $$('input[name="ctlLang"]', d).forEach(x => x.onchange = () => { lang = S.ctcLang = x.value; render(); });
     const make = async btn => { busy(btn, true, 'Preparing…'); try { return await ctcCanvas(ctcLetterHtml(c, conf, lang, false)); } finally { busy(btn, false); } };
+    const done = (rec, msg) => { Object.assign(c, rec); S.ctcList = null; if (onIssued) onIssued(rec); toast(msg); render(); };
+    const pdfOf = async b => (await ctcPdf(await make(b))).output('datauristring').split(',')[1];
     if ($('#ctlIssue', d)) twoStep($('#ctlIssue', d), 'Click again to issue', async () => {
       const b = $('#ctlIssue', d);
-      try {
-        const cv = await make(b); busy(b, true, 'Issuing…');
-        const pdf = (await ctcPdf(cv)).output('datauristring').split(',')[1];
-        const rec = await api('apiCtcIssue', c.id, { language: lang, pdf });
-        Object.assign(c, rec); S.ctcList = null; if (onIssued) onIssued(rec);
-        toast(`${c.id} issued. The PDF is saved in Drive.`); render();
-      } catch (e) { toast(e, true); busy(b, false, 'Issue letter'); }
+      try { const pdf = await pdfOf(b); busy(b, true, 'Issuing…'); done(await api('apiCtcIssue', c.id, { language: lang, pdf }), `${c.id} issued. The PDF is saved in Drive.`); }
+      catch (e) { toast(e, true); busy(b, false, 'Issue letter'); }
     });
+    if ($('#ctlSubmit', d)) twoStep($('#ctlSubmit', d), 'Click again to submit', async () => {
+      const b = $('#ctlSubmit', d);
+      try { busy(b, true, 'Submitting…'); done(await api('apiCtcSubmit', c.id, { language: lang }), `${c.id} submitted for approval.`); }
+      catch (e) { toast(e, true); busy(b, false, 'Submit for approval'); }
+    });
+    if ($('#ctlApprove', d)) twoStep($('#ctlApprove', d), 'Click again to approve', async () => {
+      const b = $('#ctlApprove', d);
+      try { const pdf = await pdfOf(b); busy(b, true, 'Approving…'); done(await api('apiCtcReview', c.id, { action: 'Approve', language: lang, pdf }), `${c.id} approved and issued. The PDF is saved in Drive.`); }
+      catch (e) { toast(e, true); busy(b, false, 'Approve and issue'); }
+    });
+    if ($('#ctlReturn', d)) $('#ctlReturn', d).onclick = async e => {
+      const note = $('#ctlNote', d).value.trim();
+      if (note.length < 5) return toast('Write a note for the maker: what to change.', true);
+      busy(e.target, true, 'Returning…');
+      try { done(await api('apiCtcReview', c.id, { action: 'Return', note }), `${c.id} returned to ${c.by.split('@')[0]}.`); } catch (err) { toast(err, true); busy(e.target, false, 'Return'); }
+    };
+    if ($('#ctlWithdraw', d)) $('#ctlWithdraw', d).onclick = async e => {
+      busy(e.target, true, 'Withdrawing…');
+      try { done(await api('apiCtcReview', c.id, { action: 'Withdraw' }), `${c.id} is a draft again.`); } catch (err) { toast(err, true); busy(e.target, false, 'Withdraw'); }
+    };
     if ($('#ctlPdf', d)) $('#ctlPdf', d).onclick = async e => { try { (await ctcPdf(await make(e.target))).save(ctcFileName(c, 'pdf')); e.target.textContent = 'Download PDF'; } catch (err) { toast(err, true); } };
     if ($('#ctlPng', d)) $('#ctlPng', d).onclick = async e => { try { const cv = await make(e.target); e.target.textContent = 'Download image'; cv.toBlob(b => saveBlob(b, ctcFileName(c, 'png')), 'image/png'); } catch (err) { toast(err, true); } };
   };
@@ -4367,6 +4428,48 @@ async function ctcVersionConfig(id, R) {
   S.ctcCfg = S.ctcCfg || {};
   if (!S.ctcCfg[id]) S.ctcCfg[id] = await api('apiCtcVersion', id);
   return S.ctcCfg[id];
+}
+
+/* ---- Access (Admin) ---- */
+async function ctcAccessTab(el, R, v) {
+  el.innerHTML = skRows(6, 4);
+  let A; try { A = await api('apiCtcAccess'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const roles = ['Head of HR', 'TA Lead', 'Recruiter'], D = { roles: JSON.parse(JSON.stringify(A.roles)), approval: A.approval, reason: '' };
+  const has = (r, p) => (D.roles[r] || []).includes(p), was = (r, p) => (A.roles[r] || []).includes(p);
+  const changed = () => roles.some(r => CTC_PERM_INFO.some(([p]) => has(r, p) !== was(r, p))) || D.approval !== A.approval;
+  const draw = () => {
+    el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Who can use the CTC calculator</h2><span class="hint">Admin always has everything. Changing the CTC rules stays with the admin.</span></div>
+      <div class="table-wrap"><table class="ctc-table ctc-acc"><thead><tr><th>Can…</th><th>Admin</th>${roles.map(r => `<th>${esc(r)}</th>`).join('')}</tr></thead><tbody>
+        ${CTC_PERM_INFO.map(([p, l, d]) => `<tr><td><b>${esc(l)}</b><span class="sub">${esc(d)}</span></td><td class="ck"><span class="ok-tick" aria-label="Yes">✓</span></td>
+          ${roles.map(r => `<td class="ck ${has(r, p) !== was(r, p) ? 'chg' : ''}"><input type="checkbox" data-r="${esc(r)}" data-p="${p}" ${has(r, p) ? 'checked' : ''} aria-label="${esc(r)}: ${esc(l)}"></td>`).join('')}</tr>`).join('')}
+        <tr><td><b>Change the CTC rules</b><span class="sub">Versions, amounts, slabs, the letter and its terms. Admin only.</span></td><td class="ck"><span class="ok-tick">✓</span></td>${roles.map(() => '<td class="ck"><span class="muted">–</span></td>').join('')}</tr>
+      </tbody></table></div>
+      <label class="ctc-appr"><input type="checkbox" id="acAppr" ${D.approval ? 'checked' : ''}> <span><b>Letters need approval before they are issued</b><span class="sub">People who can make letters but not approve them submit a letter; someone who can approve it checks it and issues it. People who can approve issue their own letters directly. Off at launch.</span></span></label>
+      <div class="grid" style="margin-top:14px"><div class="field wide"><label for="acReason">Reason for the change (kept in the change history)</label><textarea id="acReason" rows="2" maxlength="300" placeholder="e.g. Pilot with the recruiting team">${esc(D.reason)}</textarea></div></div>
+      <div class="rs-row"><span class="hint">Takes effect for each person the next time the page is opened (within about 5 minutes).</span><button class="btn primary" id="acSave" ${changed() ? '' : 'disabled'}>Save access</button></div></section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Preview as a role</h2></div><p class="hint" style="margin:0 0 10px">See the calculator the way a role would see it before you switch anything on. Nothing is saved or issued in a preview.</p>
+        <div class="rs-row">${roles.map(r => `<button class="btn" data-pv="${esc(r)}">Preview as ${esc(r)}</button>`).join('')}</div></section>
+      <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent changes</h2></div>${A.log.length ? `<ul class="rs-changes">${A.log.map(x => `<li><b>${esc(x.at)}</b> · ${esc(String(x.by).split('@')[0])} · ${esc(x.what)}</li>`).join('')}</ul>` : '<p class="hint">No changes yet.</p>'}</section>`;
+    $$('input[data-p]', el).forEach(x => x.onchange = () => {
+      const r = x.dataset.r, p = x.dataset.p, list = D.roles[r] = D.roles[r] || [];
+      const set = (q, on) => { const i = list.indexOf(q); if (on && i < 0) list.push(q); if (!on && i >= 0) list.splice(i, 1); };
+      set(p, x.checked);
+      if (x.checked && p !== 'ctc_use') set('ctc_use', true);
+      if (!x.checked && p === 'ctc_use') CTC_PERM_INFO.forEach(([q]) => set(q, false));
+      D.reason = $('#acReason').value; draw();
+    });
+    $('#acAppr').onchange = e => { D.approval = e.target.checked; D.reason = $('#acReason').value; draw(); };
+    $('#acReason').oninput = e => { D.reason = e.target.value; };
+    $$('[data-pv]', el).forEach(b => b.onclick = () => { S.ctcPreview = b.dataset.pv; S.ctcTab = 'calc'; viewCtc(v); });
+    $('#acSave').onclick = async e => {
+      const reason = $('#acReason').value.trim();
+      if (reason.length < 10) return toast('Write a reason of at least 10 characters.', true);
+      busy(e.target, true, 'Saving…');
+      try { await api('apiCtcAccessSave', { roles: Object.fromEntries(roles.map(r => [r, D.roles[r] || []])), approval: D.approval, reason }); S.ctc = null; S.ctcList = null; toast('Access saved.'); viewCtc(v); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Save access'); }
+    };
+  };
+  draw();
 }
 
 /* ---- Rules editor (ctc_rules) ---- */
