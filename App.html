@@ -1355,18 +1355,34 @@ function bindEntryEdits(root, rows, after) {
     bindDailyForm(d, () => { closeDrawer(); after(); });
   });
 }
+const FUNNEL_PIPED_ = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
 function funnelTable(rows, withPosition) {
   if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
   const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
+  const cut = S.boot.cutover || '2026-10-05', anyPiped = rows.some(r => String(r.Entry_Date) >= cut);
+  window._fnPeople = window._fnPeople || {};
+  const cell = (r, k, i) => {
+    const n = Number(r[k]) || 0, ppl = r.People && r.People[k];
+    if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (METRICS.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
+    return `<td class="num${FUNNEL_PIPED_.includes(k) && String(r.Entry_Date) >= cut ? ' pipe' : ''}">${n || ''}</td>`;
+  };
   return `<div class="table-wrap"><table><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
     ${METRICS.map(([, l, s]) => `<th class="num" title="${l}">${s}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
-    ${rows.map(r => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
+    ${rows.map((r, i) => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
       ${withPosition ? `<td>${esc(p ? p.Position : r.Line_ID)}<span class="sub">${esc(r.MRF_No)}</span></td><td>${esc(r.Recruiter)}</td>` : ''}
-      ${METRICS.map(([k]) => `<td class="num">${Number(r[k]) || ''}</td>`).join('')}<td class="remarks">${esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
-      <td class="nw">${r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
+      ${METRICS.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
+      <td class="nw">${r.derived ? '<span class="locked" title="Counted from the candidates you moved in the Pipeline">Pipeline</span>' : r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
     <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${METRICS.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
-    </tbody></table></div>`;
+    </tbody></table></div>${anyPiped ? `<p class="hint">From ${fmtDate(cut)}, the columns after \u201cReviewed\u201d are counted from the candidates moved in the Pipeline (click a number to see who). Only CVs and Reviewed are typed here.</p>` : ''}`;
 }
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-pm]'); if (!b) return;
+  const x = (window._fnPeople || {})[b.dataset.pm]; if (!x) return;
+  cpDlg(`<h2 id="cpTitle">${esc(x.label)} \u00b7 ${x.list.length} \u00b7 ${fmtDate(x.day)}</h2>
+    <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
+    ${x.list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+});
 
 async function viewDaily(v) {
   await loadPositions();

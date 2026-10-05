@@ -285,6 +285,7 @@ function e2eRun_(trash) {
     t('K17 a vendor import dry run changes nothing', function () { const r = apiBgvImport([{ ref: 'NO-SUCH-CASE', check: 'Employment', status: 'Verified' }], {}); return r.applied === false && r.counts.errors === 1 ? 'ok' : false; });
     t('K18 BGV governance shows the Drive status and the retention list', function () { const g = apiBgvGovern(); return g.retention && Array.isArray(g.retention.due) && g.drive ? g.retention.due.length + ' due' : false; });
     t('K19 the BGV audit export works for the admin and is logged', function () { const r = apiBgvAudit({}); return Array.isArray(r.rows) && r.from <= r.to ? r.total + ' rows' : false; });
+    t('M1 the Daily log list carries the pipeline counts from the switch-over', function () { const r = apiListFunnel({ from: cutover_(), to: ymd_(new Date()) }); return Array.isArray(r) && r.every(function (x) { return x.Entry_Date >= cutover_() ? typeof x.HR_1st_Round === 'number' : true; }) ? r.length + ' rows' : false; });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
       const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';
