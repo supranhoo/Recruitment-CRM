@@ -1010,6 +1010,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Screening dialog redesign** (no schema or server change; scoring unchanged)
+- Cause of the broken look: the CTC calculator's `.seg` class overrode the screening rating buttons (they became a 2×2 grid). The screening now has its own `.scr-seg`; its answer boxes share the app's input style.
+- Compact row (question, knock-out / must pill, "Needed", answer and Meets / Partly / Gap side by side, 5 rows per screen instead of 3 on a 1366×768 laptop); fixed header and footer with the questions filling the rest; the result names the knock-outs not met (click to jump); counts of Met / Partly / Gap / Unrated; section chips with "to rate" counts; **Next unrated**; the reason for each automatic rating ("3, needed 4+ → Gap"), "Changed by you (auto: Gap) · Undo"; Complete screening is stopped with a clear message that jumps to the first unrated question; keyboard: arrows or 1 / 2 / 3 on a rating; radio-group semantics; full-screen on phones.
+- Tests: browser run at 1366, 1500, 1920, 1024 and 390 px (before and after screenshots), keyboard, undo, jump, blocked and successful completion; found and fixed a lost first click caused by the header being rebuilt on blur.
+
 **Unreleased — CV profile, fixes from the first real CV** (no schema change)
 - A company name with "Pvt. Ltd." was read as a sentence, so the employer under the role line was lost; a degree with an institute and dates (even with no Education heading) was read as a job; "Bachelor/Batchelor/Master of Science / Commerce / Arts / Business" are now recognised as degrees (also for the Education field); generic tools and skill sentences ("basic MS Office") are no longer listed as certificates; when the CV states far more experience than the dated jobs add up to, the warning says earlier jobs may not have been read and names the first dated job. After a build, **Show the text that was read** lets the recruiter see what the parser saw. Tests: 58 parser cases.
 
