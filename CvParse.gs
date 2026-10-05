@@ -27,10 +27,10 @@ const SKILL_WORDS_ = ['SAP', 'SAP PM', 'SAP MM', 'SAP HR', 'AutoCAD', 'SolidWork
   'first aid', 'fire fighting', 'logistics', 'SCM', 'procurement', 'purchase', 'inventory', 'stores', 'dispatch', 'export', 'sales',
   'marketing', 'business development', 'Python', 'SQL', 'networking', 'Power BI'];
 const EDU_ORDER_ = [
-  [/\bph\.?\s?d\b|doctorate/i, 'PhD'], [/\bm\.?\s?tech\b|\bm\.e\.?(?=\s|$|,)|master of engineering/i, 'M.Tech/ME'], [/\bmba\b|\bpgdm\b|\bpgdbm\b/i, 'MBA/PGDM'],
-  [/\bmca\b/i, 'MCA'], [/\bm\.?\s?sc\b/i, 'M.Sc'], [/\bm\.?\s?com\b/i, 'M.Com'], [/\bm\.?\s?a\b(?=[\s,.])/, 'MA'],
-  [/\bb\.?\s?tech\b|\bb\.e\.?(?=\s|$|,)|bachelor of (?:engineering|technology)/i, 'B.Tech/BE'], [/\bb\.?\s?sc\b/i, 'B.Sc'], [/\bbca\b/i, 'BCA'],
-  [/\bb\.?\s?com\b/i, 'B.Com'], [/\bb\.?\s?a\b(?=[\s,.])|bachelor of arts/i, 'BA'], [/\bdiploma\b/i, 'Diploma'], [/\biti\b/i, 'ITI'],
+  [/\bph\.?\s?d\b|doctorate/i, 'PhD'], [/\bm\.?\s?tech\b|\bm\.e\.?(?=\s|$|,)|master of engineering/i, 'M.Tech/ME'], [/\bmba\b|\bpgdm\b|\bpgdbm\b|masters?\s+of\s+business/i, 'MBA/PGDM'],
+  [/\bmca\b/i, 'MCA'], [/\bm\.?\s?sc\b|masters?\s+of\s+science/i, 'M.Sc'], [/\bm\.?\s?com\b|masters?\s+of\s+commerce/i, 'M.Com'], [/\bm\.?\s?a\b(?=[\s,.])/, 'MA'],
+  [/\bb\.?\s?tech\b|\bb\.e\.?(?=\s|$|,)|bachelor of (?:engineering|technology)/i, 'B.Tech/BE'], [/\bb\.?\s?sc\b|ba?t?chelors?\s+of\s+science/i, 'B.Sc'], [/\bbca\b/i, 'BCA'],
+  [/\bb\.?\s?com\b|ba?t?chelors?\s+of\s+commerce/i, 'B.Com'], [/\bb\.?\s?a\b(?=[\s,.])|ba?t?chelors?\s+of\s+arts/i, 'BA'], [/\bdiploma\b/i, 'Diploma'], [/\biti\b/i, 'ITI'],
   [/\b(?:12th|xii|intermediate|hsc|\+2)\b/i, '12th'], [/\b(?:10th|matric|ssc)\b/i, '10th']];
 const DISCIPLINES_ = ['Mechanical', 'Electrical', 'Electronics', 'Instrumentation', 'Metallurgy', 'Metallurgical', 'Civil', 'Chemical', 'Production',
   'Computer Science', 'Information Technology', 'Automobile', 'Fitter', 'Electrician', 'Welder', 'Turner', 'Machinist', 'HR', 'Finance', 'Marketing',
