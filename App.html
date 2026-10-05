@@ -2538,6 +2538,18 @@ function sqAutoC(it, ans) {
   }
   return '';
 }
+/** Why an answer was rated automatically, in words ("3 yrs, 4+ needed"). */
+function sqReasonC(it, ans) {
+  const a = String(ans == null ? '' : ans).trim();
+  if (!a || it.sec === 'P') return '';
+  if (it.type === 'yesno') return `answered ${/^y/i.test(a) ? 'Yes' : 'No'}, needed ${it.expect === 'No' ? 'No' : 'Yes'}`;
+  if (it.type === 'number') {
+    const v = Number(a.replace(/[^0-9.]/g, '')); if (isNaN(v)) return '';
+    if (it.min != null) return `${v}, needed ${it.min}+`;
+    if (it.max != null) return `${v}, needed ${it.max} or less${it.partly != null ? ' (up to ' + it.partly + ' is partly)' : ''}`;
+  }
+  return '';
+}
 function sqRateC(it, x) { x = x || {}; const auto = sqAutoC(it, x.a); return x.o && x.r ? x.r : (auto || (it.type === 'text' ? x.r || '' : '')); }
 function sqScoreC(items, answers) {
   answers = answers || {};
@@ -2780,54 +2792,93 @@ function renderScreening(d, S, after) {
   const ans = JSON.parse(JSON.stringify(sc ? sc.answers : {})), can = S.canEdit;
   items.forEach(i => { ans[i.id] = ans[i.id] || { a: '', r: '' }; });
   const input = i => {
-    const v = esc(ans[i.id].a || ''), dis = can ? '' : ' disabled';
-    if (i.type === 'yesno') return `<select data-a="${i.id}"${dis}><option value=""></option><option${ans[i.id].a === 'Yes' ? ' selected' : ''}>Yes</option><option${ans[i.id].a === 'No' ? ' selected' : ''}>No</option></select>`;
-    if (i.type === 'number') return `<input data-a="${i.id}" inputmode="decimal" value="${v}" placeholder="Number"${dis}>`;
-    return `<textarea data-a="${i.id}" rows="${i.sec === 'P' ? 1 : 2}" placeholder="${i.sec === 'P' ? '' : 'Candidate\u2019s answer (key points)'}"${dis}>${v}</textarea>`;
+    const v = esc(ans[i.id].a || ''), dis = can ? '' : ' disabled', lab = ` aria-label="Answer to ${esc(i.id)}"`;
+    if (i.type === 'yesno') return `<select data-a="${i.id}"${lab}${dis}><option value="">Choose…</option><option${ans[i.id].a === 'Yes' ? ' selected' : ''}>Yes</option><option${ans[i.id].a === 'No' ? ' selected' : ''}>No</option></select>`;
+    if (i.type === 'number') return `<input data-a="${i.id}" inputmode="decimal" value="${v}" placeholder="Number"${lab}${dis}>`;
+    return `<textarea data-a="${i.id}" rows="${i.sec === 'R' ? 2 : 1}" placeholder="${i.sec === 'P' ? '' : 'Candidate’s answer (key points)'}"${lab}${dis}>${v}</textarea>`;
   };
-  const row = i => `<div class="scr-row" data-row="${i.id}"><div class="scr-q"><span class="scr-id${i.ko ? ' ko' : ''}">${esc(i.id)}</span><div><div class="scr-qt">${esc(i.q)}</div>
-      ${i.sec !== 'P' ? `<div class="scr-need">${i.need ? 'Needed: ' + esc(i.need) : ''}${i.ko ? '<span class="tag-ko">knock-out</span>' : i.imp === 'M' ? '<span class="tag-must">must</span>' : i.imp === 'N' ? '<span class="tag-nice">nice to have</span>' : ''}</div>` : ''}
-      ${i.good || i.watch ? `<details class="scr-guide"><summary>Guide</summary>${i.good ? `<div><b>Good answer:</b> ${esc(i.good)}</div>` : ''}${i.watch ? `<div><b>Watch for:</b> ${esc(i.watch)}</div>` : ''}</details>` : ''}</div></div>
-    <div class="scr-a">${input(i)}</div>
-    <div class="scr-r">${i.sec === 'P' ? '' : `<div class="seg" data-seg="${i.id}">${['M', 'P', 'G'].map(r => `<button type="button" data-r="${r}"${can ? '' : ' disabled'}>${RATE_LABEL[r]}</button>`).join('')}</div><span class="scr-auto" data-auto="${i.id}"></span>`}</div></div>`;
+  const row = i => `<div class="scr-row" data-row="${i.id}" id="scrq_${i.id}">
+    <div class="scr-q"><div class="scr-q1"><span class="scr-id${i.ko ? ' ko' : ''}">${esc(i.id)}</span>${i.ko ? '<span class="scr-pill ko">Knock-out</span>' : i.imp === 'M' ? '<span class="scr-pill must">Must</span>' : i.imp === 'N' ? '<span class="scr-pill nice">Nice to have</span>' : ''}<span class="scr-qt">${esc(i.q)}</span></div>
+      ${i.sec !== 'P' && i.need ? `<div class="scr-need"><b>Needed:</b> ${esc(i.need)}</div>` : ''}
+      ${i.good || i.watch ? `<details class="scr-guide"><summary>Guide for the interviewer</summary>${i.good ? `<div><b>Good answer:</b> ${esc(i.good)}</div>` : ''}${i.watch ? `<div><b>Watch for:</b> ${esc(i.watch)}</div>` : ''}</details>` : ''}</div>
+    <div class="scr-ans"><div class="scr-line"><div class="scr-a">${input(i)}</div>
+      ${i.sec === 'P' ? '' : `<div class="scr-seg" role="radiogroup" aria-label="Rating for ${esc(i.id)}" data-seg="${i.id}">${['M', 'P', 'G'].map(r => `<button type="button" role="radio" aria-checked="false" tabindex="-1" data-r="${r}"${can ? '' : ' disabled'}>${RATE_LABEL[r]}</button>`).join('')}</div>`}</div>
+      ${i.sec === 'P' ? '' : `<div class="scr-why" data-auto="${i.id}"></div>`}</div></div>`;
   const E = items.filter(i => i.sec === 'E'), R = items.filter(i => i.sec === 'R'), Pr = items.filter(i => i.sec === 'P');
   let theme = null;
   const rRows = R.map(i => { const h = (i.theme || '') !== theme ? ((theme = i.theme || '') ? `<div class="scr-theme">${esc(theme)}</div>` : '') : ''; return h + row(i); }).join('');
-  d.innerHTML = `<div class="scr-head"><div><h2 id="scrTitle">${esc(S.cand.name)}</h2><p class="sub">${esc(S.line.position)} \u00b7 ${esc(S.line.mrf || S.line.id)} \u00b7 questions v${sc ? sc.sqVersion : S.finalVersion}${S.jdVersion ? ' (JD v' + S.jdVersion + ')' : ''}${sc ? ' \u00b7 ' + (sc.status === 'Complete' ? 'completed' : 'draft') + ' ' + fmtDate(sc.on) : ''}</p></div>
-      <div class="scr-fit" id="scrFit"></div></div>
+  const secs = [E.length ? ['E', 'Eligibility', E] : null, R.length ? ['R', 'Role fit', R] : null].filter(Boolean);
+  d.innerHTML = `<div class="scr-head"><div class="scr-who"><h2 id="scrTitle">${esc(S.cand.name)}</h2><p class="sub">${esc(S.line.position)} · ${esc(S.line.mrf || S.line.id)} · questions v${sc ? sc.sqVersion : S.finalVersion}${S.jdVersion ? ' (JD v' + S.jdVersion + ')' : ''}${sc ? ' · ' + (sc.status === 'Complete' ? 'completed' : 'draft') + ' ' + fmtDate(sc.on) : ''}</p></div>
+      <div class="scr-fit" id="scrFit" aria-live="polite"></div></div>
+    <div class="scr-nav" role="navigation" aria-label="Sections">${secs.map(([k, l, list]) => `<button type="button" class="scr-chip" data-goto="scrsec_${k}">${l} <span class="n" data-cnt="${k}"></span></button>`).join('')}${Pr.length ? '<button type="button" class="scr-chip" data-goto="scrsec_P">Practical details</button>' : ''}<button type="button" class="scr-chip" data-goto="scrNoteBox">Note</button><span class="scr-sp"></span><button type="button" class="btn sm" id="scrNext">Next unrated</button></div>
     ${S.newerQuestions && can ? `<div class="note warn-note">This screening used questions v${sc.sqVersion}; the department has since confirmed v${S.finalVersion}. <button class="btn sm" id="scrRestart">Start again on v${S.finalVersion}</button></div>` : ''}
-    ${sc && sc.sharedOn ? `<div class="note">Shared with ${esc(sc.sharedWith || 'the department')} on ${fmtDate(sc.sharedOn)}${sc.shareReason ? ' \u00b7 reason: ' + esc(sc.shareReason) : ''}.</div>` : ''}
-    <div class="scr-body">
-      ${E.length ? `<h3 class="scr-sec">Eligibility</h3>${E.map(row).join('')}` : ''}
-      ${R.length ? `<h3 class="scr-sec">Role fit</h3>${rRows}` : ''}
-      ${Pr.length ? `<h3 class="scr-sec">Practical details <span class="sub">not scored</span></h3><div class="scr-prac">${Pr.map(i => `<label><span>${esc(i.label || i.q)}</span>${input(i)}</label>`).join('')}</div>` : ''}
-      <div class="field wide" style="margin-top:12px"><label for="scrNote">Recruiter\u2019s note</label><textarea id="scrNote" rows="2" placeholder="Overall impression, anything the department should know"${can ? '' : ' disabled'}>${esc(sc ? sc.note : '')}</textarea></div>
+    ${sc && sc.sharedOn ? `<div class="note">Shared with ${esc(sc.sharedWith || 'the department')} on ${fmtDate(sc.sharedOn)}${sc.shareReason ? ' · reason: ' + esc(sc.shareReason) : ''}.</div>` : ''}
+    <div class="scr-body" id="scrBody">
+      ${E.length ? `<h3 class="scr-sec" id="scrsec_E">Eligibility</h3>${E.map(row).join('')}` : ''}
+      ${R.length ? `<h3 class="scr-sec" id="scrsec_R">Role fit</h3>${rRows}` : ''}
+      ${Pr.length ? `<h3 class="scr-sec" id="scrsec_P">Practical details <span class="sub">not scored</span></h3><div class="scr-prac">${Pr.map(i => `<label><span>${esc(i.label || i.q)}</span>${input(i)}</label>`).join('')}</div>` : ''}
+      <div class="field wide" id="scrNoteBox" style="margin-top:14px"><label for="scrNote">Recruiter’s note</label><textarea id="scrNote" rows="2" placeholder="Overall impression, anything the department should know"${can ? '' : ' disabled'}>${esc(sc ? sc.note : '')}</textarea></div>
     </div>
-    <div class="drawer-actions scr-actions"><button class="btn" data-close>Close</button>
+    <div class="drawer-actions scr-actions"><span class="scr-hint" id="scrHint"></span><button class="btn" data-close>Close</button>
       ${sc && sc.status === 'Complete' ? '<button class="btn" id="scrPdf">Download PDF</button>' : ''}
       ${can && !(sc && sc.status === 'Complete') ? '<button class="btn" id="scrSave">Save draft</button><button class="btn primary" id="scrDone">Complete screening</button>' : ''}
       ${can && sc && sc.status === 'Complete' ? '<button class="btn" id="scrDone">Update screening</button>' : ''}
       ${can && sc && sc.status === 'Complete' ? '<button class="btn primary" id="scrShare">Share with department</button>' : ''}</div>`;
   close();
+  const scored = items.filter(i => i.sec !== 'P');
+  const unratedIds = () => scored.filter(i => !sqRateC(i, ans[i.id])).map(i => i.id);
+  const jump = id => { const el = d.querySelector('#' + id); if (!el) return; const f = el.querySelector('[data-a]:not(:disabled), [data-r][tabindex="0"]'); if (f) f.focus({ preventScroll: true }); el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+  const fitHtml = res => {
+    const un = res.total - res.rated, koNames = res.koFailed.map(id => { const it = items.find(x => x.id === id) || {}; return `<button type="button" class="linklike" data-jump="scrq_${esc(id)}">${esc(id)}${it.label ? ' ' + esc(it.label) : ''}</button>`; });
+    return `<div class="scr-result"><span class="fit-chip fit-${fitClass(res.band)}">${esc(bandText(res.band))}</span>${res.koFailed.length ? `<span class="scr-ko">Knock-out not met: ${koNames.join(', ')}</span>` : res.koTotal && res.band !== 'Incomplete' ? '<span class="scr-ko ok">All knock-outs met</span>' : ''}</div>
+      <div class="scr-stats"><span class="st m"><b>${res.met}</b> Met</span><span class="st p"><b>${res.partly}</b> Partly</span><span class="st g"><b>${res.gaps}</b> Gap</span><span class="st u"><b>${un}</b> Unrated</span>${res.rated ? `<span class="st pct"><b>${res.pct}%</b> score</span>` : ''}</div>
+      <span class="scr-bar" aria-hidden="true"><i class="m" style="flex:${res.met}"></i><i class="p" style="flex:${res.partly}"></i><i class="g" style="flex:${res.gaps}"></i><i class="u" style="flex:${un}"></i></span>`;
+  };
+  let lastFit = '';
   const refresh = () => {
     const res = sqScoreC(items, ans);
-    $('#scrFit', d).innerHTML = scrFitHtml(res);
+    const fh = fitHtml(res);
+    if (fh !== lastFit) {   // do not rebuild identical markup: a click that began on a link would be lost
+      lastFit = fh; $('#scrFit', d).innerHTML = fh;
+      $$('#scrFit [data-jump]', d).forEach(b => b.onclick = () => jump(b.dataset.jump));
+    }
+    const un = unratedIds();
     items.forEach(i => {
       if (i.sec === 'P') return;
-      const auto = sqAutoC(i, ans[i.id].a), r = sqRateC(i, ans[i.id]);
-      $$(`[data-seg="${i.id}"] button`, d).forEach(b => b.className = b.dataset.r === r ? 'on r-' + r : '');
-      const au = d.querySelector(`[data-auto="${i.id}"]`); if (au) au.textContent = auto ? (ans[i.id].o ? 'changed from ' + RATE_LABEL[auto] : 'auto') : '';
+      const x = ans[i.id], auto = sqAutoC(i, x.a), r = sqRateC(i, x), why = sqReasonC(i, x.a);
+      $$(`[data-seg="${i.id}"] button`, d).forEach(b => { const on = b.dataset.r === r; b.className = on ? 'on r-' + r : ''; b.setAttribute('aria-checked', on ? 'true' : 'false'); });
+      const first = $$(`[data-seg="${i.id}"] button`, d); const tab = first.find(b => b.dataset.r === r) || first[0]; first.forEach(b => b.tabIndex = b === tab ? 0 : -1);
+      const au = d.querySelector(`[data-auto="${i.id}"]`);
+      const wh = auto ? (x.o ? `Changed by you (auto: ${RATE_LABEL[auto]}${why ? ', ' + esc(why) : ''}) ${can ? '<button type="button" class="linklike" data-undo="' + i.id + '">Undo</button>' : ''}` : `Auto: ${esc(why)} → <b>${RATE_LABEL[auto]}</b>`) : (r ? '' : (can ? 'Not rated yet' : ''));
+      if (au && au.dataset.h !== wh) { au.dataset.h = wh; au.innerHTML = wh; const u = au.querySelector('[data-undo]'); if (u) u.onclick = () => { ans[u.dataset.undo].o = false; ans[u.dataset.undo].r = ''; refresh(); }; }
       const rw = d.querySelector(`[data-row="${i.id}"]`); if (rw) rw.classList.toggle('unrated', !r);
     });
+    secs.forEach(([k, l, list]) => { const n = list.filter(i => un.indexOf(i.id) >= 0).length, c = d.querySelector(`[data-cnt="${k}"]`); if (c) { c.textContent = n ? n + ' to rate' : '✓'; c.className = 'n' + (n ? '' : ' done'); } });
+    $('#scrNext', d).disabled = !un.length;
+    $('#scrHint', d).textContent = un.length ? `${un.length} question${un.length === 1 ? '' : 's'} still to rate` : (can ? 'Every question is rated' : '');
   };
   $$('[data-a]', d).forEach(el => el.oninput = el.onchange = () => { ans[el.dataset.a].a = el.value; refresh(); });
-  $$('[data-seg]', d).forEach(seg => $$('button', seg).forEach(b => b.onclick = () => {
-    const i = items.find(x => x.id === seg.dataset.seg), x = ans[i.id], auto = sqAutoC(i, x.a);
-    if (auto) { x.o = b.dataset.r !== auto; x.r = b.dataset.r; } else { x.r = x.r === b.dataset.r ? '' : b.dataset.r; x.o = false; }
+  const setRating = (id, rv) => {
+    const i = items.find(x => x.id === id), x = ans[id], auto = sqAutoC(i, x.a);
+    if (auto) { x.o = rv !== auto; x.r = rv; } else { x.r = x.r === rv ? '' : rv; x.o = false; }
     refresh();
-  }));
+  };
+  $$('[data-seg]', d).forEach(seg => {
+    const id = seg.dataset.seg;
+    $$('button', seg).forEach(b => b.onclick = () => { setRating(id, b.dataset.r); b.focus(); });
+    seg.onkeydown = e => {
+      const order = ['M', 'P', 'G'], cur = order.indexOf((document.activeElement && document.activeElement.dataset.r) || ''), k = e.key;
+      let to = null;
+      if (k === 'ArrowRight' || k === 'ArrowDown') to = order[(cur + 1 + 3) % 3]; else if (k === 'ArrowLeft' || k === 'ArrowUp') to = order[(cur + 2) % 3];
+      else if (k === '1' || k === '2' || k === '3') to = order[Number(k) - 1];
+      if (!to || !can) return; e.preventDefault(); setRating(id, to); const nb = seg.querySelector(`[data-r="${to}"]`); if (nb) nb.focus();
+    };
+  });
+  $$('[data-goto]', d).forEach(b => b.onclick = () => { const el = d.querySelector('#' + b.dataset.goto); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+  $('#scrNext', d).onclick = () => { const un = unratedIds(); if (un.length) jump('scrq_' + un[0]); };
   refresh();
   const save = async (complete, btn) => {
+    if (complete) { const un = unratedIds(); if (un.length) { toast(`${un.length} question${un.length === 1 ? ' is' : 's are'} still to rate. Starting with ${un[0]}.`, true); jump('scrq_' + un[0]); return; } }
     btn.disabled = true;
     try {
       const S2 = await api('apiSaveScreening', S.appId, { answers: ans, note: $('#scrNote', d).value, complete });
@@ -2837,7 +2888,7 @@ function renderScreening(d, S, after) {
   };
   if ($('#scrSave', d)) $('#scrSave', d).onclick = e => save(false, e.target);
   if ($('#scrDone', d)) $('#scrDone', d).onclick = e => save(true, e.target);
-  if ($('#scrRestart', d)) $('#scrRestart', d).onclick = async e => { if (!confirm('Start this screening again on the new questions? The current answers are replaced.')) return; e.target.disabled = true; try { renderScreening(d, await api('apiSaveScreening', S.appId, { answers: {}, restart: true }), after); } catch (err) { toast(err, true); } };
+  if ($('#scrRestart', d)) $('#scrRestart', d).onclick = async e => { if (!confirm('Start this screening again on the new questions? The current answers are replaced.')) return; e.target.disabled = true; try { renderScreening(d, await api('apiSaveScreening', S.appId, { answers: {}, restart: true }), after); } catch (err) { toast(err, true); e.target.disabled = false; } };
   if ($('#scrPdf', d)) $('#scrPdf', d).onclick = async e => { e.target.disabled = true; try { const p = await pdfScreening(S); saveBlob(p.blob, p.name); } catch (err) { toast(err, true); } e.target.disabled = false; };
   if ($('#scrShare', d)) $('#scrShare', d).onclick = () => { d.close(); openShareDept(S.appId, after); };
 }
