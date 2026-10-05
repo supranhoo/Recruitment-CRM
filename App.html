@@ -1561,6 +1561,7 @@ async function cvProfileSection(el, c) {
       const text = await extractCvText(file, m => say(m));
       say('Building the profile…');
       draw(await api('apiBuildProfile', c.Candidate_ID, String(text || '').slice(0, 40000), { ocr: !!file._ocr, fileName: cv.name, replace }));
+      el.querySelector('.cvp') && el.querySelector('.cvp').insertAdjacentHTML('beforeend', `<details class="cvtext"><summary>Show the text that was read (to check what the parser saw)</summary><pre>${esc(String(text || '').slice(0, 8000)) || '(no text)'}</pre></details>`);
       toast('Profile built. Please review it.');
     } catch (e) { toast(e, true); if (btn) busy(btn, false, replace ? 'Read the CV again…' : 'Build the profile from the saved CV'); say(''); }
   };

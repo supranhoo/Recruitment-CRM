@@ -1010,6 +1010,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — CV profile, fixes from the first real CV** (no schema change)
+- A company name with "Pvt. Ltd." was read as a sentence, so the employer under the role line was lost; a degree with an institute and dates (even with no Education heading) was read as a job; "Bachelor/Batchelor/Master of Science / Commerce / Arts / Business" are now recognised as degrees (also for the Education field); generic tools and skill sentences ("basic MS Office") are no longer listed as certificates; when the CV states far more experience than the dated jobs add up to, the warning says earlier jobs may not have been read and names the first dated job. After a build, **Show the text that was read** lets the recruiter see what the parser saw. Tests: 58 parser cases.
+
 **Unreleased — CV profile, phase A1** (schema 35; new `CvProfile.gs`; ADR-044; §8.6)
 - Employment timeline, education, certifications, languages, links, achievements, skills matrix with evidence, industry exposure; checks for gaps, short stays, overlaps and stated-versus-counted experience; reading confidence; facts-only summary; review and correct; Excel-ready export. No AI service; no date of birth, gender, marital status, religion, nationality or photograph is read.
 - Tests: 52 parser cases on seven CV layouts (one-line, three-line, labelled, sentence, year-only, no history, OCR duplicates), 20 server cases (build, review, replace, validation, sanitising, export), browser run (build, edit, save, export; 1500 px and 390 px), E2E L1–L4.
