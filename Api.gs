@@ -196,7 +196,7 @@ function apiListFunnel(filter) {
   const from = filter.from || '', to = filter.to || '9999-12-31';
   const today = ymd_(new Date());
   const src = filter.lineId ? readTable_(T.FUNNEL.name) : readTableFrom_(T.FUNNEL.name, 'Entry_Date', from);
-  return src.rows.filter(function (r) {
+  const rows = src.rows.filter(function (r) {
     const d = ymd_(r.Entry_Date);
     if (filter.lineId && r.Line_ID !== filter.lineId) return false;
     if (filter.recruiter && String(r.Recruiter) !== filter.recruiter) return false;
@@ -204,6 +204,47 @@ function apiListFunnel(filter) {
     return (!from || d >= from) && d <= to;
   }).map(function (r) { const o = toClient_(r); delete o._row; o.canEdit = canEditEntry_(u, r); return o; })
     .sort(function (a, b) { return a.Entry_Date < b.Entry_Date ? 1 : -1; });
+  return funnelWithPipeline_(u, filter, from, to, rows);
+}
+
+/**
+ * From the switch-over date the columns after CVs reviewed are counted from candidate moves, not typed. This adds those
+ * counts (with the candidates behind them) to the list: onto the typed entry of the same day, position and recruiter, or
+ * as a row of its own when nothing was typed. Old typed values in those columns are ignored from that date, as in the
+ * Daily review, so nothing is counted twice. Days before the switch-over are unchanged.
+ */
+function funnelWithPipeline_(u, filter, from, to, rows) {
+  const cut = cutover_(), today = ymd_(new Date());
+  const piped = PIPE_METRICS_.filter(function (m) { return TYPED_METRICS_.indexOf(m) < 0 && FUNNEL_METRICS.indexOf(m) >= 0; });
+  rows.forEach(function (o) { if (String(o.Entry_Date) >= cut) piped.forEach(function (m) { o[m] = 0; }); });
+  const f0 = from && from > cut ? from : cut, upto = to > today ? today : to;
+  if (upto < f0) return rows;
+  const mineName = String(u.recruiter || '').trim().toLowerCase();
+  const groups = {};
+  pipelineEvents_(f0, upto).forEach(function (ev) {
+    if (piped.indexOf(ev.metric) < 0) return;
+    if (filter.lineId && ev.line !== filter.lineId) return;
+    if (filter.recruiter && String(ev.recruiter) !== filter.recruiter) return;
+    if (filter.mine && String(ev.recruiter).trim().toLowerCase() !== mineName) return;
+    const k = ev.day + '|' + ev.line + '|' + ev.recruiter;
+    const g = groups[k] = groups[k] || { day: ev.day, line: ev.line, recruiter: ev.recruiter, mrf: ev.mrf, counts: {}, people: {} };
+    g.counts[ev.metric] = (g.counts[ev.metric] || 0) + 1;
+    (g.people[ev.metric] = g.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, outcome: ev.outcome, time: ev.time });
+  });
+  const firstOf = {};
+  rows.forEach(function (o) { const k = String(o.Entry_Date) + '|' + o.Line_ID + '|' + o.Recruiter; if (!firstOf[k]) firstOf[k] = o; });
+  Object.keys(groups).forEach(function (k) {
+    const g = groups[k];
+    let o = firstOf[k];
+    if (!o) {
+      o = { Entry_ID: '', Entry_Date: g.day, Line_ID: g.line, MRF_No: g.mrf, Recruiter: g.recruiter, Remarks: '', FB_From_Dept: '', derived: true, canEdit: false };
+      FUNNEL_METRICS.forEach(function (m) { o[m] = 0; });
+      rows.push(o);
+    }
+    Object.keys(g.counts).forEach(function (m) { o[m] = g.counts[m]; });
+    o.People = g.people;
+  });
+  return rows.sort(function (a, b) { return a.Entry_Date < b.Entry_Date ? 1 : a.Entry_Date > b.Entry_Date ? -1 : (a.derived ? 1 : 0) - (b.derived ? 1 : 0); });
 }
 
 function apiSaveFunnel(data) {

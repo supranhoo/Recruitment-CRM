@@ -1010,6 +1010,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Daily log shows the pipeline counts** (no schema change)
+- From the switch-over date (`PIPELINE_CUTOVER`, 5 Oct) the Daily log list, My day entries and a position's activity history had blank HR R1, Shared, Shortlisted, Interviews and Selected columns, because those are counted from Pipeline moves and the list showed only typed entries. `apiListFunnel` now adds the pipeline counts per day, position and recruiter (credited to the position's recruiter, backward moves by a lead cancel as in the KPI), onto the typed entry of the same day or as a "Pipeline" row of its own; old typed values in those columns are ignored from that date, so nothing is counted twice; days before the switch-over are unchanged. Counts are buttons that list the candidates behind them. Tests: 17 server cases, browser run, E2E M1.
+
 **Unreleased — Screening dialog redesign** (no schema or server change; scoring unchanged)
 - Cause of the broken look: the CTC calculator's `.seg` class overrode the screening rating buttons (they became a 2×2 grid). The screening now has its own `.scr-seg`; its answer boxes share the app's input style.
 - Compact row (question, knock-out / must pill, "Needed", answer and Meets / Partly / Gap side by side, 5 rows per screen instead of 3 on a 1366×768 laptop); fixed header and footer with the questions filling the rest; the result names the knock-outs not met (click to jump); counts of Met / Partly / Gap / Unrated; section chips with "to rate" counts; **Next unrated**; the reason for each automatic rating ("3, needed 4+ → Gap"), "Changed by you (auto: Gap) · Undo"; Complete screening is stopped with a clear message that jumps to the first unrated question; keyboard: arrows or 1 / 2 / 3 on a rating; radio-group semantics; full-screen on phones.
