@@ -238,6 +238,7 @@ function apiParseCv(text, fileName, opts) {
     });
   }
   p.duplicates = dups;
+  try { p.profile = cvExtractProfile_(String(text || ''), p.fields, { ocr: !!(opts && opts.ocr) }); } catch (e) { console.error('CV profile: ' + e); p.profile = null; }
   p.fileName = String(fileName || '');
   return p;
 }

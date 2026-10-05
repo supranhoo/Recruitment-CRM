@@ -616,7 +616,7 @@ async function cvBulkDialog() {
     $$('[data-pool]', d).forEach(b => b.onclick = async () => {
       const it = items[+b.dataset.pool]; busy(b, true);
       try {
-        const r = await api('apiSaveCandidate', Object.assign({ Sourced_By: S.boot.user.recruiter, Source_Channel: 'Recruiter' }, it.res.fields, { _parsed: it.res.fields, _parseFile: it.file.name, _parseChars: it.res.chars }), false);
+        const r = await api('apiSaveCandidate', Object.assign({ Sourced_By: S.boot.user.recruiter, Source_Channel: 'Recruiter' }, it.res.fields, { _parsed: it.res.fields, _parseFile: it.file.name, _parseChars: it.res.chars, _profile: it.res.profile || undefined }), false);
         if (r.duplicates) { it.status = 'Duplicate found \u2014 review it'; it.res.duplicates = r.duplicates; draw(); return; }
         try { await uploadCv(r.saved.Candidate_ID, it.file); it.status = 'Saved to the pool as ' + r.saved.Candidate_ID; } catch (e) { it.status = 'Saved as ' + r.saved.Candidate_ID + ', but the CV upload failed'; }
         it.saved = true; S.candStale = true; draw();
@@ -1408,7 +1408,7 @@ async function viewCandidates(v) {
   const numIn = (id, label, val, ph) => `<div class="field" style="max-width:120px"><label for="${id}">${label}</label><input id="${id}" type="number" min="0" step="0.5" value="${esc(val == null ? '' : val)}" placeholder="${ph}"></div>`;
   v.innerHTML = `
     <div class="page-head"><div><h1>Candidates</h1><p>The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists, including archived candidates.</p></div>
-      <div style="display:flex;gap:8px"><button class="btn" id="bulkCv">Upload CVs</button><button class="btn primary" id="newCand">Add candidate</button></div></div>
+      <div style="display:flex;gap:8px"><button class="btn" id="bulkCv">Upload CVs</button><button class="btn" id="profExport">Export profiles</button><button class="btn primary" id="newCand">Add candidate</button></div></div>
     <div class="filters">
       <div class="field search"><label for="cq">Search</label><input id="cq" type="search" placeholder="Name, mobile, email, position, designation" value="${esc(f.q)}"></div>
       <div class="field"><label for="chr">HR result</label><select id="chr">${opts(list('Interview_Result'), f.hr)}</select></div>
@@ -1460,6 +1460,7 @@ async function viewCandidates(v) {
   [['cexp1', 'expMin'], ['cexp2', 'expMax'], ['cloc', 'loc'], ['cnot', 'noticeMax'], ['cctc', 'ctcMax']].forEach(([id, k]) => $('#' + id).addEventListener('input', e => { f[k] = e.target.value; clearTimeout(timer); timer = setTimeout(again, 400); }));
   $('#newCand').onclick = () => candidateDrawer(null);
   $('#bulkCv').onclick = () => cvBulkDialog();
+  $('#profExport').onclick = () => profileExportCsv();
   fetchPage();
 }
 
@@ -1509,6 +1510,103 @@ async function openCandidate(id) {
   try { await loadPositions(); candidateDrawer(await api('apiGetCandidate', id)); } catch (e) { toast(e, true); closeDrawer(); }
 }
 
+/* ---- CV profile: history, education, skills with evidence, checks (rule-based; no AI) ---- */
+const CVP_LEVEL_ = { found: 'from CV', check: 'check' };
+function cvpDur(m) { if (m == null) return '—'; const y = Math.floor(m / 12), r = m % 12; return (y ? y + ' y ' : '') + (r || !y ? r + ' m' : '').trim(); }
+function cvpMonth(ym) { if (!ym) return ''; const p = ym.split('-'); return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+p[1] - 1] + ' ' + p[0]; }
+async function cvProfileSection(el, c) {
+  if (!el) return;
+  el.innerHTML = '<section class="app-sec"><h3>CV profile</h3><p class="hint">Loading…</p></section>';
+  let R; try { R = await api('apiGetProfile', c.Candidate_ID); } catch (e) { el.innerHTML = ''; return; }
+  if (!el.isConnected) return;
+  const draw = R => {
+    if (R.none) {
+      el.innerHTML = `<section class="app-sec"><h3>CV profile</h3><p class="hint">Employer-by-employer history, education, certifications, skills with the CV line that shows them, and checks for gaps and short stays. Read from the CV by pattern matching in your browser; nothing is sent to an AI service.</p>
+        ${R.hasCv ? '<button class="btn" id="cvpBuild">Build the profile from the saved CV</button>' : '<p class="hint">Attach a CV first (below), then build the profile.</p>'}<span class="hint" id="cvpMsg"></span></section>`;
+      if ($('#cvpBuild', el)) $('#cvpBuild', el).onclick = () => build(false);
+      return;
+    }
+    const p = R.profile, d = R.derived, nf = '<span class="muted">Not Found</span>';
+    const emp = p.employment.slice().sort((a, b) => String(b.start).localeCompare(String(a.start)));
+    const risks = d.risks.filter(x => x.level !== 'info'), infos = d.risks.filter(x => x.level === 'info');
+    const skillsBy = {}; p.skills.forEach(s => { (skillsBy[s.cat] = skillsBy[s.cat] || []).push(s); });
+    el.innerHTML = `<section class="app-sec cvp"><div class="dp-h"><h3 style="margin:0">CV profile</h3><span class="hint">${esc(R.source)} · read ${esc(R.parsedOn)}${R.reviewedBy ? ` · <b>reviewed</b> by ${esc(String(R.reviewedBy).split('@')[0])}` : ' · not reviewed yet'}</span></div>
+      <p class="cvp-conf"><span class="badge ${d.confidence.level === 'High' ? 'ok' : ''}">Reading confidence: ${esc(d.confidence.level)} (${d.confidence.score}/100)</span> <span class="hint">${d.confidence.ocr ? 'Read by OCR. ' : ''}Facts come from the CV text; anything marked “check” is a guess to confirm.</span></p>
+      <p>${esc(d.summary)}</p>
+      <h4>Experience timeline <span class="hint">${d.counted.years === null ? 'no dated jobs' : d.counted.years + ' years counted from the dates' + (d.stated !== null ? ' (CV says ' + d.stated + ')' : '')}</span></h4>
+      ${emp.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Employer</th><th>Role</th><th>From</th><th>To</th><th class="num">Duration</th><th>Key responsibilities</th></tr></thead><tbody>${emp.map(e => `<tr><td><b>${esc(e.employer) || nf}</b>${e.conf === 'check' ? ' <span class="pbadge check">check</span>' : ''}</td><td>${esc(e.role) || nf}</td><td class="nw">${cvpMonth(e.start)}${e.approx ? '*' : ''}</td><td class="nw">${e.current ? 'Present' : cvpMonth(e.end)}</td><td class="num">${cvpDur(e.months)}</td><td>${e.duties.length ? esc(e.duties.join(' · ')) : nf}</td></tr>`).join('')}</tbody></table></div>${emp.some(e => e.approx) ? '<p class="hint">* year only in the CV; the month is not known.</p>' : ''}` : `<p>${nf} — no dated employment history could be read from the CV.</p>`}
+      ${risks.length || infos.length ? `<h4>Risks and observations</h4><ul class="cvp-risks">${risks.map(x => `<li class="${x.level === 'warn' ? 'miss' : ''}">${esc(x.text)}</li>`).join('')}${infos.map(x => `<li class="muted">${esc(x.text)}</li>`).join('')}</ul>` : '<h4>Risks and observations</h4><p class="muted">None found from the dates in the CV.</p>'}
+      <h4>Education</h4>${p.education.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Level</th><th>Discipline</th><th>Institute</th><th>Year</th><th>Score</th></tr></thead><tbody>${p.education.map(e => `<tr><td>${esc(e.level)}</td><td>${esc(e.discipline) || nf}</td><td>${esc(e.institute) || nf}</td><td>${esc(e.year) || nf}</td><td>${esc(e.score) || nf}</td></tr>`).join('')}</tbody></table></div>` : `<p>${nf}</p>`}
+      <dl class="kv"><dt>Certifications</dt><dd>${p.certifications.length ? esc(p.certifications.map(x => x.name).join('; ')) : nf}</dd><dt>Languages</dt><dd>${p.languages.length ? esc(p.languages.join(', ')) : nf}</dd>
+        <dt>LinkedIn</dt><dd>${p.links.linkedin ? `<a href="${esc(p.links.linkedin)}" target="_blank" rel="noopener">${esc(p.links.linkedin.replace(/^https?:\/\/(www\.)?/, ''))}</a>` : nf}</dd><dt>GitHub / portfolio</dt><dd>${[p.links.github, p.links.portfolio].filter(Boolean).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\/(www\.)?/, ''))}</a>`).join(' · ') || nf}</dd>
+        <dt>Industry exposure</dt><dd>${p.domain.length ? esc(p.domain.map(x => x.name).join(', ')) : nf}</dd><dt>Achievements</dt><dd>${p.achievements.length ? esc(p.achievements.join(' · ')) : nf}</dd><dt>Work authorisation</dt><dd>${p.visa ? esc(p.visa) : nf}</dd></dl>
+      <details><summary>Skills matrix (${p.skills.length} found, each with the line of the CV that shows it)</summary>${p.skills.length || p.domain.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Category</th><th>Skill</th><th>Evidence in the CV</th></tr></thead><tbody>${Object.keys(skillsBy).map(k => skillsBy[k].map(s => `<tr><td>${esc(k)}</td><td><b>${esc(s.skill)}</b></td><td>${esc(s.evidence)}</td></tr>`).join('')).join('')}${p.domain.map(x => `<tr><td>Domain</td><td><b>${esc(x.name)}</b></td><td>${esc(x.evidence)}</td></tr>`).join('')}</tbody></table></div>` : `<p>${nf}</p>`}
+        <p class="hint">Matched against word lists, so a skill can be missed if it is worded differently. Proficiency (how good) is not judged: only whether the CV mentions it.</p></details>
+      ${d.missing.length ? `<p><b>Not found in the CV or the record:</b> ${esc(d.missing.join(', '))}</p>` : ''}
+      <div class="drawer-actions" style="position:static"><button class="btn" id="cvpEdit">Review and correct</button><button class="btn" id="cvpRow">Copy as an Excel row</button><button class="btn" id="cvpRe">${R.reviewedBy ? 'Read the CV again…' : 'Read the CV again'}</button></div><span class="hint" id="cvpMsg"></span></section>`;
+    $('#cvpEdit', el).onclick = () => edit(R);
+    $('#cvpRe', el).onclick = () => { if (R.reviewedBy && !confirm('This profile was reviewed. Reading the CV again replaces the reviewed facts with a fresh reading. Continue?')) return; build(!!R.reviewedBy); };
+    $('#cvpRow', el).onclick = async () => {
+      const cur = emp.find(e => e.current) || emp[0] || {}, edu = p.education.slice().reverse().map(e => [e.level, e.discipline].filter(Boolean).join(' ') + (e.year ? ' ' + e.year : '')).join('; ');
+      const row = [c.Name, c.Current_Designation || cur.role || 'Not Found', d.stated !== null ? d.stated : (d.counted.years === null ? 'Not Found' : d.counted.years), c.Current_Location || 'Not Found', p.skills.filter(s => s.cat === 'Technical' || s.cat === 'Functional').slice(0, 12).map(s => s.skill).join(', ') || 'Not Found', c.Current_Company || cur.employer || 'Not Found', edu || 'Not Found', p.certifications.map(x => x.name).join('; ') || 'Not Found'];
+      try { await navigator.clipboard.writeText(row.join('\t')); toast('Copied. Paste it into Excel.'); } catch (e) { toast('Copy is blocked in this browser. Use Export profiles on the Candidates page.', true); }
+    };
+  };
+  const build = async replace => {
+    const msg = $('#cvpMsg', el), say = t => { if (msg) msg.textContent = t; };
+    const btn = $('#cvpBuild', el) || $('#cvpRe', el); if (btn) busy(btn, true, 'Reading…');
+    try {
+      say('Fetching the CV…'); const cv = await api('apiGetCv', c.Candidate_ID);
+      const file = new File([b64Blob(cv.b64, cv.mime)], cv.name, { type: cv.mime });
+      const text = await extractCvText(file, m => say(m));
+      say('Building the profile…');
+      draw(await api('apiBuildProfile', c.Candidate_ID, String(text || '').slice(0, 40000), { ocr: !!file._ocr, fileName: cv.name, replace }));
+      toast('Profile built. Please review it.');
+    } catch (e) { toast(e, true); if (btn) busy(btn, false, replace ? 'Read the CV again…' : 'Build the profile from the saved CV'); say(''); }
+  };
+  const edit = R => {
+    const p = JSON.parse(JSON.stringify(R.profile));
+    const row = (e, i) => `<tr data-i="${i}"><td><input class="ej-emp" value="${esc(e.employer)}" maxlength="80" aria-label="Employer"></td><td><input class="ej-role" value="${esc(e.role)}" maxlength="80" aria-label="Role"></td><td><input class="ej-s" type="month" value="${esc(e.start)}" aria-label="From"></td><td><input class="ej-e" type="month" value="${esc(e.end)}" ${e.current ? 'disabled' : ''} aria-label="To"></td><td><label class="chk"><input type="checkbox" class="ej-c" ${e.current ? 'checked' : ''}> Present</label></td><td><button class="btn sm ej-x" type="button">Remove</button></td></tr>`;
+    const edr = (e, i) => `<tr data-i="${i}"><td><input class="ed-l" value="${esc(e.level)}" maxlength="30" aria-label="Level"></td><td><input class="ed-d" value="${esc(e.discipline)}" maxlength="40" aria-label="Discipline"></td><td><input class="ed-i" value="${esc(e.institute)}" maxlength="90" aria-label="Institute"></td><td><input class="ed-y" value="${esc(e.year)}" maxlength="4" size="5" aria-label="Year"></td><td><input class="ed-s" value="${esc(e.score)}" maxlength="20" size="8" aria-label="Score"></td><td><button class="btn sm ed-x" type="button">Remove</button></td></tr>`;
+    const dlg = openDrawer('Review the CV profile', `<p class="hint" style="margin-top:0">Check each fact against the CV and correct it. Saving marks the profile as reviewed. Leave a field empty when the CV does not say.</p>
+      <h4>Employment</h4><div class="table-wrap"><table class="bgv-table"><thead><tr><th>Employer</th><th>Role</th><th>From</th><th>To</th><th></th><th></th></tr></thead><tbody id="ejRows">${p.employment.map(row).join('')}</tbody></table></div><button class="btn sm" id="ejAdd" type="button">Add a job</button>
+      <h4>Education</h4><div class="table-wrap"><table class="bgv-table"><thead><tr><th>Level</th><th>Discipline</th><th>Institute</th><th>Year</th><th>Score</th><th></th></tr></thead><tbody id="edRows">${p.education.map(edr).join('')}</tbody></table></div><button class="btn sm" id="edAdd" type="button">Add education</button>
+      <div class="grid" style="margin-top:12px"><div class="field wide"><label for="pvCert">Certifications (one per line)</label><textarea id="pvCert" rows="3">${esc(p.certifications.map(x => x.name).join('\n'))}</textarea></div>
+        <div class="field wide"><label for="pvAch">Achievements (one per line)</label><textarea id="pvAch" rows="3">${esc(p.achievements.join('\n'))}</textarea></div>
+        <div class="field"><label for="pvLang">Languages (comma separated)</label><input id="pvLang" value="${esc(p.languages.join(', '))}"></div><div class="field"><label for="pvLi">LinkedIn</label><input id="pvLi" value="${esc(p.links.linkedin)}" maxlength="150"></div>
+        <div class="field"><label for="pvGh">GitHub</label><input id="pvGh" value="${esc(p.links.github)}" maxlength="150"></div><div class="field"><label for="pvPf">Portfolio</label><input id="pvPf" value="${esc(p.links.portfolio)}" maxlength="150"></div>
+        <div class="field wide"><label for="pvVisa">Work authorisation (only if the CV says)</label><input id="pvVisa" value="${esc(p.visa)}" maxlength="140"></div></div>
+      <div class="drawer-actions"><button class="btn" id="pvX">Cancel</button><button class="btn primary" id="pvSave">Save as reviewed</button></div>`, 'bgv-drawer');
+    const wireRows = () => {
+      $$('#ejRows tr', dlg).forEach(tr => { $('.ej-x', tr).onclick = () => tr.remove(); $('.ej-c', tr).onchange = e => { $('.ej-e', tr).disabled = e.target.checked; if (e.target.checked) $('.ej-e', tr).value = ''; }; });
+      $$('#edRows tr', dlg).forEach(tr => { $('.ed-x', tr).onclick = () => tr.remove(); });
+    };
+    wireRows();
+    $('#ejAdd', dlg).onclick = () => { $('#ejRows', dlg).insertAdjacentHTML('beforeend', row({ employer: '', role: '', start: '', end: '', current: false }, 99)); wireRows(); };
+    $('#edAdd', dlg).onclick = () => { $('#edRows', dlg).insertAdjacentHTML('beforeend', edr({ level: '', discipline: '', institute: '', year: '', score: '' }, 99)); wireRows(); };
+    $('#pvX', dlg).onclick = closeDrawer;
+    $('#pvSave', dlg).onclick = async e => {
+      const lines = id => $('#' + id, dlg).value.split('\n').map(x => x.trim()).filter(Boolean);
+      const out = Object.assign({}, p, {
+        employment: $$('#ejRows tr', dlg).map(tr => ({ employer: $('.ej-emp', tr).value, role: $('.ej-role', tr).value, start: $('.ej-s', tr).value, end: $('.ej-e', tr).value, current: $('.ej-c', tr).checked, approx: false, duties: ((p.employment.find(x => x.employer === $('.ej-emp', tr).value && x.start === $('.ej-s', tr).value) || {}).duties) || [] })).filter(x => x.employer || x.role),
+        education: $$('#edRows tr', dlg).map(tr => ({ level: $('.ed-l', tr).value, discipline: $('.ed-d', tr).value, institute: $('.ed-i', tr).value, year: $('.ed-y', tr).value, score: $('.ed-s', tr).value })).filter(x => x.level || x.institute),
+        certifications: lines('pvCert').map(n => ({ name: n })), achievements: lines('pvAch'), languages: $('#pvLang', dlg).value.split(',').map(x => x.trim()).filter(Boolean),
+        links: { linkedin: $('#pvLi', dlg).value, github: $('#pvGh', dlg).value, portfolio: $('#pvPf', dlg).value }, visa: $('#pvVisa', dlg).value });
+      busy(e.target, true, 'Saving…');
+      try { await api('apiSaveProfile', c.Candidate_ID, out); closeDrawer(); toast('Profile saved as reviewed.'); openCandidate(c.Candidate_ID); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Save as reviewed'); }
+    };
+  };
+  draw(R);
+}
+async function profileExportCsv() {
+  try {
+    const rows = await api('apiProfileExport');
+    if (!rows.length) return toast('No candidate has a profile yet. Build one from the candidate’s card.', true);
+    csvSave(`cv-profiles-${today()}.csv`, ['Candidate Name', 'Current Role', 'Experience (years)', 'Location', 'Skills', 'Current Employer', 'Education', 'Certifications', 'Pipeline status', 'Reading confidence', 'Risks', 'Reviewed'], rows.map(r => [r.name, r.role || 'Not Found', r.exp === '' ? 'Not Found' : r.exp, r.location || 'Not Found', r.skills || 'Not Found', r.employer || 'Not Found', r.education || 'Not Found', r.certifications || 'Not Found', r.status, r.confidence, r.risks, r.reviewed]));
+  } catch (e) { toast(e, true); }
+}
+
 function archivedCandidateDrawer(c) {
   const b = openDrawer(esc(c.Name) + ' (archived)', `<div class="note warn-note">This candidate was archived on ${fmtDate(c.Archived_On)} after ${esc(String(S.boot.archiveDays || 180))} days without activity (last active ${fmtDate(c.Last_Activity)}). Archived candidates do not appear in normal lists or reports, but duplicate checks still find them.</div>
     <dl class="kv"><dt>Candidate ID</dt><dd>${esc(c.Candidate_ID)}</dd><dt>Mobile</dt><dd>${esc(c.Mobile || '\u2014')}</dd><dt>Email</dt><dd>${esc(c.Email || '\u2014')}</dd>
@@ -1540,10 +1638,11 @@ function candidateDrawer(c, preset, parsedIn) {
       <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
         <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
     </fieldset>
-    ${isNew ? '' : '<div id="candBgv"></div>'}
+    ${isNew ? '' : '<div id="candProfile"></div><div id="candBgv"></div>'}
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawer;
+  if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
   initMulti(body);
@@ -1576,7 +1675,7 @@ function candidateDrawer(c, preset, parsedIn) {
     const badAtt = checkAttachments($('#candForm')); if (badAtt) return toast(badAtt, true);
     const attFiles = $$('.att-input', $('#candForm')).some(x => x.files[0]);
     const d = Object.assign({ Candidate_ID: isNew ? '' : data.Candidate_ID }, readForm($('#candForm')));
-    if (parsed && isNew) { d._parsed = parsed.fields; d._parseFile = parsed.fileName; d._parseChars = parsed.chars; }
+    if (parsed && isNew) { d._parsed = parsed.fields; d._parseFile = parsed.fileName; d._parseChars = parsed.chars; if (parsed.profile) d._profile = parsed.profile; }
     const dm = S.boot.depts.find(x => x.dept === d.Dept); if (dm) { d.Business_Unit = dm.bu; d.Division = dm.division; }
     const btn = $('#cSave'); busy(btn, true, 'Saving…');
     try {

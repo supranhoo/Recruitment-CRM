@@ -286,6 +286,13 @@ function e2eRun_(trash) {
     t('K18 BGV governance shows the Drive status and the retention list', function () { const g = apiBgvGovern(); return g.retention && Array.isArray(g.retention.due) && g.drive ? g.retention.due.length + ' due' : false; });
     t('K19 the BGV audit export works for the admin and is logged', function () { const r = apiBgvAudit({}); return Array.isArray(r.rows) && r.from <= r.to ? r.total + ' rows' : false; });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
+    if (c1 && c1.Candidate_ID) {
+      const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';
+      t('L1 build a CV profile from text, with dates and checks', function () { const r = apiBuildProfile(c1.Candidate_ID, cvText, { fileName: 'e2e.pdf' }); return r.profile.employment.length === 2 && r.derived.counted.years >= 11 ? r.profile.employment.length + ' jobs' : false; });
+      t('L2 correct and review the profile', function () { const r = apiGetProfile(c1.Candidate_ID), p = r.profile; p.certifications.push({ name: 'NEBOSH' }); const x = apiSaveProfile(c1.Candidate_ID, p); return x.reviewedBy && x.profile.certifications.length ? 'reviewed' : false; });
+      err('L3 a reviewed profile is not overwritten without Replace', function () { apiBuildProfile(c1.Candidate_ID, cvText, {}); }, /reviewed by/);
+      t('L4 the profile export lists the candidate', function () { return apiProfileExport([c1.Candidate_ID]).length === 1; });
+    }
   }
   const ctcR = t('I13 start a draft of the CTC rules', function () { const r = apiCtcDraftNew(); return r.draft && r.draft.changes.length === 0 ? r : false; });
   if (ctcR) {
