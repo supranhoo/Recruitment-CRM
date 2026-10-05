@@ -299,6 +299,10 @@ function apiSaveCandidate(data, force) {
     const saved = {}; PARSE_FIELDS_.forEach(function (k) { saved[k] = rec[k] instanceof Date ? ymd_(rec[k]) : rec[k]; });
     logParse_(rec.Candidate_ID, data._parsed, saved, data._parseFile, data._parseChars, u);
   }
+  if (data._profile && typeof data._profile === 'object') {
+    try { const pr = cvProfileClean_(data._profile); if (pr.employment.length || pr.education.length || pr.skills.length) { withLock_(function () { profileWrite_(rec.Candidate_ID, pr, 'CV: ' + String(data._parseFile || 'file').slice(0, 100), false, u); }); } }
+    catch (e) { console.error('CV profile save: ' + e); }
+  }
   const o = toClient_(rec); delete o._row;
   return { saved: o };
 }
