@@ -43,7 +43,7 @@ function apiCall(fn, args) {
     run[fn](...args);
   });
 }
-const SK_HEADS = {"bgv": ["BGV tracker", "Background verification of new hires: previous employers and the current employer, owned by the position\u2019s recruiter."], "ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
+const SK_HEADS = {"org": ["Organogram", "Approved against existing manpower by division, department and grade."], "bgv": ["BGV tracker", "Background verification of new hires: previous employers and the current employer, owned by the position\u2019s recruiter."], "ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
 function skb(w, h, x) { return `<span class="sk" style="width:${w};height:${h}px;${x || ''}"></span>`; }
 function skw(a, b) { return (a + Math.floor(Math.random() * (b - a + 1))) + '%'; }
 function skHead(view, right) {
@@ -150,6 +150,7 @@ const NAV_ICON = {
   candidates: '<circle cx="9" cy="8" r="3.5"/><path d="M2.8 20a6.2 6.2 0 0 1 12.4 0"/><path d="M15.5 4.6a3.5 3.5 0 0 1 0 6.8M17.8 14.2A5.6 5.6 0 0 1 21.2 20"/>',
   daily: '<path d="M4 20h4.2L19 9.2 14.8 5 4 15.8z"/><path d="m13 6.8 4.2 4.2"/>',
   kpi: '<path d="M3.5 20.5h17"/><rect x="5" y="11" width="3" height="7" rx=".8"/><rect x="10.5" y="6" width="3" height="12" rx=".8"/><rect x="16" y="13.5" width="3" height="4.5" rx=".8"/>',
+  org: '<rect x="9" y="3" width="6" height="4.5" rx="1"/><rect x="3" y="16.5" width="6" height="4.5" rx="1"/><rect x="15" y="16.5" width="6" height="4.5" rx="1"/><path d="M12 7.5V12M6 16.5V12h12v4.5"/>',
   depts: '<path d="M4 20V9l4-3v14M10 20V4l5 3v13M17 20v-8l3 2v6"/><path d="M3 20.5h18"/>',
   compliance: '<path d="M12 3 4.5 6v5.6c0 4.6 3.1 7.8 7.5 9.4 4.4-1.6 7.5-4.8 7.5-9.4V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
   panel: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h3"/>',
@@ -163,7 +164,7 @@ function buildRail(user) {
   const lead = (user.perms || []).includes('lead');
   const groups = [
     ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], ['bgv', 'BGV tracker'], (user.perms || []).includes('ctc_use') && ['ctc', 'CTC calculator'], ['daily', 'Daily log']]],
-    ['Reports', [['kpi', 'KPI scorecard'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
+    ['Reports', [['kpi', 'KPI scorecard'], ['org', 'Organogram'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
     ['Setup', [['panel', 'Interview panel'], ['jdm', 'JD Master'], lead && ['admin', 'Admin']]]];
   const initials = String(user.name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
   $('#rail').innerHTML = `<div class="rail-head"><div class="brand" aria-label="BFCL Recruitment"><span class="brand-mark" aria-hidden="true"></span><span class="lbl brand-text" aria-hidden="true"><b>BFCL</b><small>Recruitment</small></span></div>
@@ -184,7 +185,7 @@ function setRail(mini, save) {
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
-const VIEWS = { depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
+const VIEWS = { org: viewOrg, depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
   S.view = view; S.candStale = true;
@@ -3175,6 +3176,8 @@ const ROLE_MATRIX = [
   ['Move a candidate back, \u201cLinked in error\u201d, correct locked fields', 0, 1, 1, 1],
   ['Withdraw an offer (close a position with a live offer)', 0, 0, 1, 1],
   ['Admin: data checks, change history, task rules, HOD contacts', 0, 1, 1, 1],
+  ['View the organogram (approved against existing manpower)', 1, 1, 1, 1],
+  ['Import the manpower report; edit the organogram structure and department mapping', 0, 0, 1, 1],
   ['Admin: TAT rules', 0, 'view', 'edit', 'edit'],
   ['Request a TAT exemption', 'own', 'all', 'all', 'all'],
   ['Approve, grant or revoke TAT exemptions; verify notice extensions', 0, 0, 1, 1],
@@ -3404,7 +3407,7 @@ async function viewAdmin(v) {
       <button role="tab" data-t="tools" aria-selected="${f.tab === 'tools'}">Tools</button>
       <button role="tab" data-t="hod" aria-selected="${f.tab === 'hod'}">HOD contacts</button>
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
-      <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>
+      <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
       <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button></div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
@@ -3414,6 +3417,7 @@ async function viewAdmin(v) {
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
+  if (f.tab === 'org') return renderOrgAdmin(el);
   if (f.tab === 'tex') return renderExemptAdmin(el);
   if (f.tab === 'dstat') return renderDayStatusAdmin(el);
   if (f.tab === 'hod' || f.tab === 'rules') {
@@ -4004,6 +4008,257 @@ function csvSave(name, head, rows) {
   const cell = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
   saveBlob(new Blob(['﻿' + [head].concat(rows).map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);
 }
+const ORG_GRADES = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'T', 'W1', 'W2', 'W3', 'W4', 'W5'];
+const ORG_ST = { full: 'Full', vacant: 'Vacant', over: 'Over-strength', unapproved: 'Not approved' };
+const orgN = x => Number(x || 0).toLocaleString('en-IN');
+function orgM(d, cat) {
+  const m = { approved: 0, existing: 0, vacancy: 0, excess: 0, open: 0, gap: 0 };
+  d.grades.forEach(g => { if (cat && g.cat !== cat) return; ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap'].forEach(k => { m[k] += g[k]; }); });
+  m.st = orgSt(m);
+  return m;
+}
+function orgSt(m) { return m.approved === 0 && m.existing > 0 ? 'unapproved' : m.existing > m.approved ? 'over' : m.existing < m.approved ? 'vacant' : 'full'; }
+function orgSum(list) {
+  const m = { approved: 0, existing: 0, vacancy: 0, excess: 0, open: 0, gap: 0 };
+  list.forEach(x => { ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap'].forEach(k => { m[k] += x[k]; }); });
+  m.st = orgSt(m);
+  return m;
+}
+function orgBar(m) {
+  const top = Math.max(m.approved, m.existing, 1);
+  return `<span class="org-bar ost-${m.st}" role="img" aria-label="${orgN(m.existing)} in post against ${orgN(m.approved)} approved"><i style="width:${(m.existing / top * 100).toFixed(1)}%"></i><u style="left:${(m.approved / top * 100).toFixed(1)}%"></u></span>`;
+}
+function orgFig(m) {
+  return `<span class="org-fig"><b>${orgN(m.existing)}</b> of ${orgN(m.approved)}${m.vacancy ? ` \u00b7 <span class="org-v">${orgN(m.vacancy)} vacant</span>` : ''}${m.excess ? ` \u00b7 <span class="org-x">${orgN(m.excess)} over</span>` : ''}</span>`;
+}
+function orgHod(h) {
+  h = String(h || '').trim();
+  if (!h || h === '?' || h === 'TBD') return '<span class="org-no">HOD not named</span>';
+  if (h === 'Vacant') return '<span class="org-no">HOD vacant</span>';
+  return 'HOD ' + esc(h);
+}
+function orgDeptRow(d) {
+  const m = d.m;
+  return `<button type="button" class="org-dept ost-${m.st}" data-d="${esc(d.dept)}"><span class="org-dn"><b>${esc(d.dept)}</b><span class="sub">${orgHod(d.hod)}</span></span>
+    ${orgBar(m)}<span class="org-line">${orgFig(m)}${m.open ? `<span class="org-pill open">${m.open} open MRF</span>` : ''}${m.gap ? `<span class="org-pill gap">${m.gap} without MRF</span>` : ''}</span></button>`;
+}
+function orgDivCard(dv) {
+  return `<article class="org-div"><header><h4>${esc(dv.division)}</h4><div class="sub">${dv.head ? 'Head: ' + esc(dv.head) : '<span class="org-no">No division head named</span>'}</div>${orgBar(dv.m)}${orgFig(dv.m)}</header>
+    <div class="org-depts">${dv.depts.map(orgDeptRow).join('')}</div></article>`;
+}
+function orgTree(list) {
+  const groups = [];
+  list.forEach(dv => { const k = dv.group || 'Other'; let g = groups.find(x => x.name === k); if (!g) { g = { name: k, divs: [] }; groups.push(g); } g.divs.push(dv); });
+  const rank = n => { const i = ['DRI', 'CPP', 'Ferro', 'Support Function'].indexOf(n); return i < 0 ? 9 : i; };
+  groups.sort((a, b) => rank(a.name) - rank(b.name));
+  groups.forEach(g => { g.m = orgSum(g.divs.map(d => d.m)); });
+  const tot = orgSum(groups.map(g => g.m));
+  return `<div class="org-tree"><div class="org-root"><div class="org-co"><b>Bihar Foundry and Castings Ltd</b>${orgBar(tot)}${orgFig(tot)}</div></div><div class="org-stem"></div>
+    <div class="org-groups">${groups.map(g => `<section class="org-group${g.divs.length > 4 ? ' wide' : ''}"><header><h3>${esc(g.name)}</h3>${orgFig(g.m)}</header><div class="org-divs">${g.divs.map(orgDivCard).join('')}</div></section>`).join('')}</div></div>`;
+}
+function orgTable(list, f) {
+  const rows = [];
+  list.forEach(dv => dv.depts.forEach(d => rows.push({ dv, d, m: d.m })));
+  const key = { dept: r => r.d.dept, division: r => r.dv.division, approved: r => r.m.approved, existing: r => r.m.existing, vacancy: r => r.m.vacancy, excess: r => r.m.excess, open: r => r.m.open, gap: r => r.m.gap, fill: r => r.m.approved ? r.m.existing / r.m.approved : 9 }[f.sort] || (r => r.m.approved);
+  const text = f.sort === 'dept' || f.sort === 'division';
+  rows.sort((a, b) => { const x = key(a), y = key(b); return text ? (x < y ? -1 : x > y ? 1 : 0) * f.dir : (y - x) * f.dir || (a.d.dept < b.d.dept ? -1 : 1); });
+  const th = (k, l, num) => `<th class="${num ? 'num' : ''}"><button type="button" class="linklike" data-sort="${k}">${l}${f.sort === k ? (f.dir > 0 ? ' ▾' : ' ▴') : ''}</button></th>`;
+  return `<div class="table-wrap"><table class="org-table"><thead><tr>${th('division', 'Division')}${th('dept', 'Department')}<th>HOD</th>${th('approved', 'Approved', 1)}${th('existing', 'Existing', 1)}${th('vacancy', 'Vacant', 1)}${th('excess', 'Over', 1)}${th('open', 'Open MRF', 1)}${th('gap', 'No MRF', 1)}${th('fill', 'Fill', 1)}</tr></thead><tbody>
+    ${rows.map(({ dv, d, m }) => `<tr data-d="${esc(d.dept)}"><td>${esc(dv.division)}</td><td><b>${esc(d.dept)}</b></td><td>${orgHod(d.hod)}</td><td class="num">${orgN(m.approved)}</td><td class="num">${orgN(m.existing)}</td><td class="num ${m.vacancy ? 'org-v' : ''}">${orgN(m.vacancy)}</td><td class="num ${m.excess ? 'org-x' : ''}">${orgN(m.excess)}</td><td class="num">${orgN(m.open)}</td><td class="num ${m.gap ? 'org-gapn' : ''}">${orgN(m.gap)}</td><td class="num">${m.approved ? Math.round(m.existing / m.approved * 100) + '%' : '—'}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function orgMatrix(list, f) {
+  const cols = ORG_GRADES.filter(g => !f.cat || g.charAt(0) === f.cat);
+  const rows = [];
+  list.forEach(dv => dv.depts.forEach(d => rows.push({ dv, d })));
+  return `<p class="hint">Each cell reads existing / approved. Blue: vacancies. Amber: over-strength. Red: people in post with no approved headcount.</p><div class="table-wrap"><table class="org-table org-matrix"><thead><tr><th>Department</th>${cols.map(g => `<th class="num">${g}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
+    ${rows.map(({ dv, d }) => `<tr data-d="${esc(d.dept)}"><td><b>${esc(d.dept)}</b><span class="sub">${esc(dv.division)}</span></td>${cols.map(g => { const x = d.grades.find(y => y.grade === g); return x ? `<td class="num org-c ost-${x.status}">${orgN(x.existing)}<span>/${orgN(x.approved)}</span></td>` : '<td class="num empty-cell">·</td>'; }).join('')}<td class="num"><b>${orgN(d.m.existing)}</b><span class="org-t">/${orgN(d.m.approved)}</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function orgDrawer(d, r) {
+  const m = orgSum(d.grades), crm = d.crm || [];
+  const b = openDrawer(d.dept, `<div class="org-dh"><div>${esc(d.division)}</div><div class="sub">${orgHod(d.hod)}${d.email ? ' · ' + esc(d.email) : ''}</div></div>
+    <div class="kpis"><div class="kpi"><div class="v">${orgN(m.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(m.existing)}</div><div class="l">Existing</div></div>
+      <div class="kpi ${m.vacancy ? 'alert' : ''}"><div class="v">${orgN(m.vacancy)}</div><div class="l">Vacant</div></div><div class="kpi"><div class="v">${orgN(m.open)}</div><div class="l">Open MRFs</div></div>
+      <div class="kpi ${m.gap ? 'alert' : ''}"><div class="v">${orgN(m.gap)}</div><div class="l">Vacant without an MRF</div></div></div>
+    <div class="table-wrap"><table class="org-table"><thead><tr><th>Grade</th><th class="num">Approved</th><th class="num">Existing</th><th class="num">Vacant</th><th class="num">Over</th><th class="num">Open MRF</th><th class="num">No MRF</th></tr></thead><tbody>
+    ${d.grades.map(g => `<tr style="cursor:default"><td><b>${esc(g.grade)}</b></td><td class="num">${orgN(g.approved)}</td><td class="num">${orgN(g.existing)}</td><td class="num ${g.vacancy ? 'org-v' : ''}">${orgN(g.vacancy)}</td><td class="num ${g.excess ? 'org-x' : ''}">${orgN(g.excess)}</td><td class="num">${orgN(g.open)}</td><td class="num ${g.gap ? 'org-gapn' : ''}">${orgN(g.gap)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="7" class="empty">No headcount imported for this department.</td></tr>'}
+    </tbody></table></div>
+    <h3 class="org-h3">Open positions</h3>
+    ${d.lines.length ? `<div class="table-wrap"><table class="org-table"><thead><tr><th>Position</th><th>Grade</th><th>Status</th><th>Recruiter</th></tr></thead><tbody>${d.lines.map(l => `<tr data-line="${esc(l.id)}"><td><b>${esc(l.position || l.id)}</b><span class="sub">${esc(l.mrf)}</span></td><td>${esc(l.grade)}</td><td>${esc(l.status)}</td><td>${esc(l.recruiter)}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="hint">No open positions in this department.</p>'}
+    ${m.gap ? `<div class="note">${m.gap} approved seat${m.gap > 1 ? 's are' : ' is'} vacant with no MRF raised. Raise the MRF(s) in Positions when the department confirms the need.</div>` : ''}
+    <p class="hint">${crm.length ? 'CRM departments counted here: ' + esc(crm.join(', ')) + '.' : 'No CRM department is mapped to this department yet.'}</p>`);
+  $$('tr[data-line]', b).forEach(tr => tr.onclick = async () => {
+    try { await loadPositions(); const p = lineById(tr.dataset.line); if (p) positionDrawer(p); else toast('That position is not in your list.', true); } catch (e) { toast(e, true); }
+  });
+}
+async function viewOrg(v) {
+  const f = S.orgF = S.orgF || { tab: 'tree', div: '', q: '', cat: '', st: '', sort: 'approved', dir: 1 };
+  v.innerHTML = `<div class="page-head"><div><h1>Organogram</h1><p id="orgSub">Approved against existing manpower by division, department and grade.</p></div><div class="page-actions" id="orgAct"></div></div>
+    <div id="orgBody">${skKpis(6)}${skRows(8, 5)}</div>`;
+  let r; try { r = await api('apiOrganogram'); } catch (e) { $('#orgBody', v).innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  if (!$('#orgBody', v)) return;
+  S.orgData = r;
+  const shown = () => {
+    const q = f.q.trim().toLowerCase();
+    return r.divisions.filter(dv => !f.div || dv.division === f.div).map(dv => {
+      const depts = dv.depts.map(d => Object.assign({}, d, { m: orgM(d, f.cat) })).filter(d => {
+        if (f.cat && d.m.approved + d.m.existing + d.m.open === 0) return false;
+        if (f.st && d.m.st !== f.st) return false;
+        return !q || (d.dept + ' ' + d.hod + ' ' + dv.division + ' ' + dv.head).toLowerCase().includes(q);
+      });
+      return Object.assign({}, dv, { depts, m: orgSum(depts.map(d => d.m)) });
+    }).filter(dv => dv.depts.length);
+  };
+  const csv = () => {
+    const rows = [];
+    shown().forEach(dv => dv.depts.forEach(d => d.grades.forEach(g => { if (f.cat && g.cat !== f.cat) return; rows.push([dv.division, dv.head, d.dept, d.hod, g.grade, g.cat, g.approved, g.existing, g.vacancy, g.excess, g.open, g.gap]); })));
+    csvSave('organogram-' + (r.asOn || today()) + '.csv', ['Division', 'Division head', 'Department', 'HOD', 'Grade', 'Category', 'Approved', 'Existing', 'Vacant', 'Over-strength', 'Open MRF', 'Vacant without MRF'], rows);
+  };
+  const act = $('#orgAct', v);
+  act.innerHTML = `<button class="btn" id="orgCsv">Download CSV</button>${r.canManage ? '<button class="btn primary" id="orgImp">Import manpower report</button>' : ''}`;
+  $('#orgCsv', v).onclick = csv;
+  if (r.canManage) $('#orgImp', v).onclick = () => orgImportDialog(() => viewOrg(v));
+  $('#orgSub', v).textContent = r.asOn ? `Approved against existing manpower by division, department and grade. As on ${r.asOn}${r.imported ? ', imported by ' + r.imported.by : ''}. Open MRFs are live.` : 'Approved against existing manpower by division, department and grade.';
+  const draw = () => {
+    const list = shown(), all = orgSum(list.map(d => d.m));
+    const body = $('#orgBody', v);
+    if (!r.asOn) {
+      body.innerHTML = `<div class="empty"><b>No manpower has been imported yet.</b><p>${r.canManage ? 'Import the Approved vs Existing Manpower report to fill the organogram.' : 'The Head of HR or the admin imports the Approved vs Existing Manpower report.'}</p></div>`;
+      return;
+    }
+    const cats = [['', 'All grades'], ['M', 'M · Management'], ['W', 'W · Workmen'], ['T', 'T · Trainee']];
+    const sts = [['', 'Any status'], ['vacant', 'Vacant'], ['over', 'Over-strength'], ['unapproved', 'Not approved'], ['full', 'Full']];
+    const unm = r.unmapped.reduce((s, x) => s + x.open, 0);
+    body.innerHTML = `${r.unmapped.length ? `<div class="note warn-note">${unm} open position${unm === 1 ? ' is' : 's are'} in departments not yet mapped to the new structure (${esc(r.unmapped.map(x => x.dept).slice(0, 4).join(', '))}${r.unmapped.length > 4 ? ' and ' + (r.unmapped.length - 4) + ' more' : ''}). ${r.canManage ? 'Map them in Admin, Org structure.' : 'Ask the Head of HR to map them.'}</div>` : ''}
+      <div class="kpis">
+        <div class="kpi"><div class="v">${orgN(all.approved)}</div><div class="l">Approved manpower</div></div>
+        <div class="kpi"><div class="v">${orgN(all.existing)}</div><div class="l">Existing, ${all.approved ? Math.round(all.existing / all.approved * 100) : 0}% of approved</div></div>
+        <div class="kpi ${all.approved - all.existing > 0 ? 'alert' : ''}"><div class="v">${orgN(all.approved - all.existing)}</div><div class="l">Net vacant (approved less existing)</div></div>
+        <div class="kpi"><div class="v">${orgN(all.vacancy)}</div><div class="l">Vacant seats, before over-strength is offset</div></div>
+        <div class="kpi"><div class="v">${orgN(all.open)}</div><div class="l">Open MRFs against these seats</div></div>
+        <div class="kpi ${all.gap ? 'alert' : ''}"><div class="v">${orgN(all.gap)}</div><div class="l">Vacant seats with no MRF raised</div></div></div>
+      <div class="filters"><div class="field"><label for="orgDiv">Division</label><select id="orgDiv">${opts([['', 'All divisions']].concat(r.divisions.map(d => [d.division, d.division])), f.div, false)}</select></div>
+        <div class="field search"><label for="orgQ">Search</label><input id="orgQ" type="search" placeholder="Department, HOD or division head" value="${esc(f.q)}"></div>
+        <div class="field"><label for="orgSt">Status</label><select id="orgSt">${opts(sts, f.st, false)}</select></div></div>
+      <div class="chips">${cats.map(([k, l]) => `<button type="button" class="chip" data-cat="${k}" aria-pressed="${f.cat === k}">${l}</button>`).join('')}</div>
+      <div class="tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button></div>
+      <div id="orgView" style="margin-top:14px">${!list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgTree(list)}</div>`;
+    $('#orgDiv', body).onchange = e => { f.div = e.target.value; draw(); };
+    $('#orgSt', body).onchange = e => { f.st = e.target.value; draw(); };
+    $('#orgQ', body).oninput = debounce(e => { f.q = e.target.value; draw(); const q = $('#orgQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250);
+    $$('.chip', body).forEach(c => c.onclick = () => { f.cat = c.dataset.cat; draw(); });
+    $$('.tabs button', body).forEach(b => b.onclick = () => { f.tab = b.dataset.t; draw(); });
+    $$('[data-sort]', body).forEach(b => b.onclick = () => { if (f.sort === b.dataset.sort) f.dir = -f.dir; else { f.sort = b.dataset.sort; f.dir = 1; } draw(); });
+    const byName = {}; r.divisions.forEach(dv => dv.depts.forEach(d => { byName[d.dept] = d; }));
+    $$('[data-d]', body).forEach(el => el.onclick = () => { const d = byName[el.dataset.d]; if (d) orgDrawer(d, r); });
+  };
+  draw();
+}
+
+function orgImportDialog(done) {
+  const b = openDrawer('Import the manpower report', `<p>Choose the <b>Approved vs Existing Manpower</b> report (.xlsx). It is read in your browser and checked first. Nothing changes until you confirm, and the import replaces the earlier headcount snapshot.</p>
+    <div class="field"><label for="orgFile">Report</label><input type="file" id="orgFile" accept=".xlsx"></div>
+    <div class="field" style="max-width:200px"><label for="orgAsOn">Headcount as on</label><input type="date" id="orgAsOn" value="${today()}" max="${today()}"></div>
+    <div id="orgCheck"></div>
+    <div class="drawer-actions"><button class="btn" id="orgCancel">Cancel</button><button class="btn primary" id="orgGo" disabled>Import</button></div>`);
+  let rows = null, fileName = '';
+  $('#orgCancel', b).onclick = closeDrawer;
+  const show = r => {
+    const errs = r.errors && r.errors.length ? `<div class="note warn-note"><b>Nothing was changed.</b> Fix these and choose the file again:<ul style="margin:6px 0 0 18px">${r.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${r.moreErrors ? `<div>and ${r.moreErrors} more.</div>` : ''}</div>` : '';
+    const ok = r.ok ? `<div class="kpis"><div class="kpi"><div class="v">${orgN(r.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(r.existing)}</div><div class="l">Existing</div></div><div class="kpi"><div class="v">${orgN(r.net)}</div><div class="l">Net vacant</div></div><div class="kpi"><div class="v">${orgN(r.groups)}</div><div class="l">Department and grade rows</div></div></div>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th class="num">Approved</th><th class="num">Existing</th></tr></thead><tbody>${r.byDivision.map(x => `<tr style="cursor:default"><td>${esc(x.division)}</td><td class="num">${orgN(x.approved)}</td><td class="num">${orgN(x.existing)}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const warn = r.warnings && r.warnings.length ? `<div class="note">${r.warnings.map(esc).join('<br>')}</div>` : '';
+    $('#orgCheck', b).innerHTML = errs + ok + warn;
+  };
+  $('#orgFile', b).onchange = async e => {
+    const file = e.target.files[0]; rows = null; $('#orgGo', b).disabled = true;
+    if (!file) return;
+    fileName = file.name;
+    $('#orgCheck', b).innerHTML = '<p class="hint">Reading the report…</p>';
+    try {
+      await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js');
+      const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+      const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+      const hi = grid.findIndex(r => r.some(c => /^department name$/i.test(String(c).trim())) && r.some(c => /^level name$/i.test(String(c).trim())));
+      if (hi < 0) { $('#orgCheck', b).innerHTML = '<div class="note warn-note">This does not look like the manpower report: no row with Department Name and Level Name was found.</div>'; return; }
+      const head = grid[hi].map(c => String(c).trim());
+      rows = grid.slice(hi + 1).filter(r => r.some(c => c !== '')).map(r => { const o = {}; head.forEach((h, i) => { if (h) o[h] = r[i]; }); return o; });
+      const res = await api('apiOrgImport', rows, { file: fileName });
+      show(res);
+      $('#orgGo', b).disabled = !res.ok;
+    } catch (err) { $('#orgCheck', b).innerHTML = `<div class="note warn-note">Could not read the file: ${esc(err.message || err)}</div>`; }
+  };
+  $('#orgGo', b).onclick = async () => {
+    if (!rows) return;
+    const btn = $('#orgGo', b); busy(btn, true, 'Importing…'); $('#orgCancel', b).disabled = true;
+    try {
+      const res = await api('apiOrgImport', rows, { apply: true, asOn: $('#orgAsOn', b).value, file: fileName });
+      $('#orgCheck', b).innerHTML = `<div class="note ok-note"><b>Imported.</b> ${orgN(res.approved)} approved and ${orgN(res.existing)} existing, as on ${esc(res.asOn)}.</div>`;
+      btn.hidden = true; $('#orgCancel', b).disabled = false; $('#orgCancel', b).textContent = 'Close';
+      $('#orgCancel', b).onclick = () => { closeDrawer(); done(); };
+    } catch (err) { toast(err, true); busy(btn, false, 'Import'); $('#orgCancel', b).disabled = false; }
+  };
+}
+
+async function renderOrgAdmin(el) {
+  const f = S.orgAdm = S.orgAdm || { sec: 'import', q: '', unm: true };
+  let a; try { a = await api('apiOrgAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const secs = [['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping']];
+  const unmapped = a.map.filter(m => !m.org).length;
+  const active = a.depts.filter(d => d.active !== 'No');
+  const head = `<div class="chips">${secs.map(([k, l]) => `<button type="button" class="chip" data-sec="${k}" aria-pressed="${f.sec === k}">${l}${k === 'map' && unmapped ? `<span class="n">${unmapped}</span>` : ''}</button>`).join('')}</div>`;
+  const redo = () => renderOrgAdmin(el);
+  const bind = () => $$('[data-sec]', el).forEach(c => c.onclick = () => { f.sec = c.dataset.sec; redo(); });
+  if (f.sec === 'import') {
+    el.innerHTML = head + `<section class="panel"><h2>Manpower report</h2><p class="hint">Approved and existing headcount comes from the Approved vs Existing Manpower report. Each import replaces the earlier snapshot. The check runs first and nothing is saved until you confirm.</p>
+      <div class="drawer-actions" style="position:static;border:0;justify-content:flex-start"><button class="btn primary" id="orgImp2">Import manpower report</button></div>
+      <div class="table-wrap" style="margin-top:12px"><table class="org-table"><thead><tr><th>As on</th><th>File</th><th class="num">Rows</th><th class="num">Approved</th><th class="num">Existing</th><th>By</th><th>Imported</th></tr></thead><tbody>
+      ${a.log.map(l => `<tr style="cursor:default"><td>${esc(l.asOn)}</td><td>${esc(l.file)}</td><td class="num">${orgN(l.rows)}</td><td class="num">${orgN(l.approved)}</td><td class="num">${orgN(l.existing)}</td><td>${esc(l.by)}</td><td>${esc(l.at)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="7" class="empty">No import yet.</td></tr>'}</tbody></table></div></section>`;
+    bind(); $('#orgImp2', el).onclick = () => orgImportDialog(redo);
+    return;
+  }
+  if (f.sec === 'struct') {
+    const q = f.q.toLowerCase();
+    el.innerHTML = head + `<section class="panel"><h2>Divisions</h2><p class="hint">The division head shows on the organogram. Group is the earlier division name (DRI, CPP, Ferro, Support Function).</p>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th>Group</th><th>Division head</th><th>Active</th></tr></thead><tbody>
+      ${a.divisions.map(d => `<tr style="cursor:default" data-div="${esc(d.division)}"><td><b>${esc(d.division)}</b></td><td>${esc(d.group)}</td><td><input data-f="head" value="${esc(d.head)}" aria-label="Head of ${esc(d.division)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} aria-label="${esc(d.division)} active"></td></tr>`).join('')}</tbody></table></div></section>
+      <section class="panel" style="margin-top:16px"><h2>Departments</h2><p class="hint">A department with headcount or mapped CRM departments stays active. To add a department, fill the last row.</p>
+      <div class="field" style="max-width:360px;margin:6px 0 10px"><label for="orgSq">Find a department</label><input id="orgSq" type="search" value="${esc(f.q)}"></div>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Division</th><th>HOD name</th><th>HOD email</th><th>Active</th></tr></thead><tbody>
+      ${a.depts.filter(d => !q || (d.dept + ' ' + d.hod + ' ' + d.division).toLowerCase().includes(q)).map(d => `<tr style="cursor:default" data-dept="${esc(d.dept)}"><td><b>${esc(d.dept)}</b></td><td><select data-f="div" aria-label="Division of ${esc(d.dept)}">${opts(a.divisions.map(x => [x.division, x.division]), d.division, false)}</select></td><td><input data-f="hod" value="${esc(d.hod)}" aria-label="HOD of ${esc(d.dept)}"></td><td><input data-f="email" value="${esc(d.email)}" aria-label="HOD email of ${esc(d.dept)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} ${d.hasHC ? 'disabled' : ''} aria-label="${esc(d.dept)} active"></td></tr>`).join('')}
+      <tr style="cursor:default" id="orgNew"><td><input data-f="name" placeholder="New department name" aria-label="New department name"></td><td><select data-f="div" aria-label="Division of the new department">${opts(a.divisions.map(x => [x.division, x.division]), '', false)}</select></td><td><input data-f="hod" placeholder="HOD name" aria-label="HOD of the new department"></td><td><input data-f="email" placeholder="HOD email" aria-label="HOD email of the new department"></td><td></td></tr>
+      </tbody></table></div>
+      <div class="drawer-actions" style="position:static"><button class="btn primary" id="orgSave">Save changes</button></div></section>`;
+    bind();
+    $('#orgSq', el).onchange = e => { f.q = e.target.value; redo(); };
+    $('#orgSave', el).onclick = async () => {
+      const divisions = $$('tr[data-div]', el).map(tr => ({ division: tr.dataset.div, head: $('[data-f=head]', tr).value, active: $('[data-f=act]', tr).checked }));
+      const depts = $$('tr[data-dept]', el).map(tr => ({ dept: tr.dataset.dept, division: $('[data-f=div]', tr).value, hod: $('[data-f=hod]', tr).value, email: $('[data-f=email]', tr).value, active: $('[data-f=act]', tr).checked }));
+      const nw = $('#orgNew', el), nn = $('[data-f=name]', nw).value.trim();
+      if (nn) depts.push({ dept: nn, division: $('[data-f=div]', nw).value, hod: $('[data-f=hod]', nw).value, email: $('[data-f=email]', nw).value, active: true, isNew: true });
+      const btn = $('#orgSave', el); busy(btn, true, 'Saving…');
+      try { await api('apiOrgSaveStructure', { divisions, depts }); toast('Saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save changes'); }
+    };
+    return;
+  }
+  const rowsM = a.map.filter(m => !f.unm || !m.org);
+  el.innerHTML = head + `<section class="panel"><h2>Department mapping</h2><p class="hint">Positions and candidates keep their existing department names. This table says which new department each one counts under. Departments with open positions are listed first.</p>
+    <div class="chips"><button type="button" class="chip" id="orgUnm" aria-pressed="${f.unm}">Not mapped yet<span class="n">${unmapped}</span></button></div>
+    <div class="table-wrap"><table class="org-table"><thead><tr><th>CRM department</th><th class="num">Open MRFs</th><th>Counts under</th></tr></thead><tbody>
+    ${rowsM.map(m => `<tr style="cursor:default" data-crm="${esc(m.crm)}"><td><b>${esc(m.crm)}</b></td><td class="num">${orgN(m.open)}</td><td><select data-f="org" aria-label="New department for ${esc(m.crm)}">${opts([['', m.suggest ? 'Not mapped (suggested: ' + m.suggest + ')' : 'Not mapped']].concat(active.map(d => [d.dept, d.dept])), m.org, false)}</select>${m.suggest ? `<button type="button" class="btn sm" data-take="${esc(m.suggest)}">Use suggestion</button>` : ''}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="3" class="empty">Every department is mapped.</td></tr>'}</tbody></table></div>
+    <div class="drawer-actions" style="position:static"><button class="btn primary" id="orgMapSave">Save mapping</button></div></section>`;
+  bind();
+  $('#orgUnm', el).onclick = () => { f.unm = !f.unm; redo(); };
+  $$('[data-take]', el).forEach(b => b.onclick = () => { $('[data-f=org]', b.closest('tr')).value = b.dataset.take; });
+  $('#orgMapSave', el).onclick = async () => {
+    const list = $$('tr[data-crm]', el).map(tr => ({ crm: tr.dataset.crm, org: $('[data-f=org]', tr).value }));
+    const btn = $('#orgMapSave', el); busy(btn, true, 'Saving…');
+    try { await api('apiOrgSaveMap', list); toast('Mapping saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save mapping'); }
+  };
+}
+
 async function viewDepts(v) {
   const f = S.deptF = S.deptF || { days: '90', from: daysAgo(90), to: today(), dept: '', delayed: false };
   v.innerHTML = `<div class="page-head"><div><h1>Department delays</h1><p>${esc(SK_HEADS.depts[1])} Recruitment closure depends on departments as much as on recruiters.</p></div></div>

@@ -309,5 +309,32 @@ function e2eRun_(trash) {
     });
     err('I17 an issued letter on older rules cannot be re-issued', function () { apiCtcIssue(ctcA.id, { language: 'en', pdf: ctcPdf }); }, /already|superseded/i);
   }
+  const orgA = t('O1 the organogram structure is seeded', function () { const a = apiOrgAdmin(); return a.divisions.length >= 1 && a.depts.length >= 1 && a.map.some(function (m) { return m.org; }) ? a : false; });
+  if (orgA) {
+    const mapped = orgA.map.filter(function (m) { return m.org; }).slice(0, 2);
+    const rep = function (a1, e1, a2, e2) {
+      return [{ 'Department Name': mapped[0].crm, 'Level Name': 'M6', 'ApprovedManPower': a1, 'ExixtingManpower': e1 }, { 'Department Name': mapped[mapped.length - 1].crm, 'Level Name': 'W4', 'ApprovedManPower': a2, 'ExixtingManpower': e2 }];
+    };
+    t('O2 the organogram opens for the admin with totals and the manage flag', function () { const r = apiOrganogram(); return r.canManage === true && r.totals && typeof r.totals.approved === 'number' && Array.isArray(r.divisions) && Array.isArray(r.unmapped); });
+    t('O3 an import dry run changes nothing', function () { const before = readTable_(ORG_MP_, true).rows.length; const r = apiOrgImport(rep(10, 8, 20, 22), {}); return r.ok === true && r.applied === false && r.approved === 30 && r.existing === 30 && readTable_(ORG_MP_, true).rows.length === before; });
+    t('O4 a department that is not mapped is refused and named', function () { const r = apiOrgImport([{ 'Department Name': 'E2E Unmapped Dept', 'Level Name': 'M6', 'ApprovedManPower': 1, 'ExixtingManpower': 1 }], {}); return r.ok === false && /E2E Unmapped Dept/.test(r.errors[0]); });
+    t('O5 a grade outside M, W, T is refused', function () { const r = apiOrgImport([{ 'Department Name': mapped[0].crm, 'Level Name': 'Z9', 'ApprovedManPower': 1, 'ExixtingManpower': 1 }], {}); return r.ok === false && /not a grade/.test(r.errors[0]); });
+    t('O6 a report without the right columns is refused', function () { const r = apiOrgImport([{ A: 1 }], {}); return r.ok === false && /missing these columns/.test(r.errors[0]); });
+    t('O7 applying an import replaces the headcount snapshot', function () { const r = apiOrgImport(rep(10, 8, 20, 22), { apply: true, asOn: today, file: 'e2e.xlsx' }); const o = apiOrganogram(); return r.applied === true && o.totals.approved === 30 && o.totals.existing === 30 && o.asOn === today ? r.batch : false; });
+    t('O8 a second import replaces the first, it does not add to it', function () { apiOrgImport(rep(5, 5, 7, 6), { apply: true, asOn: today, file: 'e2e2.xlsx' }); const o = apiOrganogram(); return o.totals.approved === 12 && o.totals.existing === 11 && o.totals.net === 1; });
+    t('O9 the import log keeps one row per import', function () { return apiOrgAdmin().log.length >= 2; });
+    const d0 = orgA.depts[0];
+    t('O10 a HOD name and email save and read back', function () { const r = apiOrgSaveStructure({ depts: [{ dept: d0.dept, division: d0.division, hod: 'E2E HOD', email: 'e2e.hod@example.com', active: true }] }); const x = r.depts.filter(function (d) { return d.dept === d0.dept; })[0]; return x.hod === 'E2E HOD' && x.email === 'e2e.hod@example.com'; });
+    err('O11 a bad HOD email is refused', function () { apiOrgSaveStructure({ depts: [{ dept: d0.dept, division: d0.division, hod: 'E2E HOD', email: 'not-an-email', active: true }] }); }, /email/);
+    err('O12 a department with headcount cannot be switched off', function () { const od = orgA.depts.filter(function (d) { return d.dept === mapped[0].org; })[0]; apiOrgSaveStructure({ depts: [{ dept: od.dept, division: od.division, hod: '', email: '', active: false }] }); }, /headcount|mapped/);
+    t('O13 a CRM department can be mapped and unmapped', function () {
+      const a = apiOrgSaveMap([{ crm: 'E2E Mapping Test Dept', org: d0.dept }]);
+      const there = a.map.some(function (m) { return m.crm === 'E2E Mapping Test Dept' && m.org === d0.dept; });
+      const b = apiOrgSaveMap([{ crm: 'E2E Mapping Test Dept', org: '' }]);
+      return there && !b.map.some(function (m) { return m.crm === 'E2E Mapping Test Dept' && m.org; });
+    });
+    err('O14 mapping to a department that does not exist is refused', function () { apiOrgSaveMap([{ crm: 'E2E Mapping Test Dept', org: 'No Such Org Dept' }]); }, /not an active department/);
+    t('O15 open positions are counted under the mapped department', function () { const o = apiOrganogram(); return o.totals.open >= 0 && o.divisions.every(function (dv) { return dv.depts.every(function (d) { return Array.isArray(d.lines) && Array.isArray(d.crm); }); }); });
+  }
   return { pass: pass, fail: fail, log: log };
 }
