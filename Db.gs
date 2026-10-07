@@ -14,7 +14,7 @@ function sheet_(name) {
 }
 
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
-const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'KPI_Targets', 'M_Panel_Members', 'Users'];
+const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users'];
 const TABLE_CACHE_SECONDS_ = 600;
 function tableCacheKey_(name) { return 'tbl3_' + name; }
 function dropTableCache_(name) {
@@ -66,10 +66,10 @@ function jdmSafeText_(v) {
   if (typeof v !== 'string' || !v || v.charAt(0) === "'") return v;
   return /^[-(.$\u20B9\d]|^(true|false)$|^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s.,\/-]*\d/i.test(v) ? "'" + v : v;
 }
-function jdmRow_(name, row) { return /^(JDM_|Position_Docs$|Screenings$|Day_Status$)/.test(name) ? row.map(jdmSafeText_) : row; }
+function jdmRow_(name, row) { return /^(JDM_|Org_|Position_Docs$|Screenings$|Day_Status$)/.test(name) ? row.map(jdmSafeText_) : row; }
 /** Repairs JD library cells that Sheets had already turned into dates (e.g. "1-3" stored as 3 Jan): read back as the original "M-D" text. */
 function jdmUndate_(name, headers, rows) {
-  if (!/^(JDM_|Position_Docs$|Screenings$|Day_Status$)/.test(name)) return;
+  if (!/^(JDM_|Org_|Position_Docs$|Screenings$|Day_Status$)/.test(name)) return;
   const cols = headers.filter(function (h) { return !/(_On|_At)$|^Date$/.test(h); });
   rows.forEach(function (o) {
     cols.forEach(function (h) {

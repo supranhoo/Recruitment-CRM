@@ -97,6 +97,7 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `jd_manage` | Sign off and edit the JD Master (grades, competency departments, duplicate groups, responsibilities, skills, department map) | – | ✓ | ✓ | ✓ |
 | `system` | Backups, candidate archive run, system tools, JD library import | – | – | – | ✓ |
 | `bgv_decide` | Decide on a BGV discrepancy or unverified result (§11.8) | – | – | ✓ | ✓ |
+| `org_manage` | Import the manpower report; edit the organogram structure, heads, HODs, the department mapping and grade notes (§11.9) | – | – | ✓ | ✓ |
 | `ctc_use` | Use the CTC calculator (§11.7). The `ctc_*` permissions other than `ctc_rules` can be given to other roles in CTC calculator → Access (Role_Access sheet, ADR-041); the table shows the launch defaults | – | – | – | ✓ |
 | `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
 | `ctc_view_all` | See everyone's CTC calculations | – | – | – | ✓ |
@@ -158,6 +159,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Auth.gs` (file_4) | `currentUser_`, `normRole_`, `can_`, `isLead_`, `requireAdmin_`, `canEditLine_`, users cache |
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
+| `Org.gs` | Organogram (schema 36): `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`; `apiOrganogram`, `apiOrgImport`, `apiOrgAdmin`, `apiOrgSaveStructure`, `apiOrgSaveMap`; pure helpers `orgKey_`, `orgCategory_`, `orgRollup_`, `orgReadReport_` |
 | `CvProfile.gs` | CV profile (schema 35): `cvExtractProfile_`, `cvDerive_`, `apiGetProfile`, `apiBuildProfile`, `apiSaveProfile`, `apiProfileExport` |
 | `Bgv.gs` `BgvGov.gs` | BGV tracker (schema 34; governance: Drive folders, retention purge, audit export; efficiency: `apiBgvImport`, `bgvJoinGuard_`, email templates; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
 | `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
@@ -290,6 +292,12 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **BGV_Vendors** | Vendor_ID (VND-), Name, Contact_Person, Email, Phone, Checks_Offered, Std_TAT_Days, Active, Contract_End, Note | Schema 33 |
 | **BGV_Rules** | Version_ID (BGR-V1…), Effective_From, Status, Config_JSON, Reason, Remark | Schema 33. Versioned like TAT and CTC rules; V1 = Policy 9.1.1 and the agreed BGV plan |
 | **M_Departments** | Dept, Business_Unit, Division, HOD_Name, HOD_Email | 85 departments; HOD contacts drive task messages |
+| **Org_Divisions** | Division, Division_Group, Division_Head, Active, Sort, Updated_By/At | Schema 36. The 16 divisions; group is the earlier division name (DRI, CPP, Ferro, Support Function) |
+| **Org_Departments** | Org_Dept, Division, HOD_Name, HOD_Email, Active, Sort, Updated_By/At | Schema 36. The 59 departments with HODs. A department with headcount cannot be deactivated |
+| **Org_Dept_Map** | CRM_Dept, Org_Dept, Mapped_By, Note | Schema 36. One row per existing CRM department (M_Departments / MRF.Dept) mapped to a new department; MRF lines keep their old names |
+| **Org_Manpower** | Org_Dept, Grade, Approved_HC, Existing_HC, As_On, Batch_ID | Schema 36. Headcount snapshot, one row per department and grade; replaced whole by each import |
+| **Org_Import_Log** | Batch_ID, As_On, File, Rows, Approved, Existing, Imported_By, Imported_At, Note | Schema 36. One row per import |
+| **Org_Grade_Notes** | Note_ID (`ONT-`), Org_Dept, From_Grade, To_Grade, Seats, Reason, Approved_By, Review_On, Status, Created/Updated By/At | Schema 37. One active note per department, approved grade and grade it is filled at. Upgrades keep a reason, approver and review date; downgrades need none |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
 | **KPI_Targets** | Recruiter, KPI, Levels, TAT_Days, Notice_Exemption, Effective_From, Note | Recruiter `*` = team default (Timely closure 60 days all levels; M fulfilment 50 days M) |
@@ -795,6 +803,20 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 - **Retention** (rules `retentionReportYears` 3, `retentionNonJoinerMonths` 6). A closed case is due 3 years after it closed; a case that was cancelled, ended in "Withdraw the offer", or whose position backed out or was replaced is due 6 months after it closed (or the back-out, if later). The tab lists what is due and what falls due in 60 days (CSV). The **Admin** selects cases, gives a reason or approval reference (10+ characters) and presses **Purge now** (confirmation; up to 40 at a time; every case must be due). A purge moves the files to the Drive bin (30 days to recover from Drive), clears the file links, and blanks the candidate name (shown as "(purged)"), remarks, decision note, the checks' employer/institute/period/finding, the timeline notes, and the old/new values of those records in the change log. The row stays with its dates, status, result and vendor, so reports and the KPI still add up. A case whose file cannot be deleted is left whole and reported. Purged cases show a note and accept no files. The candidate's own record is outside this purge.
 - **Audit.** Opening a BGV file is written to the change log ("File viewed", who and which file). **Audit export** (Head of HR, Admin): the BGV timeline plus every change to cases, checks, vendors and rules for a period (up to a year; all cases or one), oldest first, as a CSV with who, when, case, candidate, recruiter, action, field, from, to. The export itself is logged.
 
+### 11.9 Organogram (`Org.gs`; `org_manage` to import and edit, everyone signed in can view; ADR-045)
+Approved against existing manpower by division, department and grade, with the division head and HOD, joined to the positions the CRM already tracks. Reports → Organogram.
+- **Structure:** company → group (earlier division name) → division (head) → department (HOD). 16 divisions and 59 departments, loaded from the HR sheets (schema 36 seed). Grades: M1–M7 = M (management), W1–W5 = W (workmen and supervisory), T = trainee (`orgCategory_`).
+- **Headcount:** from the *Approved vs Existing Manpower* report, imported in Admin → Org structure → Import (the file is read in the browser; the server checks every row; nothing is saved until Apply). The old department name in the file is mapped to a new department through `Org_Dept_Map`; the file's own "New Department Name" is only compared (a difference is a warning, the mapping wins). Each import replaces the snapshot and shows its "as on" date.
+- **Per grade, before grade cover:** gross vacancy = max(0, approved − existing), gross excess = max(0, existing − approved). Net vacant = approved − existing (the report's own figure). Totals reconcile to the file.
+- **Grade cover (ADR-046):** within one department and one pay band (Senior management M1–M3, Middle management M4–M5, Officers and engineers M6–M7, Trainee T, Supervisory W1–W2, Workmen W3–W5), seats filled above approved are matched to vacant seats, nearest grade first (`orgNetting_`). A matched seat is **covered by another grade**: it is not vacant and not over-strength, and it never asks for an MRF. What is left is **truly vacant** and **true over-strength**; residual vacancy − residual excess always equals approved − existing. Only residuals use warning colours; covered seats show a neutral grey-blue ↔ marker. On Report_4: gross 617 vacant and 302 excess become 410 vacant and 95 over-strength, 207 seats covered (31 filled at a higher grade, 26 at a lower).
+- **Notes for upgrades (`Org_Grade_Notes`):** a seat filled at a higher grade than approved shows *Needs a note* until Head of HR or Admin records a reason, who approved it and a review date; the note shows *Noted* and turns *Review due* after its date. Downgrades need none. Notes are kept across re-imports; a note whose substitution has gone is listed as no longer applying. The **Grade mix** tab lists every substitution with filters (upgrades, downgrades, needs a note, review due) and CSV. Cost is monitored by count (seats and grade steps above approved) until a budget CTC per grade is added.
+- **Check before hiring:** an open MRF in a grade whose seat another grade already covers is shown as a neutral note; another hire would create an excess.
+- **Open positions:** a position counts when its status is Open, Offered or On Hold (`positionStatus_`), under the new department its `MRF.Dept` maps to, by grade. **Vacant without an MRF** = max(0, truly vacant − open MRFs) per grade. Positions in unmapped departments are listed in a warning. `MRF` is not changed.
+- **Screen:** KPI row; division, search, status and category filters; tabs *Organogram* (a connected chart: company, group, division with its head, department with its HOD, as people cards with fill bars; Top-down or Left to right; zoom, fit, drag to pan; expand or collapse divisions; click a group or division to focus that branch, with a breadcrumb back; click a department for its grades and open positions), *By department* (sortable, CSV) and *Grade matrix*.
+- **Admin:** import with preview; divisions and departments (head, HOD, e-mail, division, active, add); mapping with suggestions (`jdmSuggestDept_`). Names are not renamed (headcount and the mapping are keyed by name): add a new department instead.
+- HODs here are kept separately from `M_Departments.HOD_Name/Email`, which drive task messages, until HR decides to merge them.
+- Tests: E2E group O1–O22 (§12.5), plus a local harness of the pure functions.
+
 ## 12. Administration, settings, jobs and operations
 
 ### 12.1 Admin page tabs
@@ -808,6 +830,7 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 | Task rules | lead | Due/critical hours and on/off per rule |
 | TAT exemptions | lead (act: `tat_exempt` = Head of HR, Admin) | Awaiting the Head of HR (oldest first, Approve / Reject), notice extensions to review (Verify / Reject), register with filters and CSV, reasons editor (add, deactivate; no rename) |
 | Grades & designations | lead | Grades: band, active, add a grade (code + starting TAT days). Designations: add, rename (carried to every position of that grade using the old name), move to another grade (only while unused), deactivate, note. Short forms are expanded on save (Sr → Senior, Engr → Engineer, SE → Senior Engineer). All changes audited (`apiGradeSetup`, `apiSaveGradeSetup`) |
+| Org structure | `org_manage` | Import the manpower report (check first, then apply); divisions (head, active) and departments (division, HOD name and e-mail, active, add); old-to-new department mapping with suggestions (§11.9) |
 | TAT rules | tat_view (edit: tat_edit) | §7.2 |
 | Users | users_view (edit: users_edit) | §3.3 |
 | Roles & permissions | everyone with Admin page | Read-only matrix |
@@ -919,6 +942,16 @@ Context: a test candidate row deleted directly in the sheet freed CAN-01088, whi
 **ADR-017 — Close without hiring; On hold pauses TAT; company withdrawal is not a backout** (26 Sep)
 Context: positions closed by departments stayed Open because the only route was changing Approval status. Decisions: an explicit *Close without hiring* action with outcome, date, reason, requested-by and candidate handling; after switch-over, status changes only through it; **On hold pauses TAT** (hold days excluded on resume — user's choice over restart or new MRF); a live offer can be withdrawn only by Head of HR/Admin and is recorded as *Offer withdrawn by the company*, not a backout. Consequences: every closure has a reason; TAT fair to recruiters; backout rate not polluted.
 
+**ADR-046 — A seat filled at another grade of the same band counts as covered, not vacant; upgrades keep a note** (7 Oct, user decisions)
+Context: HR often fills a vacancy by hiring in a neighbouring grade. Per grade this showed a vacancy and an over-strength at once and prompted unnecessary MRFs (Report_4: 617 gross vacant against 410 after cover).
+Decision: cover is computed inside one department and one pay band, nearest grade first, and only the residual vacancy and excess use warning colours. Substitutions are shown neutrally, listed in a Grade mix monitor, and an upgrade keeps a one-line note with approver and review date (Head of HR, Admin). Monitoring is count-based; a budget CTC per grade table is left for later.
+Consequences: the vacancy figures drop against the per-grade view while net vacancy (315) is unchanged; bands are a constant (`ORG_BANDS_`); notes must be reviewed by date; a hire in a covered grade is flagged as "check before hiring".
+
+**ADR-045 — The organogram is a separate structure mapped to the existing departments; headcount is an imported snapshot** (7 Oct, user decisions)
+Context: HR defined a new structure (16 divisions, 59 departments, grades M / W / T, division heads and HODs) and an Approved vs Existing Manpower report, while positions and candidates carry the earlier 85 department names.
+Decision: keep `M_Departments` and `MRF` untouched; add `Org_*` sheets and a mapping from each CRM department to a new one. Existing manpower is imported from the HR report as a dated snapshot (replace on each import), not typed in; open positions are joined live through the mapping. Everyone signed in can view; `org_manage` (Head of HR, Admin) imports and edits.
+Consequences: no migration of positions; a department missing from the mapping blocks the import and shows as a warning; the snapshot ages until the next import; HODs on the organogram are not yet synchronised with the HOD contacts used for task messages.
+
 **ADR-044 — A rule-based CV profile (history, checks, skills with evidence) is kept per candidate; protected characteristics are never read** (5 Oct, user decision "start with A")
 Context: the parser filled 13 form fields only. Recruiters also need the employer-by-employer history, education, certifications, languages, links, and checks for gaps and short stays, in a form that can go to Excel. An AI service was assessed again and not chosen (ADR-018; Policy §19 and DPDP).
 Decision: extend the pattern-based parser; store the extracted facts as JSON per candidate (sheet Candidate_Profiles) and calculate the checks on every read, so a recruiter's correction updates them. Facts the parser is unsure of are marked "check"; absent facts are "Not Found". Date of birth, age, gender, marital status, religion, nationality and photos are never extracted or stored. The summary is written from facts only and says it is not an assessment.
@@ -1009,6 +1042,18 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
+- A seat filled at another grade of the same band, in the same department, is covered, not vacant and not excess. Key figures now show truly vacant, covered by another grade, true over-strength, and truly vacant with no MRF; the net vacant figure stays beside them. Covered seats use a neutral marker; only residuals use warning colours.
+- New Grade mix tab (substitutions with direction, grade steps, note status and review date, CSV); department drawer lists the substitutions; Admin → Org structure → Grade notes.
+- New sheet `Org_Grade_Notes`; new APIs `apiOrgSaveNote`, `apiOrgCloseNote` (`org_manage`). `SCHEMA_VERSION` 37.
+- Tests: E2E O16–O22; local checks reproduce Report_4 (410 vacant, 95 over-strength, 207 covered, net 315).
+
+**Unreleased — Organogram** (schema 36; new Org.gs; ADR-045; §11.9)
+- New Reports → Organogram: approved against existing manpower by division, department and grade (M, W, T), division heads and HODs, open MRFs and vacant seats with no MRF. Tree, by-department table and grade matrix, CSV, department drawer with open positions.
+- New Admin → Org structure (`org_manage`, Head of HR and Admin): import the manpower report (checked first, replaces the snapshot), edit divisions, departments and HODs, map the existing CRM departments to the new ones.
+- New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
+- Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
 **Unreleased — Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
 - Editing a Daily log entry from the switch-over date was refused with "HR 1st round, shared … counted from the candidate pipeline": the list now carries the pipeline counts, the Edit form filled its hidden pipeline fields with them, and the server refused them. Now the form never carries those fields (cleared when shown, cleared when the date moves past the switch-over, and sent as 0), and the server **drops** them for entries from the switch-over date instead of refusing (a stale page cannot be blocked either). Entries before the switch-over save as before. Tests: 6 more server cases (23), browser run of the edit form and a date change.
@@ -1316,7 +1361,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+37 Org_Grade_Notes (organogram grade cover, unreleased) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (unreleased) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
