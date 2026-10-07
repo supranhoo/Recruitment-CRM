@@ -1010,6 +1010,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
+- Editing a Daily log entry from the switch-over date was refused with "HR 1st round, shared … counted from the candidate pipeline": the list now carries the pipeline counts, the Edit form filled its hidden pipeline fields with them, and the server refused them. Now the form never carries those fields (cleared when shown, cleared when the date moves past the switch-over, and sent as 0), and the server **drops** them for entries from the switch-over date instead of refusing (a stale page cannot be blocked either). Entries before the switch-over save as before. Tests: 6 more server cases (23), browser run of the edit form and a date change.
+
 **Unreleased — Daily log shows the pipeline counts** (no schema change)
 - From the switch-over date (`PIPELINE_CUTOVER`, 5 Oct) the Daily log list, My day entries and a position's activity history had blank HR R1, Shared, Shortlisted, Interviews and Selected columns, because those are counted from Pipeline moves and the list showed only typed entries. `apiListFunnel` now adds the pipeline counts per day, position and recruiter (credited to the position's recruiter, backward moves by a lead cancel as in the KPI), onto the typed entry of the same day or as a "Pipeline" row of its own; old typed values in those columns are ignored from that date, so nothing is counted twice; days before the switch-over are unchanged. Counts are buttons that list the candidates behind them. Tests: 17 server cases, browser run, E2E M1.
 

@@ -1319,6 +1319,8 @@ function activeLineOptions(selected) {
 }
 function dailyFormHtml(fixedLine, data) {
   data = data || { Entry_Date: today() };
+  // The list shows pipeline counts for these columns; the form must not carry them (they are counted, never typed).
+  if (String(data.Entry_Date) >= (S.boot.cutover || '2026-10-05')) { data = Object.assign({}, data); FUNNEL_PIPED_.forEach(k => { data[k] = ''; }); }
   return `<div class="dailyform" data-entry="${esc(data.Entry_ID || '')}">
     <div class="grid">
       ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : `<div class="field wide"><label for="dl_line">Position *</label><select id="dl_line" name="Line_ID">${activeLineOptions(data.Line_ID)}</select></div>`}
@@ -1335,13 +1337,14 @@ function bindDailyForm(root, after) {
   const f = $('.dailyform', root);
   const syncPipe = () => {
     const dt = ($('[name=Entry_Date]', f) || {}).value || today(), piped = dt >= (S.boot.cutover || '2026-10-05');
-    $$('.dl-pipe', f).forEach(x => { x.hidden = piped; if (piped) { const i = $('input', x); if (i && !Number(i.value)) i.value = ''; } });
+    $$('.dl-pipe', f).forEach(x => { x.hidden = piped; if (piped) { const i = $('input', x); if (i) i.value = ''; } });
     const n = $('.dl-pipe-note', f); if (n) n.hidden = !piped;
   };
   if ($('[name=Entry_Date]', f)) $('[name=Entry_Date]', f).addEventListener('change', syncPipe);
   syncPipe();
   $('.dl-save', f).onclick = async () => {
     const d = readForm(f); d.Entry_ID = f.dataset.entry;
+    if ((d.Entry_Date || today()) >= (S.boot.cutover || '2026-10-05')) FUNNEL_PIPED_.forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
     const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
     try { const saved = await api('apiSaveFunnel', d); toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
     catch (e) { toast(e, true); busy(btn, false, label); }

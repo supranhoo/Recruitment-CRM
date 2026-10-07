@@ -259,9 +259,9 @@ function apiSaveFunnel(data) {
     if (isNaN(n) || n < 0 || n % 1) throw new Error(m.replace(/_/g, ' ') + ' must be a whole number, 0 or more.');
     patch[m] = n;
   });
-  if (scorecardDerived_(ymd_(patch.Entry_Date)) && FUNNEL_METRICS.some(function (m) { return TYPED_METRICS_.indexOf(m) < 0 && patch[m] > 0; })) {
-    throw new Error('From ' + cutover_() + ', HR 1st round, shared, shortlisted, interviews and selected are counted from the candidate pipeline. Enter only CVs sourced and CVs reviewed here.');
-  }
+  // From the switch-over date those columns are counted from the pipeline and cannot be typed: whatever the form sends
+  // (a stale page, or the pipeline counts shown in the list) is dropped, not refused.
+  if (scorecardDerived_(ymd_(patch.Entry_Date))) FUNNEL_METRICS.forEach(function (m) { if (TYPED_METRICS_.indexOf(m) < 0) patch[m] = 0; });
   if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error('Enter at least one count or a remark.');
   patch.MRF_No = line.MRF_No;
   let rec;
