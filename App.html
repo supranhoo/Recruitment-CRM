@@ -4009,18 +4009,30 @@ function csvSave(name, head, rows) {
   saveBlob(new Blob(['﻿' + [head].concat(rows).map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);
 }
 const ORG_GRADES = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'T', 'W1', 'W2', 'W3', 'W4', 'W5'];
-const ORG_ST = { full: 'Full', vacant: 'Vacant', over: 'Over-strength', unapproved: 'Not approved' };
+const ORG_ST = { full: 'Full', vacant: 'Vacant', over: 'Over-strength', unapproved: 'Not approved', mix: 'Grade mix differs' };
+const ORG_F = ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap', 'covered', 'grossVacancy', 'grossExcess', 'upSeats', 'downSeats', 'upSteps', 'recheck'];
 const orgN = x => Number(x || 0).toLocaleString('en-IN');
+function orgZero() { const m = {}; ORG_F.forEach(k => { m[k] = 0; }); return m; }
 function orgM(d, cat) {
-  const m = { approved: 0, existing: 0, vacancy: 0, excess: 0, open: 0, gap: 0 };
-  d.grades.forEach(g => { if (cat && g.cat !== cat) return; ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap'].forEach(k => { m[k] += g[k]; }); });
+  const m = orgZero();
+  d.grades.forEach(g => { if (cat && g.cat !== cat) return; ORG_F.forEach(k => { m[k] += g[k] || 0; }); });
+  (d.subs || []).forEach(s => {
+    if (cat && s.from.charAt(0) !== cat) return;
+    if (s.dir === 'Upgrade') { m.upSeats += s.seats; m.upSteps += s.seats * s.steps; } else m.downSeats += s.seats;
+  });
   m.st = orgSt(m);
   return m;
 }
-function orgSt(m) { return m.approved === 0 && m.existing > 0 ? 'unapproved' : m.existing > m.approved ? 'over' : m.existing < m.approved ? 'vacant' : 'full'; }
+function orgSt(m) {
+  if (m.approved === 0 && m.existing > 0 && m.excess > 0) return 'unapproved';
+  if (m.vacancy > 0) return 'vacant';
+  if (m.excess > 0) return 'over';
+  if (m.covered > 0) return 'mix';
+  return 'full';
+}
 function orgSum(list) {
-  const m = { approved: 0, existing: 0, vacancy: 0, excess: 0, open: 0, gap: 0 };
-  list.forEach(x => { ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap'].forEach(k => { m[k] += x[k]; }); });
+  const m = orgZero();
+  list.forEach(x => { ORG_F.forEach(k => { m[k] += x[k] || 0; }); });
   m.st = orgSt(m);
   return m;
 }
@@ -4029,7 +4041,7 @@ function orgBar(m) {
   return `<span class="org-bar ost-${m.st}" role="img" aria-label="${orgN(m.existing)} in post against ${orgN(m.approved)} approved"><i style="width:${(m.existing / top * 100).toFixed(1)}%"></i><u style="left:${(m.approved / top * 100).toFixed(1)}%"></u></span>`;
 }
 function orgFig(m) {
-  return `<span class="org-fig"><b>${orgN(m.existing)}</b> of ${orgN(m.approved)}${m.vacancy ? ` \u00b7 <span class="org-v">${orgN(m.vacancy)} vacant</span>` : ''}${m.excess ? ` \u00b7 <span class="org-x">${orgN(m.excess)} over</span>` : ''}</span>`;
+  return `<span class="org-fig"><b>${orgN(m.existing)}</b> of ${orgN(m.approved)}${m.vacancy ? ` · <span class="org-v">${orgN(m.vacancy)} vacant</span>` : ''}${m.excess ? ` · <span class="org-x">${orgN(m.excess)} over</span>` : ''}${m.covered ? ` · <span class="org-cv" title="Seats filled at another grade of the same band">↔ ${orgN(m.covered)} covered</span>` : ''}</span>`;
 }
 function orgHod(h) {
   h = String(h || '').trim();
@@ -4045,7 +4057,7 @@ function orgInit(n) {
   return (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase();
 }
 function orgAv(n, big) { const i = orgInit(n); return `<span class="oc-av${i ? '' : ' none'}${big ? ' big' : ''}" aria-hidden="true">${i || '?'}</span>`; }
-function orgPills(m) { return `${m.open ? `<span class="org-pill open">${m.open} open MRF</span>` : ''}${m.gap ? `<span class="org-pill gap">${m.gap} without MRF</span>` : ''}`; }
+function orgPills(m) { return `${m.open ? `<span class="org-pill open">${m.open} open MRF</span>` : ''}${m.gap ? `<span class="org-pill gap">${m.gap} without MRF</span>` : ''}${m.recheck ? `<span class="org-pill chk">check before hiring</span>` : ''}`; }
 function orgDepNode(d) {
   const m = d.m;
   return `<button type="button" class="oc-n oc-dep ost-${m.st}" data-d="${esc(d.dept)}">${orgAv(d.hod)}<span class="oc-t"><b>${esc(d.dept)}</b><span class="sub">${orgHod(d.hod)}</span></span>
@@ -4093,7 +4105,7 @@ function orgChartHtml(list, f) {
         return `<li>${orgDivNode(dv)}<button type="button" class="oc-x" data-x="${esc(dv.division)}" aria-expanded="${open}">${open ? 'Hide' : 'Show'} ${dv.depts.length} department${dv.depts.length === 1 ? '' : 's'}</button>${open ? `<ul class="v">${deps(dv)}</ul>` : ''}</li>`;
       }).join('')}</ul></section>`).join('')}</div></div>`;
   }
-  const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="dot ost-full"></i>Full</span><span><i class="dot ost-vacant"></i>Vacant</span><span><i class="dot ost-over"></i>Over-strength</span><span><i class="dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
+  const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="dot ost-full"></i>Full</span><span><i class="dot ost-mix"></i>Grade mix differs (covered)</span><span><i class="dot ost-vacant"></i>Vacant</span><span><i class="dot ost-over"></i>Over-strength</span><span><i class="dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
   return `${bar}<div class="oc-frame" id="ocFrame" tabindex="0" aria-label="Organisation chart. Drag to move, use the buttons to zoom."><div id="ocZoom">${chart}</div></div>${legend}`;
 }
 function orgChartBind(root, f, redraw) {
@@ -4128,39 +4140,98 @@ function orgChartBind(root, f, redraw) {
 function orgTable(list, f) {
   const rows = [];
   list.forEach(dv => dv.depts.forEach(d => rows.push({ dv, d, m: d.m })));
-  const key = { dept: r => r.d.dept, division: r => r.dv.division, approved: r => r.m.approved, existing: r => r.m.existing, vacancy: r => r.m.vacancy, excess: r => r.m.excess, open: r => r.m.open, gap: r => r.m.gap, fill: r => r.m.approved ? r.m.existing / r.m.approved : 9 }[f.sort] || (r => r.m.approved);
+  const key = { dept: r => r.d.dept, division: r => r.dv.division, approved: r => r.m.approved, existing: r => r.m.existing, vacancy: r => r.m.vacancy, covered: r => r.m.covered, excess: r => r.m.excess, open: r => r.m.open, gap: r => r.m.gap, fill: r => r.m.approved ? r.m.existing / r.m.approved : 9 }[f.sort] || (r => r.m.approved);
   const text = f.sort === 'dept' || f.sort === 'division';
   rows.sort((a, b) => { const x = key(a), y = key(b); return text ? (x < y ? -1 : x > y ? 1 : 0) * f.dir : (y - x) * f.dir || (a.d.dept < b.d.dept ? -1 : 1); });
   const th = (k, l, num) => `<th class="${num ? 'num' : ''}"><button type="button" class="linklike" data-sort="${k}">${l}${f.sort === k ? (f.dir > 0 ? ' ▾' : ' ▴') : ''}</button></th>`;
-  return `<div class="table-wrap"><table class="org-table"><thead><tr>${th('division', 'Division')}${th('dept', 'Department')}<th>HOD</th>${th('approved', 'Approved', 1)}${th('existing', 'Existing', 1)}${th('vacancy', 'Vacant', 1)}${th('excess', 'Over', 1)}${th('open', 'Open MRF', 1)}${th('gap', 'No MRF', 1)}${th('fill', 'Fill', 1)}</tr></thead><tbody>
-    ${rows.map(({ dv, d, m }) => `<tr data-d="${esc(d.dept)}"><td>${esc(dv.division)}</td><td><b>${esc(d.dept)}</b></td><td>${orgHod(d.hod)}</td><td class="num">${orgN(m.approved)}</td><td class="num">${orgN(m.existing)}</td><td class="num ${m.vacancy ? 'org-v' : ''}">${orgN(m.vacancy)}</td><td class="num ${m.excess ? 'org-x' : ''}">${orgN(m.excess)}</td><td class="num">${orgN(m.open)}</td><td class="num ${m.gap ? 'org-gapn' : ''}">${orgN(m.gap)}</td><td class="num">${m.approved ? Math.round(m.existing / m.approved * 100) + '%' : '—'}</td></tr>`).join('')}
+  return `<div class="table-wrap"><table class="org-table"><thead><tr>${th('division', 'Division')}${th('dept', 'Department')}<th>HOD</th>${th('approved', 'Approved', 1)}${th('existing', 'Existing', 1)}${th('vacancy', 'Vacant', 1)}${th('covered', 'Covered by another grade', 1)}${th('excess', 'Over', 1)}${th('open', 'Open MRF', 1)}${th('gap', 'No MRF', 1)}${th('fill', 'Fill', 1)}</tr></thead><tbody>
+    ${rows.map(({ dv, d, m }) => `<tr data-d="${esc(d.dept)}"><td>${esc(dv.division)}</td><td><b>${esc(d.dept)}</b></td><td>${orgHod(d.hod)}</td><td class="num">${orgN(m.approved)}</td><td class="num">${orgN(m.existing)}</td><td class="num ${m.vacancy ? 'org-v' : ''}">${orgN(m.vacancy)}</td><td class="num ${m.covered ? 'org-cv' : ''}">${orgN(m.covered)}</td><td class="num ${m.excess ? 'org-x' : ''}">${orgN(m.excess)}</td><td class="num">${orgN(m.open)}</td><td class="num ${m.gap ? 'org-gapn' : ''}">${orgN(m.gap)}</td><td class="num">${m.approved ? Math.round(m.existing / m.approved * 100) + '%' : '—'}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function orgMatrix(list, f) {
   const cols = ORG_GRADES.filter(g => !f.cat || g.charAt(0) === f.cat);
   const rows = [];
   list.forEach(dv => dv.depts.forEach(d => rows.push({ dv, d })));
-  return `<p class="hint">Each cell reads existing / approved. Blue: vacancies. Amber: over-strength. Red: people in post with no approved headcount.</p><div class="table-wrap"><table class="org-table org-matrix"><thead><tr><th>Department</th>${cols.map(g => `<th class="num">${g}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
-    ${rows.map(({ dv, d }) => `<tr data-d="${esc(d.dept)}"><td><b>${esc(d.dept)}</b><span class="sub">${esc(dv.division)}</span></td>${cols.map(g => { const x = d.grades.find(y => y.grade === g); return x ? `<td class="num org-c ost-${x.status}">${orgN(x.existing)}<span>/${orgN(x.approved)}</span></td>` : '<td class="num empty-cell">·</td>'; }).join('')}<td class="num"><b>${orgN(d.m.existing)}</b><span class="org-t">/${orgN(d.m.approved)}</span></td></tr>`).join('')}
+  return `<p class="hint">Each cell reads existing / approved. A grey-blue cell with ↔ is a seat covered by, or covering for, another grade in the same band: it is not a vacancy and not an excess. Blue: true vacancies. Amber: true over-strength. Red: people in post with no approved headcount and no grade to cover.</p><div class="table-wrap"><table class="org-table org-matrix"><thead><tr><th>Department</th>${cols.map(g => `<th class="num">${g}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
+    ${rows.map(({ dv, d }) => `<tr data-d="${esc(d.dept)}"><td><b>${esc(d.dept)}</b><span class="sub">${esc(dv.division)}</span></td>${cols.map(g => { const x = d.grades.find(y => y.grade === g); return x ? `<td class="num org-c ost-${x.status}"${x.covered ? ` title="${x.covered} seat${x.covered > 1 ? 's' : ''} covered by another grade"` : x.covers ? ` title="${x.covers} seat${x.covers > 1 ? 's' : ''} filling another grade"` : ''}>${orgN(x.existing)}<span>/${orgN(x.approved)}</span>${x.covered || x.covers ? '<i class="org-ex">↔</i>' : ''}</td>` : '<td class="num empty-cell">·</td>'; }).join('')}<td class="num"><b>${orgN(d.m.existing)}</b><span class="org-t">/${orgN(d.m.approved)}</span></td></tr>`).join('')}
     </tbody></table></div>`;
+}
+const ORG_STATE = { needs: 'Needs a note', noted: 'Noted', review: 'Review due', none: 'No note needed' };
+function orgDirTxt(s) { return s.dir === 'Upgrade' ? `▲ ${s.steps} grade${s.steps === 1 ? '' : 's'} up` : `▼ ${s.steps} grade${s.steps === 1 ? '' : 's'} down`; }
+function orgStChip(s) { return `<span class="org-st ${s.state}">${ORG_STATE[s.state]}</span>`; }
+function orgSubLine(s) { return `<b>${s.seats}</b> seat${s.seats === 1 ? '' : 's'} approved at <b>${esc(s.from)}</b> filled at <b>${esc(s.to)}</b> <span class="org-dir ${s.dir === 'Upgrade' ? 'up' : 'down'}">${orgDirTxt(s)}</span>`; }
+function orgNoteText(n) { return n ? `${esc(n.reason || 'No reason recorded')}${n.by ? ' · approved by ' + esc(n.by) : ''}${n.reviewOn ? ' · review on ' + esc(n.reviewOn) : ''}` : ''; }
+function orgNoteDialog(s, done) {
+  const up = s.dir === 'Upgrade', n = s.note || {};
+  const dflt = () => { const d = new Date(); d.setMonth(d.getMonth() + 6); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const b = openDrawer('Grade note', `<p><b>${esc(s.dept)}</b></p><p>${orgSubLine(s)}</p>
+    <p class="hint">${up ? 'A seat filled at a higher grade costs more, so a short note is kept: why, who approved it, and when to look at it again. The seat does not show as vacant meanwhile.' : 'A seat filled at a lower grade needs no approval. A note is optional.'}</p>
+    <div class="field" style="max-width:160px"><label for="onSeats">Seats</label><input id="onSeats" type="number" min="1" max="999" value="${esc(n.seats || s.seats)}"></div>
+    <div class="field"><label for="onReason">Reason${up ? '' : ' (optional)'}</label><textarea id="onReason" rows="3" maxlength="300">${esc(n.reason || '')}</textarea></div>
+    <div class="field"><label for="onBy">Approved by${up ? '' : ' (optional)'}</label><input id="onBy" value="${esc(n.by || '')}" maxlength="80"></div>
+    <div class="field" style="max-width:200px"><label for="onRev">Review on${up ? '' : ' (optional)'}</label><input id="onRev" type="date" value="${esc(n.reviewOn || (up ? dflt() : ''))}"></div>
+    <div class="drawer-actions"><button class="btn" id="onCancel">Cancel</button>${n.id ? '<button class="btn" id="onClose">Close this note</button>' : ''}<button class="btn primary" id="onSave">Save note</button></div>`);
+  $('#onCancel', b).onclick = closeDrawer;
+  if (n.id) $('#onClose', b).onclick = async () => { try { await api('apiOrgCloseNote', n.id); toast('Note closed'); closeDrawer(); done(); } catch (e) { toast(e, true); } };
+  $('#onSave', b).onclick = async () => {
+    const btn = $('#onSave', b); busy(btn, true, 'Saving…');
+    try { await api('apiOrgSaveNote', { dept: s.dept, from: s.from, to: s.to, seats: Number($('#onSeats', b).value), reason: $('#onReason', b).value, by: $('#onBy', b).value, reviewOn: $('#onRev', b).value }); toast('Note saved'); closeDrawer(); done(); }
+    catch (e) { toast(e, true); busy(btn, false, 'Save note'); }
+  };
+}
+function orgSubsHtml(d, canManage) {
+  if (!d.subs || !d.subs.length) return '<p class="hint">No seat here is filled at a different grade from the one approved.</p>';
+  return d.subs.map((s, i) => `<div class="org-sub"><div class="org-sub-h"><span>${orgSubLine(s)}</span>${orgStChip(s)}</div>${s.note ? `<div class="sub">${orgNoteText(s.note)}</div>` : ''}${canManage ? `<button type="button" class="btn sm" data-note="${i}">${s.note ? 'Edit note' : s.dir === 'Upgrade' ? 'Add note' : 'Add optional note'}</button>` : ''}</div>`).join('');
 }
 function orgDrawer(d, r) {
   const m = orgSum(d.grades), crm = d.crm || [];
   const b = openDrawer(d.dept, `<div class="org-dh"><div>${esc(d.division)}</div><div class="sub">${orgHod(d.hod)}${d.email ? ' · ' + esc(d.email) : ''}</div></div>
     <div class="kpis"><div class="kpi"><div class="v">${orgN(m.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(m.existing)}</div><div class="l">Existing</div></div>
-      <div class="kpi ${m.vacancy ? 'alert' : ''}"><div class="v">${orgN(m.vacancy)}</div><div class="l">Vacant</div></div><div class="kpi"><div class="v">${orgN(m.open)}</div><div class="l">Open MRFs</div></div>
+      <div class="kpi"><div class="v">${orgN(m.vacancy)}</div><div class="l">Truly vacant</div></div><div class="kpi info"><div class="v">${orgN(m.covered)}</div><div class="l">Covered by another grade</div></div>
+      <div class="kpi"><div class="v">${orgN(m.open)}</div><div class="l">Open MRFs</div></div>
       <div class="kpi ${m.gap ? 'alert' : ''}"><div class="v">${orgN(m.gap)}</div><div class="l">Vacant without an MRF</div></div></div>
-    <div class="table-wrap"><table class="org-table"><thead><tr><th>Grade</th><th class="num">Approved</th><th class="num">Existing</th><th class="num">Vacant</th><th class="num">Over</th><th class="num">Open MRF</th><th class="num">No MRF</th></tr></thead><tbody>
-    ${d.grades.map(g => `<tr style="cursor:default"><td><b>${esc(g.grade)}</b></td><td class="num">${orgN(g.approved)}</td><td class="num">${orgN(g.existing)}</td><td class="num ${g.vacancy ? 'org-v' : ''}">${orgN(g.vacancy)}</td><td class="num ${g.excess ? 'org-x' : ''}">${orgN(g.excess)}</td><td class="num">${orgN(g.open)}</td><td class="num ${g.gap ? 'org-gapn' : ''}">${orgN(g.gap)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="7" class="empty">No headcount imported for this department.</td></tr>'}
+    <div class="table-wrap"><table class="org-table"><thead><tr><th>Grade</th><th class="num">Approved</th><th class="num">Existing</th><th class="num">Vacant</th><th class="num">Covered</th><th class="num">Over</th><th class="num">Open MRF</th><th class="num">No MRF</th></tr></thead><tbody>
+    ${d.grades.map(g => `<tr style="cursor:default"><td><b>${esc(g.grade)}</b>${g.covers ? ` <span class="org-t" title="Filling seats approved at another grade">↔ ${g.covers}</span>` : ''}</td><td class="num">${orgN(g.approved)}</td><td class="num">${orgN(g.existing)}</td><td class="num ${g.vacancy ? 'org-v' : ''}">${orgN(g.vacancy)}</td><td class="num ${g.covered ? 'org-cv' : ''}">${orgN(g.covered)}</td><td class="num ${g.excess ? 'org-x' : ''}">${orgN(g.excess)}</td><td class="num">${orgN(g.open)}</td><td class="num ${g.gap ? 'org-gapn' : ''}">${orgN(g.gap)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="8" class="empty">No headcount imported for this department.</td></tr>'}
     </tbody></table></div>
+    <h3 class="org-h3">Grade substitutions</h3>
+    <div id="orgSubs">${orgSubsHtml(d, r.canManage)}</div>
     <h3 class="org-h3">Open positions</h3>
     ${d.lines.length ? `<div class="table-wrap"><table class="org-table"><thead><tr><th>Position</th><th>Grade</th><th>Status</th><th>Recruiter</th></tr></thead><tbody>${d.lines.map(l => `<tr data-line="${esc(l.id)}"><td><b>${esc(l.position || l.id)}</b><span class="sub">${esc(l.mrf)}</span></td><td>${esc(l.grade)}</td><td>${esc(l.status)}</td><td>${esc(l.recruiter)}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="hint">No open positions in this department.</p>'}
-    ${m.gap ? `<div class="note">${m.gap} approved seat${m.gap > 1 ? 's are' : ' is'} vacant with no MRF raised. Raise the MRF(s) in Positions when the department confirms the need.</div>` : ''}
+    ${m.recheck ? `<div class="note info-note">${m.recheck} open MRF${m.recheck > 1 ? 's are' : ' is'} for a grade whose seat another grade already covers. Check before hiring: another hire would create an excess.</div>` : ''}
+    ${m.gap ? `<div class="note">${m.gap} approved seat${m.gap > 1 ? 's are' : ' is'} still vacant after grade cover, with no MRF raised. Raise the MRF(s) in Positions when the department confirms the need.</div>` : ''}
     <p class="hint">${crm.length ? 'CRM departments counted here: ' + esc(crm.join(', ')) + '.' : 'No CRM department is mapped to this department yet.'}</p>`);
   $$('tr[data-line]', b).forEach(tr => tr.onclick = async () => {
     try { await loadPositions(); const p = lineById(tr.dataset.line); if (p) positionDrawer(p); else toast('That position is not in your list.', true); } catch (e) { toast(e, true); }
   });
+  $$('[data-note]', b).forEach(bt => bt.onclick = () => orgNoteDialog(d.subs[Number(bt.dataset.note)], () => go('org', false)));
+}
+function orgMixList(f) {
+  const q = f.q.trim().toLowerCase();
+  return S.orgData.mix.filter(x => (!f.div || x.division === f.div) && (!f.cat || x.from.charAt(0) === f.cat) && (!q || (x.dept + ' ' + x.division).toLowerCase().includes(q)));
+}
+function orgMixHtml(f, r) {
+  const base = orgMixList(f);
+  const sum = (a, fn) => a.filter(fn).reduce((s, x) => s + x.seats, 0);
+  const rows = base.filter(x => !f.mixF || (f.mixF === 'Upgrade' || f.mixF === 'Downgrade' ? x.dir === f.mixF : x.state === f.mixF));
+  const chips = [['', 'All', base.length], ['Upgrade', 'Upgrades', base.filter(x => x.dir === 'Upgrade').length], ['Downgrade', 'Downgrades', base.filter(x => x.dir === 'Downgrade').length], ['needs', 'Needs a note', base.filter(x => x.state === 'needs').length], ['review', 'Review due', base.filter(x => x.state === 'review').length]];
+  const stale = r.canManage ? r.staleNotes || [] : [];
+  return `<p class="hint">Seats filled at a different grade from the one approved, inside the same department and pay band. They are counted as covered, so they are not vacancies and not excess. They are listed here so higher-grade hiring stays visible and reviewed.</p>
+    <div class="kpis"><div class="kpi info"><div class="v">${orgN(sum(base, x => true))}</div><div class="l">Seats covered by another grade</div></div>
+      <div class="kpi"><div class="v">${orgN(sum(base, x => x.dir === 'Upgrade'))}</div><div class="l">Filled at a higher grade (upgrade)</div></div>
+      <div class="kpi"><div class="v">${orgN(sum(base, x => x.dir === 'Downgrade'))}</div><div class="l">Filled at a lower grade (downgrade)</div></div>
+      <div class="kpi"><div class="v">${orgN(base.filter(x => x.state === 'needs').length)}</div><div class="l">Upgrades waiting for a note</div></div>
+      <div class="kpi"><div class="v">${orgN(base.filter(x => x.state === 'review').length)}</div><div class="l">Notes due for review</div></div></div>
+    <div class="chips">${chips.map(([k, l, n]) => `<button type="button" class="chip" data-mix="${k}" aria-pressed="${(f.mixF || '') === k}">${l}<span class="n">${n}</span></button>`).join('')}</div>
+    ${rows.length ? `<div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Division</th><th>Band</th><th>Approved at</th><th>Filled at</th><th class="num">Seats</th><th>Direction</th><th>Note</th><th>Review on</th>${r.canManage ? '<th></th>' : ''}</tr></thead><tbody>
+    ${rows.map(x => `<tr data-d="${esc(x.dept)}"><td><b>${esc(x.dept)}</b></td><td>${esc(x.division)}</td><td>${esc(x.band)}</td><td>${esc(x.from)}</td><td>${esc(x.to)}</td><td class="num">${x.seats}</td><td><span class="org-dir ${x.dir === 'Upgrade' ? 'up' : 'down'}">${orgDirTxt(x)}</span></td><td>${orgStChip(x)}${x.note ? `<span class="sub">${orgNoteText(x.note)}</span>` : ''}</td><td>${x.note ? esc(x.note.reviewOn) : '—'}</td>${r.canManage ? `<td><button type="button" class="btn sm" data-mnote="${S.orgData.mix.indexOf(x)}">${x.note ? 'Edit' : 'Add note'}</button></td>` : ''}</tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty">No grade substitutions match these filters.</div>'}
+    ${stale.length ? `<h3 class="org-h3">Notes that no longer apply</h3><p class="hint">The headcount changed and these seats are no longer filled at another grade. Close them.</p><div class="table-wrap"><table class="org-table"><tbody>${stale.map(n => `<tr style="cursor:default"><td><b>${esc(n.dept)}</b> · ${esc(n.from)} → ${esc(n.to)}</td><td>${orgNoteText(n)}</td><td><button type="button" class="btn sm" data-sclose="${esc(n.id)}">Close note</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+}
+function orgMixBind(root, f, draw) {
+  $$('[data-mix]', root).forEach(c => c.onclick = () => { f.mixF = c.dataset.mix; draw(); });
+  $$('[data-mnote]', root).forEach(b => b.onclick = e => { e.stopPropagation(); orgNoteDialog(S.orgData.mix[Number(b.dataset.mnote)], () => go('org', false)); });
+  $$('[data-sclose]', root).forEach(b => b.onclick = async () => { try { await api('apiOrgCloseNote', b.dataset.sclose); toast('Note closed'); go('org', false); } catch (e) { toast(e, true); } });
 }
 async function viewOrg(v) {
   const f = S.orgF = S.orgF || { tab: 'tree', div: '', q: '', cat: '', st: '', sort: 'approved', dir: 1 };
@@ -4183,8 +4254,8 @@ async function viewOrg(v) {
   };
   const csv = () => {
     const rows = [];
-    shown().forEach(dv => dv.depts.forEach(d => d.grades.forEach(g => { if (f.cat && g.cat !== f.cat) return; rows.push([dv.division, dv.head, d.dept, d.hod, g.grade, g.cat, g.approved, g.existing, g.vacancy, g.excess, g.open, g.gap]); })));
-    csvSave('organogram-' + (r.asOn || today()) + '.csv', ['Division', 'Division head', 'Department', 'HOD', 'Grade', 'Category', 'Approved', 'Existing', 'Vacant', 'Over-strength', 'Open MRF', 'Vacant without MRF'], rows);
+    shown().forEach(dv => dv.depts.forEach(d => d.grades.forEach(g => { if (f.cat && g.cat !== f.cat) return; rows.push([dv.division, dv.head, d.dept, d.hod, g.grade, g.cat, g.approved, g.existing, g.vacancy, g.covered, g.excess, g.open, g.gap]); })));
+    csvSave('organogram-' + (r.asOn || today()) + '.csv', ['Division', 'Division head', 'Department', 'HOD', 'Grade', 'Category', 'Approved', 'Existing', 'Vacant after grade cover', 'Covered by another grade', 'Over-strength after grade cover', 'Open MRF', 'Vacant without MRF'], rows);
   };
   const act = $('#orgAct', v);
   act.innerHTML = `<button class="btn" id="orgCsv">Download CSV</button>${r.canManage ? '<button class="btn primary" id="orgImp">Import manpower report</button>' : ''}`;
@@ -4199,30 +4270,34 @@ async function viewOrg(v) {
       return;
     }
     const cats = [['', 'All grades'], ['M', 'M · Management'], ['W', 'W · Workmen'], ['T', 'T · Trainee']];
-    const sts = [['', 'Any status'], ['vacant', 'Vacant'], ['over', 'Over-strength'], ['unapproved', 'Not approved'], ['full', 'Full']];
+    const sts = [['', 'Any status'], ['vacant', 'Vacant'], ['over', 'Over-strength'], ['unapproved', 'Not approved'], ['mix', 'Grade mix differs'], ['full', 'Full']];
     const unm = r.unmapped.reduce((s, x) => s + x.open, 0);
     body.innerHTML = `${r.unmapped.length ? `<div class="note warn-note">${unm} open position${unm === 1 ? ' is' : 's are'} in departments not yet mapped to the new structure (${esc(r.unmapped.map(x => x.dept).slice(0, 4).join(', '))}${r.unmapped.length > 4 ? ' and ' + (r.unmapped.length - 4) + ' more' : ''}). ${r.canManage ? 'Map them in Admin, Org structure.' : 'Ask the Head of HR to map them.'}</div>` : ''}
-      <div class="kpis">
+      <div class="kpis org-kpis">
         <div class="kpi"><div class="v">${orgN(all.approved)}</div><div class="l">Approved manpower</div></div>
         <div class="kpi"><div class="v">${orgN(all.existing)}</div><div class="l">Existing, ${all.approved ? Math.round(all.existing / all.approved * 100) : 0}% of approved</div></div>
-        <div class="kpi ${all.approved - all.existing > 0 ? 'alert' : ''}"><div class="v">${orgN(all.approved - all.existing)}</div><div class="l">Net vacant (approved less existing)</div></div>
-        <div class="kpi"><div class="v">${orgN(all.vacancy)}</div><div class="l">Vacant seats, before over-strength is offset</div></div>
+        <div class="kpi"><div class="v">${orgN(all.approved - all.existing)}</div><div class="l">Net vacant (approved less existing)</div></div>
+        <div class="kpi"><div class="v">${orgN(all.vacancy)}</div><div class="l">Truly vacant, after grades cover for each other</div></div>
+        <div class="kpi info"><div class="v">${orgN(all.covered)}</div><div class="l">Covered by another grade, not vacant</div></div>
+        <div class="kpi"><div class="v">${orgN(all.excess)}</div><div class="l">True over-strength</div></div>
         <div class="kpi"><div class="v">${orgN(all.open)}</div><div class="l">Open MRFs against these seats</div></div>
-        <div class="kpi ${all.gap ? 'alert' : ''}"><div class="v">${orgN(all.gap)}</div><div class="l">Vacant seats with no MRF raised</div></div></div>
+        <div class="kpi ${all.gap ? 'alert' : ''}"><div class="v">${orgN(all.gap)}</div><div class="l">Truly vacant with no MRF raised</div></div></div>
+      <p class="hint org-note">A seat filled at a neighbouring grade of the same band counts as covered, not as a vacancy. See the Grade mix tab.</p>
       <div class="filters"><div class="field"><label for="orgDiv">Division</label><select id="orgDiv">${opts([['', 'All divisions']].concat(r.divisions.map(d => [d.division, d.division])), f.div, false)}</select></div>
         <div class="field search"><label for="orgQ">Search</label><input id="orgQ" type="search" placeholder="Department, HOD or division head" value="${esc(f.q)}"></div>
         <div class="field"><label for="orgSt">Status</label><select id="orgSt">${opts(sts, f.st, false)}</select></div></div>
       <div class="chips">${cats.map(([k, l]) => `<button type="button" class="chip" data-cat="${k}" aria-pressed="${f.cat === k}">${l}</button>`).join('')}</div>
-      <div class="tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button></div>
-      <div id="orgView" style="margin-top:14px">${!list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgChartHtml(list, f)}</div>`;
+      <div class="tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button><button role="tab" data-t="mix" aria-selected="${f.tab === 'mix'}">Grade mix${orgMixList(f).filter(x => x.state === 'needs').length ? `<span class="n">${orgMixList(f).filter(x => x.state === 'needs').length}</span>` : ''}</button></div>
+      <div id="orgView" style="margin-top:14px">${f.tab === 'mix' ? orgMixHtml(f, r) : !list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgChartHtml(list, f)}</div>`;
     $('#orgDiv', body).onchange = e => { f.div = e.target.value; draw(); };
     $('#orgSt', body).onchange = e => { f.st = e.target.value; draw(); };
     $('#orgQ', body).oninput = debounce(e => { f.q = e.target.value; draw(); const q = $('#orgQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250);
-    $$('.chip', body).forEach(c => c.onclick = () => { f.cat = c.dataset.cat; draw(); });
+    $$('.chip[data-cat]', body).forEach(c => c.onclick = () => { f.cat = c.dataset.cat; draw(); });
     $$('.tabs button', body).forEach(b => b.onclick = () => { f.tab = b.dataset.t; draw(); });
     $$('[data-sort]', body).forEach(b => b.onclick = () => { if (f.sort === b.dataset.sort) f.dir = -f.dir; else { f.sort = b.dataset.sort; f.dir = 1; } draw(); });
     const byName = {}; r.divisions.forEach(dv => dv.depts.forEach(d => { byName[d.dept] = d; }));
     if (f.tab === 'tree') orgChartBind(body, f, draw);
+    if (f.tab === 'mix') orgMixBind(body, f, draw);
     $$('[data-d]', body).forEach(el => el.onclick = () => { const d = byName[el.dataset.d]; if (d) orgDrawer(d, r); });
   };
   draw();
@@ -4276,7 +4351,7 @@ function orgImportDialog(done) {
 async function renderOrgAdmin(el) {
   const f = S.orgAdm = S.orgAdm || { sec: 'import', q: '', unm: true };
   let a; try { a = await api('apiOrgAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  const secs = [['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping']];
+  const secs = [['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping'], ['notes', 'Grade notes']];
   const unmapped = a.map.filter(m => !m.org).length;
   const active = a.depts.filter(d => d.active !== 'No');
   const head = `<div class="chips">${secs.map(([k, l]) => `<button type="button" class="chip" data-sec="${k}" aria-pressed="${f.sec === k}">${l}${k === 'map' && unmapped ? `<span class="n">${unmapped}</span>` : ''}</button>`).join('')}</div>`;
@@ -4312,6 +4387,19 @@ async function renderOrgAdmin(el) {
       const btn = $('#orgSave', el); busy(btn, true, 'Saving…');
       try { await api('apiOrgSaveStructure', { divisions, depts }); toast('Saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save changes'); }
     };
+    return;
+  }
+  if (f.sec === 'notes') {
+    let o; try { o = await api('apiOrganogram'); } catch (e) { el.innerHTML = head + `<div class="empty">${esc(e)}</div>`; bind(); return; }
+    const need = o.mix.filter(x => x.state === 'needs' || x.state === 'review');
+    const list = f.nn ? need : o.mix;
+    el.innerHTML = head + `<section class="panel"><h2>Grade notes</h2><p class="hint">Seats filled at a different grade from the one approved. An upgrade keeps a short note: reason, who approved it and a review date. Downgrades need none.</p>
+      <div class="chips"><button type="button" class="chip" id="orgNn" aria-pressed="${!!f.nn}">Needs attention<span class="n">${need.length}</span></button></div>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Approved at</th><th>Filled at</th><th class="num">Seats</th><th>Direction</th><th>Note</th><th></th></tr></thead><tbody>
+      ${list.map(x => `<tr style="cursor:default"><td><b>${esc(x.dept)}</b><span class="sub">${esc(x.division)}</span></td><td>${esc(x.from)}</td><td>${esc(x.to)}</td><td class="num">${x.seats}</td><td><span class="org-dir ${x.dir === 'Upgrade' ? 'up' : 'down'}">${orgDirTxt(x)}</span></td><td>${orgStChip(x)}${x.note ? `<span class="sub">${orgNoteText(x.note)}</span>` : ''}</td><td><button type="button" class="btn sm" data-an="${o.mix.indexOf(x)}">${x.note ? 'Edit' : 'Add note'}</button></td></tr>`).join('') || '<tr style="cursor:default"><td colspan="7" class="empty">Nothing to show.</td></tr>'}</tbody></table></div></section>`;
+    bind();
+    $('#orgNn', el).onclick = () => { f.nn = !f.nn; redo(); };
+    $$('[data-an]', el).forEach(b => b.onclick = () => orgNoteDialog(o.mix[Number(b.dataset.an)], redo));
     return;
   }
   const rowsM = a.map.filter(m => !f.unm || !m.org);

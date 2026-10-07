@@ -335,6 +335,28 @@ function e2eRun_(trash) {
     });
     err('O14 mapping to a department that does not exist is refused', function () { apiOrgSaveMap([{ crm: 'E2E Mapping Test Dept', org: 'No Such Org Dept' }]); }, /not an active department/);
     t('O15 open positions are counted under the mapped department', function () { const o = apiOrganogram(); return o.totals.open >= 0 && o.divisions.every(function (dv) { return dv.depts.every(function (d) { return Array.isArray(d.lines) && Array.isArray(d.crm); }); }); });
+    const upSub = t('O16 a seat filled at a higher grade is covered, not vacant, and needs a note', function () {
+      const dn = mapped[0].crm;
+      const r = apiOrgImport([{ 'Department Name': dn, 'Level Name': 'W5', 'ApprovedManPower': 3, 'ExixtingManpower': 1 }, { 'Department Name': dn, 'Level Name': 'W4', 'ApprovedManPower': 0, 'ExixtingManpower': 2 }], { apply: true, asOn: today, file: 'e2e-mix.xlsx' });
+      const o = apiOrganogram(), s = o.mix.filter(function (x) { return x.dept === mapped[0].org && x.from === 'W5' && x.to === 'W4'; })[0];
+      return r.applied && s && s.seats === 2 && s.dir === 'Upgrade' && s.state === 'needs' && o.totals.vacancy === 0 && o.totals.excess === 0 && o.totals.covered === 2 && o.totals.net === 0 ? s : false;
+    });
+    t('O17 an upgrade note is saved, listed and counted as noted', function () {
+      if (!upSub || !upSub.dept || upSub.dir !== 'Upgrade') return true;
+      apiOrgSaveNote({ dept: upSub.dept, from: upSub.from, to: upSub.to, seats: upSub.seats, reason: 'E2E grade note', by: 'E2E', reviewOn: '2099-01-01' });
+      const x = apiOrganogram().mix.filter(function (m) { return m.dept === upSub.dept && m.from === upSub.from && m.to === upSub.to; })[0];
+      return x && x.state === 'noted' && x.note.reason === 'E2E grade note';
+    });
+    err('O18 an upgrade without a reason is refused', function () { apiOrgSaveNote({ dept: d0.dept, from: 'W5', to: 'W4', seats: 1, by: 'x', reviewOn: '2099-01-01' }); }, /reason/);
+    err('O19 a note across two pay bands is refused', function () { apiOrgSaveNote({ dept: d0.dept, from: 'W5', to: 'M7', seats: 1, reason: 'abc', by: 'x', reviewOn: '2099-01-01' }); }, /same band/);
+    t('O20 a note can be closed and the seat asks for one again', function () {
+      if (!upSub || !upSub.dept || upSub.dir !== 'Upgrade') return true;
+      const x = apiOrganogram().mix.filter(function (m) { return m.dept === upSub.dept && m.from === upSub.from && m.to === upSub.to; })[0];
+      apiOrgCloseNote(x.note.id);
+      return apiOrganogram().mix.filter(function (m) { return m.dept === upSub.dept && m.from === upSub.from && m.to === upSub.to; })[0].state === 'needs';
+    });
+    t('O21 re-importing the headcount keeps the notes sheet', function () { const n = readTable_(ORG_NOTE_, true).rows.length; apiOrgImport(rep(5, 5, 7, 6), { apply: true, asOn: today, file: 'e2e3.xlsx' }); return readTable_(ORG_NOTE_, true).rows.length === n; });
+    t('O22 no grade is counted both as vacant and as covered beyond what is approved', function () { const o = apiOrganogram(); return o.divisions.every(function (dv) { return dv.depts.every(function (d) { return d.grades.every(function (g) { return g.vacancy >= 0 && g.excess >= 0 && g.covered <= g.grossVacancy && g.covers <= g.grossExcess; }); }); }); });
   }
   return { pass: pass, fail: fail, log: log };
 }

@@ -14,6 +14,9 @@ const ORG_DIV_COLS_ = ['Division', 'Division_Group', 'Division_Head', 'Active', 
 const ORG_DEPT_COLS_ = ['Org_Dept', 'Division', 'HOD_Name', 'HOD_Email', 'Active', 'Sort', 'Updated_By', 'Updated_At'];
 const ORG_MAP_COLS_ = ['CRM_Dept', 'Org_Dept', 'Mapped_By', 'Note'];
 const ORG_MP_COLS_ = ['Org_Dept', 'Grade', 'Approved_HC', 'Existing_HC', 'As_On', 'Batch_ID'];
+const ORG_NOTE_ = 'Org_Grade_Notes';
+const ORG_NOTE_COLS_ = ['Note_ID', 'Org_Dept', 'From_Grade', 'To_Grade', 'Seats', 'Reason', 'Approved_By', 'Review_On', 'Status', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
+T.ONT = { name: ORG_NOTE_, id: 'Note_ID', prefix: 'ONT-', width: 4, dates: ['Review_On'], editable: ['Org_Dept', 'From_Grade', 'To_Grade', 'Seats', 'Reason', 'Approved_By', 'Review_On', 'Status'] };
 const ORG_LOG_COLS_ = ['Batch_ID', 'As_On', 'File', 'Rows', 'Approved', 'Existing', 'Imported_By', 'Imported_At', 'Note'];
 const ORG_GRADES_ = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'T', 'W1', 'W2', 'W3', 'W4', 'W5'];
 const ORG_OPEN_ = ['Open', 'Offered', 'On Hold'];
@@ -192,18 +195,72 @@ function orgGap_(approved, existing, open) {
   const vacancy = Math.max(0, approved - existing);
   return { vacancy: vacancy, excess: Math.max(0, existing - approved), gap: Math.max(0, vacancy - open) };
 }
-function orgStatus_(approved, existing) {
-  if (approved === 0 && existing > 0) return 'unapproved';
-  if (existing > approved) return 'over';
-  if (existing < approved) return 'vacant';
+/**
+ * Status of a figure set { approved, existing, vacancy, excess, covered } where vacancy and excess are the residuals left
+ * after grades have covered for each other. Grade mix alone (covered seats) is never a warning: it reads 'mix'.
+ */
+function orgStatus_(m) {
+  if (m.approved === 0 && m.existing > 0 && m.excess > 0) return 'unapproved';
+  if (m.vacancy > 0) return 'vacant';
+  if (m.excess > 0) return 'over';
+  if (m.covered > 0 || m.covers > 0) return 'mix';
   return 'full';
+}
+
+/** Pay bands: a vacancy in one grade can be covered by a hire in another grade of the same band, in the same department. */
+const ORG_BANDS_ = { M1: 'Senior management', M2: 'Senior management', M3: 'Senior management', M4: 'Middle management', M5: 'Middle management',
+  M6: 'Officers and engineers', M7: 'Officers and engineers', T: 'Trainee', W1: 'Supervisory', W2: 'Supervisory', W3: 'Workmen', W4: 'Workmen', W5: 'Workmen' };
+function orgBand_(g) { return ORG_BANDS_[orgGrade_(g)] || ''; }
+
+/**
+ * Grade cover for one department. rows: [{ grade, approved, existing }].
+ * Within each band, seats filled above approved (excess) are matched to vacant seats, nearest grade first.
+ * Returns { by: { grade: { vac, exc, covered, covers } }, subs: [{ band, from, to, seats, dir, steps }] } where
+ * from = the grade the seat was approved at and to = the grade it is filled at. Upgrade = filled at a higher grade
+ * (a lower position in the grade list). Residual vacancy = vac - covered; residual excess = exc - covers, and
+ * (residual vacancy) - (residual excess) always equals approved - existing.
+ */
+function orgNetting_(rows) {
+  const by = {}, subs = {};
+  rows.forEach(function (r) {
+    const a = Number(r.approved) || 0, e = Number(r.existing) || 0;
+    by[r.grade] = { vac: Math.max(0, a - e), exc: Math.max(0, e - a), covered: 0, covers: 0 };
+  });
+  const bands = {};
+  Object.keys(by).forEach(function (g) { const b = orgBand_(g); if (b) (bands[b] = bands[b] || []).push(g); });
+  Object.keys(bands).forEach(function (band) {
+    const gs = bands[band], pairs = [];
+    gs.forEach(function (ex) {
+      gs.forEach(function (va) {
+        if (ex === va || !by[ex].exc || !by[va].vac) return;
+        pairs.push({ ex: ex, va: va, d: Math.abs(orgGradeRank_(ex) - orgGradeRank_(va)) });
+      });
+    });
+    pairs.sort(function (x, y) { return x.d - y.d || orgGradeRank_(x.va) - orgGradeRank_(y.va) || orgGradeRank_(x.ex) - orgGradeRank_(y.ex); });
+    pairs.forEach(function (p) {
+      const m = Math.min(by[p.ex].exc - by[p.ex].covers, by[p.va].vac - by[p.va].covered);
+      if (m <= 0) return;
+      by[p.ex].covers += m; by[p.va].covered += m;
+      const k = p.va + '>' + p.ex;
+      const up = orgGradeRank_(p.ex) < orgGradeRank_(p.va);
+      subs[k] = subs[k] || { band: band, from: p.va, to: p.ex, seats: 0, dir: up ? 'Upgrade' : 'Downgrade', steps: p.d };
+      subs[k].seats += m;
+    });
+  });
+  return { by: by, subs: Object.keys(subs).map(function (k) { return subs[k]; }).sort(function (x, y) { return orgGradeRank_(x.from) - orgGradeRank_(y.from) || orgGradeRank_(x.to) - orgGradeRank_(y.to); }) };
+}
+
+/** State of a substitution against the notes: 'noted', 'review' (note past its review date), 'needs' (upgrade without a note) or 'none' (a downgrade needs none). */
+function orgSubState_(sub, note, today) {
+  if (note) return note.reviewOn && String(note.reviewOn) <= today ? 'review' : 'noted';
+  return sub.dir === 'Upgrade' ? 'needs' : 'none';
 }
 
 /**
  * Builds the organogram from plain data.
  * in: { divs:[{division,group,head,active}], depts:[{dept,division,hod,email,active}], manpower:[{dept,grade,approved,existing}],
- *       map:{ orgKey(CRM dept): Org dept }, openLines:[{dept (CRM name), grade}] }
- * out: { divisions:[{ ..., depts:[{ ..., grades:[...] }] }], totals, unmapped:[{dept, open}], orphans }
+ *       map:{ orgKey(CRM dept): Org dept }, openLines:[{dept (CRM name), grade, ...}], notes:[{id,dept,from,to,seats,reason,by,reviewOn}], today:'yyyy-mm-dd' }
+ * out: { divisions:[{ ..., depts:[{ ..., grades:[...], subs:[...] }] }], totals, cats, mix:[...], unmapped, orphans, staleNotes }
  */
 function orgRollup_(inp) {
   const byDept = {}, divs = [], divByName = {};
@@ -219,7 +276,7 @@ function orgRollup_(inp) {
     byDept[orgKey_(d.dept)] = o; dv.depts.push(o);
   });
   const gradeRow = function (dept, g) {
-    return dept.gradeMap[g] || (dept.gradeMap[g] = { grade: g, cat: orgCategory_(g), approved: 0, existing: 0, open: 0 });
+    return dept.gradeMap[g] || (dept.gradeMap[g] = { grade: g, cat: orgCategory_(g), band: orgBand_(g), approved: 0, existing: 0, open: 0 });
   };
   let orphans = 0;
   (inp.manpower || []).forEach(function (m) {
@@ -235,33 +292,52 @@ function orgRollup_(inp) {
     gradeRow(d, orgGrade_(l.grade) || '?').open++;
     if (d.lines.length < ORG_MAX_LINES_) d.lines.push({ id: l.id || '', position: l.position || '', grade: orgGrade_(l.grade), status: l.status || '', recruiter: l.recruiter || '', mrf: l.mrf || '' });
   });
-  const blank = function () { return { approved: 0, existing: 0, vacancy: 0, excess: 0, open: 0, gap: 0 }; };
-  const add = function (a, b) { ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap'].forEach(function (k) { a[k] += b[k]; }); };
-  const totals = blank(), cats = { M: blank(), W: blank(), T: blank() };
+  const today = inp.today || '';
+  const notes = {}; (inp.notes || []).forEach(function (n) { notes[orgKey_(n.dept) + '|' + n.from + '|' + n.to] = n; });
+  const usedNotes = {};
+  const F = ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap', 'covered', 'grossVacancy', 'grossExcess', 'upSeats', 'downSeats', 'upSteps', 'recheck'];
+  const blank = function () { const o = {}; F.forEach(function (k) { o[k] = 0; }); return o; };
+  const add = function (a, b) { F.forEach(function (k) { a[k] += b[k] || 0; }); };
+  const totals = blank(), cats = { M: blank(), W: blank(), T: blank() }, mix = [];
   divs.forEach(function (dv) {
     const dt = blank();
     dv.depts.forEach(function (d) {
       d.grades = Object.keys(d.gradeMap).map(function (g) { return d.gradeMap[g]; }).sort(function (a, b) { return orgGradeRank_(a.grade) - orgGradeRank_(b.grade); });
       delete d.gradeMap;
+      const net = orgNetting_(d.grades);
       const t = blank();
       d.grades.forEach(function (r) {
-        const x = orgGap_(r.approved, r.existing, r.open);
-        r.vacancy = x.vacancy; r.excess = x.excess; r.gap = x.gap; r.status = orgStatus_(r.approved, r.existing);
+        const n = net.by[r.grade] || { vac: 0, exc: 0, covered: 0, covers: 0 };
+        r.grossVacancy = n.vac; r.grossExcess = n.exc; r.covered = n.covered; r.covers = n.covers;
+        r.vacancy = n.vac - n.covered; r.excess = n.exc - n.covers;
+        r.gap = Math.max(0, r.vacancy - r.open);
+        r.recheck = n.covered > 0 ? Math.max(0, r.open - r.vacancy) : 0;
+        r.status = orgStatus_(r);
         add(t, r); if (cats[r.cat]) add(cats[r.cat], r);
       });
+      d.subs = net.subs.map(function (sb) {
+        const key = orgKey_(d.dept) + '|' + sb.from + '|' + sb.to, note = notes[key] || null;
+        if (note) usedNotes[key] = true;
+        const o = { dept: d.dept, division: dv.division, band: sb.band, from: sb.from, to: sb.to, seats: sb.seats, dir: sb.dir, steps: sb.steps, state: orgSubState_(sb, note, today), note: note };
+        mix.push(o);
+        if (sb.dir === 'Upgrade') { t.upSeats += sb.seats; t.upSteps += sb.seats * sb.steps; } else t.downSeats += sb.seats;
+        return o;
+      });
       Object.keys(t).forEach(function (k) { d[k] = t[k]; });
-      d.status = orgStatus_(d.approved, d.existing);
+      d.status = orgStatus_(d);
       add(dt, t);
     });
     dv.depts.sort(function (a, b) { return b.approved - a.approved || (a.dept < b.dept ? -1 : 1); });
     Object.keys(dt).forEach(function (k) { dv[k] = dt[k]; });
-    dv.status = orgStatus_(dv.approved, dv.existing);
+    dv.status = orgStatus_(dv);
     add(totals, dt);
   });
   divs.sort(function (a, b) { return b.approved - a.approved || (a.division < b.division ? -1 : 1); });
   totals.net = totals.approved - totals.existing;
   Object.keys(cats).forEach(function (k) { cats[k].net = cats[k].approved - cats[k].existing; });
-  return { divisions: divs, totals: totals, cats: cats, unmapped: Object.keys(unmapped).sort().map(function (k) { return { dept: k, open: unmapped[k] }; }), orphans: orphans };
+  const stale = (inp.notes || []).filter(function (n) { return !usedNotes[orgKey_(n.dept) + '|' + n.from + '|' + n.to]; });
+  mix.sort(function (a, b) { return (b.state === 'needs') - (a.state === 'needs') || b.seats - a.seats || (a.dept < b.dept ? -1 : 1); });
+  return { divisions: divs, totals: totals, cats: cats, mix: mix, staleNotes: stale, unmapped: Object.keys(unmapped).sort().map(function (k) { return { dept: k, open: unmapped[k] }; }), orphans: orphans };
 }
 
 /**
@@ -323,6 +399,7 @@ function orgSchema_() {
   make(ORG_MAP_, ORG_MAP_COLS_, ORG_SEED_MAP_.map(function (m) { return [m[0], m[1], 'Seed (HR report)', '']; }));
   make(ORG_MP_, ORG_MP_COLS_, []);
   make(ORG_LOG_, ORG_LOG_COLS_, []);
+  make(ORG_NOTE_, ORG_NOTE_COLS_, []);
 }
 
 /* ---------------- Reading ---------------- */
@@ -338,6 +415,14 @@ function orgContext_() {
   return { divs: divs, depts: depts, map: map, manpower: manpower, asOn: asOn, batch: batch };
 }
 
+function orgNotes_() {
+  if (!ss_().getSheetByName(ORG_NOTE_)) return [];
+  return readTable_(ORG_NOTE_).rows.filter(function (r) { return String(r.Status || 'Active') !== 'Closed'; }).map(function (r) {
+    return { id: String(r.Note_ID), dept: String(r.Org_Dept), from: orgGrade_(r.From_Grade), to: orgGrade_(r.To_Grade), seats: Number(r.Seats) || 0, reason: String(r.Reason || ''),
+      by: String(r.Approved_By || ''), reviewOn: ymd_(r.Review_On), setBy: String(r.Updated_By || r.Created_By || ''), setOn: ymd_(r.Updated_At || r.Created_At) };
+  });
+}
+
 function orgOpenLines_() {
   return readTable_(T.MRF.name).rows.filter(function (l) { return ORG_OPEN_.indexOf(positionStatus_(l)) >= 0; })
     .map(function (l) { return { id: String(l.Line_ID || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''), position: String(l.Position || ''), status: positionStatus_(l), recruiter: String(l.Recruiter || ''), mrf: String(l.MRF_No || '') }; });
@@ -348,7 +433,7 @@ function apiOrganogram() {
   const u = currentUser_(); ensureSchema_();
   const c = orgContext_();
   const crmNames = readTable_(ORG_MAP_).rows.filter(function (m) { return String(m.Org_Dept || '').trim(); }).map(function (m) { return { crm: String(m.CRM_Dept), org: String(m.Org_Dept).trim() }; });
-  const r = orgRollup_({ divs: c.divs, depts: c.depts, manpower: c.manpower, map: c.map, openLines: orgOpenLines_(), crmNames: crmNames });
+  const r = orgRollup_({ divs: c.divs, depts: c.depts, manpower: c.manpower, map: c.map, openLines: orgOpenLines_(), crmNames: crmNames, notes: orgNotes_(), today: ymd_(new Date()) });
   const log = readTable_(ORG_LOG_).rows;
   const last = log.length ? log[log.length - 1] : null;
   r.asOn = c.asOn; r.batch = c.batch;
@@ -509,6 +594,47 @@ function apiOrgSaveStructure(d) {
     dropStale_(ORG_DIV_); dropStale_(ORG_DEPT_);
   });
   return apiOrgAdmin();
+}
+
+/**
+ * Saves the note for a seat that is filled at another grade than it was approved at.
+ * n: { id?, dept, from, to, seats, reason, by, reviewOn }. One active note per department, from-grade and to-grade.
+ * An upgrade (filled at a higher grade) needs a reason, who approved it and a review date; a downgrade needs none of them.
+ */
+function apiOrgSaveNote(n) {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can add grade notes.');
+  n = n || {};
+  const dept = String(n.dept || '').trim(), from = orgGrade_(n.from), to = orgGrade_(n.to);
+  const dRow = readTable_(ORG_DEPT_).rows.filter(function (r) { return orgKey_(r.Org_Dept) === orgKey_(dept) && String(r.Active) !== 'No'; })[0];
+  if (!dRow) throw new Error('Pick a department from the organogram.');
+  if (!orgBand_(from) || !orgBand_(to)) throw new Error('Grades must be from the list (M1 to M7, T, W1 to W5).');
+  if (from === to) throw new Error('The approved grade and the grade it is filled at are the same.');
+  if (orgBand_(from) !== orgBand_(to)) throw new Error('A grade can only cover for another grade in the same band (' + orgBand_(from) + ' and ' + orgBand_(to) + ' are different bands).');
+  const seats = Number(n.seats);
+  if (!(seats >= 1 && seats <= 999 && Math.round(seats) === seats)) throw new Error('Seats must be a whole number, 1 or more.');
+  const up = orgGradeRank_(to) < orgGradeRank_(from);
+  const reason = clean_(String(n.reason || '').trim()), by = clean_(String(n.by || '').trim());
+  if (reason.length > 300) throw new Error('Keep the reason under 300 characters.');
+  let review = '';
+  if (n.reviewOn) { review = parseYmd_(n.reviewOn); }
+  if (up) {
+    if (reason.length < 3) throw new Error('Write a reason for filling a ' + from + ' seat at ' + to + '.');
+    if (!by) throw new Error('Enter who approved the higher grade.');
+    if (!review) throw new Error('Pick a review date for the higher grade.');
+  }
+  const data = { Org_Dept: String(dRow.Org_Dept).trim(), From_Grade: from, To_Grade: to, Seats: seats, Reason: reason, Approved_By: by, Review_On: n.reviewOn || '', Status: 'Active' };
+  const t = readTable_(ORG_NOTE_, true);
+  const have = t.rows.filter(function (r) { return String(r.Status || 'Active') !== 'Closed' && (String(r.Note_ID) === String(n.id) || (orgKey_(r.Org_Dept) === orgKey_(data.Org_Dept) && orgGrade_(r.From_Grade) === from && orgGrade_(r.To_Grade) === to)); })[0];
+  if (have) { update_(T.ONT, have.Note_ID, prepare_(T.ONT, data), u); return { id: String(have.Note_ID) }; }
+  const o = insert_(T.ONT, prepare_(T.ONT, data), u);
+  return { id: String(o.Note_ID) };
+}
+function apiOrgCloseNote(id) {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can close grade notes.');
+  update_(T.ONT, String(id || ''), { Status: 'Closed' }, u);
+  return { id: String(id) };
 }
 
 /** list: [{crm, org}]. org '' removes a mapping. */
