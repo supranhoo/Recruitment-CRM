@@ -4037,24 +4037,93 @@ function orgHod(h) {
   if (h === 'Vacant') return '<span class="org-no">HOD vacant</span>';
   return 'HOD ' + esc(h);
 }
-function orgDeptRow(d) {
+function orgNamed(n) { n = String(n || '').trim(); return !!n && !['?', 'TBD', 'Vacant', 'None'].includes(n); }
+function orgInit(n) {
+  if (!orgNamed(n)) return '';
+  const w = String(n).trim().split(/\s+/).filter(x => /[A-Za-z]/.test(x));
+  if (!w.length) return '';
+  return (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase();
+}
+function orgAv(n, big) { const i = orgInit(n); return `<span class="oc-av${i ? '' : ' none'}${big ? ' big' : ''}" aria-hidden="true">${i || '?'}</span>`; }
+function orgPills(m) { return `${m.open ? `<span class="org-pill open">${m.open} open MRF</span>` : ''}${m.gap ? `<span class="org-pill gap">${m.gap} without MRF</span>` : ''}`; }
+function orgDepNode(d) {
   const m = d.m;
-  return `<button type="button" class="org-dept ost-${m.st}" data-d="${esc(d.dept)}"><span class="org-dn"><b>${esc(d.dept)}</b><span class="sub">${orgHod(d.hod)}</span></span>
-    ${orgBar(m)}<span class="org-line">${orgFig(m)}${m.open ? `<span class="org-pill open">${m.open} open MRF</span>` : ''}${m.gap ? `<span class="org-pill gap">${m.gap} without MRF</span>` : ''}</span></button>`;
+  return `<button type="button" class="oc-n oc-dep ost-${m.st}" data-d="${esc(d.dept)}">${orgAv(d.hod)}<span class="oc-t"><b>${esc(d.dept)}</b><span class="sub">${orgHod(d.hod)}</span></span>
+    <span class="oc-s">${orgBar(m)}<span class="org-line">${orgFig(m)}${orgPills(m)}</span></span></button>`;
 }
-function orgDivCard(dv) {
-  return `<article class="org-div"><header><h4>${esc(dv.division)}</h4><div class="sub">${dv.head ? 'Head: ' + esc(dv.head) : '<span class="org-no">No division head named</span>'}</div>${orgBar(dv.m)}${orgFig(dv.m)}</header>
-    <div class="org-depts">${dv.depts.map(orgDeptRow).join('')}</div></article>`;
+function orgDivNode(dv) {
+  const named = orgNamed(dv.head);
+  return `<button type="button" class="oc-n oc-div" data-fd="${esc(dv.division)}" title="Show only this division">${orgAv(dv.head, true)}<span class="oc-t"><b>${esc(dv.division)}</b><span class="sub">${named ? 'Division head · ' + esc(dv.head) : '<span class="org-no">No division head named</span>'}</span></span>
+    <span class="oc-s">${orgBar(dv.m)}<span class="org-line">${orgFig(dv.m)}${orgPills(dv.m)}</span></span></button>`;
 }
-function orgTree(list) {
+function orgGrpNode(g) {
+  return `<button type="button" class="oc-n oc-grp" data-fg="${esc(g.name)}" title="Show only this group"><span class="oc-t"><b>${esc(g.name)}</b><span class="sub">${g.divs.length} division${g.divs.length === 1 ? '' : 's'} · ${g.divs.reduce((s, d) => s + d.depts.length, 0)} departments</span></span>
+    <span class="oc-s">${orgBar(g.m)}<span class="org-line">${orgFig(g.m)}</span></span></button>`;
+}
+function orgCoNode(tot) {
+  return `<div class="oc-n oc-co"><span class="oc-t"><b>Bihar Foundry and Castings Ltd</b><span class="sub">Approved against existing manpower</span></span><span class="oc-s">${orgBar(tot)}<span class="org-line">${orgFig(tot)}</span></span></div>`;
+}
+const ORG_RANK = ['DRI', 'CPP', 'Ferro', 'Support Function'];
+function orgChartHtml(list, f) {
+  const fo = f.focus || (f.focus = { g: '', d: '' });
+  let L = list;
+  if (fo.g) L = L.filter(dv => (dv.group || 'Other') === fo.g);
+  if (fo.d) L = L.filter(dv => dv.division === fo.d);
   const groups = [];
-  list.forEach(dv => { const k = dv.group || 'Other'; let g = groups.find(x => x.name === k); if (!g) { g = { name: k, divs: [] }; groups.push(g); } g.divs.push(dv); });
-  const rank = n => { const i = ['DRI', 'CPP', 'Ferro', 'Support Function'].indexOf(n); return i < 0 ? 9 : i; };
-  groups.sort((a, b) => rank(a.name) - rank(b.name));
-  groups.forEach(g => { g.m = orgSum(g.divs.map(d => d.m)); });
-  const tot = orgSum(groups.map(g => g.m));
-  return `<div class="org-tree"><div class="org-root"><div class="org-co"><b>Bihar Foundry and Castings Ltd</b>${orgBar(tot)}${orgFig(tot)}</div></div><div class="org-stem"></div>
-    <div class="org-groups">${groups.map(g => `<section class="org-group${g.divs.length > 4 ? ' wide' : ''}"><header><h3>${esc(g.name)}</h3>${orgFig(g.m)}</header><div class="org-divs">${g.divs.map(orgDivCard).join('')}</div></section>`).join('')}</div></div>`;
+  L.forEach(dv => { const k = dv.group || 'Other'; let g = groups.find(x => x.name === k); if (!g) { g = { name: k, divs: [] }; groups.push(g); } g.divs.push(dv); });
+  const rk = n => { const i = ORG_RANK.indexOf(n); return i < 0 ? 9 : i; };
+  groups.sort((a, b) => rk(a.name) - rk(b.name));
+  groups.forEach((g, i) => { g.m = orgSum(g.divs.map(d => d.m)); g.i = Math.min(rk(g.name), 4); });
+  const tot = orgSum(list.map(d => d.m));
+  const lr = f.layout === 'lr', q = f.q.trim();
+  const isOpen = dv => lr || fo.d === dv.division || !!f.open[dv.division] || !!q;
+  const deps = dv => dv.depts.map(d => `<li>${orgDepNode(d)}</li>`).join('');
+  const crumbs = `<nav class="oc-crumbs" aria-label="Branch"><button type="button" class="linklike" data-crumb="">All divisions</button>${fo.g ? ` <span aria-hidden="true">›</span> <button type="button" class="linklike" data-crumb="g">${esc(fo.g)}</button>` : ''}${fo.d ? ` <span aria-hidden="true">›</span> <b>${esc(fo.d)}</b>` : ''}</nav>`;
+  const bar = `<div class="oc-bar">${crumbs}<div class="oc-tools">
+    <div class="seg" role="group" aria-label="Layout"><button type="button" data-lay="td" aria-pressed="${!lr}">Top-down</button><button type="button" data-lay="lr" aria-pressed="${lr}">Left to right</button></div>
+    <button type="button" class="btn sm" data-ocz="-">−</button><span class="oc-pct" id="ocPct">100%</span><button type="button" class="btn sm" data-ocz="+">+</button><button type="button" class="btn sm" data-ocz="fit">Fit</button>
+    ${lr ? '' : '<button type="button" class="btn sm" data-oca="open">Expand all</button><button type="button" class="btn sm" data-oca="shut">Collapse all</button>'}</div></div>`;
+  let chart;
+  if (lr) {
+    chart = `<div class="oc oc-lr" id="ocInner"><ul class="oc-lrt"><li>${orgCoNode(tot)}<ul>${groups.map(g => `<li style="--gc:var(--g${g.i})">${orgGrpNode(g)}<ul>${g.divs.map(dv => `<li style="--gc:var(--g${g.i})">${orgDivNode(dv)}<ul>${deps(dv)}</ul></li>`).join('')}</ul></li>`).join('')}</ul></li></ul></div>`;
+  } else {
+    chart = `<div class="oc oc-td" id="ocInner" style="--n:${groups.length}"><div class="oc-top">${orgCoNode(tot)}</div><div class="oc-stem"></div>
+      <div class="oc-groups">${groups.map(g => `<section class="oc-g" style="--gc:var(--g${g.i})">${orgGrpNode(g)}<ul class="v">${g.divs.map(dv => {
+        const open = isOpen(dv);
+        return `<li>${orgDivNode(dv)}<button type="button" class="oc-x" data-x="${esc(dv.division)}" aria-expanded="${open}">${open ? 'Hide' : 'Show'} ${dv.depts.length} department${dv.depts.length === 1 ? '' : 's'}</button>${open ? `<ul class="v">${deps(dv)}</ul>` : ''}</li>`;
+      }).join('')}</ul></section>`).join('')}</div></div>`;
+  }
+  const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="dot ost-full"></i>Full</span><span><i class="dot ost-vacant"></i>Vacant</span><span><i class="dot ost-over"></i>Over-strength</span><span><i class="dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
+  return `${bar}<div class="oc-frame" id="ocFrame" tabindex="0" aria-label="Organisation chart. Drag to move, use the buttons to zoom."><div id="ocZoom">${chart}</div></div>${legend}`;
+}
+function orgChartBind(root, f, redraw) {
+  const frame = $('#ocFrame', root), zoom = $('#ocZoom', root), inner = $('#ocInner', root);
+  if (!frame || !inner) return;
+  const floor = f.layout === 'lr' ? 0.7 : 0.5;
+  const scaleNow = () => f.zoom || Math.max(floor, Math.min(1, (frame.clientWidth - 2) / (inner.offsetWidth || 1)));
+  const apply = () => {
+    const s = scaleNow();
+    inner.style.transform = `scale(${s})`; zoom.style.width = Math.ceil(inner.offsetWidth * s) + 'px'; zoom.style.height = Math.ceil(inner.offsetHeight * s) + 'px';
+    $('#ocPct', root).textContent = Math.round(s * 100) + '%';
+  };
+  apply();
+  const step = d => { f.zoom = Math.min(1.5, Math.max(0.3, +(scaleNow() + d).toFixed(2))); apply(); };
+  $$('[data-ocz]', root).forEach(b => b.onclick = () => { const k = b.dataset.ocz; if (k === 'fit') { f.zoom = null; apply(); } else step(k === '+' ? 0.1 : -0.1); });
+  $$('[data-lay]', root).forEach(b => b.onclick = () => { f.layout = b.dataset.lay; f.zoom = null; redraw(); });
+  $$('[data-oca]', root).forEach(b => b.onclick = () => { f.open = {}; if (b.dataset.oca === 'open') (S.orgData.divisions || []).forEach(d => { f.open[d.division] = true; }); f.zoom = null; redraw(); });
+  $$('[data-x]', root).forEach(b => b.onclick = () => { const k = b.dataset.x; f.open[k] = !f.open[k]; redraw(); });
+  $$('[data-fg]', root).forEach(b => b.onclick = () => { f.focus = { g: b.dataset.fg, d: '' }; f.zoom = null; redraw(); });
+  $$('[data-fd]', root).forEach(b => b.onclick = () => {
+    const dv = (S.orgData.divisions || []).find(d => d.division === b.dataset.fd);
+    f.focus = { g: dv ? (dv.group || 'Other') : '', d: b.dataset.fd }; f.zoom = null; redraw();
+  });
+  $$('[data-crumb]', root).forEach(b => b.onclick = () => { f.focus = b.dataset.crumb === 'g' ? { g: f.focus.g, d: '' } : { g: '', d: '' }; f.zoom = null; redraw(); });
+  frame.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); step(e.deltaY < 0 ? 0.1 : -0.1); } }, { passive: false });
+  let drag = null, moved = false;
+  frame.addEventListener('mousedown', e => { if (e.button !== 0 || e.target.closest('button')) return; drag = { x: e.clientX, y: e.clientY, l: frame.scrollLeft, t: frame.scrollTop }; moved = false; frame.classList.add('grab'); });
+  window.addEventListener('mousemove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true; frame.scrollLeft = drag.l - dx; frame.scrollTop = drag.t - dy; });
+  window.addEventListener('mouseup', () => { drag = null; frame.classList.remove('grab'); });
+  window.addEventListener('resize', debounce(() => { if (document.body.contains(frame) && !f.zoom) apply(); }, 150));
 }
 function orgTable(list, f) {
   const rows = [];
@@ -4095,6 +4164,7 @@ function orgDrawer(d, r) {
 }
 async function viewOrg(v) {
   const f = S.orgF = S.orgF || { tab: 'tree', div: '', q: '', cat: '', st: '', sort: 'approved', dir: 1 };
+  f.layout = f.layout || 'td'; f.open = f.open || {}; f.focus = f.focus || { g: '', d: '' };
   v.innerHTML = `<div class="page-head"><div><h1>Organogram</h1><p id="orgSub">Approved against existing manpower by division, department and grade.</p></div><div class="page-actions" id="orgAct"></div></div>
     <div id="orgBody">${skKpis(6)}${skRows(8, 5)}</div>`;
   let r; try { r = await api('apiOrganogram'); } catch (e) { $('#orgBody', v).innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
@@ -4144,7 +4214,7 @@ async function viewOrg(v) {
         <div class="field"><label for="orgSt">Status</label><select id="orgSt">${opts(sts, f.st, false)}</select></div></div>
       <div class="chips">${cats.map(([k, l]) => `<button type="button" class="chip" data-cat="${k}" aria-pressed="${f.cat === k}">${l}</button>`).join('')}</div>
       <div class="tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button></div>
-      <div id="orgView" style="margin-top:14px">${!list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgTree(list)}</div>`;
+      <div id="orgView" style="margin-top:14px">${!list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgChartHtml(list, f)}</div>`;
     $('#orgDiv', body).onchange = e => { f.div = e.target.value; draw(); };
     $('#orgSt', body).onchange = e => { f.st = e.target.value; draw(); };
     $('#orgQ', body).oninput = debounce(e => { f.q = e.target.value; draw(); const q = $('#orgQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250);
@@ -4152,6 +4222,7 @@ async function viewOrg(v) {
     $$('.tabs button', body).forEach(b => b.onclick = () => { f.tab = b.dataset.t; draw(); });
     $$('[data-sort]', body).forEach(b => b.onclick = () => { if (f.sort === b.dataset.sort) f.dir = -f.dir; else { f.sort = b.dataset.sort; f.dir = 1; } draw(); });
     const byName = {}; r.divisions.forEach(dv => dv.depts.forEach(d => { byName[d.dept] = d; }));
+    if (f.tab === 'tree') orgChartBind(body, f, draw);
     $$('[data-d]', body).forEach(el => el.onclick = () => { const d = byName[el.dataset.d]; if (d) orgDrawer(d, r); });
   };
   draw();
