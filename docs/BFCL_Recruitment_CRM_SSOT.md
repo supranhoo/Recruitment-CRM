@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Document version** | 1.18 (v62 deployed: grades and designations separated; UI speed changes unreleased) |
-| **Describes app version** | **v62** (Apps Script deployment version 62, 29 Sep 2026) |
-| **Database schema version** | **27** (Script Property `SCHEMA_V`) |
+| **Document version** | 1.19 (v81 Organogram entries recorded, 7 Oct 2026; older unreleased entries in §14 not yet given version numbers) |
+| **Describes app version** | **v81 Organogram entries** (Apps Script deployment version 81, 7 Oct 2026; v80 was Daily log save fix) |
+| **Database schema version** | **37** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -215,7 +215,7 @@ Google's HTML service can mangle inline scripts containing `//` or `/* */` in so
 
 ### 4.8 Schema upgrades
 
-`ensureSchema_()` (Compliance.gs) runs on bootstrap and other entry points. If Script Property `SCHEMA_V` ≥ `SCHEMA_VERSION` it costs one property read; otherwise, under the lock, it runs every idempotent step (add missing columns/sheets, seeds, migrations) and records the new version. Current: **21**. Steps, in order: BGV & panel columns on MRF → seed panel members → `CV_Reviewed` on Daily_Funnel → pipeline sheets (Applications, Stage_History, Job_Posts, Followups; existing linked candidates get a card) → JD/SQ confirmed dates → JD folder migration → Approved_On/Assigned_On → task sheets → replacement columns (Parent_Line_ID, Replaced_By, Replaced_On, TAT_Start_From) and per-candidate offer fields on Applications → reconcile columns → closure columns → panel To_Date/Kind → archive → pool fields → parse log → Users audit columns → **TAT_Rules seed** → **JD Master sheets (schema 21)** → Daily_Summary, psychometric columns, Observations, Audit_Checks → `KPI_CAPTURE_FROM` default (next month).
+`ensureSchema_()` (Compliance.gs) runs on bootstrap and other entry points. If Script Property `SCHEMA_V` ≥ `SCHEMA_VERSION` it costs one property read; otherwise, under the lock, it runs every idempotent step (add missing columns/sheets, seeds, migrations) and records the new version. Current: **37**. Steps, in order: BGV & panel columns on MRF → seed panel members → `CV_Reviewed` on Daily_Funnel → pipeline sheets (Applications, Stage_History, Job_Posts, Followups; existing linked candidates get a card) → JD/SQ confirmed dates → JD folder migration → Approved_On/Assigned_On → task sheets → replacement columns (Parent_Line_ID, Replaced_By, Replaced_On, TAT_Start_From) and per-candidate offer fields on Applications → reconcile columns → closure columns → panel To_Date/Kind → archive → pool fields → parse log → Users audit columns → **TAT_Rules seed** → **JD Master sheets (schema 21)** → Daily_Summary, psychometric columns, Observations, Audit_Checks → `KPI_CAPTURE_FROM` default (next month).
 
 ### 4.9 Background jobs (triggers run under the account that installed them — the Admin)
 
@@ -1041,19 +1041,18 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
+### 2026-10-07
+
+**v81 — deployed 7 Oct — Organogram entries** (schema 36 and 37; new Org.gs; ADR-045, ADR-046; §11.9)
+- New Reports → Organogram, open to everyone signed in: approved against existing manpower by division, department and grade (M, W, T), with division heads and HODs, open MRFs and vacant seats with no MRF. A connected chart (Top-down or Left to right, zoom, focus a branch), by-department table, grade matrix, Grade mix tab, CSV, and a department drawer with grades, substitutions and open positions.
+- Grade cover: a seat filled at another grade of the same band, in the same department, counts as covered, not vacant and not excess. Key figures show truly vacant, covered by another grade, true over-strength and truly vacant with no MRF, with the net vacant figure beside them. Covered seats use a neutral marker; only residuals use warning colours. On Report_4: 617 gross vacant and 302 excess become 410 and 95, with 207 seats covered; net 315 unchanged.
+- Upgrades (a seat filled at a higher grade) keep a note: reason, who approved, review date (`Org_Grade_Notes`; `apiOrgSaveNote`, `apiOrgCloseNote`). Downgrades need none.
+- New Admin → Org structure (`org_manage`, Head of HR and Admin): import the manpower report (checked first, replaces the snapshot), edit divisions, departments, HODs and e-mails, map the existing CRM departments to the new ones, manage grade notes.
+- New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, `Org_Grade_Notes`, seeded with 16 divisions, 59 departments and a 71-row department mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 37.
+- Shared styles: the Organogram's own classes are prefixed `org-`/`oc-` so the CTC calculator's and screening dialog's `.seg` controls are unchanged.
+- Tests: E2E group O1–O22; local checks reproduce Report_4 (approved 2,510, existing 2,195, net 315; 410 vacant, 95 over-strength, 207 covered).
+
 ### 2026-09-30
-
-**Unreleased — Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
-- A seat filled at another grade of the same band, in the same department, is covered, not vacant and not excess. Key figures now show truly vacant, covered by another grade, true over-strength, and truly vacant with no MRF; the net vacant figure stays beside them. Covered seats use a neutral marker; only residuals use warning colours.
-- New Grade mix tab (substitutions with direction, grade steps, note status and review date, CSV); department drawer lists the substitutions; Admin → Org structure → Grade notes.
-- New sheet `Org_Grade_Notes`; new APIs `apiOrgSaveNote`, `apiOrgCloseNote` (`org_manage`). `SCHEMA_VERSION` 37.
-- Tests: E2E O16–O22; local checks reproduce Report_4 (410 vacant, 95 over-strength, 207 covered, net 315).
-
-**Unreleased — Organogram** (schema 36; new Org.gs; ADR-045; §11.9)
-- New Reports → Organogram: approved against existing manpower by division, department and grade (M, W, T), division heads and HODs, open MRFs and vacant seats with no MRF. Tree, by-department table and grade matrix, CSV, department drawer with open positions.
-- New Admin → Org structure (`org_manage`, Head of HR and Admin): import the manpower report (checked first, replaces the snapshot), edit divisions, departments and HODs, map the existing CRM departments to the new ones.
-- New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
-- Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
 **Unreleased — Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
 - Editing a Daily log entry from the switch-over date was refused with "HR 1st round, shared … counted from the candidate pipeline": the list now carries the pipeline counts, the Edit form filled its hidden pipeline fields with them, and the server refused them. Now the form never carries those fields (cleared when shown, cleared when the date moves past the switch-over, and sent as 0), and the server **drops** them for entries from the switch-over date instead of refusing (a stale page cannot be blocked either). Entries before the switch-over save as before. Tests: 6 more server cases (23), browser run of the edit form and a date change.
@@ -1361,7 +1360,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-37 Org_Grade_Notes (organogram grade cover, unreleased) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (unreleased) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+37 Org_Grade_Notes (organogram grade cover, v81 Organogram entries) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (v81 Organogram entries) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
