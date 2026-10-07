@@ -1320,6 +1320,8 @@ function activeLineOptions(selected) {
 }
 function dailyFormHtml(fixedLine, data) {
   data = data || { Entry_Date: today() };
+  // The list shows pipeline counts for these columns; the form must not carry them (they are counted, never typed).
+  if (String(data.Entry_Date) >= (S.boot.cutover || '2026-10-05')) { data = Object.assign({}, data); FUNNEL_PIPED_.forEach(k => { data[k] = ''; }); }
   return `<div class="dailyform" data-entry="${esc(data.Entry_ID || '')}">
     <div class="grid">
       ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : `<div class="field wide"><label for="dl_line">Position *</label><select id="dl_line" name="Line_ID">${activeLineOptions(data.Line_ID)}</select></div>`}
@@ -1336,13 +1338,14 @@ function bindDailyForm(root, after) {
   const f = $('.dailyform', root);
   const syncPipe = () => {
     const dt = ($('[name=Entry_Date]', f) || {}).value || today(), piped = dt >= (S.boot.cutover || '2026-10-05');
-    $$('.dl-pipe', f).forEach(x => { x.hidden = piped; if (piped) { const i = $('input', x); if (i && !Number(i.value)) i.value = ''; } });
+    $$('.dl-pipe', f).forEach(x => { x.hidden = piped; if (piped) { const i = $('input', x); if (i) i.value = ''; } });
     const n = $('.dl-pipe-note', f); if (n) n.hidden = !piped;
   };
   if ($('[name=Entry_Date]', f)) $('[name=Entry_Date]', f).addEventListener('change', syncPipe);
   syncPipe();
   $('.dl-save', f).onclick = async () => {
     const d = readForm(f); d.Entry_ID = f.dataset.entry;
+    if ((d.Entry_Date || today()) >= (S.boot.cutover || '2026-10-05')) FUNNEL_PIPED_.forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
     const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
     try { const saved = await api('apiSaveFunnel', d); toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
     catch (e) { toast(e, true); busy(btn, false, label); }
@@ -4092,7 +4095,7 @@ function orgChartHtml(list, f) {
   const deps = dv => dv.depts.map(d => `<li>${orgDepNode(d)}</li>`).join('');
   const crumbs = `<nav class="oc-crumbs" aria-label="Branch"><button type="button" class="linklike" data-crumb="">All divisions</button>${fo.g ? ` <span aria-hidden="true">›</span> <button type="button" class="linklike" data-crumb="g">${esc(fo.g)}</button>` : ''}${fo.d ? ` <span aria-hidden="true">›</span> <b>${esc(fo.d)}</b>` : ''}</nav>`;
   const bar = `<div class="oc-bar">${crumbs}<div class="oc-tools">
-    <div class="seg" role="group" aria-label="Layout"><button type="button" data-lay="td" aria-pressed="${!lr}">Top-down</button><button type="button" data-lay="lr" aria-pressed="${lr}">Left to right</button></div>
+    <div class="org-seg" role="group" aria-label="Layout"><button type="button" data-lay="td" aria-pressed="${!lr}">Top-down</button><button type="button" data-lay="lr" aria-pressed="${lr}">Left to right</button></div>
     <button type="button" class="btn sm" data-ocz="-">−</button><span class="oc-pct" id="ocPct">100%</span><button type="button" class="btn sm" data-ocz="+">+</button><button type="button" class="btn sm" data-ocz="fit">Fit</button>
     ${lr ? '' : '<button type="button" class="btn sm" data-oca="open">Expand all</button><button type="button" class="btn sm" data-oca="shut">Collapse all</button>'}</div></div>`;
   let chart;
@@ -4105,7 +4108,7 @@ function orgChartHtml(list, f) {
         return `<li>${orgDivNode(dv)}<button type="button" class="oc-x" data-x="${esc(dv.division)}" aria-expanded="${open}">${open ? 'Hide' : 'Show'} ${dv.depts.length} department${dv.depts.length === 1 ? '' : 's'}</button>${open ? `<ul class="v">${deps(dv)}</ul>` : ''}</li>`;
       }).join('')}</ul></section>`).join('')}</div></div>`;
   }
-  const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="dot ost-full"></i>Full</span><span><i class="dot ost-mix"></i>Grade mix differs (covered)</span><span><i class="dot ost-vacant"></i>Vacant</span><span><i class="dot ost-over"></i>Over-strength</span><span><i class="dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
+  const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="org-dot ost-full"></i>Full</span><span><i class="org-dot ost-mix"></i>Grade mix differs (covered)</span><span><i class="org-dot ost-vacant"></i>Vacant</span><span><i class="org-dot ost-over"></i>Over-strength</span><span><i class="org-dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
   return `${bar}<div class="oc-frame" id="ocFrame" tabindex="0" aria-label="Organisation chart. Drag to move, use the buttons to zoom."><div id="ocZoom">${chart}</div></div>${legend}`;
 }
 function orgChartBind(root, f, redraw) {
@@ -4187,7 +4190,7 @@ function orgDrawer(d, r) {
   const m = orgSum(d.grades), crm = d.crm || [];
   const b = openDrawer(d.dept, `<div class="org-dh"><div>${esc(d.division)}</div><div class="sub">${orgHod(d.hod)}${d.email ? ' · ' + esc(d.email) : ''}</div></div>
     <div class="kpis"><div class="kpi"><div class="v">${orgN(m.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(m.existing)}</div><div class="l">Existing</div></div>
-      <div class="kpi"><div class="v">${orgN(m.vacancy)}</div><div class="l">Truly vacant</div></div><div class="kpi info"><div class="v">${orgN(m.covered)}</div><div class="l">Covered by another grade</div></div>
+      <div class="kpi"><div class="v">${orgN(m.vacancy)}</div><div class="l">Truly vacant</div></div><div class="kpi org-cov"><div class="v">${orgN(m.covered)}</div><div class="l">Covered by another grade</div></div>
       <div class="kpi"><div class="v">${orgN(m.open)}</div><div class="l">Open MRFs</div></div>
       <div class="kpi ${m.gap ? 'alert' : ''}"><div class="v">${orgN(m.gap)}</div><div class="l">Vacant without an MRF</div></div></div>
     <div class="table-wrap"><table class="org-table"><thead><tr><th>Grade</th><th class="num">Approved</th><th class="num">Existing</th><th class="num">Vacant</th><th class="num">Covered</th><th class="num">Over</th><th class="num">Open MRF</th><th class="num">No MRF</th></tr></thead><tbody>
@@ -4217,7 +4220,7 @@ function orgMixHtml(f, r) {
   const chips = [['', 'All', base.length], ['Upgrade', 'Upgrades', base.filter(x => x.dir === 'Upgrade').length], ['Downgrade', 'Downgrades', base.filter(x => x.dir === 'Downgrade').length], ['needs', 'Needs a note', base.filter(x => x.state === 'needs').length], ['review', 'Review due', base.filter(x => x.state === 'review').length]];
   const stale = r.canManage ? r.staleNotes || [] : [];
   return `<p class="hint">Seats filled at a different grade from the one approved, inside the same department and pay band. They are counted as covered, so they are not vacancies and not excess. They are listed here so higher-grade hiring stays visible and reviewed.</p>
-    <div class="kpis"><div class="kpi info"><div class="v">${orgN(sum(base, x => true))}</div><div class="l">Seats covered by another grade</div></div>
+    <div class="kpis"><div class="kpi org-cov"><div class="v">${orgN(sum(base, x => true))}</div><div class="l">Seats covered by another grade</div></div>
       <div class="kpi"><div class="v">${orgN(sum(base, x => x.dir === 'Upgrade'))}</div><div class="l">Filled at a higher grade (upgrade)</div></div>
       <div class="kpi"><div class="v">${orgN(sum(base, x => x.dir === 'Downgrade'))}</div><div class="l">Filled at a lower grade (downgrade)</div></div>
       <div class="kpi"><div class="v">${orgN(base.filter(x => x.state === 'needs').length)}</div><div class="l">Upgrades waiting for a note</div></div>
@@ -4278,7 +4281,7 @@ async function viewOrg(v) {
         <div class="kpi"><div class="v">${orgN(all.existing)}</div><div class="l">Existing, ${all.approved ? Math.round(all.existing / all.approved * 100) : 0}% of approved</div></div>
         <div class="kpi"><div class="v">${orgN(all.approved - all.existing)}</div><div class="l">Net vacant (approved less existing)</div></div>
         <div class="kpi"><div class="v">${orgN(all.vacancy)}</div><div class="l">Truly vacant, after grades cover for each other</div></div>
-        <div class="kpi info"><div class="v">${orgN(all.covered)}</div><div class="l">Covered by another grade, not vacant</div></div>
+        <div class="kpi org-cov"><div class="v">${orgN(all.covered)}</div><div class="l">Covered by another grade, not vacant</div></div>
         <div class="kpi"><div class="v">${orgN(all.excess)}</div><div class="l">True over-strength</div></div>
         <div class="kpi"><div class="v">${orgN(all.open)}</div><div class="l">Open MRFs against these seats</div></div>
         <div class="kpi ${all.gap ? 'alert' : ''}"><div class="v">${orgN(all.gap)}</div><div class="l">Truly vacant with no MRF raised</div></div></div>
@@ -4287,7 +4290,7 @@ async function viewOrg(v) {
         <div class="field search"><label for="orgQ">Search</label><input id="orgQ" type="search" placeholder="Department, HOD or division head" value="${esc(f.q)}"></div>
         <div class="field"><label for="orgSt">Status</label><select id="orgSt">${opts(sts, f.st, false)}</select></div></div>
       <div class="chips">${cats.map(([k, l]) => `<button type="button" class="chip" data-cat="${k}" aria-pressed="${f.cat === k}">${l}</button>`).join('')}</div>
-      <div class="tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button><button role="tab" data-t="mix" aria-selected="${f.tab === 'mix'}">Grade mix${orgMixList(f).filter(x => x.state === 'needs').length ? `<span class="n">${orgMixList(f).filter(x => x.state === 'needs').length}</span>` : ''}</button></div>
+      <div class="tabs org-tabs" role="tablist"><button role="tab" data-t="tree" aria-selected="${f.tab === 'tree'}">Organogram</button><button role="tab" data-t="table" aria-selected="${f.tab === 'table'}">By department</button><button role="tab" data-t="matrix" aria-selected="${f.tab === 'matrix'}">Grade matrix</button><button role="tab" data-t="mix" aria-selected="${f.tab === 'mix'}">Grade mix${orgMixList(f).filter(x => x.state === 'needs').length ? `<span class="n">${orgMixList(f).filter(x => x.state === 'needs').length}</span>` : ''}</button></div>
       <div id="orgView" style="margin-top:14px">${f.tab === 'mix' ? orgMixHtml(f, r) : !list.length ? '<div class="empty">Nothing matches these filters.</div>' : f.tab === 'table' ? orgTable(list, f) : f.tab === 'matrix' ? orgMatrix(list, f) : orgChartHtml(list, f)}</div>`;
     $('#orgDiv', body).onchange = e => { f.div = e.target.value; draw(); };
     $('#orgSt', body).onchange = e => { f.st = e.target.value; draw(); };
