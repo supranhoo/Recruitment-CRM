@@ -17,6 +17,10 @@ const ORG_MP_COLS_ = ['Org_Dept', 'Grade', 'Approved_HC', 'Existing_HC', 'As_On'
 const ORG_NOTE_ = 'Org_Grade_Notes';
 const ORG_NOTE_COLS_ = ['Note_ID', 'Org_Dept', 'From_Grade', 'To_Grade', 'Seats', 'Reason', 'Approved_By', 'Review_On', 'Status', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
 T.ONT = { name: ORG_NOTE_, id: 'Note_ID', prefix: 'ONT-', width: 4, dates: ['Review_On'], editable: ['Org_Dept', 'From_Grade', 'To_Grade', 'Seats', 'Reason', 'Approved_By', 'Review_On', 'Status'] };
+const ORG_PREV_ = 'Org_Plan_Revisions', ORG_PLAN_ = 'Org_Plan';
+const ORG_PREV_COLS_ = ['Rev_ID', 'Rev_No', 'Status', 'Reason', 'Approved_By', 'Effective_On', 'Source', 'Base_Rev', 'Total_Approved', 'Seats_Changed', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Activated_By', 'Activated_At'];
+const ORG_PLAN_COLS_ = ['Row_ID', 'Rev_ID', 'Org_Dept', 'Grade', 'Approved_HC'];
+T.OPR = { name: ORG_PREV_, id: 'Rev_ID', prefix: 'ORV-', width: 4, dates: ['Effective_On'], editable: ['Rev_No', 'Status', 'Reason', 'Approved_By', 'Effective_On', 'Source', 'Base_Rev', 'Total_Approved', 'Seats_Changed'] };
 const ORG_LOG_COLS_ = ['Batch_ID', 'As_On', 'File', 'Rows', 'Approved', 'Existing', 'Imported_By', 'Imported_At', 'Note'];
 const ORG_GRADES_ = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'T', 'W1', 'W2', 'W3', 'W4', 'W5'];
 const ORG_OPEN_ = ['Open', 'Offered', 'On Hold'];
@@ -400,6 +404,9 @@ function orgSchema_() {
   make(ORG_MP_, ORG_MP_COLS_, []);
   make(ORG_LOG_, ORG_LOG_COLS_, []);
   make(ORG_NOTE_, ORG_NOTE_COLS_, []);
+  make(ORG_PREV_, ORG_PREV_COLS_, []);
+  make(ORG_PLAN_, ORG_PLAN_COLS_, []);
+  orgPlanMigrate_();
 }
 
 /* ---------------- Reading ---------------- */
@@ -410,9 +417,11 @@ function orgContext_() {
   const map = {};
   readTable_(ORG_MAP_).rows.forEach(function (r) { if (String(r.Org_Dept || '').trim()) map[orgKey_(r.CRM_Dept)] = String(r.Org_Dept).trim(); });
   const mp = readTable_(ORG_MP_).rows;
-  const manpower = mp.map(function (r) { return { dept: String(r.Org_Dept), grade: String(r.Grade), approved: Number(r.Approved_HC) || 0, existing: Number(r.Existing_HC) || 0 }; });
+  const snapshot = mp.map(function (r) { return { dept: String(r.Org_Dept), grade: String(r.Grade), existing: Number(r.Existing_HC) || 0, report: Number(r.Approved_HC) || 0 }; });
+  const act = orgPlanActive_();
+  const manpower = orgMergePlan_(act ? act.rows : null, snapshot);
   const asOn = mp.length ? ymd_(mp[0].As_On) : '', batch = mp.length ? String(mp[0].Batch_ID || '') : '';
-  return { divs: divs, depts: depts, map: map, manpower: manpower, asOn: asOn, batch: batch };
+  return { divs: divs, depts: depts, map: map, manpower: manpower, asOn: asOn, batch: batch, plan: act ? act.rev : null, snapshot: snapshot };
 }
 
 function orgNotes_() {
@@ -439,6 +448,9 @@ function apiOrganogram() {
   r.asOn = c.asOn; r.batch = c.batch;
   r.imported = last ? { by: String(last.Imported_By || ''), at: ymd_(last.Imported_At), file: String(last.File || '') } : null;
   r.canManage = can_(u, 'org_manage');
+  const revs = orgPlanRevs_();
+  const draft = revs.filter(function (x) { return x.status === 'Draft'; })[0];
+  r.plan = c.plan ? { rev: c.plan.no, effective: c.plan.effective, by: c.plan.by, reason: c.plan.reason, total: c.plan.total, hasDraft: r.canManage && !!draft } : null;
   return r;
 }
 
@@ -476,6 +488,13 @@ function apiOrgImport(rows, opts) {
   const byDiv = {}, divOf = {}; c.depts.forEach(function (d) { divOf[orgKey_(d.dept)] = d.division; });
   agg.groups.forEach(function (g) { const dv = divOf[orgKey_(g.dept)] || '?'; const b = byDiv[dv] || (byDiv[dv] = { division: dv, approved: 0, existing: 0 }); b.approved += g.approved; b.existing += g.existing; });
   res.byDivision = Object.keys(byDiv).map(function (k) { return byDiv[k]; }).sort(function (a, b) { return b.approved - a.approved; });
+  const act = orgPlanActive_();
+  res.planKept = !!act;
+  if (act) {
+    const rep = agg.groups.map(function (g) { return { dept: g.dept, grade: g.grade, approved: g.approved }; });
+    const df = orgPlanDiff_(act.rows, rep);
+    res.plan = { rev: act.rev.no, total: df.totalFrom, reportTotal: df.totalTo, cells: df.changes.length, up: df.up, down: df.down, top: df.changes.slice(0, 8) };
+  }
   if (opts.apply !== true) return res;
   const asOn = opts.asOn ? parseYmd_(opts.asOn) : parseYmd_(ymd_(new Date()));
   withLock_(function () {
@@ -486,9 +505,14 @@ function apiOrgImport(rows, opts) {
       .map(function (g) { return jdmRow_(ORG_MP_, [g.dept, g.grade, g.approved, g.existing, asOn, batch]); });
     sh.getRange(2, 1, out.length, ORG_MP_COLS_.length).setValues(out);
     const lg = sheet_(ORG_LOG_);
-    lg.getRange(lg.getLastRow() + 1, 1, 1, ORG_LOG_COLS_.length).setValues([[batch, asOn, clean_(String(opts.file || '')), rep.rows.length, approved, existing, u.email, new Date(), 'Replaced the snapshot']]);
+    lg.getRange(lg.getLastRow() + 1, 1, 1, ORG_LOG_COLS_.length).setValues([[batch, asOn, clean_(String(opts.file || '')), rep.rows.length, approved, existing, u.email, new Date(), (act ? 'Replaced the snapshot; plan kept' : 'Replaced the snapshot; opening plan created')]]);
     audit_(u, ORG_MP_, batch, 'Import', 'Approved / Existing', '', approved + ' / ' + existing + ' (' + out.length + ' rows, as on ' + ymd_(asOn) + ')');
     dropStale_(ORG_MP_); dropStale_(ORG_LOG_);
+    if (!act) {
+      const rowsP = agg.groups.map(function (g) { return { dept: g.dept, grade: g.grade, approved: g.approved }; });
+      orgPlanCreate_({ status: 'Active', reason: 'Opening plan from the manpower report as on ' + ymd_(asOn), by: 'HR manpower report', effective: ymd_(asOn), source: 'Report import', base: '', user: u.email }, rowsP, null);
+      res.planCreated = true;
+    }
     res.batch = batch;
   });
   res.applied = true; res.asOn = ymd_(asOn);
@@ -543,6 +567,7 @@ function apiOrgSaveStructure(d) {
     const divByKey = {}; dt.rows.forEach(function (r) { divByKey[orgKey_(r.Division)] = r; });
     const depByKey = {}; pt.rows.forEach(function (r) { depByKey[orgKey_(r.Org_Dept)] = r; });
     const mp = {}; readTable_(ORG_MP_, true).rows.forEach(function (r) { mp[orgKey_(r.Org_Dept)] = true; });
+    const pa = orgPlanActive_(); if (pa) pa.rows.forEach(function (r) { if (r.approved > 0) mp[orgKey_(r.dept)] = true; });
     const mapped = {}; readTable_(ORG_MAP_, true).rows.forEach(function (r) { const k = orgKey_(r.Org_Dept); if (k) mapped[k] = true; });
     const setCell = function (t, r, col, v) { t.sheet.getRange(r._row, col).setValue(jdmSafeText_(clean_(v))); };
     (d.divisions || []).forEach(function (x) {
@@ -670,3 +695,343 @@ function apiOrgSaveMap(list) {
   return apiOrgAdmin();
 }
 
+/* ---------------- Budgeted manpower plan (schema 38) ---------------- */
+
+/**
+ * The approved (budgeted) headcount is kept as dated revisions: Org_Plan_Revisions (one row per revision, status Draft,
+ * Active or Superseded) and Org_Plan (the full set of department and grade rows of each revision). The Organogram reads
+ * approved from the Active revision and existing from Org_Manpower. A re-import refreshes existing only.
+ */
+
+function orgPlanKey_(dept, grade) { return orgKey_(dept) + '|' + orgGrade_(grade); }
+
+/**
+ * Joins the plan with the headcount snapshot. plan: [{dept,grade,approved}] or null (no plan yet: the report's own approved
+ * column is used). snapshot: [{dept,grade,existing,report}]. A department and grade in only one source counts as 0 in the other.
+ */
+function orgMergePlan_(plan, snapshot) {
+  const by = {}, order = [];
+  const row = function (dept, grade) {
+    const k = orgPlanKey_(dept, grade);
+    if (!by[k]) { by[k] = { dept: String(dept).trim(), grade: orgGrade_(grade), approved: 0, existing: 0, report: 0 }; order.push(k); }
+    return by[k];
+  };
+  (snapshot || []).forEach(function (s) { const r = row(s.dept, s.grade); r.existing += Number(s.existing) || 0; r.report += Number(s.report) || 0; });
+  if (plan) (plan || []).forEach(function (p) { const r = row(p.dept, p.grade); r.approved += Number(p.approved) || 0; });
+  else order.forEach(function (k) { by[k].approved = by[k].report; });
+  return order.map(function (k) { return by[k]; });
+}
+
+/** Checks plan cells [{dept,grade,approved}] against the active departments. Returns { rows, errors }. */
+function orgPlanCells_(cells, validDepts) {
+  const out = [], errors = [], seen = {};
+  (cells || []).forEach(function (c, i) {
+    const dept = validDepts[orgKey_(c.dept)], grade = orgGrade_(c.grade), n = orgNum_(c.approved);
+    if (!dept) { errors.push('Row ' + (i + 1) + ': "' + String(c.dept == null ? '' : c.dept) + '" is not an active department.'); return; }
+    if (ORG_GRADES_.indexOf(grade) < 0) { errors.push(dept + ': "' + String(c.grade == null ? '' : c.grade) + '" is not a grade in the list.'); return; }
+    if (isNaN(n) || n < 0 || n > 9999 || Math.round(n) !== n) { errors.push(dept + ' ' + grade + ': approved must be a whole number from 0 to 9999.'); return; }
+    const k = orgPlanKey_(dept, grade);
+    if (seen[k]) { errors.push(dept + ' ' + grade + ' appears twice.'); return; }
+    seen[k] = true;
+    out.push({ dept: dept, grade: grade, approved: n });
+  });
+  return { rows: out, errors: errors.slice(0, 40), moreErrors: Math.max(0, errors.length - 40) };
+}
+
+function orgPlanMap_(rows) { const m = {}; (rows || []).forEach(function (r) { m[orgPlanKey_(r.dept, r.grade)] = { dept: r.dept, grade: orgGrade_(r.grade), approved: Number(r.approved) || 0 }; }); return m; }
+
+/** Changes from one set of plan rows to another: { changes:[{dept,grade,from,to}], up, down, totalFrom, totalTo, depts:{dept:{from,to}} }. */
+function orgPlanDiff_(before, after) {
+  const a = orgPlanMap_(before), b = orgPlanMap_(after), keys = {}, changes = [], depts = {};
+  Object.keys(a).concat(Object.keys(b)).forEach(function (k) { keys[k] = true; });
+  let up = 0, down = 0, tf = 0, tt = 0;
+  Object.keys(keys).forEach(function (k) {
+    const x = a[k] ? a[k].approved : 0, y = b[k] ? b[k].approved : 0, ref = a[k] || b[k];
+    tf += x; tt += y;
+    const d = depts[orgKey_(ref.dept)] || (depts[orgKey_(ref.dept)] = { dept: ref.dept, from: 0, to: 0 });
+    d.from += x; d.to += y;
+    if (x !== y) { changes.push({ dept: ref.dept, grade: ref.grade, from: x, to: y }); if (y > x) up += y - x; else down += x - y; }
+  });
+  changes.sort(function (p, q) { return Math.abs(q.to - q.from) - Math.abs(p.to - p.from) || (p.dept < q.dept ? -1 : p.dept > q.dept ? 1 : orgGradeRank_(p.grade) - orgGradeRank_(q.grade)); });
+  return { changes: changes, up: up, down: down, totalFrom: tf, totalTo: tt, depts: depts };
+}
+
+/** Soft warnings for a proposed plan (never block): plan below people in post, a department cut to 0, large moves. */
+function orgPlanWarnings_(diff, existingMap) {
+  const w = [], below = {};
+  diff.changes.forEach(function (c) {
+    const ex = existingMap[orgPlanKey_(c.dept, c.grade)] || 0;
+    if (c.to < ex && c.to < c.from) (below[c.dept] = below[c.dept] || []).push(c.grade + ' (' + c.to + ' planned, ' + ex + ' in post)');
+  });
+  Object.keys(below).forEach(function (d) { w.push(d + ': plan is below people in post for ' + below[d].join(', ') + '. It will show as over-strength.'); });
+  Object.keys(diff.depts).forEach(function (k) {
+    const d = diff.depts[k]; if (d.from === d.to) return;
+    let exist = 0; Object.keys(existingMap).forEach(function (kk) { if (kk.indexOf(k + '|') === 0) exist += existingMap[kk]; });
+    if (d.to === 0 && exist > 0) w.push(d.dept + ': the whole plan is cut to 0 while ' + exist + ' people are in post.');
+    else if (d.from >= 4 && Math.abs(d.to - d.from) / d.from > 0.25) w.push(d.dept + ': the plan moves from ' + d.from + ' to ' + d.to + ' (more than 25%).');
+  });
+  return w.slice(0, 20);
+}
+
+/* ---- sheet access ---- */
+
+function orgPlanRevs_() {
+  if (!ss_().getSheetByName(ORG_PREV_)) return [];
+  return readTable_(ORG_PREV_).rows.map(function (r) {
+    return { id: String(r.Rev_ID), no: Number(r.Rev_No) || 0, status: String(r.Status || ''), reason: String(r.Reason || ''), by: String(r.Approved_By || ''), effective: ymd_(r.Effective_On),
+      source: String(r.Source || ''), base: String(r.Base_Rev || ''), total: Number(r.Total_Approved) || 0, changed: Number(r.Seats_Changed) || 0, createdBy: String(r.Created_By || ''),
+      createdAt: ymd_(r.Created_At), activatedBy: String(r.Activated_By || ''), activatedAt: ymd_(r.Activated_At), row: r._row };
+  });
+}
+function orgPlanRows_(revId) {
+  if (!ss_().getSheetByName(ORG_PLAN_)) return [];
+  return readTable_(ORG_PLAN_).rows.filter(function (r) { return String(r.Rev_ID) === String(revId); })
+    .map(function (r) { return { dept: String(r.Org_Dept), grade: orgGrade_(r.Grade), approved: Number(r.Approved_HC) || 0 }; });
+}
+function orgPlanActive_() {
+  const rev = orgPlanRevs_().filter(function (x) { return x.status === 'Active'; })[0];
+  return rev ? { rev: rev, rows: orgPlanRows_(rev.id) } : null;
+}
+function orgPlanDraft_() {
+  const rev = orgPlanRevs_().filter(function (x) { return x.status === 'Draft'; })[0];
+  return rev ? { rev: rev, rows: orgPlanRows_(rev.id) } : null;
+}
+function orgPlanTotal_(rows) { return rows.reduce(function (s, r) { return s + (Number(r.approved) || 0); }, 0); }
+
+/** Appends the plan rows of one revision (non-zero cells only). */
+function orgPlanWriteRows_(revId, rows) {
+  const keep = rows.filter(function (r) { return Number(r.approved) > 0; }).sort(function (a, b) { return a.dept < b.dept ? -1 : a.dept > b.dept ? 1 : orgGradeRank_(a.grade) - orgGradeRank_(b.grade); });
+  if (!keep.length) return;
+  const sh = sheet_(ORG_PLAN_), start = sh.getLastRow() + 1;
+  sh.getRange(start, 1, keep.length, ORG_PLAN_COLS_.length).setValues(keep.map(function (r, i) { return jdmRow_(ORG_PLAN_, [revId + '-' + (i + 1), revId, r.dept, r.grade, r.approved]); }));
+}
+/** Removes every plan row of one revision by rewriting the sheet without them (one write, not one per row). */
+function orgPlanDropRows_(revId) {
+  const sh = sheet_(ORG_PLAN_), last = sh.getLastRow(); if (last < 2) return;
+  const vals = sh.getRange(2, 1, last - 1, ORG_PLAN_COLS_.length).getValues();
+  const keep = vals.filter(function (r) { return String(r[1]) !== String(revId); });
+  if (keep.length === vals.length) return;
+  sh.getRange(2, 1, last - 1, ORG_PLAN_COLS_.length).clearContent();
+  if (keep.length) sh.getRange(2, 1, keep.length, ORG_PLAN_COLS_.length).setValues(keep);
+}
+function orgPlanSetRev_(rev, patch) {
+  const sh = sheet_(ORG_PREV_), head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  Object.keys(patch).forEach(function (k) { const c = head.indexOf(k) + 1; if (c) sh.getRange(rev.row, c).setValue(patch[k] instanceof Date ? patch[k] : jdmSafeText_(clean_(patch[k]))); });
+}
+/** Creates a revision row and its plan rows. meta: { status, reason, by, effective (yyyy-mm-dd), source, base, user }. No locking here: callers hold it. */
+function orgPlanCreate_(meta, rows, prev) {
+  const t = readTable_(ORG_PREV_, true), no = meta.status === 'Active' ? Math.max(0, Math.max.apply(null, t.rows.map(function (r) { return Number(r.Rev_No) || 0; }).concat([0]))) + 1 : '';
+  const id = nextId_(T.OPR, t.rows), now = new Date();
+  const total = orgPlanTotal_(rows), changed = prev ? orgPlanDiff_(prev, rows).up + orgPlanDiff_(prev, rows).down : total;
+  const row = ORG_PREV_COLS_.map(function (h) {
+    return h === 'Rev_ID' ? id : h === 'Rev_No' ? no : h === 'Status' ? meta.status : h === 'Reason' ? clean_(meta.reason || '') : h === 'Approved_By' ? clean_(meta.by || '') :
+      h === 'Effective_On' ? (meta.effective ? parseYmd_(meta.effective) : '') : h === 'Source' ? meta.source || '' : h === 'Base_Rev' ? meta.base || '' : h === 'Total_Approved' ? total : h === 'Seats_Changed' ? changed :
+      h === 'Created_By' || h === 'Updated_By' ? (meta.user || '') : h === 'Created_At' || h === 'Updated_At' ? now : h === 'Activated_By' ? (meta.status === 'Active' ? meta.user || '' : '') : h === 'Activated_At' ? (meta.status === 'Active' ? now : '') : '';
+  });
+  t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, row.length).setValues([jdmRow_(ORG_PREV_, row)]);
+  orgPlanWriteRows_(id, rows);
+  dropStale_(ORG_PREV_); dropStale_(ORG_PLAN_);
+  return id;
+}
+
+/** Schema step: an existing import with no plan becomes revision 1 (Active). Runs inside the schema lock, so it writes directly. */
+function orgPlanMigrate_() {
+  if (orgPlanRevs_().length) return;
+  const mp = readTable_(ORG_MP_, true).rows; if (!mp.length) return;
+  const rows = mp.map(function (r) { return { dept: String(r.Org_Dept), grade: orgGrade_(r.Grade), approved: Number(r.Approved_HC) || 0 }; });
+  const asOn = ymd_(mp[0].As_On);
+  orgPlanCreate_({ status: 'Active', reason: 'Opening plan from the manpower report as on ' + asOn, by: 'HR manpower report', effective: asOn, source: 'Report import', base: '', user: 'migration' }, rows, null);
+}
+
+/* ---- APIs ---- */
+
+function orgPlanGuard_() {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can change the manpower plan.');
+  return u;
+}
+function orgValidDepts_() {
+  const v = {}; readTable_(ORG_DEPT_).rows.forEach(function (d) { if (String(d.Active) !== 'No') v[orgKey_(d.Org_Dept)] = String(d.Org_Dept).trim(); });
+  return v;
+}
+function orgExistingMap_() {
+  const m = {}; readTable_(ORG_MP_).rows.forEach(function (r) { m[orgPlanKey_(r.Org_Dept, r.Grade)] = Number(r.Existing_HC) || 0; });
+  return m;
+}
+
+/** The plan screen: the active revision, the open draft, and every active department by grade with plan, draft, existing and report approved. */
+function apiOrgPlan() {
+  const u = orgPlanGuard_();
+  const act = orgPlanActive_(), draft = orgPlanDraft_();
+  const depts = readTable_(ORG_DEPT_).rows.filter(function (d) { return String(d.Active) !== 'No'; });
+  const divs = readTable_(ORG_DIV_).rows;
+  const divOrder = {}; divs.forEach(function (d, i) { divOrder[orgKey_(d.Division)] = Number(d.Sort) || i; });
+  const grid = function (rows) { const m = {}; (rows || []).forEach(function (r) { m[orgPlanKey_(r.dept, r.grade)] = r.approved; }); return m; };
+  const pa = grid(act ? act.rows : []), pd = draft ? grid(draft.rows) : null, ex = orgExistingMap_(), rp = {};
+  readTable_(ORG_MP_).rows.forEach(function (r) { rp[orgPlanKey_(r.Org_Dept, r.Grade)] = Number(r.Approved_HC) || 0; });
+  const list = depts.map(function (d) {
+    const name = String(d.Org_Dept).trim(), k = orgKey_(name);
+    const line = function (m) { return ORG_GRADES_.map(function (g) { return m[k + '|' + g] || 0; }); };
+    return { dept: name, division: String(d.Division).trim(), order: divOrder[orgKey_(d.Division)] || 0, plan: line(pa), draft: pd ? line(pd) : null, existing: line(ex), report: line(rp) };
+  }).sort(function (a, b) { return a.order - b.order || (a.division < b.division ? -1 : a.division > b.division ? 1 : a.dept < b.dept ? -1 : 1); });
+  const revs = orgPlanRevs_().sort(function (a, b) { return (b.no || 9999) - (a.no || 9999); });
+  return { grades: ORG_GRADES_, active: act ? act.rev : null, draft: draft ? draft.rev : null, depts: list, revisions: revs, canActivate: !!draft && (!act || draft.rev.base === act.rev.id),
+    stale: !!draft && !!act && draft.rev.base !== act.rev.id };
+}
+
+/** Saves the edited grid as the one open draft. cells: [{dept, grade, approved}] for the whole plan. */
+function apiOrgPlanSaveDraft(cells, meta) {
+  const u = orgPlanGuard_(); meta = meta || {};
+  const checked = orgPlanCells_(cells, orgValidDepts_());
+  if (checked.errors.length) return { ok: false, errors: checked.errors, moreErrors: checked.moreErrors };
+  const act = orgPlanActive_();
+  let warnings = [];
+  withLock_(function () {
+    const draft = orgPlanDraft_();
+    const diff = orgPlanDiff_(act ? act.rows : [], checked.rows);
+    warnings = orgPlanWarnings_(diff, orgExistingMap_());
+    if (draft) {
+      orgPlanDropRows_(draft.rev.id); orgPlanWriteRows_(draft.rev.id, checked.rows);
+      orgPlanSetRev_(draft.rev, { Total_Approved: diff.totalTo, Seats_Changed: diff.up + diff.down, Updated_By: u.email, Updated_At: new Date(), Source: meta.source || draft.rev.source || 'App edit' });
+      audit_(u, ORG_PREV_, draft.rev.id, 'Update', 'Draft', '', 'Draft saved: ' + diff.changes.length + ' cells changed');
+    } else {
+      const id = orgPlanCreate_({ status: 'Draft', reason: '', by: '', effective: '', source: meta.source || 'App edit', base: act ? act.rev.id : '', user: u.email }, checked.rows, act ? act.rows : null);
+      audit_(u, ORG_PREV_, id, 'Create', 'Draft', '', 'Draft started: ' + diff.changes.length + ' cells changed');
+    }
+    dropStale_(ORG_PREV_); dropStale_(ORG_PLAN_);
+  });
+  const out = apiOrgPlan(); out.ok = true; out.warnings = warnings; out.changes = orgPlanDiff_(act ? act.rows : [], checked.rows).changes.length;
+  return out;
+}
+
+/** Changes of a revision against another one (default: the one before it, or for a draft the active revision). */
+function apiOrgPlanDiff(revId, otherId) {
+  orgPlanGuard_();
+  const revs = orgPlanRevs_(), rev = revs.filter(function (x) { return x.id === String(revId); })[0];
+  if (!rev) throw new Error('That plan revision was not found.');
+  let other = otherId ? revs.filter(function (x) { return x.id === String(otherId); })[0] : null;
+  if (!other) {
+    if (rev.status === 'Draft') other = revs.filter(function (x) { return x.status === 'Active'; })[0];
+    else other = revs.filter(function (x) { return x.no && x.no < rev.no; }).sort(function (a, b) { return b.no - a.no; })[0];
+  }
+  const divOf = {}; readTable_(ORG_DEPT_).rows.forEach(function (d) { divOf[orgKey_(d.Org_Dept)] = String(d.Division).trim(); });
+  const diff = orgPlanDiff_(other ? orgPlanRows_(other.id) : [], orgPlanRows_(rev.id));
+  const byDiv = {};
+  Object.keys(diff.depts).forEach(function (k) {
+    const d = diff.depts[k], dv = divOf[k] || '?'; const b = byDiv[dv] || (byDiv[dv] = { division: dv, from: 0, to: 0 }); b.from += d.from; b.to += d.to;
+  });
+  return { rev: rev, other: other || null, changes: diff.changes, up: diff.up, down: diff.down, totalFrom: diff.totalFrom, totalTo: diff.totalTo,
+    byDivision: Object.keys(byDiv).map(function (k) { return byDiv[k]; }).filter(function (x) { return x.from !== x.to; }).sort(function (a, b) { return Math.abs(b.to - b.from) - Math.abs(a.to - a.from); }),
+    byDept: Object.keys(diff.depts).map(function (k) { return diff.depts[k]; }).filter(function (x) { return x.from !== x.to; }).sort(function (a, b) { return Math.abs(b.to - b.from) - Math.abs(a.to - a.from); }),
+    warnings: rev.status === 'Draft' ? orgPlanWarnings_(diff, orgExistingMap_()) : [] };
+}
+
+/** Puts the open draft in force. meta: { reason, approvedBy, effectiveOn }. */
+function apiOrgPlanActivate(draftId, meta) {
+  const u = orgPlanGuard_(); meta = meta || {};
+  const reason = String(meta.reason || '').trim(), by = String(meta.approvedBy || '').trim();
+  if (reason.length < 5) throw new Error('Write the reason for this change (at least 5 characters).');
+  if (reason.length > 300) throw new Error('Keep the reason under 300 characters.');
+  if (!by) throw new Error('Enter who approved this plan.');
+  if (by.length > 80) throw new Error('Keep the approver name under 80 characters.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(meta.effectiveOn || ''))) throw new Error('Pick the date this plan takes effect.');
+  parseYmd_(meta.effectiveOn);
+  let result = null;
+  withLock_(function () {
+    const draft = orgPlanDraft_();
+    if (!draft || draft.rev.id !== String(draftId)) throw new Error('There is no open draft with that number. Reload the page.');
+    const act = orgPlanActive_();
+    if ((act ? act.rev.id : '') !== (draft.rev.base || '')) throw new Error('The plan was changed by someone else after this draft was started (revision ' + (act ? act.rev.no : 0) + ' is now in force). Reload, then restore or redo your changes.');
+    const diff = orgPlanDiff_(act ? act.rows : [], draft.rows);
+    if (!diff.changes.length) throw new Error('This draft has no changes against the plan in force.');
+    const no = Math.max.apply(null, [0].concat(orgPlanRevs_().map(function (x) { return x.no; }))) + 1;
+    if (act) { orgPlanSetRev_(act.rev, { Status: 'Superseded', Updated_By: u.email, Updated_At: new Date() }); }
+    orgPlanSetRev_(draft.rev, { Status: 'Active', Rev_No: no, Reason: reason, Approved_By: by, Effective_On: parseYmd_(meta.effectiveOn), Total_Approved: diff.totalTo, Seats_Changed: diff.up + diff.down,
+      Activated_By: u.email, Activated_At: new Date(), Updated_By: u.email, Updated_At: new Date() });
+    audit_(u, ORG_PREV_, draft.rev.id, 'Activate', 'Approved plan', String(diff.totalFrom), diff.totalTo + ' (revision ' + no + ', ' + diff.changes.length + ' cells, +' + diff.up + ' / -' + diff.down + '): ' + reason);
+    dropStale_(ORG_PREV_); dropStale_(ORG_PLAN_);
+    result = { rev: no, total: diff.totalTo, changes: diff.changes.length };
+  });
+  const out = apiOrgPlan(); out.activated = result; return out;
+}
+
+function apiOrgPlanDiscard(draftId) {
+  const u = orgPlanGuard_();
+  withLock_(function () {
+    const draft = orgPlanDraft_();
+    if (!draft || draft.rev.id !== String(draftId)) throw new Error('There is no open draft with that number. Reload the page.');
+    orgPlanDropRows_(draft.rev.id);
+    const sh = sheet_(ORG_PREV_); sh.deleteRow(draft.rev.row);
+    audit_(u, ORG_PREV_, draft.rev.id, 'Delete', 'Draft', '', 'Draft discarded');
+    dropStale_(ORG_PREV_); dropStale_(ORG_PLAN_);
+  });
+  return apiOrgPlan();
+}
+
+/** A new draft copied from an older revision, or from the report's own approved column (revId 'report'). History is never rewritten. */
+function apiOrgPlanRestore(revId) {
+  const u = orgPlanGuard_();
+  withLock_(function () {
+    if (orgPlanDraft_()) throw new Error('There is already an open draft. Activate or discard it first.');
+    const act = orgPlanActive_();
+    let rows, src, note;
+    if (String(revId) === 'report') {
+      const rs = readTable_(ORG_MP_, true).rows; if (!rs.length) throw new Error('No manpower report has been imported yet.');
+      rows = rs.map(function (r) { return { dept: String(r.Org_Dept), grade: orgGrade_(r.Grade), approved: Number(r.Approved_HC) || 0 }; }); src = 'Report import'; note = 'the report';
+    } else {
+      const rev = orgPlanRevs_().filter(function (x) { return x.id === String(revId); })[0];
+      if (!rev) throw new Error('That plan revision was not found.');
+      rows = orgPlanRows_(rev.id); src = 'Restored'; note = 'revision ' + rev.no;
+    }
+    const id = orgPlanCreate_({ status: 'Draft', source: src, base: act ? act.rev.id : '', user: u.email }, rows, act ? act.rows : null);
+    audit_(u, ORG_PREV_, id, 'Create', 'Draft', '', 'Draft started from ' + note);
+  });
+  return apiOrgPlan();
+}
+
+/**
+ * Excel upload. rows: objects read from the template (Department and the grade columns M1 to W5). Dry run unless opts.apply;
+ * applying saves a Draft only. Departments not in the file keep the numbers of the draft (or the plan in force).
+ */
+function apiOrgPlanUpload(rows, opts) {
+  const u = orgPlanGuard_(); opts = opts || {};
+  if (!rows || !rows.length) return { ok: false, errors: ['The file has no rows.'] };
+  if (rows.length > 500) throw new Error('The file has more than 500 rows. Use the template from Download Excel.');
+  const nrm = function (k) { return String(k).toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  const keys = Object.keys(rows[0]), col = {};
+  keys.forEach(function (k) { col[nrm(k)] = k; });
+  const dCol = col.department || col.dept || col.orgdept;
+  const gCols = ORG_GRADES_.filter(function (g) { return col[nrm(g)]; });
+  const errors = [];
+  if (!dCol) errors.push('The file needs a Department column. Use the template from Download Excel.');
+  if (!gCols.length) errors.push('The file needs grade columns (M1 to M7, T, W1 to W5).');
+  if (errors.length) return { ok: false, errors: errors };
+  const valid = orgValidDepts_(), act = orgPlanActive_(), draft = orgPlanDraft_();
+  const startRows = draft ? draft.rows : (act ? act.rows : []);
+  const cur = orgPlanMap_(startRows), cells = [], seen = {};
+  rows.forEach(function (r, i) {
+    const name = String(r[dCol] == null ? '' : r[dCol]).trim(); if (!name || /^total$/i.test(name)) return;
+    const d = valid[orgKey_(name)];
+    if (!d) { errors.push('Row ' + (i + 2) + ': "' + name + '" is not an active department.'); return; }
+    if (seen[orgKey_(d)]) { errors.push('Row ' + (i + 2) + ': ' + d + ' appears twice.'); return; }
+    seen[orgKey_(d)] = true;
+    gCols.forEach(function (g) {
+      const raw = r[col[nrm(g)]], isBlank = raw === '' || raw === null || raw === undefined;
+      const v = isBlank ? (cur[orgPlanKey_(d, g)] ? cur[orgPlanKey_(d, g)].approved : 0) : raw;
+      cells.push({ dept: d, grade: g, approved: v, fromFile: !isBlank });
+    });
+  });
+  if (errors.length) return { ok: false, errors: errors.slice(0, 40), moreErrors: Math.max(0, errors.length - 40) };
+  const touched = {}; cells.forEach(function (c) { touched[orgPlanKey_(c.dept, c.grade)] = true; });
+  Object.keys(cur).forEach(function (k) { if (!touched[k]) cells.push({ dept: cur[k].dept, grade: cur[k].grade, approved: cur[k].approved }); });
+  const checked = orgPlanCells_(cells, valid);
+  if (checked.errors.length) return { ok: false, errors: checked.errors, moreErrors: checked.moreErrors };
+  const base = act ? act.rows : [], diff = orgPlanDiff_(base, checked.rows), against = diff;
+  const warnings = orgPlanWarnings_(diff, orgExistingMap_());
+  const res = { ok: true, applied: false, departments: Object.keys(seen).length, changes: diff.changes.length, up: diff.up, down: diff.down, totalFrom: diff.totalFrom, totalTo: diff.totalTo, preview: diff.changes.slice(0, 40), warnings: warnings, replacesDraft: !!draft };
+  if (opts.apply !== true) return res;
+  if (!diff.changes.length) throw new Error('The file makes no change to the plan in force.');
+  const out = apiOrgPlanSaveDraft(checked.rows, { source: 'Excel upload' });
+  out.applied = true; out.changes = diff.changes.length; out.up = diff.up; out.down = diff.down; out.preview = res.preview; out.warnings = warnings;
+  return out;
+}

@@ -840,4 +840,19 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .org-tabs button .n{font-family:var(--num);font-size:12px;margin-left:6px;padding:0 7px;border-radius:999px;background:#EEF3FA;color:var(--navy-2)}
 .org-table .btn.sm{white-space:nowrap}
 .oc-co .org-cv{color:#C9D6E6}
+/* manpower plan editor */
+.org-up{color:var(--ok);font-weight:600}.org-dn{color:var(--molten);font-weight:600}
+.org-planhead{padding:10px 12px;border-left:4px solid var(--navy);background:var(--paper);border-radius:var(--r-sm);margin:8px 0 12px}
+.org-planhead .sub{color:var(--ink-2);font-size:13px;margin-top:2px}
+.org-pbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}.org-pspace{flex:1 1 auto}
+.org-pwrap{max-height:70vh;overflow:auto}
+.org-ptable th.org-pname,.org-ptable td.org-pname{position:sticky;left:0;z-index:1;background:#fff;min-width:190px;text-align:left;font-weight:600}
+.org-ptable thead th{position:sticky;top:0;z-index:2}.org-ptable thead th.org-pname{z-index:3;background:var(--paper)}
+.org-ptable td{padding:4px 6px}.org-ptable td.num{min-width:44px}
+.org-ptable .org-pdiv th,.org-ptable .org-pdiv td{background:#EEF3FA;font-weight:700;color:var(--navy)}
+.org-ptable input{width:58px;min-width:0;text-align:right;font-family:var(--num);padding:4px 6px}
+.org-pc.chg{background:#FFF4D6}.org-pc.chg input{border-color:var(--amber);background:#FFFBEF}
+.org-pc.low{box-shadow:inset 0 -2px 0 #6C8EBF}
+.org-z{color:#B7C0CC}.org-pt{font-weight:700}
+@media (max-width:640px){.org-ptable th.org-pname{min-width:140px}.org-pbar .btn{flex:1 1 auto}}
 </style>

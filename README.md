@@ -5,7 +5,7 @@ Google Apps Script source for the BFCL Recruitment CRM web app.
 The CRM tracks every MRF position line and candidate for Human Resources – Talent Acquisition, from approval to onboarding, with the BFCL Recruitment Policy v2.0 built in: TAT, JD and screening-question validation with HODs, pipeline stages, automatic to-dos, Day’s Status, KPIs and compliance.
 
 - **Platform:** Google Apps Script web app · Google Sheets database · Google Drive for CVs and documents
-- **Live version:** v81 Organogram entries (7 Oct 2026) · database schema 37
+- **Live version:** v82 Organogram plan editor (7 Oct 2026) · database schema 38
 - **Documentation (single source of truth):** [`docs/BFCL_Recruitment_CRM_SSOT.md`](docs/BFCL_Recruitment_CRM_SSOT.md), covering every rule, screen, decision record and the detailed changelog
 
 No recruitment data is stored in this repository. The database, CVs and documents stay in Google Sheets and Drive.

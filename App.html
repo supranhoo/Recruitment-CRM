@@ -4203,11 +4203,13 @@ function orgDrawer(d, r) {
       : '<p class="hint">No open positions in this department.</p>'}
     ${m.recheck ? `<div class="note info-note">${m.recheck} open MRF${m.recheck > 1 ? 's are' : ' is'} for a grade whose seat another grade already covers. Check before hiring: another hire would create an excess.</div>` : ''}
     ${m.gap ? `<div class="note">${m.gap} approved seat${m.gap > 1 ? 's are' : ' is'} still vacant after grade cover, with no MRF raised. Raise the MRF(s) in Positions when the department confirms the need.</div>` : ''}
+    ${r.canManage ? '<p><button type="button" class="btn sm" data-eplan>Edit plan for this department</button></p>' : ''}
     <p class="hint">${crm.length ? 'CRM departments counted here: ' + esc(crm.join(', ')) + '.' : 'No CRM department is mapped to this department yet.'}</p>`);
   $$('tr[data-line]', b).forEach(tr => tr.onclick = async () => {
     try { await loadPositions(); const p = lineById(tr.dataset.line); if (p) positionDrawer(p); else toast('That position is not in your list.', true); } catch (e) { toast(e, true); }
   });
   $$('[data-note]', b).forEach(bt => bt.onclick = () => orgNoteDialog(d.subs[Number(bt.dataset.note)], () => go('org', false)));
+  $$('[data-eplan]', b).forEach(bt => bt.onclick = () => { S.orgAdm = Object.assign(S.orgAdm || { q: '', unm: true }, { sec: 'plan' }); S.orgPlanF = { div: '', q: d.dept, changed: false, edit: true, edits: {}, warn: null }; S.adminTab = Object.assign(S.adminTab || { q: '', sheet: '', from: daysAgo(30), to: today() }, { tab: 'org' }); closeDrawer(); go('admin', true); });
 }
 function orgMixList(f) {
   const q = f.q.trim().toLowerCase();
@@ -4264,7 +4266,7 @@ async function viewOrg(v) {
   act.innerHTML = `<button class="btn" id="orgCsv">Download CSV</button>${r.canManage ? '<button class="btn primary" id="orgImp">Import manpower report</button>' : ''}`;
   $('#orgCsv', v).onclick = csv;
   if (r.canManage) $('#orgImp', v).onclick = () => orgImportDialog(() => viewOrg(v));
-  $('#orgSub', v).textContent = r.asOn ? `Approved against existing manpower by division, department and grade. As on ${r.asOn}${r.imported ? ', imported by ' + r.imported.by : ''}. Open MRFs are live.` : 'Approved against existing manpower by division, department and grade.';
+  $('#orgSub', v).textContent = r.asOn ? `Approved against existing manpower by division, department and grade. Headcount as on ${r.asOn}${r.imported ? ', imported by ' + r.imported.by : ''}.${r.plan && r.plan.rev ? ' Plan: revision ' + r.plan.rev + ', effective ' + r.plan.effective + '.' : ''} Open MRFs are live.` : 'Approved against existing manpower by division, department and grade.';
   const draw = () => {
     const list = shown(), all = orgSum(list.map(d => d.m));
     const body = $('#orgBody', v);
@@ -4307,7 +4309,7 @@ async function viewOrg(v) {
 }
 
 function orgImportDialog(done) {
-  const b = openDrawer('Import the manpower report', `<p>Choose the <b>Approved vs Existing Manpower</b> report (.xlsx). It is read in your browser and checked first. Nothing changes until you confirm, and the import replaces the earlier headcount snapshot.</p>
+  const b = openDrawer('Import the manpower report', `<p>Choose the <b>Approved vs Existing Manpower</b> report (.xlsx). It is read in your browser and checked first. Nothing changes until you confirm. The import replaces the snapshot of who is in post; the approved plan is kept.</p>
     <div class="field"><label for="orgFile">Report</label><input type="file" id="orgFile" accept=".xlsx"></div>
     <div class="field" style="max-width:200px"><label for="orgAsOn">Headcount as on</label><input type="date" id="orgAsOn" value="${today()}" max="${today()}"></div>
     <div id="orgCheck"></div>
@@ -4319,7 +4321,8 @@ function orgImportDialog(done) {
     const ok = r.ok ? `<div class="kpis"><div class="kpi"><div class="v">${orgN(r.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(r.existing)}</div><div class="l">Existing</div></div><div class="kpi"><div class="v">${orgN(r.net)}</div><div class="l">Net vacant</div></div><div class="kpi"><div class="v">${orgN(r.groups)}</div><div class="l">Department and grade rows</div></div></div>
       <div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th class="num">Approved</th><th class="num">Existing</th></tr></thead><tbody>${r.byDivision.map(x => `<tr style="cursor:default"><td>${esc(x.division)}</td><td class="num">${orgN(x.approved)}</td><td class="num">${orgN(x.existing)}</td></tr>`).join('')}</tbody></table></div>` : '';
     const warn = r.warnings && r.warnings.length ? `<div class="note">${r.warnings.map(esc).join('<br>')}</div>` : '';
-    $('#orgCheck', b).innerHTML = errs + ok + warn;
+    const pl = r.ok ? (r.plan ? (r.plan.cells ? `<div class="note info-note"><b>The plan in force (revision ${r.plan.rev}) is kept.</b> The report's approved numbers differ from it in ${r.plan.cells} cell${r.plan.cells === 1 ? '' : 's'}: ${orgN(r.plan.total)} in the plan, ${orgN(r.plan.reportTotal)} in the report. Change the plan in Admin, Manpower plan; there you can also start a draft from the report's numbers.</div>` : '<div class="note info-note">The report\'s approved numbers match the plan in force (revision ' + r.plan.rev + ').</div>') : '<div class="note info-note">No plan exists yet. This import creates revision 1 from the report\'s approved numbers.</div>') : '';
+    $('#orgCheck', b).innerHTML = errs + ok + pl + warn;
   };
   $('#orgFile', b).onchange = async e => {
     const file = e.target.files[0]; rows = null; $('#orgGo', b).disabled = true;
@@ -4344,24 +4347,200 @@ function orgImportDialog(done) {
     const btn = $('#orgGo', b); busy(btn, true, 'Importing…'); $('#orgCancel', b).disabled = true;
     try {
       const res = await api('apiOrgImport', rows, { apply: true, asOn: $('#orgAsOn', b).value, file: fileName });
-      $('#orgCheck', b).innerHTML = `<div class="note ok-note"><b>Imported.</b> ${orgN(res.approved)} approved and ${orgN(res.existing)} existing, as on ${esc(res.asOn)}.</div>`;
+      $('#orgCheck', b).innerHTML = `<div class="note ok-note"><b>Imported.</b> ${orgN(res.existing)} in post, as on ${esc(res.asOn)}. ${res.planCreated ? 'Plan revision 1 was created from the report.' : 'The approved plan was kept.'}</div>`;
       btn.hidden = true; $('#orgCancel', b).disabled = false; $('#orgCancel', b).textContent = 'Close';
       $('#orgCancel', b).onclick = () => { closeDrawer(); done(); };
     } catch (err) { toast(err, true); busy(btn, false, 'Import'); $('#orgCancel', b).disabled = false; }
   };
 }
 
+function orgPlanWarnHtml(w) {
+  return w && w.length ? `<div class="note warn-note"><b>Worth a look before you activate:</b><ul style="margin:6px 0 0 18px">${w.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+}
+function orgPlanChangesHtml(d) {
+  const bd = d.byDivision.length ? `<div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th class="num">From</th><th class="num">To</th><th class="num">Change</th></tr></thead><tbody>${d.byDivision.map(x => `<tr style="cursor:default"><td>${esc(x.division)}</td><td class="num">${orgN(x.from)}</td><td class="num">${orgN(x.to)}</td><td class="num ${x.to > x.from ? 'org-up' : 'org-dn'}">${x.to > x.from ? '+' : '−'}${orgN(Math.abs(x.to - x.from))}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const ch = d.changes.length ? `<h3 class="org-h3">Cells changed${d.changes.length > 30 ? ' (largest 30 of ' + d.changes.length + ')' : ''}</h3><div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Grade</th><th class="num">From</th><th class="num">To</th></tr></thead><tbody>${d.changes.slice(0, 30).map(x => `<tr style="cursor:default"><td>${esc(x.dept)}</td><td>${esc(x.grade)}</td><td class="num">${orgN(x.from)}</td><td class="num ${x.to > x.from ? 'org-up' : 'org-dn'}"><b>${orgN(x.to)}</b></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No cell differs.</p>';
+  return `<div class="kpis"><div class="kpi"><div class="v">${orgN(d.totalFrom)}</div><div class="l">Approved before</div></div><div class="kpi"><div class="v">${orgN(d.totalTo)}</div><div class="l">Approved after</div></div><div class="kpi"><div class="v org-up">+${orgN(d.up)}</div><div class="l">Seats added</div></div><div class="kpi"><div class="v org-dn">−${orgN(d.down)}</div><div class="l">Seats removed</div></div></div>${bd}${ch}`;
+}
+async function orgPlanReview(p, done) {
+  const b = openDrawer('Review and activate', '<p class="hint">Loading the changes…</p>');
+  let d; try { d = await api('apiOrgPlanDiff', p.draft.id); } catch (e) { b.innerHTML = `<div class="note warn-note">${esc(e)}</div>`; return; }
+  b.innerHTML = `<p>These changes replace the plan in force (revision ${p.active ? p.active.no : 0}) once you activate. The earlier revision stays in History.</p>${orgPlanWarnHtml(d.warnings)}${orgPlanChangesHtml(d)}
+    <div class="field" style="margin-top:14px"><label for="opReason">Reason for the change</label><textarea id="opReason" rows="2" maxlength="300" placeholder="For example: second shift added at the 1000 TPD plant"></textarea></div>
+    <div class="field"><label for="opBy">Approved by</label><input id="opBy" maxlength="80" placeholder="Name of the approver"></div>
+    <div class="field" style="max-width:200px"><label for="opEff">Effective from</label><input type="date" id="opEff" value="${today()}"></div>
+    <div class="drawer-actions"><button class="btn" id="opCancel">Back</button><button class="btn primary" id="opGo">Activate plan</button></div>`;
+  $('#opCancel', b).onclick = closeDrawer;
+  $('#opGo', b).onclick = async () => {
+    const btn = $('#opGo', b); busy(btn, true, 'Activating…');
+    try {
+      const r = await api('apiOrgPlanActivate', p.draft.id, { reason: $('#opReason', b).value, approvedBy: $('#opBy', b).value, effectiveOn: $('#opEff', b).value });
+      closeDrawer(); toast('Plan revision ' + r.activated.rev + ' is in force'); done();
+    } catch (e) { toast(e, true); busy(btn, false, 'Activate plan'); }
+  };
+}
+async function orgPlanHistory(p, done) {
+  const b = openDrawer('Plan history', '');
+  const list = () => {
+    b.innerHTML = `<p class="hint">Every change is kept as a revision. Restoring one starts a new draft; nothing is rewritten.</p><div class="table-wrap"><table class="org-table"><thead><tr><th>Rev</th><th>Status</th><th>Effective</th><th class="num">Approved</th><th class="num">Seats moved</th><th>Reason and approver</th><th></th></tr></thead><tbody>
+      ${p.revisions.map(r => `<tr style="cursor:default"><td><b>${r.no || 'Draft'}</b></td><td>${esc(r.status)}</td><td>${esc(r.effective)}</td><td class="num">${orgN(r.total)}</td><td class="num">${orgN(r.changed)}</td><td>${esc(r.reason)}<span class="sub">${esc(r.by)}${r.activatedBy ? ' · activated by ' + esc(r.activatedBy) + ' on ' + esc(r.activatedAt) : ''} · ${esc(r.source)}</span></td>
+      <td><button type="button" class="btn sm" data-rd="${esc(r.id)}">Changes</button> ${r.status !== 'Draft' && !p.draft ? `<button type="button" class="btn sm" data-rr="${esc(r.id)}">Restore as draft</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    $$('[data-rd]', b).forEach(x => x.onclick = async () => {
+      try {
+        const d = await api('apiOrgPlanDiff', x.dataset.rd), rv = d.rev;
+        b.innerHTML = `<button type="button" class="btn sm" id="opBack">All revisions</button><h3 class="org-h3">${rv.no ? 'Revision ' + rv.no : 'Draft'}${d.other ? ' against ' + (d.other.no ? 'revision ' + d.other.no : 'the plan in force') : ' (the first revision)'}</h3>${orgPlanChangesHtml(d)}`;
+        $('#opBack', b).onclick = list;
+      } catch (e) { toast(e, true); }
+    });
+    $$('[data-rr]', b).forEach(x => x.onclick = async () => {
+      try { await api('apiOrgPlanRestore', x.dataset.rr); closeDrawer(); toast('A draft was started from that revision'); done(); } catch (e) { toast(e, true); }
+    });
+  };
+  list();
+}
+async function orgPlanDownload(p) {
+  await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js');
+  const wb = XLSX.utils.book_new();
+  const rows = [['Division', 'Department'].concat(p.grades)];
+  p.depts.forEach(d => rows.push([d.division, d.dept].concat(d.draft || d.plan)));
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 26 }, { wch: 30 }].concat(p.grades.map(() => ({ wch: 6 })));
+  XLSX.utils.book_append_sheet(wb, ws, 'Plan');
+  const notes = [['How to use this file'], ['Change the approved headcount in the grade columns. Whole numbers from 0 to 9999.'], ['Leave a cell empty to keep the current number. Do not rename departments or grades.'], ['Upload the file in Admin, Org structure, Manpower plan. It is saved as a draft. Nothing is in force until you activate it with a reason and an approver.'], ['Plan in force: ' + (p.active ? 'revision ' + p.active.no + ', effective ' + p.active.effective : 'none') + (p.draft ? '. The numbers below are from the open draft.' : '.')]];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(notes), 'Notes');
+  XLSX.writeFile(wb, 'manpower-plan-' + today() + '.xlsx');
+}
+function orgPlanUploadDialog(p, done) {
+  const b = openDrawer('Upload the plan from Excel', `<p>Choose the file you got from <b>Download Excel</b>. It is read in your browser and checked first. Saving makes a <b>draft</b>; nothing is in force until you activate it.</p>
+    <div class="field"><label for="opFile">Excel file</label><input type="file" id="opFile" accept=".xlsx"></div>
+    <div id="opCheck"></div><div class="drawer-actions"><button class="btn" id="opX">Cancel</button><button class="btn primary" id="opSave" disabled>Save as draft</button></div>`);
+  let rows = null;
+  $('#opX', b).onclick = closeDrawer;
+  $('#opFile', b).onchange = async e => {
+    const file = e.target.files[0]; rows = null; $('#opSave', b).disabled = true; if (!file) return;
+    $('#opCheck', b).innerHTML = '<p class="hint">Reading the file…</p>';
+    try {
+      await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js');
+      const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true, defval: '' });
+      const r = await api('apiOrgPlanUpload', rows, {});
+      if (!r.ok) { $('#opCheck', b).innerHTML = `<div class="note warn-note"><b>Nothing was saved.</b> Fix these and choose the file again:<ul style="margin:6px 0 0 18px">${r.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${r.moreErrors ? `<div>and ${r.moreErrors} more.</div>` : ''}</div>`; return; }
+      $('#opCheck', b).innerHTML = `${r.replacesDraft ? '<div class="note">This replaces the draft that is open now.</div>' : ''}${orgPlanWarnHtml(r.warnings)}
+        <div class="kpis"><div class="kpi"><div class="v">${r.changes}</div><div class="l">Cells changed in ${r.departments} departments</div></div><div class="kpi"><div class="v org-up">+${orgN(r.up)}</div><div class="l">Seats added</div></div><div class="kpi"><div class="v org-dn">−${orgN(r.down)}</div><div class="l">Seats removed</div></div><div class="kpi"><div class="v">${orgN(r.totalTo)}</div><div class="l">Approved after</div></div></div>
+        ${r.preview.length ? `<div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Grade</th><th class="num">Now</th><th class="num">File</th></tr></thead><tbody>${r.preview.map(x => `<tr style="cursor:default"><td>${esc(x.dept)}</td><td>${esc(x.grade)}</td><td class="num">${orgN(x.from)}</td><td class="num"><b>${orgN(x.to)}</b></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+      $('#opSave', b).disabled = !r.changes;
+      if (!r.changes) $('#opCheck', b).insertAdjacentHTML('afterbegin', '<div class="note">The file makes no change to the plan in force.</div>');
+    } catch (err) { $('#opCheck', b).innerHTML = `<div class="note warn-note">Could not read the file: ${esc(err.message || err)}</div>`; }
+  };
+  $('#opSave', b).onclick = async () => {
+    const btn = $('#opSave', b); busy(btn, true, 'Saving…');
+    try { await api('apiOrgPlanUpload', rows, { apply: true }); closeDrawer(); toast('Saved as a draft. Review it, then activate.'); done(); } catch (e) { toast(e, true); busy(btn, false, 'Save as draft'); }
+  };
+}
+async function orgPlanPanel(el, head, bind, redo) {
+  const f = S.orgPlanF = S.orgPlanF || { div: '', q: '', changed: false, edit: false, edits: {}, warn: null };
+  let p; try { p = await api('apiOrgPlan'); } catch (e) { el.innerHTML = head + `<div class="empty">${esc(e)}</div>`; bind(); return; }
+  S.orgPlanData = p;
+  const G = p.grades, a = p.active, ed = f.edit;
+  const base = d => d.draft || d.plan;
+  const val = (d, i) => { const k = d.dept + '|' + i; return k in f.edits ? f.edits[k] : base(d)[i]; };
+  const sumOf = d => G.reduce((s, g, i) => s + val(d, i), 0);
+  const exOf = d => d.existing.reduce((s, x) => s + x, 0);
+  const divs = []; p.depts.forEach(d => { let x = divs.find(y => y.name === d.division); if (!x) divs.push(x = { name: d.division, depts: [] }); x.depts.push(d); });
+  const q = f.q.trim().toLowerCase();
+  const chg = d => G.some((g, i) => val(d, i) !== d.plan[i]);
+  const shown = divs.filter(dv => !f.div || dv.name === f.div).map(dv => ({ name: dv.name, depts: dv.depts.filter(d => (!q || (d.dept + ' ' + dv.name).toLowerCase().includes(q)) && (!f.changed || chg(d))) })).filter(dv => dv.depts.length);
+  const total = () => p.depts.reduce((s, d) => s + sumOf(d), 0);
+  const existing = p.depts.reduce((s, d) => s + exOf(d), 0);
+  const changedCells = () => p.depts.reduce((s, d) => s + G.filter((g, i) => val(d, i) !== d.plan[i]).length, 0);
+  const repDiff = !p.draft && a && p.depts.some(d => d.report.some((x, i) => x !== d.plan[i]));
+  const cell = (d, i) => {
+    const v = val(d, i), was = d.plan[i], low = v < d.existing[i];
+    const cls = 'org-pc' + (v !== was ? ' chg' : '') + (low ? ' low' : '');
+    const tip = (v !== was ? 'Was ' + was + '. ' : '') + (low ? d.existing[i] + ' in post' : '');
+    return ed ? `<td class="${cls}" title="${esc(tip)}"><input type="number" min="0" max="9999" step="1" inputmode="numeric" data-c="${esc(d.dept)}|${i}" value="${v}" aria-label="${esc(d.dept)} ${G[i]}"></td>` : `<td class="${cls} num" title="${esc(tip)}">${v || '<span class="org-z">·</span>'}</td>`;
+  };
+  const body = shown.map(dv => `<tr class="org-pdiv" data-dv="${esc(dv.name)}"><th class="org-pname">${esc(dv.name)}</th>${G.map((g, i) => `<td class="num" data-ds="${i}">${orgN(dv.depts.reduce((s, d) => s + val(d, i), 0))}</td>`).join('')}<td class="num" data-dt>${orgN(dv.depts.reduce((s, d) => s + sumOf(d), 0))}</td><td class="num">${orgN(dv.depts.reduce((s, d) => s + exOf(d), 0))}</td><td class="num"></td></tr>`
+    + dv.depts.map(d => `<tr data-pd="${esc(d.dept)}"><th class="org-pname" scope="row">${esc(d.dept)}</th>${G.map((g, i) => cell(d, i)).join('')}<td class="num org-pt" data-t>${orgN(sumOf(d))}</td><td class="num">${orgN(exOf(d))}</td><td class="num org-pn" data-n>${orgN(sumOf(d) - exOf(d))}</td></tr>`).join('')).join('');
+  const rev = a ? `<div class="org-planhead"><div><b>Revision ${a.no}</b> in force · effective ${esc(a.effective)} · approved by ${esc(a.by)}</div><div class="sub">${esc(a.reason)}</div></div>` : '<p class="hint">There is no plan yet. Import the manpower report and revision 1 is created from its approved numbers.</p>';
+  const dr = p.draft ? `<div class="note ${p.stale ? 'warn-note' : 'info-note'}"><b>A draft is open</b> (${esc(p.draft.source)}, by ${esc(p.draft.createdBy)} on ${esc(p.draft.createdAt)}). It is not in force until you activate it.${p.stale ? ' The plan in force changed after this draft was started. Discard it and redo your changes.' : ''}</div>` : '';
+  el.innerHTML = head + `<section class="panel"><h2>Manpower plan</h2><p class="hint">The approved (budgeted) headcount by department and grade. A new import refreshes who is in post and never changes this plan.</p>${rev}${dr}${orgPlanWarnHtml(f.warn)}
+    <div class="kpis"><div class="kpi"><div class="v" id="opTot">${orgN(total())}</div><div class="l">Approved in this view</div></div><div class="kpi"><div class="v">${orgN(existing)}</div><div class="l">Existing</div></div><div class="kpi"><div class="v" id="opNet">${orgN(total() - existing)}</div><div class="l">Net vacant</div></div><div class="kpi"><div class="v" id="opCnt">${changedCells()}</div><div class="l">Cells different from the plan in force</div></div></div>
+    <div class="org-pbar">${ed ? '<button class="btn" id="opSaveD">Save draft</button><button class="btn primary" id="opRev">Review and activate</button><button class="btn" id="opCancelE">Stop editing</button>' : `<button class="btn primary" id="opEdit"${a ? '' : ' disabled'}>${p.draft ? 'Continue the draft' : 'Edit plan'}</button>${p.draft ? '<button class="btn" id="opRev">Review and activate</button><button class="btn" id="opDisc">Discard draft</button>' : repDiff ? '<button class="btn" id="opRep" title="Start a draft with the approved numbers of the last imported report">Draft from the report\'s numbers</button>' : ''}`}
+      <span class="org-pspace"></span><button class="btn" id="opDown">Download Excel</button><button class="btn" id="opUp"${a ? '' : ' disabled'}>Upload Excel</button><button class="btn" id="opHist">History</button></div>
+    <div class="filters"><div class="field"><label for="opDiv">Division</label><select id="opDiv">${opts([['', 'All divisions']].concat(divs.map(d => [d.name, d.name])), f.div, false)}</select></div>
+      <div class="field search"><label for="opQ">Find a department</label><input id="opQ" type="search" value="${esc(f.q)}"></div>
+      <div class="field"><label for="opCh">Show</label><select id="opCh">${opts([['', 'All departments'], ['1', 'Changed only']], f.changed ? '1' : '', false)}</select></div></div>
+    <div class="table-wrap org-pwrap"><table class="org-table org-ptable"><thead><tr><th class="org-pname">Department</th>${G.map(g => `<th class="num">${g}</th>`).join('')}<th class="num">Total</th><th class="num">Existing</th><th class="num">Net</th></tr></thead><tbody>${body || `<tr style="cursor:default"><td colspan="${G.length + 4}" class="empty">Nothing matches.</td></tr>`}</tbody></table></div>
+    <p class="hint">A shaded cell where the plan is below people in post will show as over-strength on the Organogram.</p></section>`;
+  bind();
+  const paint = () => {
+    $$('tr[data-pd]', el).forEach(tr => { const d = p.depts.find(x => x.dept === tr.dataset.pd); if (!d) return; $('[data-t]', tr).textContent = orgN(sumOf(d)); $('[data-n]', tr).textContent = orgN(sumOf(d) - exOf(d)); });
+    $$('tr[data-dv]', el).forEach(tr => { const ds = (shown.find(x => x.name === tr.dataset.dv) || { depts: [] }).depts; $$('[data-ds]', tr).forEach(td => { const i = Number(td.dataset.ds); td.textContent = orgN(ds.reduce((s, d) => s + val(d, i), 0)); }); $('[data-dt]', tr).textContent = orgN(ds.reduce((s, d) => s + sumOf(d), 0)); });
+    $('#opTot', el).textContent = orgN(total()); $('#opNet', el).textContent = orgN(total() - existing); $('#opCnt', el).textContent = changedCells();
+  };
+  $$('input[data-c]', el).forEach(inp => {
+    inp.oninput = () => {
+      const [dept, i] = inp.dataset.c.split('|'), d = p.depts.find(x => x.dept === dept), idx = Number(i);
+      const n = inp.value === '' ? 0 : Number(inp.value);
+      if (n === base(d)[idx]) delete f.edits[inp.dataset.c]; else f.edits[inp.dataset.c] = n;
+      const td = inp.parentNode; td.classList.toggle('chg', n !== d.plan[idx]); td.classList.toggle('low', n < d.existing[idx]);
+      paint();
+    };
+    inp.onfocus = () => inp.select();
+    inp.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const all = $$('input[data-c]', el), at = all.indexOf(inp), step = e.shiftKey ? -1 : 1, nx = all[at + step * G.length] || all[at + step];
+      if (nx) nx.focus();
+    };
+  });
+  const cells = () => { const out = []; p.depts.forEach(d => G.forEach((g, i) => { const v = val(d, i); if (v > 0) out.push({ dept: d.dept, grade: g, approved: v }); })); return out; };
+  const save = async btn => {
+    const r = await api('apiOrgPlanSaveDraft', cells(), { source: 'App edit' });
+    if (!r.ok) { toast(r.errors[0], true); return null; }
+    f.edits = {}; f.warn = r.warnings && r.warnings.length ? r.warnings : null; return r;
+  };
+  $('#opDiv', el).onchange = e => { f.div = e.target.value; redo(); };
+  $('#opCh', el).onchange = e => { f.changed = e.target.value === '1'; redo(); };
+  $('#opQ', el).onchange = e => { f.q = e.target.value; redo(); };
+  if ($('#opEdit', el)) $('#opEdit', el).onclick = () => { f.edit = true; redo(); };
+  if ($('#opCancelE', el)) $('#opCancelE', el).onclick = () => { f.edits = {}; f.edit = false; redo(); };
+  if ($('#opSaveD', el)) $('#opSaveD', el).onclick = async e => {
+    busy(e.target, true, 'Saving…');
+    try { if (!Object.keys(f.edits).length && p.draft) { toast('Nothing new to save'); busy(e.target, false, 'Save draft'); return; } const r = await save(); if (r) { f.edit = false; toast('Draft saved'); redo(); } else busy(e.target, false, 'Save draft'); } catch (x) { toast(x, true); busy(e.target, false, 'Save draft'); }
+  };
+  if ($('#opRev', el)) $('#opRev', el).onclick = async e => {
+    busy(e.target, true, 'Opening…');
+    try {
+      let pl = p;
+      if (Object.keys(f.edits).length || !p.draft) { const r = await save(); if (!r) { busy(e.target, false, 'Review and activate'); return; } pl = r; if (!pl.draft) { toast('There is nothing to review', true); busy(e.target, false, 'Review and activate'); return; } }
+      f.edit = false; busy(e.target, false, 'Review and activate');
+      orgPlanReview(pl, redo);
+    } catch (x) { toast(x, true); busy(e.target, false, 'Review and activate'); }
+  };
+  if ($('#opRep', el)) $('#opRep', el).onclick = async () => { try { await api('apiOrgPlanRestore', 'report'); f.edit = false; toast('A draft was started from the report'); redo(); } catch (x) { toast(x, true); } };
+  if ($('#opDisc', el)) $('#opDisc', el).onclick = async () => {
+    if (!confirm('Discard this draft? The plan in force is not affected.')) return;
+    try { await api('apiOrgPlanDiscard', p.draft.id); f.edits = {}; f.warn = null; toast('Draft discarded'); redo(); } catch (x) { toast(x, true); }
+  };
+  $('#opDown', el).onclick = async e => { busy(e.target, true, 'Preparing…'); try { await orgPlanDownload(p); } catch (x) { toast(x, true); } busy(e.target, false, 'Download Excel'); };
+  $('#opUp', el).onclick = () => orgPlanUploadDialog(p, redo);
+  $('#opHist', el).onclick = () => orgPlanHistory(p, redo);
+}
+
 async function renderOrgAdmin(el) {
-  const f = S.orgAdm = S.orgAdm || { sec: 'import', q: '', unm: true };
+  const f = S.orgAdm = S.orgAdm || { sec: 'plan', q: '', unm: true };
   let a; try { a = await api('apiOrgAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  const secs = [['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping'], ['notes', 'Grade notes']];
+  const secs = [['plan', 'Manpower plan'], ['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping'], ['notes', 'Grade notes']];
   const unmapped = a.map.filter(m => !m.org).length;
   const active = a.depts.filter(d => d.active !== 'No');
   const head = `<div class="chips">${secs.map(([k, l]) => `<button type="button" class="chip" data-sec="${k}" aria-pressed="${f.sec === k}">${l}${k === 'map' && unmapped ? `<span class="n">${unmapped}</span>` : ''}</button>`).join('')}</div>`;
   const redo = () => renderOrgAdmin(el);
   const bind = () => $$('[data-sec]', el).forEach(c => c.onclick = () => { f.sec = c.dataset.sec; redo(); });
+  if (f.sec === 'plan') return orgPlanPanel(el, head, bind, redo);
   if (f.sec === 'import') {
-    el.innerHTML = head + `<section class="panel"><h2>Manpower report</h2><p class="hint">Approved and existing headcount comes from the Approved vs Existing Manpower report. Each import replaces the earlier snapshot. The check runs first and nothing is saved until you confirm.</p>
+    el.innerHTML = head + `<section class="panel"><h2>Manpower report</h2><p class="hint">Approved and existing headcount comes from the Approved vs Existing Manpower report. Each import replaces the snapshot of who is in post and leaves the approved plan as it is (see Manpower plan). The check runs first and nothing is saved until you confirm.</p>
       <div class="drawer-actions" style="position:static;border:0;justify-content:flex-start"><button class="btn primary" id="orgImp2">Import manpower report</button></div>
       <div class="table-wrap" style="margin-top:12px"><table class="org-table"><thead><tr><th>As on</th><th>File</th><th class="num">Rows</th><th class="num">Approved</th><th class="num">Existing</th><th>By</th><th>Imported</th></tr></thead><tbody>
       ${a.log.map(l => `<tr style="cursor:default"><td>${esc(l.asOn)}</td><td>${esc(l.file)}</td><td class="num">${orgN(l.rows)}</td><td class="num">${orgN(l.approved)}</td><td class="num">${orgN(l.existing)}</td><td>${esc(l.by)}</td><td>${esc(l.at)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="7" class="empty">No import yet.</td></tr>'}</tbody></table></div></section>`;
