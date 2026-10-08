@@ -169,6 +169,21 @@ function e2eRun_(trash) {
     const n = apiListPositions().filter(function (x) { return x.Line_ID === R.to; })[0]; return a.Actual_DOJ === today && n.Position_Status === 'Closed' && n.Actual_DOJ === today; });
   err('D24 onboarding needs induction and buddy', function () { apiMoveStage(B, 'Onboarded', { onboard: {} }); }, /induction/);
   t('D25 onboarded', function () { return B2('Onboarded', { onboard: { induction: today, buddy: 'Randhir Singh', hrms: 'Yes' } }).Stage === 'Onboarded'; });
+  const dAgo = function (n) { return ymd_(new Date(Date.now() - n * 86400000)); };
+  err('D25a a joining date cannot be corrected without a reason', function () { apiCorrectJoiningDate(B, dAgo(1), 'short'); }, /at least 10/);
+  err('D25b a joining date in the future is refused', function () { apiCorrectJoiningDate(B, ymd_(new Date(Date.now() + 5 * 86400000)), 'Recruiter typed the wrong day'); }, /future/);
+  err('D25c the same date is refused', function () { apiCorrectJoiningDate(B, today, 'Recruiter typed the wrong day'); }, /already/);
+  err('D25d a date before the offer was accepted is refused', function () { apiCorrectJoiningDate(B, dAgo(1), 'Recruiter typed the wrong day'); }, /before the offer was accepted/);
+  t('D25e a joining date is corrected on the candidate, the card and the position, with history', function () {
+    const u0 = currentUser_(), early = dAgo(3), fix = dAgo(1);
+    update_(T.APP, B, { Offer_Accepted_On: parseYmd_(early) }, u0);
+    const p = apiCorrectJoiningDate(B, fix, 'Recruiter keyed the wrong day, HR record shows yesterday');
+    const a = p.apps.filter(function (x) { return x.App_ID === B; })[0];
+    _tables = {};
+    const ln = lineOf_(a.Line_ID), cd = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === a.Candidate_ID; })[0];
+    const last = a.history[a.history.length - 1];
+    return a.Actual_DOJ === fix && ymd_(ln.Actual_DOJ) === fix && ymd_(cd.DOJ) === fix && a.Stage === 'Onboarded' && last.outcome === 'Date corrected' && last.note.indexOf(today) >= 0 && last.note.indexOf(fix) >= 0 ? last.note.slice(0, 60) : false;
+  });
   t('D26 stage history complete', function () { _tables = {}; const h = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0].history; return h.length >= 10 && h[h.length - 1].outcome === 'Backout' ? h.length + ' entries' : false; });
   const legacy = (apiListCandidates().filter(function (c) { return !c.Line_ID && c.Name; })[0] || {}).Candidate_ID;
   t('D27 add existing candidate to pipeline', function () { return apiAddToPipeline(legacy, L2.Line_ID).Stage === 'Sourced'; });

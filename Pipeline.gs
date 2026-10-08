@@ -206,6 +206,42 @@ function apiMoveStage(appId, toStage, data) {
   return apiPipeline(app.Line_ID);
 }
 
+/**
+ * Corrects the actual joining date of a candidate who is already Joined or Onboarded (Head of HR and admin, 'correct_data').
+ * The same date goes to all three places that hold it (candidate, application, position), the position's stored TAT is
+ * recomputed, and the stage history keeps the old and new date with the reason. The stage does not change.
+ */
+function apiCorrectJoiningDate(appId, newDoj, reason) {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'correct_data')) throw new Error('Only the Head of HR or the admin can correct a joining date.');
+  const why = clean_(String(reason || '').trim());
+  if (why.length < 10) throw new Error('Write the reason for the correction (at least 10 characters).');
+  if (why.length > 300) throw new Error('Keep the reason under 300 characters.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(newDoj || ''))) throw new Error('Pick the corrected joining date.');
+  if (String(newDoj) > ymd_(new Date())) throw new Error('The joining date cannot be in the future.');
+  const app = appOf_(appId);
+  if (['Joined', 'Onboarded'].indexOf(String(app.Stage)) < 0 || String(app.Status) !== 'Active') throw new Error('Only a candidate who has joined can have the joining date corrected.');
+  const line = lineOf_(app.Line_ID);
+  if (!line) throw new Error('The position was not found.');
+  const old = ymd_(app.Actual_DOJ) || ymd_(line.Actual_DOJ);
+  if (old === String(newDoj)) throw new Error('That is already the recorded joining date.');
+  const floor = ymd_(app.Offer_Accepted_On) || ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+  if (floor && String(newDoj) < floor) throw new Error('The joining date cannot be before the offer was accepted (' + floor + ').');
+  const nd = parseYmd_(newDoj);
+  update_(T.CAND, app.Candidate_ID, { DOJ: nd }, u);
+  update_(T.APP, appId, { Actual_DOJ: nd }, u);
+  const patch = { Actual_DOJ: nd };
+  Object.assign(patch, storedTat_(computeTat_(Object.assign({}, line, { Actual_DOJ: nd }), tatContext_())));
+  update_(T.MRF, line.Line_ID, patch, u);
+  appendHistory_(app, String(app.Stage), String(app.Stage), 'Date corrected', 'Joining date ' + (old || 'blank') + ' to ' + newDoj + ': ' + why, u);
+  daySnapDropAll_();
+  bgvTouchLine_(app.Line_ID);
+  const out = apiPipeline(app.Line_ID), warnings = [];
+  if (old && old.slice(0, 7) !== String(newDoj).slice(0, 7)) warnings.push('The joining moved to another month, so the monthly joined counts and KPIs change.');
+  out.warnings = warnings;
+  return out;
+}
+
 /** Rejects, holds, withdraws (backs out) or reactivates an application. */
 function apiSetAppStatus(appId, status, reason, backoutDate) {
   const u = currentUser_(); ensureSchema_();

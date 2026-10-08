@@ -3178,6 +3178,7 @@ const ROLE_MATRIX = [
   ['Daily review and the team KPI scorecard', 0, 1, 1, 1],
   ['Move a candidate back, \u201cLinked in error\u201d, correct locked fields', 0, 1, 1, 1],
   ['Withdraw an offer (close a position with a live offer)', 0, 0, 1, 1],
+  ['Correct a joining date that was recorded wrongly', 0, 0, 1, 1],
   ['Admin: data checks, change history, task rules, HOD contacts', 0, 1, 1, 1],
   ['View the organogram (approved against existing manpower)', 1, 1, 1, 1],
   ['Import the manpower report; edit the organogram structure and department mapping', 0, 0, 1, 1],
@@ -6150,7 +6151,7 @@ async function viewPipeline(v) {
     const reached = {}; a.history.forEach(h => { if (h.to && h.from !== h.to) reached[h.to] = h.at.split(',')[0]; });
     const nextFields = stageFields(next, a);
     const active = a.Status === 'Active';
-    const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
+    const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Actual_DOJ && ['Joined', 'Onboarded'].includes(a.Stage) ? '\u00b7 <b>Joined on ' + esc(fmtDate(a.Actual_DOJ)) + '</b> ' : ''}${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
       <ol class="track">${P_STAGES.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${P_NAMES[s]}</span><small>${esc(reached[s] || '')}</small></li>`).join('')}</ol>
       <div class="app-grid3">
@@ -6171,6 +6172,7 @@ async function viewPipeline(v) {
           ${canEdit ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
             ${active && ['Offer', 'Prejoin'].includes(a.Stage) ? `<div class="field" style="margin-top:8px"><label for="apBoDate">Backout date</label><input id="apBoDate" type="date" value="${today()}" max="${today()}"></div>
               <p class="hint">Recording a backout closes ${esc(P.line.MRF_No || 'this MRF')} and raises the replacement MRF (policy 9.5). Other active candidates move to it, and its TAT counts from the original start.</p>` : ''}
+            ${can('correct_data') && ['Joined', 'Onboarded'].includes(a.Stage) && active ? `<details class="rc-keep" style="margin-top:10px"><summary>Joining date wrong? (Head of HR and admin)</summary><div class="rc-act"><div class="field"><label for="apDojNew">Correct joining date</label><input id="apDojNew" type="date" value="${esc(a.Actual_DOJ || '')}" max="${today()}"></div><input id="apDojWhy" placeholder="Reason for the correction (required)" aria-label="Reason for the date correction"><button class="btn" id="apDojFix">Correct date</button></div><p class="hint">The new date replaces the old one on the candidate, the card and the position, and the position's TAT is recalculated. The old date and your reason stay in the history.</p></details>` : ''}
             ${isLead() ? `<details class="rc-keep" style="margin-top:10px"><summary>Linked in error? (head and admin)</summary><div class="rc-act"><input id="apUnlinkWhy" placeholder="Reason for the correction (required)" aria-label="Reason"><button class="btn sm" id="apUnlink">Remove this card</button></div><p class="hint">Removes the card without recording a backout, and sends the position back to the switch-over check so the right candidate can be linked. The history is kept.</p></details>` : ''}
             <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
             ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section>` : ''}
@@ -6191,6 +6193,13 @@ async function viewPipeline(v) {
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');
     initMulti(d);
     bindInterviewSec(d, a);
+    if ($('#apDojFix', d)) $('#apDojFix', d).onclick = async () => {
+      const b = $('#apDojFix', d); busy(b, true);
+      try {
+        const np = await api('apiCorrectJoiningDate', a.App_ID, $('#apDojNew', d).value, $('#apDojWhy', d).value);
+        S.posStale = true; toast('Joining date corrected' + (np.warnings && np.warnings.length ? '. ' + np.warnings.join(' ') : '')); d.close(); P = np; renderBoard();
+      } catch (e) { toast(e, true); busy(b, false); }
+    };
     if ($('#apUnlink', d)) $('#apUnlink', d).onclick = async () => {
       const b = $('#apUnlink', d); busy(b, true);
       try { const np = await api('apiUnlinkApp', a.App_ID, $('#apUnlinkWhy', d).value); S.posStale = true; toast('Card removed. The position is back in the switch-over check.'); d.close(); P = np; renderBoard(); }

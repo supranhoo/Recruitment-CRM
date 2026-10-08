@@ -80,7 +80,7 @@ const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
- * admin data checks); 'withdraw_offer' = close a position with a live offer; 'system' = backups, archive, tools,
+ * admin data checks); 'withdraw_offer' = close a position with a live offer; 'correct_data' = correct a joining date already recorded; 'system' = backups, archive, tools,
  * JD library import; 'jd_manage' = sign off and edit the JD Master;
  * 'tat_exempt' = approve, reject, grant and revoke TAT exemptions and verify notice extensions;
  * 'bgv_decide' = decide on a BGV discrepancy (Head of HR, Admin);
@@ -92,6 +92,6 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter'];
 const PERMS_ = {
   'Recruiter': [],
   'TA Lead': ['lead', 'tat_view', 'jd_manage'],
-  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve']
+  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data'],
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve']
 };

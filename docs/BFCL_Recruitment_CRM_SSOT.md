@@ -97,6 +97,7 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `jd_manage` | Sign off and edit the JD Master (grades, competency departments, duplicate groups, responsibilities, skills, department map) | – | ✓ | ✓ | ✓ |
 | `system` | Backups, candidate archive run, system tools, JD library import | – | – | – | ✓ |
 | `bgv_decide` | Decide on a BGV discrepancy or unverified result (§11.8) | – | – | ✓ | ✓ |
+| `correct_data` | Correct a joining date already recorded (`apiCorrectJoiningDate`, §9) | – | – | ✓ | ✓ |
 | `org_manage` | Import the manpower report; edit the organogram structure, heads, HODs, the department mapping and grade notes (§11.9) | – | – | ✓ | ✓ |
 | `ctc_use` | Use the CTC calculator (§11.7). The `ctc_*` permissions other than `ctc_rules` can be given to other roles in CTC calculator → Access (Role_Access sheet, ADR-041); the table shows the launch defaults | – | – | – | ✓ |
 | `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
@@ -604,6 +605,8 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 | `joined_open` | Card at Joined/Onboarded but no joining date on the position | **Record joining** (closes the position) |
 | `maybe_closed` | Remarks suggest closed/held | Use **Close without hiring** |
 
+**Correcting a joining date** (`apiCorrectJoiningDate`, `correct_data`: Head of HR and admin). A recruiter's wrong date on a candidate who is Joined or Onboarded is fixed in the candidate drawer → Other actions → *Joining date wrong?* with the new date and a reason (10+ characters). The new date may not be in the future or before the offer was accepted. The same date is written to `Candidates.DOJ`, `Applications.Actual_DOJ` and `MRF.Actual_DOJ`, the position's stored TAT is recomputed, and a Stage_History row "Date corrected" keeps the old and new date and the reason; field changes are in the Audit_Log. The stage does not change and the position stays Closed. Moving to another month shows a notice (monthly joined counts and KPIs change). The drawer now shows "Joined on <date>" for joined candidates.
+
 **Keep as is** (`apiReconcileReviewed`) needs a note and removes the position from the list. **Correct a wrong link** (`apiUnlinkApp`, `lead`): removes a card linked by mistake without recording a backout ("Linked in error"; counts for nothing in the scorecard) and returns the position to the check. As of 26 Sep the check showed *"Nothing to fix"* after the team's clean-up (a few items remain to confirm, §15).
 
 ## 10. Daily work
@@ -1051,6 +1054,10 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-10-07
+
+**v83 — ready to deploy — Joining date correction** (no schema change; `Pipeline.gs`, `Config.gs`, `App.html`, `E2E.gs`; §3, §9)
+- Head of HR and Admin can correct a joining date a recruiter recorded wrongly, without moving the card back: new permission `correct_data`, `apiCorrectJoiningDate`, drawer block *Joining date wrong?*. All three stored copies of the date change together, TAT is recalculated, and history and audit keep the old date and reason. The drawer shows "Joined on <date>".
+- Tests: E2E D25a–D25e; local checks for permissions, validation, the three writes, history and the month notice.
 
 **v82 — ready to deploy — Organogram plan editor** (schema 38; `Org.gs`, `App.html`, `Styles.html`, `E2E.gs`; ADR-047; §11.9)
 - Head of HR and Admin can update the approved (budgeted) manpower plan in Admin → Org structure → Manpower plan: grid by department and grade, Excel download and upload, review and activate with reason, approver and effective date, history with diffs and restore as draft.
