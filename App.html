@@ -4843,25 +4843,32 @@ async function bgvGovernTab(el, B, v) {
 const VOICE_STATUS_CLASS_ = { Completed: 'ok', Started: '', Starting: '', Failed: 'miss', 'Blocked (Do Not Disturb)': 'miss', Cancelled: '' };
 async function renderVoiceAdmin(el) {
   let C; try { C = await api('apiVoiceConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready && C.connected ? 'ok' : ''}">${C.connected ? (C.ready ? 'Ready' : 'Not set up') : 'Provider not connected yet'}</span></div>
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready && (C.dndWritten || !C.dndRequired) ? 'ok' : ''}">${C.ready ? (C.dndWritten || !C.dndRequired ? 'Ready' : 'Do Not Disturb check not connected yet') : 'Not set up'}</span></div>
       <p class="hint" style="margin-top:0">An AI voice agent calls the candidate and asks the position’s confirmed screening questions. The answers come back as a <b>draft</b> screening for the recruiter to check; nothing is completed or moved by the call. Candidates on the Do Not Disturb list are never called. This is visible to the Admin only. The API key is kept on the server and is never shown again.</p>
       ${C.missing.length ? `<div class="note warn-note"><b>Still to fill in:</b> ${esc(C.missing.join(', '))}.</div>` : ''}
-      ${C.connected ? '' : '<div class="note">The connection to the voice provider has not been written yet, so no call can be placed. You can fill in the settings and use <b>Preview the call</b> on a candidate’s card to check what would be sent.</div>'}
+      ${C.dndWritten || !C.dndRequired ? '' : '<div class="note">The call itself is connected. The <b>Do Not Disturb check</b> is not connected yet, and it is required, so no call is placed. Use <b>Preview the call</b> on a candidate\u2019s card to check exactly what would be sent.</div>'}
+      ${C.resultsWritten ? '' : '<div class="note">Results coming back from the call (disposition, summary and answers) are not connected yet. A call can be placed once the Do Not Disturb check is connected, but its answers will not fill the draft screening yet.</div>'}
       <div class="grid">
         <div class="field wide"><label class="chk"><input type="checkbox" id="vcOn" ${C.enabled ? 'checked' : ''}> Allow calls (the Admin can start a call from a candidate’s card)</label></div>
         <div class="field"><label for="vcAgent">Agent id</label><input id="vcAgent" value="${esc(C.agentId)}" maxlength="100" autocomplete="off"></div>
         <div class="field"><label for="vcConn">Connection id</label><input id="vcConn" value="${esc(C.connectionId)}" maxlength="100" autocomplete="off"></div>
         <div class="field"><label for="vcFrom">Calling number</label><input id="vcFrom" value="${esc(C.fromNumber)}" maxlength="20" placeholder="+91…" autocomplete="off"></div>
         <div class="field"><label for="vcKey">API key ${C.keySet ? `<span class="opt">(set, ends ${esc(C.keyHint)}; type a new one to replace)</span>` : '<span class="opt">(not set)</span>'}</label><input id="vcKey" type="password" autocomplete="new-password" placeholder="${C.keySet ? 'Leave blank to keep' : 'Paste the key'}"></div>
+        <div class="field"><label for="vcVer">Agent version</label><input id="vcVer" type="number" min="1" max="9999" step="1" value="${esc(C.agentVersion)}"></div>
         <div class="field"><label for="vcOrg">Organisation id</label><input id="vcOrg" value="${esc(C.orgId)}" maxlength="100"></div>
         <div class="field"><label for="vcWs">Workspace id</label><input id="vcWs" value="${esc(C.workspaceId)}" maxlength="100"></div>
+        <div class="field wide"><label for="vcLine">Opening line <span class="opt">(optional; leave blank to use the agent\u2019s own)</span></label><input id="vcLine" value="${esc(C.openingLine)}" maxlength="300"></div>
+        <div class="field"><label for="vcState">Entry state <span class="opt">(optional)</span></label><input id="vcState" value="${esc(C.entryState)}" maxlength="80"></div>
+        <div class="field"><label for="vcQv">Agent variable that receives the questions <span class="opt">(optional)</span></label><input id="vcQv" value="${esc(C.questionsVar)}" maxlength="60" placeholder="e.g. screening_questions"><span class="hint">Define this variable in the agent first. Blank: the questions are not sent and the agent uses its own.</span></div>
+        <div class="field wide"><label for="vcHook">Webhook address <span class="opt">(where the provider sends the result; needs a public https address)</span></label><input id="vcHook" value="${esc(C.webhookUrl)}" maxlength="400" placeholder="https://\u2026"></div>
         <div class="field wide"><label class="chk"><input type="checkbox" id="vcDnd" ${C.dndRequired ? 'checked' : ''}> Check the Do Not Disturb list before every call (recommended; on)</label></div></div>
       <div class="drawer-actions" style="position:static">${C.keySet ? '<button class="btn" id="vcClear">Remove the API key</button>' : ''}<button class="btn primary" id="vcSave">Save</button></div></section>
     <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent calls</h2><span class="hint">${C.calls} in total</span></div>
       ${C.recent.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Call</th><th>When</th><th>Candidate</th><th>Number</th><th>Status</th><th>Note</th></tr></thead><tbody>${C.recent.map(c => `<tr><td><b>${esc(c.id)}</b></td><td class="nw">${esc(c.startedAt)}<span class="sub">${esc(String(c.startedBy).split('@')[0])}</span></td><td>${esc(c.cand)}</td><td>…${esc(c.last4)}</td><td><b class="${VOICE_STATUS_CLASS_[c.status] || ''}">${esc(c.status)}</b>${c.draft ? '<span class="sub">draft screening written</span>' : ''}</td><td>${esc(c.note)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No call has been placed yet.</div>'}</section>`;
   const save = async (extra, btn, label) => {
     busy(btn, true, 'Saving…');
-    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
+    if (!$('#vcDnd').checked && C.dndRequired && !confirm('Switch off the Do Not Disturb check? Candidates on the Do Not Disturb list could then be called.')) return;
+    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, webhookUrl: $('#vcHook').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
     catch (e) { toast(e, true); busy(btn, false, label); }
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
@@ -4894,9 +4901,10 @@ function voicePreviewDialog(r) {
     <p><b>${esc(r.candidate)}</b> · number ending ${esc(r.phoneLast4)} · questions v${r.questionsVersion}</p>
     <div class="note ${r.ready ? '' : 'warn-note'}">${r.ready ? '<b>Ready to call.</b>' : '<b>Not ready:</b> ' + esc(r.problems.join('; ')) + '.'} Do Not Disturb: ${esc(r.dnd)}.</div>
     <h4>What the agent is told</h4>
-    <p class="sub">Calls the candidate by first name <b>${esc(b.candidateFirstName)}</b> about <b>${esc(b.position)}</b> at ${esc(b.company)}. Nothing else about the candidate (no CV, salary or other details) is sent.</p>
+    <p class="sub">Calls the candidate by first name <b>${esc(b.candidateFirstName)}</b> about <b>${esc(b.position)}</b> at ${esc(b.company)}. Not sent: ${esc((r.notSent || []).join(', '))} and nothing else from the candidate\u2019s record. ${r.questionsSent ? 'The questions below are sent to the agent.' : 'The questions below are <b>not</b> sent: no agent variable is named for them in the settings, so the agent uses its own questions.'} ${esc(r.resultsReturn || '')}.</p>
     <div class="table-wrap"><table class="bgv-table"><thead><tr><th>#</th><th>Group</th><th>Question</th><th>Answer</th><th>Needed</th></tr></thead><tbody>
       ${b.questions.map(q => `<tr><td>${esc(q.id)}</td><td>${esc(q.section)}${q.knockOut ? '<span class="sub miss">knock-out</span>' : ''}</td><td>${esc(q.question)}</td><td>${esc(q.answerType)}</td><td>${esc(q.needed)}</td></tr>`).join('')}</tbody></table></div>
+    <details style="margin-top:10px"><summary>The exact request (number masked, key never shown)</summary><pre class="cvtext" style="white-space:pre-wrap">${esc(JSON.stringify(r.request, null, 2))}</pre></details>
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
 }
 
