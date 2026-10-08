@@ -1072,6 +1072,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
 - Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
+**Unreleased — Voice call section always visible to the Admin** (no schema change)
+- The Voice screening call section on a pipeline card was hidden when the position had no confirmed screening questions, so the Admin could not tell why it was missing. It now shows on every active card for the Admin; without confirmed questions it says so and names the steps to finish (JD final, Questions final in JD Master) instead of the buttons.
+
 **Unreleased — Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
 - The Admin → Voice agent page failed with *The database has no sheet named "Voice_Calls"*: the schema step that creates it did not run (the stored schema number was already at or above the code's, most likely because another build with the same number had been deployed to the same script). The voice functions now create the call-log sheet themselves when it is missing (as the CV profile sheet already did), and the schema number is raised to 39 so the step runs once everywhere. **Rule for new sheets:** create them from a `xxxSchema_()` called both from `ensureSchema_` and from the first read, so a skipped schema step cannot break a page; and when several builds are deployed to one script, give each a different schema number.
 
