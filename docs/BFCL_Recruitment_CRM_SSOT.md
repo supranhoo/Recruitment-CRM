@@ -1072,6 +1072,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
 - Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
+**Unreleased — Voice agent form fixes** (no schema change)
+- The webhook box showed `https: <div class=` : a literal `//` inside the page script is mangled by Apps Script's page handling (the reason the CDN addresses are written `https:\/\/`). Written the same way. The two tick boxes were stretched to the full width of their column (`.field input{width:100%}`) and pushed their text to the right; check boxes inside a field are now their natural size. **Rule: never write `//` inside App.html script text; write `\/\/` or build it from `String.fromCharCode(47, 47)`.**
+
 **Unreleased — Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
 - The Admin → Voice agent page failed with *The database has no sheet named "Voice_Calls"*: the schema step that creates it did not run (the stored schema number was already at or above the code's, most likely because another build with the same number had been deployed to the same script). The voice functions now create the call-log sheet themselves when it is missing (as the CV profile sheet already did), and the schema number is raised to 39 so the step runs once everywhere. **Rule for new sheets:** create them from a `xxxSchema_()` called both from `ensureSchema_` and from the first read, so a skipped schema step cannot break a page; and when several builds are deployed to one script, give each a different schema number.
 
