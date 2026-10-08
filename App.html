@@ -4877,6 +4877,10 @@ async function renderVoiceAdmin(el) {
 /** On a pipeline card: Admin only. Previews what would be sent and, once the provider is connected, places the call. */
 async function voiceCardSection(el, a, P) {
   if (!el) return;
+  if (!P.hasFinalSq) {
+    el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3><p class="hint">Not available for this position yet: the screening questions have not been confirmed with the department. Finish <b>JD final</b> and <b>Questions final</b> for this position in <b>JD Master</b>, then reopen this card.</p></section>`;
+    return;
+  }
   let calls = []; try { calls = await api('apiVoiceCallsFor', a.App_ID); } catch (e) { return; }
   if (!el.isConnected) return;
   const last = calls[0];
@@ -6073,7 +6077,7 @@ async function viewPipeline(v) {
             : P.hasFinalSq && canEdit && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
-          ${can('voice_agent') && P.hasFinalSq && active ? '<div id="apVoice"></div>' : ''}
+          ${can('voice_agent') && active ? '<div id="apVoice"></div>' : ''}
           <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
