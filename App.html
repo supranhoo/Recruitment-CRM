@@ -3412,11 +3412,12 @@ async function viewAdmin(v) {
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
-      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button></div>
+      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
   const el = $('#adBody');
   if (f.tab === 'users') return renderUsers(el, v);
+  if (f.tab === 'voice' && can('voice_agent')) return renderVoiceAdmin(el);
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
@@ -4838,6 +4839,67 @@ async function bgvGovernTab(el, B, v) {
   };
 }
 
+/* ---- Voice screening call (Admin test; ADR-045) ---- */
+const VOICE_STATUS_CLASS_ = { Completed: 'ok', Started: '', Starting: '', Failed: 'miss', 'Blocked (Do Not Disturb)': 'miss', Cancelled: '' };
+async function renderVoiceAdmin(el) {
+  let C; try { C = await api('apiVoiceConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready && C.connected ? 'ok' : ''}">${C.connected ? (C.ready ? 'Ready' : 'Not set up') : 'Provider not connected yet'}</span></div>
+      <p class="hint" style="margin-top:0">An AI voice agent calls the candidate and asks the position’s confirmed screening questions. The answers come back as a <b>draft</b> screening for the recruiter to check; nothing is completed or moved by the call. Candidates on the Do Not Disturb list are never called. This is visible to the Admin only. The API key is kept on the server and is never shown again.</p>
+      ${C.missing.length ? `<div class="note warn-note"><b>Still to fill in:</b> ${esc(C.missing.join(', '))}.</div>` : ''}
+      ${C.connected ? '' : '<div class="note">The connection to the voice provider has not been written yet, so no call can be placed. You can fill in the settings and use <b>Preview the call</b> on a candidate’s card to check what would be sent.</div>'}
+      <div class="grid">
+        <div class="field wide"><label class="chk"><input type="checkbox" id="vcOn" ${C.enabled ? 'checked' : ''}> Allow calls (the Admin can start a call from a candidate’s card)</label></div>
+        <div class="field"><label for="vcAgent">Agent id</label><input id="vcAgent" value="${esc(C.agentId)}" maxlength="100" autocomplete="off"></div>
+        <div class="field"><label for="vcConn">Connection id</label><input id="vcConn" value="${esc(C.connectionId)}" maxlength="100" autocomplete="off"></div>
+        <div class="field"><label for="vcFrom">Calling number</label><input id="vcFrom" value="${esc(C.fromNumber)}" maxlength="20" placeholder="+91…" autocomplete="off"></div>
+        <div class="field"><label for="vcKey">API key ${C.keySet ? `<span class="opt">(set, ends ${esc(C.keyHint)}; type a new one to replace)</span>` : '<span class="opt">(not set)</span>'}</label><input id="vcKey" type="password" autocomplete="new-password" placeholder="${C.keySet ? 'Leave blank to keep' : 'Paste the key'}"></div>
+        <div class="field"><label for="vcOrg">Organisation id</label><input id="vcOrg" value="${esc(C.orgId)}" maxlength="100"></div>
+        <div class="field"><label for="vcWs">Workspace id</label><input id="vcWs" value="${esc(C.workspaceId)}" maxlength="100"></div>
+        <div class="field wide"><label class="chk"><input type="checkbox" id="vcDnd" ${C.dndRequired ? 'checked' : ''}> Check the Do Not Disturb list before every call (recommended; on)</label></div></div>
+      <div class="drawer-actions" style="position:static">${C.keySet ? '<button class="btn" id="vcClear">Remove the API key</button>' : ''}<button class="btn primary" id="vcSave">Save</button></div></section>
+    <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent calls</h2><span class="hint">${C.calls} in total</span></div>
+      ${C.recent.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Call</th><th>When</th><th>Candidate</th><th>Number</th><th>Status</th><th>Note</th></tr></thead><tbody>${C.recent.map(c => `<tr><td><b>${esc(c.id)}</b></td><td class="nw">${esc(c.startedAt)}<span class="sub">${esc(String(c.startedBy).split('@')[0])}</span></td><td>${esc(c.cand)}</td><td>…${esc(c.last4)}</td><td><b class="${VOICE_STATUS_CLASS_[c.status] || ''}">${esc(c.status)}</b>${c.draft ? '<span class="sub">draft screening written</span>' : ''}</td><td>${esc(c.note)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No call has been placed yet.</div>'}</section>`;
+  const save = async (extra, btn, label) => {
+    busy(btn, true, 'Saving…');
+    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
+    catch (e) { toast(e, true); busy(btn, false, label); }
+  };
+  $('#vcSave').onclick = e => save({}, e.target, 'Save');
+  if ($('#vcClear')) $('#vcClear').onclick = e => { if (confirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
+}
+/** On a pipeline card: Admin only. Previews what would be sent and, once the provider is connected, places the call. */
+async function voiceCardSection(el, a, P) {
+  if (!el) return;
+  let calls = []; try { calls = await api('apiVoiceCallsFor', a.App_ID); } catch (e) { return; }
+  if (!el.isConnected) return;
+  const last = calls[0];
+  el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
+    <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
+    ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
+    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button></div><span class="hint" id="vcMsg"></span></section>`;
+  const run = async (dry, btn) => {
+    busy(btn, true, dry ? 'Checking…' : 'Calling…');
+    try {
+      const r = await api('apiVoiceStartScreening', a.App_ID, { dryRun: dry });
+      if (dry) voicePreviewDialog(r); else { toast('The call has been placed.'); voiceCardSection(el, a, P); }
+    } catch (e) { toast(e, true); }
+    busy(btn, false, dry ? 'Preview the call' : 'Place the call');
+  };
+  $('#vcPrev', el).onclick = e => run(true, e.target);
+  $('#vcGo', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); };
+}
+function voicePreviewDialog(r) {
+  const b = r.brief;
+  const d = cpDlg(`<h2 id="cpTitle">Voice screening call · preview</h2>
+    <p><b>${esc(r.candidate)}</b> · number ending ${esc(r.phoneLast4)} · questions v${r.questionsVersion}</p>
+    <div class="note ${r.ready ? '' : 'warn-note'}">${r.ready ? '<b>Ready to call.</b>' : '<b>Not ready:</b> ' + esc(r.problems.join('; ')) + '.'} Do Not Disturb: ${esc(r.dnd)}.</div>
+    <h4>What the agent is told</h4>
+    <p class="sub">Calls the candidate by first name <b>${esc(b.candidateFirstName)}</b> about <b>${esc(b.position)}</b> at ${esc(b.company)}. Nothing else about the candidate (no CV, salary or other details) is sent.</p>
+    <div class="table-wrap"><table class="bgv-table"><thead><tr><th>#</th><th>Group</th><th>Question</th><th>Answer</th><th>Needed</th></tr></thead><tbody>
+      ${b.questions.map(q => `<tr><td>${esc(q.id)}</td><td>${esc(q.section)}${q.knockOut ? '<span class="sub miss">knock-out</span>' : ''}</td><td>${esc(q.question)}</td><td>${esc(q.answerType)}</td><td>${esc(q.needed)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+}
+
 /* ---- Vendors and rules ---- */
 function bgvVendors(el, B, v) {
   const vend = B.vendors;
@@ -6003,6 +6065,7 @@ async function viewPipeline(v) {
             : P.hasFinalSq && canEdit && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
+          ${can('voice_agent') && P.hasFinalSq && active ? '<div id="apVoice"></div>' : ''}
           <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
@@ -6020,6 +6083,7 @@ async function viewPipeline(v) {
     bindAttachmentViews('APP', a.App_ID, d);
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
+    if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });

@@ -88,10 +88,11 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter'];
  * 'ctc_use' = use the CTC calculator; 'ctc_rules' = change the CTC rules (Admin only, never grantable); 'ctc_view_all' = see everyone's CTC
  * calculations; 'ctc_codes' = change the structure choices and allowances; 'ctc_issue' = make and issue letters; 'ctc_approve' = approve letters
  * when approval is on. The ctc_* permissions other than ctc_rules can be given to other roles in CTC calculator > Access (Role_Access sheet).
+ * 'voice_agent' = set up and use the voice screening call while it is being tested (Admin only, never grantable).
  */
 const PERMS_ = {
   'Recruiter': [],
   'TA Lead': ['lead', 'tat_view', 'jd_manage'],
   'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve']
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent']
 };
