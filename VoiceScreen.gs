@@ -22,6 +22,7 @@ const VOICE_DEFAULTS_ = { orgId: '01a11b5b-1fcf-7fc7-b673-8ebbe5e5dd0c', workspa
   agentId: 'Conversatio-85617fe5-386e', agentVersion: 1, connectionId: '14185236-97-20b5ee4b-4097', fromNumber: '+918064269699' };
 const VOICE_API_BASE_ = 'https://apps.sarvam.ai/api';
 
+/** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
 function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); }
 function requireVoiceAdmin_(u) { if (!can_(u, 'voice_agent')) throw new Error('Only the CRM admin can use the voice agent while it is being tested.'); }
 
@@ -57,7 +58,7 @@ function voiceProviderConnected_() { return voicePlaceWritten_() && voiceDndWrit
 
 function apiVoiceConfig() {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
-  const calls = readTable_(VOICE_CALLS_.name).rows;
+  const calls = voiceCallsRows_();
   const o = voiceCfgOut_(voiceCfg_());
   o.calls = calls.length; o.recent = calls.slice(-15).reverse().map(voiceCallOut_);
   return o;
@@ -107,7 +108,7 @@ function voiceCallOut_(r) {
   return { id: String(r.Call_ID), app: String(r.App_ID), cand: String(r.Candidate_ID), line: String(r.Line_ID), last4: String(r.Phone_Last4 || ''), status: String(r.Status), note: String(r.Status_Note || ''),
     startedBy: String(r.Started_By || ''), startedAt: at(r.Started_At), completedAt: at(r.Completed_At), draft: String(r.Draft_Applied || '') === 'Yes', hasTranscript: !!String(r.Transcript || '') };
 }
-function voiceCallsRows_(appId) { return readTable_(VOICE_CALLS_.name).rows.filter(function (r) { return !appId || String(r.App_ID) === String(appId); }); }
+function voiceCallsRows_(appId) { voiceSchema_(); return readTable_(VOICE_CALLS_.name).rows.filter(function (r) { return !appId || String(r.App_ID) === String(appId); }); }
 
 /** The 10-digit mobile of a candidate, or '' when it is missing or not a valid mobile. */
 function voicePhone_(cand) { const p = normPhone_(cand && cand.Mobile); return /^[6-9]\d{9}$/.test(p) ? p : ''; }
@@ -225,6 +226,7 @@ function voicePlaceCall_(phone, brief, cfg, callId) {
 function voiceLog_(u, app, cand, phone, status, note, qVersion) {
   const o = { App_ID: String(app.App_ID), Candidate_ID: String(app.Candidate_ID), Line_ID: String(app.Line_ID), Phone_Last4: phone.slice(-4), Status: status, Status_Note: note || '',
     Questions_Version: qVersion, Started_By: u.email, Started_At: new Date(), Updated_By: u.email, Updated_At: new Date() };
+  voiceSchema_();
   return withLock_(function () {
     const t = readTable_(VOICE_CALLS_.name, true);
     o.Call_ID = nextId_(VOICE_CALLS_, t.rows);
@@ -235,6 +237,7 @@ function voiceLog_(u, app, cand, phone, status, note, qVersion) {
 }
 /** Writes columns of one call row directly (transcripts and answers must not go into the change log). */
 function voiceUpdate_(callId, patch) {
+  voiceSchema_();
   withLock_(function () {
     const t = readTable_(VOICE_CALLS_.name, true), r = t.rows.filter(function (x) { return String(x.Call_ID) === String(callId); })[0];
     if (!r) throw new Error('Call ' + callId + ' was not found.');
