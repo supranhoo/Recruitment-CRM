@@ -1089,6 +1089,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
 - Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
+**Unreleased — Voice agent form fixes** (no schema change)
+- The webhook box showed `https: <div class=` : a literal `//` inside the page script is mangled by Apps Script's page handling (the reason the CDN addresses are written `https:\/\/`). Written the same way. The two tick boxes were stretched to the full width of their column (`.field input{width:100%}`) and pushed their text to the right; check boxes inside a field are now their natural size. **Rule: never write `//` inside App.html script text; write `\/\/` or build it from `String.fromCharCode(47, 47)`.**
+
 **Unreleased — Voice call section always visible to the Admin** (no schema change)
 - The Voice screening call section on a pipeline card was hidden when the position had no confirmed screening questions, so the Admin could not tell why it was missing. It now shows on every active card for the Admin; without confirmed questions it says so and names the steps to finish (JD final, Questions final in JD Master) instead of the buttons.
 
