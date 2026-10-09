@@ -277,7 +277,8 @@ function apiSaveFunnel(data) {
       if (!canEditEntry_(u, old)) throw new Error('This entry was saved on ' + (old.Created_At instanceof Date ? fmt_(old.Created_At, TZ, 'd MMM yyyy') : String(old.Created_At || 'an earlier day')) + '. Entries can be changed only on the day they are saved. Ask a TA Lead or the Head of HR to correct it.');
     });
   } else {
-    patch.Recruiter = u.recruiter;
+    // An entry counts for the position's recruiter, also when a lead or a colleague types it; Created_By keeps who typed it.
+    patch.Recruiter = String(line.Recruiter || '').trim() || u.recruiter;
     rec = insert_(T.FUNNEL, patch, u);
   }
   const o = toClient_(rec); delete o._row;
