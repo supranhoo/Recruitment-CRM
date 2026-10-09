@@ -1393,7 +1393,7 @@ function bindEntryEdits(root, rows, after) {
   $$('[data-edit]', root).forEach(b => b.onclick = e => {
     e.stopPropagation();
     const r = rows.find(x => x.Entry_ID === b.dataset.edit);
-    const d = openDrawer('Edit activity entry', `<p class="hint" style="margin:0 0 10px">You can change this entry until midnight today. After that it is locked.</p>` + dailyFormHtml(null, r));
+    const d = openDrawer('Edit activity entry', `<p class="hint" style="margin:0 0 10px">You can change this entry until midnight today. After that it is locked.</p>` + dailyFormHtml(r.Line_ID, r));
     bindDailyForm(d, () => { closeDrawer(); after(); });
   });
 }
@@ -1426,6 +1426,60 @@ document.addEventListener('click', e => {
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
 });
 
+/** The day's grid on the Daily log page: one row per position, the day's numbers typed in the row. */
+async function dailyGrid(box, onRec) {
+  const cut = S.boot.cutover || '2026-10-05', st = S.dlGrid = S.dlGrid || {};
+  if (!st.date) st.date = today();
+  const dirty = () => $$('tr.dg-dirty', box).length;
+  const guard = () => !dirty() || confirm('You have unsaved numbers. Discard them?');
+  const draw = async () => {
+    const rec = S.dlRec = dlDefaultRec(), piped = st.date >= cut, day = st.date;
+    const cols = METRICS.filter(([k]) => !piped || ['CV_Sourced', 'CV_Reviewed'].includes(k));
+    const lines = dlLines().filter(p => rec === DL_ALL || dlRecOf(p) === rec).sort((a, b) => dlRecOf(a).localeCompare(dlRecOf(b)) || String(a.MRF_No).localeCompare(String(b.MRF_No)));
+    box.innerHTML = `<h2>Log activity</h2><div class="grid" style="margin-bottom:8px">
+        <div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
+        <div class="field"><label for="dl_date">Date</label><input id="dl_date" type="date" value="${esc(day)}" max="${today()}"></div></div>
+        <div id="dgBody">${skRows(4, 5)}</div>`;
+    $('#dl_rec', box).onchange = e => { if (!guard()) { e.target.value = rec; return; } S.dlRec = e.target.value; onRec(e.target.value); draw(); };
+    $('#dl_date', box).onchange = e => { if (!guard()) { e.target.value = day; return; } st.date = e.target.value || today(); draw(); };
+    let rows = [];
+    try { rows = await fresh('apiListFunnel', { recruiter: '', from: day, to: day }); } catch (e) { toast(e, true); }
+    if (st.date !== day) return;
+    const byLine = {}, pipe = {};
+    rows.forEach(r => { if (r.Entry_ID && !r.derived && !byLine[r.Line_ID]) byLine[r.Line_ID] = r; if (piped) FUNNEL_PIPED_.forEach(k => { if (Number(r[k])) { pipe[r.Line_ID] = pipe[r.Line_ID] || {}; pipe[r.Line_ID][k] = (pipe[r.Line_ID][k] || 0) + Number(r[k]); } }); });
+    const note = id => { const p = pipe[id]; return p ? `<span class="sub">Pipeline today: ${FUNNEL_PIPED_.filter(k => p[k]).map(k => `${(METRICS.find(m => m[0] === k) || [])[2]} ${p[k]}`).join(' · ')}</span>` : ''; };
+    const body = $('#dgBody', box);
+    if (!lines.length) { body.innerHTML = '<div class="empty">No active positions for this recruiter.</div>'; return; }
+    let lastRec = null;
+    body.innerHTML = `${piped ? `<p class="hint" style="margin:0 0 8px">Type CVs sourced and reviewed. HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Rows you change are saved with <b>Save</b> or <b>Save all changes</b>. An entry can be changed until midnight.</p>` : ''}
+      <div class="table-wrap"><table class="dgrid"><thead><tr><th>Position</th>${cols.map(([, l, sh]) => `<th class="num" title="${esc(l)}">${esc(sh)}</th>`).join('')}<th>Feedback from dept</th><th>Remarks</th><th><span class="sr-only">Save</span></th></tr></thead><tbody>
+      ${lines.map(p => { const e = byLine[p.Line_ID], lock = e && !e.canEdit, ro = lock ? ' disabled' : '';
+        const grp = rec === DL_ALL && dlRecOf(p) !== lastRec ? `<tr class="dg-grp"><td colspan="${cols.length + 4}"><b>${esc(dlRecOf(p) === DL_NONE ? 'Not assigned' : dlRecOf(p))}</b></td></tr>` : ''; lastRec = dlRecOf(p);
+        return grp + `<tr data-line="${esc(p.Line_ID)}" data-entry="${esc(e ? e.Entry_ID : '')}"><td>${esc(p.Position)}<span class="sub">${esc(p.MRF_No || '')} · ${esc(p.Dept || '')}</span>${note(p.Line_ID)}</td>
+          ${cols.map(([k, l]) => `<td class="num"><input type="number" min="0" step="1" data-k="${k}" aria-label="${esc(l)} for ${esc(p.Position)}" value="${esc(e && Number(e[k]) ? e[k] : '')}" placeholder="0"${ro}></td>`).join('')}
+          <td><select data-k="FB_From_Dept" aria-label="Feedback from dept"${ro}>${opts(['Yes', 'No', 'Pending'], e ? e.FB_From_Dept : '')}</select></td>
+          <td><input data-k="Remarks" value="${esc(e ? e.Remarks || '' : '')}" placeholder="Remarks"${ro}></td>
+          <td class="nw">${lock ? '<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>' : `<button class="btn sm dg-save" disabled>Save</button>`}</td></tr>`; }).join('')}
+      </tbody></table></div>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:12px"><span class="hint" id="dgCount"></span><button class="btn primary" id="dgAll" disabled>Save all changes</button></div>`;
+    const sync = () => { const n = dirty(), b = $('#dgAll', box); if (b) { b.disabled = !n; $('#dgCount', box).textContent = n ? n + (n === 1 ? ' row' : ' rows') + ' changed' : ''; } };
+    const payload = tr => { const d = { Line_ID: tr.dataset.line, Entry_Date: day, Entry_ID: tr.dataset.entry }; $$('[data-k]', tr).forEach(i => { d[i.dataset.k] = i.value; }); if (piped) FUNNEL_PIPED_.forEach(k => { d[k] = 0; }); return d; };
+    $$('tr[data-line]', body).forEach(tr => {
+      const mark = () => { tr.classList.add('dg-dirty'); const b = $('.dg-save', tr); if (b) b.disabled = false; sync(); };
+      $$('[data-k]', tr).forEach(i => { i.addEventListener('input', mark); i.addEventListener('change', mark); });
+      const b = $('.dg-save', tr);
+      if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { await api('apiSaveFunnel', payload(tr)); toast('Saved'); onRec(null, true); await draw(); } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
+    });
+    $('#dgAll', box).onclick = async () => {
+      const trs = $$('tr.dg-dirty', box), b = $('#dgAll', box); busy(b, true, 'Saving…'); let ok = 0; const bad = [];
+      for (const tr of trs) { try { const sv = await api('apiSaveFunnel', payload(tr)); if (sv && sv.Entry_ID) tr.dataset.entry = sv.Entry_ID; ok++; tr.classList.remove('dg-dirty'); } catch (e) { bad.push(tr.firstElementChild.firstChild.textContent + ': ' + String((e && e.message) || e).replace(/^Error:\s*/, '')); } }
+      if (ok) onRec(null, true);
+      if (bad.length) { toast(`${ok} saved. ${bad.join(' | ')}`, true); busy(b, false, 'Save all changes'); } else { toast(ok + (ok === 1 ? ' entry saved' : ' entries saved')); await draw(); }
+    };
+  };
+  await draw();
+}
+
 async function viewDaily(v) {
   await loadPositions();
   const f = S.dailyFilter = S.dailyFilter || { recruiter: '', from: daysAgo(14), to: today() };
@@ -1433,8 +1487,8 @@ async function viewDaily(v) {
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily log</h1><p>Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports.</p></div></div>
     <div id="dlTodo" class="todo-strip ov-todo">${skb('46%', 13)}${skb('140px', 28)}</div>
-    <section class="panel" id="dailyNew"><h2>Log activity</h2>${dailyFormHtml(null)}</section>
-    <p class="hint" style="margin:18px 0 0">History below follows the Recruiter chosen above.</p>
+    <section class="panel" id="dailyNew">${skRows(4, 5)}</section>
+    <h2 style="margin:22px 0 0;font-size:16px">History</h2><p class="hint" style="margin:2px 0 0">Follows the Recruiter chosen above. Pick a date range to look back or change an earlier entry.</p>
     <div class="filters" style="margin-top:6px">
       <div class="field"><label for="dffrom">From</label><input id="dffrom" type="date" value="${f.from}"></div>
       <div class="field"><label for="dfto">To</label><input id="dfto" type="date" value="${f.to}"></div>
@@ -1445,7 +1499,6 @@ async function viewDaily(v) {
     $('#dailyList').innerHTML = funnelTable(rows, true);
     bindEntryEdits($('#dailyList'), rows, load);
   };
-  $('#dailyNew').addEventListener('change', e => { if (e.target.id !== 'dl_rec') return; f.recruiter = [DL_ALL, DL_NONE].includes(e.target.value) ? '' : e.target.value; load(); });
   $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
   $('#dfto').onchange = e => { f.to = e.target.value; load(); };
   api('apiMyTasks').then(res => {
@@ -1456,7 +1509,7 @@ async function viewDaily(v) {
       <button class="btn sm" id="dlTodoOpen">Open my to-do</button>`;
     el.hidden = false; $('#dlTodoOpen').onclick = () => go('myday', true);
   }).catch(() => { const el = $('#dlTodo'); if (el) el.remove(); });
-  bindDailyForm($('#dailyNew'), function again(saved) { $('#dailyNew').innerHTML = '<h2>Log activity</h2>' + dailyFormHtml(null, { Entry_Date: today(), Line_ID: saved && saved.Line_ID }); bindDailyForm($('#dailyNew'), again); load(); });
+  dailyGrid($('#dailyNew'), (rec, saved) => { if (!saved) f.recruiter = [DL_ALL, DL_NONE].includes(rec) ? '' : rec; load(); });
   load();
 }
 

@@ -1074,6 +1074,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Daily log: the day's grid replaces the form** (no schema change)
+- The Log activity form is replaced by a grid: Recruiter picker and Date (today) at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks typed in the row. Today's existing entry is shown in the row; a row is saved with **Save**, or all changed rows with **Save all changes** (an existing entry is updated, a new one created). Pipeline counts for the day are shown under the position. Past entries are locked as before. For dates before 5 Oct the grid also shows the typed pipeline columns.
+- The history below stays for date ranges; its Edit opens the entry for its own position.
+
 **Unreleased — Daily log: recruiter picker inside Log activity** (no schema change)
 - A Recruiter picker sits at the top of the Log activity form: "My positions" by default (a recruiter with none of their own starts on All recruiters), each colleague, Not assigned, or All recruiters (positions grouped by recruiter). The Position list follows it, with a count, and is pre-selected when there is only one.
 - The history below follows the same picker (the separate Recruiter filter at the bottom is removed; From and To stay). After saving, the recruiter and position stay selected.
