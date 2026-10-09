@@ -29,6 +29,7 @@ function listLine_(l, ctx, u) {
   Object.keys(c).forEach(function (k) { l[k] = c[k]; });
   const o = toClient_(l);
   o._canEdit = canEditLine_(u, l);
+  o.Route = routeOf_(l);
   delete o._row;
   return o;
 }
@@ -90,6 +91,11 @@ function apiSavePosition(data) {
   const ctx = tatContext_();
   const patch = prepare_(T.MRF, data);
   delete patch.JD_Confirmed_Date; delete patch.SQ_Confirmed_Date;
+  if ('Hiring_Route' in patch) {   // blank = by grade; only a lead can set it by hand
+    const hr = String(patch.Hiring_Route || '').trim();
+    if (hr && FAST_ROUTES_.indexOf(hr) < 0) throw new Error('The hiring route must be Fast-track or Standard.');
+    if (!isLead_(u)) delete patch.Hiring_Route; else patch.Hiring_Route = hr;
+  }
   if (!patch.Position || !patch.Grade || !patch.Dept || !patch.Receipt_Date) throw new Error('Position, grade, department and MRF receipt date are required.');
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;

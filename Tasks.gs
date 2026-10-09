@@ -98,6 +98,12 @@ function computeTasks_() {
   const add = function (rid, t) {
     const r = rules[rid];
     if (!r || !r.on) return;
+    const fl = t.line && lines[t.line];
+    if (fl && isFast_(fl)) {   // fast-track position: no JD / questions / CV-sharing / interview-scheduling to-dos
+      if (FAST_SKIP_TASKS_.indexOf(rid) >= 0) return;
+      if (rid === 'release_offer') t.title = 'Confirm the hiring';
+      if (rid === 'hod_feedback') t.title = 'Chase the department\u2019s written confirmation';
+    }
     const dueAt = t.startMs + (r.due || 0) * HOUR_MS_;
     if (now < dueAt) return;
     const critAt = t.forceCritical ? (t.critAt || t.startMs) : (r.crit === null ? 0 : t.startMs + r.crit * HOUR_MS_);
