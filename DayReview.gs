@@ -21,7 +21,7 @@ function pipelineMetrics_(h) {
   const m = [];
   if (to === 'Screened') m.push('HR_1st_Round');
   if (to === 'Shared') m.push('CV_Shared_Dept');
-  if (to === 'Confirmed') m.push('Shortlisted_Dept');
+  if (to === 'Confirmed') { m.push('Shortlisted_Dept'); if (/^Suitable/i.test(o)) m.push('Interviews_Done', 'Selected_Final'); }   // fast-track: the department's written confirmation is the interview and the selection
   if (to === 'Technical' || to === 'HR') m.push('Interviews_Done');
   if (to === 'HR' && /select/i.test(o)) m.push('Selected_Final');
   if (to === 'Offer') m.push('Offers');

@@ -1043,6 +1043,7 @@ function positionFields(isNew, p, orig) {
     { k: 'Backout_Date', l: 'Backout date', t: 'date', ro: pl, hint: 'Record backouts in the Pipeline: it closes this MRF and raises the replacement (policy 9.5).' },
     { k: 'Candidate_ID', l: 'Selected candidate ID', ro: pl, hint: pl ? plHint : 'Optional, e.g. CAN-01088' },
     { section: 'Background verification' },
+    { k: 'Hiring_Route', l: 'Hiring route', t: 'select', noBlank: true, ro: !isLead(), opts: [['', 'By grade (default)'], ['Fast-track', 'Fast-track (call, department confirms in writing, hire)'], ['Standard', 'Standard (screening, shortlist, interviews)']], hint: 'W and T levels follow the fast-track route unless set otherwise here.' },
     { k: 'BGV_Required', l: 'BGV required', t: 'select', noBlank: true, opts: [['Auto', 'Auto (Manager & above)'], ['Yes', 'Yes, flagged case'], ['No', 'Not required']] },
     { k: 'BGV_Prev_Org_Date', l: 'Previous employer BGV initiated on', t: 'date', ro: !isNew, hint: isNew ? 'Within 3 days after the offer letter date (policy 9.1.1).' : 'Kept by the BGV tracker (BGV case).' },
     { k: 'BGV_Current_Org_Date', l: 'Current employer BGV started on', t: 'date', ro: !isNew, hint: isNew ? 'Within 2 days of joining.' : 'Kept by the BGV tracker (BGV case).' },
@@ -3197,12 +3198,16 @@ const ROLE_MATRIX = [
   ['Admin: backups, archive, weekly email, database link', 0, 0, 0, 1],
   ['JD Master: view the library', 1, 1, 1, 1],
   ['JD Master: sign off and edit the library', 0, 1, 1, 1],
-  ['JD Master: import the library workbook', 0, 0, 0, 1]];
+  ['JD Master: import the library workbook', 0, 0, 0, 1],
+  ['Fast-track (W and T level) hiring: confirm the hiring, record the joining, complete the onboarding', 'own', 'all', 'all', 'all'],
+  ['Set a position\u2019s hiring route by hand (fast-track or standard)', 0, 1, 1, 1],
+  ['Admin: which levels use the fast-track route', 0, 0, 'edit', 'edit']];
+const ROLE_ONB_VIEW = new Set(['View all positions, candidates, pipeline and reports', 'View the organogram (approved against existing manpower)', 'BGV tracker: see the status of every case (findings: owner and leads only)', 'JD Master: view the library']);
 function renderRoles(el) {
   const cell = x => x === 1 ? '<span class="ok-tick" aria-label="Yes">\u2713</span>' : x === 0 ? '<span class="muted" aria-label="No">\u2013</span>' : esc(x);
   el.innerHTML = `<p class="hint" style="margin:0 0 12px">What each role can do. Your role: <b>${esc(S.boot.user.role)}</b>. The admin sets roles in the Users tab.</p>
-    <div class="table-wrap"><table class="roles-table"><thead><tr><th>Capability</th><th class="num">Recruiter</th><th class="num">TA Lead</th><th class="num">Head of HR</th><th class="num">Admin</th></tr></thead><tbody>
-    ${ROLE_MATRIX.map(r => `<tr style="cursor:default"><td>${esc(r[0])}</td>${r.slice(1).map(x => `<td class="num">${cell(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    <div class="table-wrap"><table class="roles-table"><thead><tr><th>Capability</th><th class="num">Recruiter</th><th class="num">TA Lead</th><th class="num">Head of HR</th><th class="num">Admin</th><th class="num">Onboarding</th></tr></thead><tbody>
+    ${ROLE_MATRIX.map(r => `<tr style="cursor:default"><td>${esc(r[0])}</td>${r.slice(1).concat([ROLE_ONB_VIEW.has(r[0]) ? 1 : r[0].startsWith('Fast-track') ? 'hiring, joining, onboarding of any recruiter\u2019s' : 0]).map(x => `<td class="num">${cell(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 async function renderUsers(el, v) {
   let r; try { r = await api('apiListUsers'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
@@ -3246,7 +3251,7 @@ function userDrawer(r, x, done) {
       ${isNew ? '' : `<div class="field wide"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="u_active" ${x.active ? 'checked' : ''}> Active (can sign in)</label></div>`}
     </div></fieldset><div id="usReassign"></div>
     <div class="drawer-actions"><button class="btn" id="usCancel">Cancel</button><button class="btn primary" id="usSave">${isNew ? 'Add user' : 'Save changes'}</button></div>`);
-  const hints = { 'Recruiter': 'Edits their own positions; sees everything.', 'TA Lead': 'Edits all positions, assigns work, sees team reviews and admin checks.', 'Head of HR': 'Everything a TA Lead can, plus withdrawing offers, TAT rules and viewing users.', 'Admin': 'Everything, including users, backups and system tools.' };
+  const hints = { 'Recruiter': 'Edits their own positions; sees everything.', 'TA Lead': 'Edits all positions, assigns work, sees team reviews and admin checks.', 'Head of HR': 'Everything a TA Lead can, plus withdrawing offers, TAT rules and viewing users.', 'Admin': 'Everything, including users, backups and system tools.', 'Onboarding': 'Supports the recruitment team: confirms the hiring, records the joining and completes the onboarding of fast-track (W and T level) positions. Sees everything else, edits nothing else.' };
   const hint = () => { $('#u_roleHint', b).textContent = hints[$('#u_role', b).value] || ''; };
   $('#u_role', b).onchange = hint; hint();
   $('#usCancel', b).onclick = closeDrawer;
@@ -3412,12 +3417,13 @@ async function viewAdmin(v) {
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
-      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
+      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
   const el = $('#adBody');
   if (f.tab === 'users') return renderUsers(el, v);
   if (f.tab === 'voice' && can('voice_agent')) return renderVoiceAdmin(el);
+  if (f.tab === 'routes' && can('tat_view')) return renderRoutesAdmin(el);
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
@@ -3912,6 +3918,12 @@ async function viewDailyReview(v) {
 const P_STAGES = ['Sourced', 'Screened', 'Shared', 'Confirmed', 'Technical', 'HR', 'Docs', 'Offer', 'Prejoin', 'Joined', 'Onboarded'];
 const P_NAMES = { Sourced: 'CV received', Screened: 'Screened', Shared: 'Shared with dept', Confirmed: 'Dept confirmed', Technical: 'Technical interview',
   HR: 'HR interview', Docs: 'Documents verified', Offer: 'Offer released', Prejoin: 'Pre-joining', Joined: 'Joined', Onboarded: 'Onboarded' };
+const FAST_NAMES = { Sourced: 'CV received', Shared: 'Sent to department', Confirmed: 'Dept confirmed (written)', Offer: 'Hiring confirmed', Joined: 'Joined', Onboarded: 'Onboarded' };
+const FAST_RESULTS = ['Suitable', 'Not suitable', 'Hold'];
+const FAST_HINTS = { Shared: 'Send the candidate to the department with the CV and the department form. Note who they were sent to.', Confirmed: 'The department writes its decision on the CV or the form. Record it here and attach that paper (a photo or scan).',
+  Offer: 'The Onboarding team confirms the hiring once the department has confirmed in writing. An offer letter is optional; attach it if one was signed.', Joined: 'Record the joining date. The appointment letter is given on the joining date; note it here. Collect the joining documents.',
+  Onboarded: 'Induction, buddy and the joining documents. Every document must be verified (or marked not applicable) unless an approved exception is recorded.' };
+const FAST_BTN = { Shared: 'Mark as sent to department', Confirmed: 'Record the department\u2019s confirmation', Offer: 'Confirm the hiring', Joined: 'Record the joining', Onboarded: 'Complete the onboarding' };
 const MOVE_LABELS = Object.assign({}, P_NAMES, { Rejected: 'rejected', 'On hold': 'on hold', Withdrawn: 'withdrawn', Backout: 'backout', Active: 'reactivated' });
 const DOC_STATES = ['Pending', 'Received', 'Verified', 'NA'];
 
@@ -4908,6 +4920,19 @@ function voicePreviewDialog(r) {
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
 }
 
+/* ---- Hiring routes (fast-track) ---- */
+async function renderRoutesAdmin(el) {
+  let C; try { C = await api('apiFastTrackConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Hiring routes</h2><span class="hint">${C.canEdit ? 'Head of HR and Admin can change this' : 'View only'}</span></div>
+    <p class="hint" style="margin-top:0">Positions at the levels ticked below follow the <b>fast-track route</b>: ${C.stages.map(esc).join(' \u2192 ')}. No JD or screening questions are needed; the department\u2019s written confirmation must be attached before the hiring is confirmed; the Onboarding team can confirm the hiring, record the joining and complete the onboarding. A position can be set by hand on its form. Everything else uses the standard route.</p>
+    <div class="rs-row" style="flex-wrap:wrap;gap:6px 18px">${C.levels.map(l => `<label class="chk"><input type="checkbox" class="rt-l" value="${esc(l)}" ${C.fast.includes(l) ? 'checked' : ''} ${C.canEdit ? '' : 'disabled'}> ${esc(l)}</label>`).join('')}</div>
+    <h4>Joining documents for a fast-track hire</h4><ul class="rs-changes">${C.docs.map(d => `<li>${esc(d[1])}</li>`).join('')}</ul>
+    ${C.canEdit ? '<div class="drawer-actions" style="position:static"><button class="btn" id="rtDefault">Use the default levels (W1\u2013W5 and T levels)</button><button class="btn primary" id="rtSave">Save</button></div>' : ''}</section>`;
+  const save = async (levels, btn, label) => { busy(btn, true, 'Saving\u2026'); try { await api('apiFastTrackConfigSave', levels); toast('Saved.'); renderRoutesAdmin(el); } catch (e) { toast(e, true); busy(btn, false, label); } };
+  if ($('#rtSave')) $('#rtSave').onclick = e => save($$('.rt-l', el).filter(x => x.checked).map(x => x.value), e.target, 'Save');
+  if ($('#rtDefault')) $('#rtDefault').onclick = e => save(C.defaults, e.target, 'Use the default levels (W1\u2013W5 and T levels)');
+}
+
 /* ---- Vendors and rules ---- */
 function bgvVendors(el, B, v) {
   const vend = B.vendors;
@@ -5861,15 +5886,22 @@ async function viewPipeline(v) {
   const closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
   const owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
   const canEdit = !replaced && !closedSt && owns;
+  const fastRoute = () => P.route === 'Fast-track';
+  const PN = st => (fastRoute() && FAST_NAMES[st]) || P_NAMES[st];
+  const stagesOf = () => fastRoute() ? P.fastStages : P_STAGES;
+  // The Onboarding team confirms the hiring, records the joining and completes the onboarding of fast-track positions of any recruiter.
+  const onboardOnly = !replaced && !closedSt && !owns && can('onboard');
+  const canNext = nx => canEdit || (onboardOnly && fastRoute() && ['Offer', 'Joined', 'Onboarded'].includes(nx));
   const renderBoard = () => {
     if (!$('#pBody')) return;
     const L = P.line;
     const posts = P.posts.filter(x => x.Status !== 'Closed');
-    const ready = [
+    const readyAll = [
       ['MRF approved', L.Approval_Status === 'Approved', (L.Approval_Status || 'not set') + (L.Approved_On ? ' ' + fmtDate(L.Approved_On) : '') + (L.MRF_Form_File ? ' \u00b7 form attached' : ' \u00b7 no signed form'), L.MRF_Form_File ? ['mrf', 'View MRF'] : null],
       ['JD final', P.docs.jdFinal, docStepText('JD', P.docs), L.JD_File ? ['jd', 'View JD'] : L.JD_Text ? ['jdtext', 'View JD'] : null],
       ['Questions final', P.docs.sqFinal, docStepText('SQ', P.docs), P.questions.length ? ['qs', 'View questions'] : null],
       ['Job posted', posts.length > 0, posts.length ? posts.map(x => x.Channel).join(', ') : P.docs.readyToPost ? 'ready to post' : 'after the JD and questions are final']];
+    const ready = fastRoute() ? [readyAll[0], ['Fast-track route', true, 'No JD or screening questions needed. Call the candidate, send to the department, attach its written confirmation, confirm the hiring, then join and onboard.']] : readyAll;
     const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
     const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
     $('#pBody').innerHTML = `
@@ -5879,9 +5911,9 @@ async function viewPipeline(v) {
         <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button><button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}</div></section>
       ${closedSt ? `<div class="note warn-note">${P.line.Position_Status === 'On Hold' ? 'On hold' : 'Closed without a hire (' + esc(P.line.Position_Status) + ')'}${P.line.Closure_Reason ? ': ' + esc(P.line.Closure_Reason) : ''}. This board is read-only${P.line.Position_Status === 'On Hold' ? ' until the position is resumed' : ''}.${P.line.Position_Status === 'On Hold' && owns ? ' <button class="btn sm" id="pResume">Resume position</button>' : ''}</div>` : ''}
       <div id="pTasks"></div>
-      <div class="board" role="list">${P_STAGES.map(s => {
+      <div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
         const cards = shown.filter(a => a.Stage === s);
-        return `<section class="col${cards.length ? '' : ' empty'}" role="listitem" aria-label="${P_NAMES[s]}${cards.length ? '' : ', no candidates'}" title="${P_NAMES[s]}"><header><span>${P_NAMES[s]}</span><span class="pcount">${cards.length}</span></header>
+        return `<section class="col${cards.length ? '' : ' empty'}" role="listitem" aria-label="${PN(s)}${cards.length ? '' : ', no candidates'}" title="${PN(s)}"><header><span>${PN(s)}</span><span class="pcount">${cards.length}</span></header>
           ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
             <b>${esc(a.cand.name || a.Candidate_ID)}</b>
             <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
@@ -6037,19 +6069,21 @@ async function viewPipeline(v) {
     });
   };
   const openApp = a => {
-    const i = P_STAGES.indexOf(a.Stage), next = P_STAGES[i + 1];
+    const i = P_STAGES.indexOf(a.Stage), next = fastRoute() ? (P.fastStages.find(x => P_STAGES.indexOf(x) > i) || '') : P_STAGES[i + 1];
     const reached = {}; a.history.forEach(h => { if (h.to && h.from !== h.to) reached[h.to] = h.at.split(',')[0]; });
     const nextFields = stageFields(next, a);
     const active = a.Status === 'Active';
     const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
-      <ol class="track">${P_STAGES.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${P_NAMES[s]}</span><small>${esc(reached[s] || '')}</small></li>`).join('')}</ol>
+      <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); return `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${PN(s)}</span><small>${esc(reached[s] || '')}</small></li>`; }).join('')}</ol>
       <div class="app-grid3">
         <div>
-          ${canEdit && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${P_NAMES[next]}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
+          ${canEdit && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apScreen">${a.screen ? 'Continue screening' : 'Record screening'}</button></div></section>` : ''}
-          ${canEdit && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${P_NAMES[next]}</h3><div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
-            <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">Move to ${P_NAMES[next]}</button></div></section>` : ''}
+          ${canNext(next) && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3>${fastRoute() ? `<p class="hint">${esc(FAST_HINTS[next] || '')}</p>` : ''}<div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
+            <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">${fastRoute() ? esc(FAST_BTN[next] || 'Move to ' + PN(next)) : 'Move to ' + PN(next)}</button></div></section>` : ''}
+          ${fastRoute() && active && (canEdit || onboardOnly) ? `<section class="app-sec"><h3>Papers</h3><p class="hint">Attach or replace the papers at any time.</p><div id="apPapers">${wrapForm(form([{ k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation', t: 'file', wide: true }, { k: 'Offer_Letter_File', l: 'Offer letter (if any)', t: 'file', wide: true }, { k: 'Appointment_Letter_File', l: 'Appointment letter', t: 'file', wide: true }, { k: 'Docs_File', l: 'Joining documents', t: 'file', wide: true }], a))}</div>
+            <div class="drawer-actions" style="position:static"><button class="btn" id="apPapersUp">Upload chosen files</button></div></section>` : ''}
           ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
             ${a.followups.length ? `<ul class="work">${a.followups.map(x => `<li><b>${fmtDate(x.date)}</b> ${esc(x.mode)} \u00b7 <span class="risk r-${esc(x.risk)}">${esc(x.risk)}</span> ${esc(x.response)}${x.note ? ` \u2014 ${esc(x.note)}` : ''}${x.next ? ` \u00b7 next ${fmtDate(x.next)}` : ''}</li>`).join('')}</ul>` : '<p class="hint">No check-ins logged yet.</p>'}
             ${canEdit && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
@@ -6089,6 +6123,13 @@ async function viewPipeline(v) {
       catch (e) { toast(e, true); busy(b, false); }
     };
     bindAttachmentViews('APP', a.App_ID, d);
+    if ($('#apPapersUp', d)) $('#apPapersUp', d).onclick = async e => {
+      const root = $('#apPapers', d), bad = checkAttachments(root); if (bad) return toast(bad, true);
+      if (!$$('.att-input', root).some(x => x.files[0])) return toast('Choose a file first.', true);
+      busy(e.target, true, 'Uploading\u2026');
+      try { await uploadAttachments('APP', a.App_ID, root); const np = await api('apiPipeline', f.line); toast('Files uploaded.'); after(np); }
+      catch (err) { toast(err, true); busy(e.target, false, 'Upload chosen files'); }
+    };
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
@@ -6099,6 +6140,8 @@ async function viewPipeline(v) {
     const after = np => { reload(np); const na = np.apps.find(x => x.App_ID === a.App_ID); if (na) openApp(na); };
     if ($('#apMove')) $('#apMove').onclick = async () => {
       const root = $('#apNext'); const bad = checkAttachments(root); if (bad) return toast(bad, true);
+      if (fastRoute() && next === 'Confirmed' && !a.Dept_Confirm_File && !$$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0])) return toast('Attach the department\u2019s written confirmation (a photo, scan or PDF of the CV or form with its remarks).', true);
+      if (fastRoute() && next === 'Offer' && !a.Dept_Confirm_File) return toast('The department\u2019s written confirmation is not attached yet. Attach it under Papers, then confirm the hiring.', true);
       const payload = collectStage(next, root, a);
       const b = $('#apMove'); busy(b, true, 'Saving\u2026');
       try {
@@ -6111,8 +6154,8 @@ async function viewPipeline(v) {
         }
         if ($$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
         await refreshLine(a.Line_ID);
-        toast(`${a.cand.name} moved to ${P_NAMES[next]}`); after(np);
-      } catch (e) { toast(e, true); busy(b, false, `Move to ${P_NAMES[next]}`); }
+        toast(`${a.cand.name} moved to ${PN(next)}`); after(np);
+      } catch (e) { toast(e, true); busy(b, false, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
     };
     $$('[data-st]', d).forEach(b => b.onclick = async () => {
       try {
@@ -6135,6 +6178,18 @@ async function viewPipeline(v) {
   };
   const stageFields = (s, a) => {
     const note = { k: 'note', l: 'Note', wide: true };
+    if (fastRoute()) {   // fast-track route
+      const docFields = P.docSections.map(([k, n]) => ({ k: 'doc_' + k, l: n, t: 'select', opts: DOC_STATES, noBlank: true }));
+      if (s === 'Shared') return [{ k: 'note', l: 'Sent to (department / HOD), and anything the candidate was told', wide: true }];
+      if (s === 'Confirmed') return [{ k: 'result', l: 'Department\u2019s decision', t: 'select', opts: FAST_RESULTS, noBlank: true, req: true }, { k: 'by', l: 'Confirmed by (name in the department)', req: true }, { k: 'date', l: 'Date of the confirmation', t: 'date', req: true },
+        { k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation (the CV or form with its remarks)', t: 'file', wide: true, hint: 'Required: a photo, scan or PDF. The hiring cannot be confirmed without it.' }, note];
+      if (s === 'Offer') return [{ k: 'confirmedOn', l: 'Hiring confirmed on', t: 'date', req: true }, { k: 'edoj', l: 'Expected joining date (optional)', t: 'date' }, { k: 'ctc', l: 'Wage / CTC offered (optional)' },
+        { k: 'Offer_Letter_File', l: 'Signed offer letter (only if one was given)', t: 'file', wide: true }, note];
+      if (s === 'Joined') return [{ k: 'doj', l: 'Actual joining date', t: 'date', req: true }, { k: 'appointmentDate', l: 'Appointment letter given on (optional)', t: 'date' },
+        { k: 'Appointment_Letter_File', l: 'Appointment letter (copy)', t: 'file', wide: true }].concat(docFields).concat([{ k: 'Docs_File', l: 'Joining documents (combined file)', t: 'file', wide: true }, note]);
+      if (s === 'Onboarded') return [{ k: 'induction', l: 'Induction completed on', t: 'date', req: true }, { k: 'buddy', l: 'Buddy assigned', req: true }, { k: 'hrms', l: 'HRMS, J-controls and access set up', t: 'select', opts: ['Yes', 'No'], noBlank: true }].concat(docFields)
+        .concat([{ k: 'exception', l: 'Approved exception (if any document is not verified)', wide: true, hint: 'Conditional joining needs Head HR / Plant Head approval.' }, { k: 'Docs_File', l: 'Joining documents (combined file)', t: 'file', wide: true }, note]);
+    }
     if (s === 'Screened') return P.questions.map((q, k) => ({ k: 'q' + k, l: q, wide: true })).concat([note]);
     if (s === 'Shared') return [{ k: 'note', l: 'Shared with (HOD / department) and how', wide: true }];
     if (s === 'Confirmed') return [{ k: 'note', l: 'Department confirmation (who confirmed, any remarks)', wide: true }];
@@ -6154,6 +6209,13 @@ async function viewPipeline(v) {
   };
   const stageDefaults = (s, a) => {
     const o = {};
+    if (fastRoute()) {
+      if (s === 'Confirmed') { o.result = 'Suitable'; o.date = today(); o.Dept_Confirm_File = a.Dept_Confirm_File || ''; }
+      if (s === 'Offer') { o.confirmedOn = today(); o.edoj = P.line.EDOJ || ''; o.Offer_Letter_File = a.Offer_Letter_File || ''; }
+      if (s === 'Joined') { o.doj = P.line.EDOJ && P.line.EDOJ <= today() ? P.line.EDOJ : today(); o.Appointment_Letter_File = a.Appointment_Letter_File || ''; o.Docs_File = a.Docs_File || ''; P.docSections.forEach(([k]) => { o['doc_' + k] = (a.Docs_JSON || {})[k] || 'Pending'; }); }
+      if (s === 'Onboarded') { o.induction = today(); o.hrms = 'Yes'; o.Docs_File = a.Docs_File || ''; P.docSections.forEach(([k]) => { o['doc_' + k] = (a.Docs_JSON || {})[k] || 'Pending'; }); }
+      return o;
+    }
     if (s === 'Technical' || s === 'HR') o.date = today();
     if (s === 'Docs') P.docSections.forEach(([k]) => { o['doc_' + k] = (a.Docs_JSON || {})[k] || 'Pending'; });
     if (s === 'Offer') { o.offerDate = today(); o.edoj = P.line.EDOJ || ''; }
@@ -6165,6 +6227,14 @@ async function viewPipeline(v) {
   };
   const collectStage = (s, root, a) => {
     const raw = readForm(root); const out = { note: raw.note };
+    if (fastRoute()) {
+      const docs = () => { const d = {}; P.docSections.forEach(([k]) => { d[k] = raw['doc_' + k]; }); return d; };
+      if (s === 'Confirmed') Object.assign(out, { result: raw.result, by: raw.by, date: raw.date });
+      if (s === 'Offer') Object.assign(out, { confirmedOn: raw.confirmedOn, offerDate: raw.confirmedOn, edoj: raw.edoj, ctc: raw.ctc });
+      if (s === 'Joined') Object.assign(out, { doj: raw.doj, appointmentDate: raw.appointmentDate, docs: docs() });
+      if (s === 'Onboarded') Object.assign(out, { onboard: { induction: raw.induction, buddy: raw.buddy, hrms: raw.hrms }, docs: docs(), exception: raw.exception });
+      return out;
+    }
     if (s === 'Screened') { out.answers = {}; P.questions.forEach((q, k) => { out.answers[q] = raw['q' + k] || ''; }); }
     if (s === 'Technical' || s === 'HR') Object.assign(out, { date: raw.date, result: raw.result, by: raw.by });
     if (s === 'Docs') { out.docs = {}; P.docSections.forEach(([k]) => { out.docs[k] = raw['doc_' + k]; }); out.exception = raw.exception; }

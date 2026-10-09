@@ -43,6 +43,7 @@ function e2eRun_(trash) {
   t('A12 weekly summary status', function () { return typeof apiWeeklyStatus().on === 'boolean'; });
   t('A13 admin info', function () { return apiAdminInfo().hasOwnProperty('lastBackup'); });
   t('A14 pipeline alerts', function () { return !!apiPipelineAlerts().counts; });
+  t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 
   const rec = (boot && boot.recruiters[0] && (boot.recruiters[0].Recruiter || boot.recruiters[0])) || 'Tanaaz';
   const dept = (lines.filter(function (l) { return l.Dept; })[0] || {}).Dept || 'HR-HUMAN RESOURCES';
