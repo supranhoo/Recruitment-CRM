@@ -16,6 +16,7 @@ function normRole_(r) {
   if (s === 'admin' || s === 'administrator') return ROLES.ADMIN;
   if (s === 'head' || s === 'headhr' || s === 'headofhr' || s === 'hrhead') return ROLES.HEAD;
   if (s === 'talead' || s === 'leadta' || s === 'tl' || s === 'lead') return ROLES.TALEAD;
+  if (s === 'onboarding' || s === 'onboard' || s === 'onboardingteam' || s === 'onboardingexecutive') return ROLES.ONBOARDING;
   return ROLES.RECRUITER;
 }
 /** A role's built-in permissions plus the CTC permissions the admin has given it (CTC calculator > Access). */

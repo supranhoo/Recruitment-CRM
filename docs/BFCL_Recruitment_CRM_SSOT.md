@@ -254,6 +254,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Observations** | `Obs_ID` (OBS-) | Process-adherence findings: Obs_Date, Line_ID, MRF_No, Recruiter, Type, Description, Status. |
 | **Audit_Checks** | `Audit_ID` (AUD-) | Monthly 20 % sample: Month, Entity, Record_ID, Label, Recruiter, Result (Pending/Correct/Error), Error_Field, Critical, Remarks. |
 | **TAT_Rules** | `Rule_ID` (TR-) | Version_ID, Effective_From, Level, Standard_Days, Grace_Days, Risk_Pct, Status (Active/Superseded), Note, Created_By/At. |
+| **MRF / Applications (fast-track columns)** | MRF: Hiring_Route (blank = by grade / Fast-track / Standard). Applications: Dept_Confirm_On, Dept_Confirm_By, Dept_Confirm_File, Appointment_Date, Appointment_Letter_File | Schema 40 (ADR-047) |
 | **Voice_Calls** | Call_ID (VCL-), App_ID, Candidate_ID, Line_ID, Phone_Last4, Status, Status_Note, Provider_Call_ID, Questions_Version, Started_By/At, Completed_At, Transcript, Answers_JSON, Draft_Applied, Updated_By/At | Schema 38 (ADR-045). Admin only |
 | **Candidate_Profiles** | Candidate_ID (key), Profile_JSON, Source, Parsed_On, Reviewed_By, Reviewed_On, Updated_By, Updated_At | Schema 35 (ADR-044). One row per candidate; JSON holds the facts, checks are calculated on read |
 | **CV_Parse_Log** | `Log_ID` | Candidate_ID, File_Name, Parsed_JSON, Saved_JSON, Chars, By, At (parser pilot accuracy). |
@@ -549,6 +550,14 @@ Server-side, paged search. Every typed word must match somewhere (name, mobile, 
 - **Only empty form fields are filled**; the message says how many already had a value. The recruiter reviews before saving. The **duplicate check** runs immediately (active + archive).
 - **Pilot measurement:** parsed vs saved values are logged per candidate (`CV_Parse_Log`); Admin → Tools → **CV parser accuracy** shows per field how often the value was kept, corrected or missed. Target: 30–50 real CVs before deciding whether any AI option is needed. Benchmark at v42: 43/43 fields correct on 8 test CVs in the browser; 52/52 on the sample suite.
 - **"Show the text that was read"** helps diagnose misses (missing text = OCR/format issue; present text = parser pattern gap).
+
+### 8.8 Fast-track hiring route (`FastTrack.gs`; ADR-047; schema 40)
+- **Who:** positions at fast-track levels (default W1–W5 and T levels; Admin → Hiring routes) or set by hand on the position form (Head of HR / TA Lead). Everything else is the standard route.
+- **Steps:** CV received → Sent to department → Department confirmed (written) → Hiring confirmed → Joined → Onboarded. The other stages are skipped, not removed (history note lists them), so reports and KPIs are unchanged. KPI: a Suitable department decision counts as shortlisted, interview and selected.
+- **Gates:** the department's decision, name and date are recorded at Confirmed; the hiring cannot be confirmed (Offer) without the department's written confirmation file; Onboarded needs the W document pack (Aadhaar, PAN, family details, spouse and children Aadhaar for ESIC, photographs, basic education, identity proof, birth proof) verified, or an approved exception. Offer letter is optional; the appointment letter date and file are recorded at Joined.
+- **Onboarding role** (`onboard` permission): may confirm the hiring, record the joining and complete onboarding of any fast-track position, and nothing else. Create users with role "Onboarding".
+- **To-dos:** JD, questions, CV sharing, interview and offer-acceptance to-dos are not raised for fast-track positions.
+- Later phases: referral slip / department form PDF, walk-in "Hire now", Onboarding to-dos, fast-track time-to-hire reports.
 
 ## 9. Candidate pipeline
 
@@ -959,6 +968,11 @@ Context: HR often fills a vacancy by hiring in a neighbouring grade. Per grade t
 Decision: cover is computed inside one department and one pay band, nearest grade first, and only the residual vacancy and excess use warning colours. Substitutions are shown neutrally, listed in a Grade mix monitor, and an upgrade keeps a one-line note with approver and review date (Head of HR, Admin). Monitoring is count-based; a budget CTC per grade table is left for later.
 Consequences: the vacancy figures drop against the per-grade view while net vacancy (315) is unchanged; bands are a constant (`ORG_BANDS_`); notes must be reviewed by date; a hire in a covered grade is flagged as "check before hiring".
 
+**ADR-047 — Blue-collar (W, T) hiring uses a fast-track route that skips stages rather than removing them** (9 Oct, user decisions)
+Context: for helpers and ITI trainees the multi-stage process is slow; the real process is call, send to the department, written confirmation, hiring confirmation by the onboarding team, onboarding.
+Decision: reuse the 11 stages and skip the unneeded ones on fast-track positions; gate the hiring on the department's written confirmation file; short W document pack; new Onboarding role limited to the last three stages; levels configurable.
+Consequences: reports, history and KPIs keep working; the fast-track time-to-hire needs its own definition (later phase).
+
 **ADR-045 — The organogram is a separate structure mapped to the existing departments; headcount is an imported snapshot** (7 Oct, user decisions)
 Context: HR defined a new structure (16 divisions, 59 departments, grades M / W / T, division heads and HODs) and an Approved vs Existing Manpower report, while positions and candidates carry the earlier 85 department names.
 Decision: keep `M_Departments` and `MRF` untouched; add `Org_*` sheets and a mapping from each CRM department to a new one. Existing manpower is imported from the HR report as a dated snapshot (replace on each import), not typed in; open positions are joined live through the mapping. Everyone signed in can view; `org_manage` (Head of HR, Admin) imports and edits.
@@ -1060,6 +1074,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Fast-track hiring for W and T levels** (schema 40; new `FastTrack.gs`; ADR-047; §8.8)
+- New route per position (by grade or set by hand), Hiring routes admin tab, Onboarding role, department written-confirmation gate, W document pack, to-do suppression. `SCHEMA_VERSION` 40. Tests: E2E A15; local 40-case harness.
+
 **Unreleased — Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
 - A seat filled at another grade of the same band, in the same department, is covered, not vacant and not excess. Key figures now show truly vacant, covered by another grade, true over-strength, and truly vacant with no MRF; the net vacant figure stays beside them. Covered seats use a neutral marker; only residuals use warning colours.
 - New Grade mix tab (substitutions with direction, grade steps, note status and review date, CSV); department drawer lists the substitutions; Admin → Org structure → Grade notes.
@@ -1074,6 +1091,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 **Unreleased — Voice agent form fixes** (no schema change)
 - The webhook box showed `https: <div class=` : a literal `//` inside the page script is mangled by Apps Script's page handling (the reason the CDN addresses are written `https:\/\/`). Written the same way. The two tick boxes were stretched to the full width of their column (`.field input{width:100%}`) and pushed their text to the right; check boxes inside a field are now their natural size. **Rule: never write `//` inside App.html script text; write `\/\/` or build it from `String.fromCharCode(47, 47)`.**
+
+**Unreleased — Voice call section always visible to the Admin** (no schema change)
+- The Voice screening call section on a pipeline card was hidden when the position had no confirmed screening questions, so the Admin could not tell why it was missing. It now shows on every active card for the Admin; without confirmed questions it says so and names the steps to finish (JD final, Questions final in JD Master) instead of the buttons.
 
 **Unreleased — Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
 - The Admin → Voice agent page failed with *The database has no sheet named "Voice_Calls"*: the schema step that creates it did not run (the stored schema number was already at or above the code's, most likely because another build with the same number had been deployed to the same script). The voice functions now create the call-log sheet themselves when it is missing (as the CV profile sheet already did), and the schema number is raised to 39 so the step runs once everywhere. **Rule for new sheets:** create them from a `xxxSchema_()` called both from `ensureSchema_` and from the first read, so a skipped schema step cannot break a page; and when several builds are deployed to one script, give each a different schema number.

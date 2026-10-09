@@ -115,7 +115,7 @@ function apiPipeline(lineId) {
   if (line.Replaced_By && byId[line.Replaced_By]) l.replacedByMrf = String(byId[line.Replaced_By].MRF_No || line.Replaced_By);
   if (line.Parent_Line_ID && byId[line.Parent_Line_ID]) l.parentMrf = String(byId[line.Parent_Line_ID].MRF_No || line.Parent_Line_ID);
   const qs = sqTexts_(line.Screening_Questions);
-  return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: DOC_SECTIONS, now: Date.now(), interviews: interviewsFor_(lineId) };
+  return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: isFast_(line) ? FAST_DOC_SECTIONS_ : DOC_SECTIONS, route: routeOf_(line), fastStages: FAST_STAGES_, now: Date.now(), interviews: interviewsFor_(lineId) };
 }
 
 function apiAddToPipeline(candidateId, lineId) {
@@ -140,7 +140,8 @@ function apiMoveStage(appId, toStage, data) {
   data = data || {};
   if (STAGES.indexOf(toStage) < 0) throw new Error('Unknown stage.');
   const app = appOf_(appId);
-  const line = requireLineEdit_(u, app.Line_ID);
+  const line0 = lineOf_(app.Line_ID);
+  const line = canOnboardMove_(u, line0, toStage) ? line0 : requireLineEdit_(u, app.Line_ID);   // the Onboarding team may move fast-track cards to Hiring confirmed, Joined and Onboarded
   requireActiveLine_(line);
   if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them first.');
   const from = String(app.Stage), fi = STAGES.indexOf(from), ti = STAGES.indexOf(toStage);
@@ -152,6 +153,8 @@ function apiMoveStage(appId, toStage, data) {
   if (ti < fi) daySnapDropAll_();
   const patch = { Stage: toStage, Stage_Since: new Date() };
   let outcome = '';
+  let fastOut = null;
+  if (ti > fi && isFast_(line)) { fastTrackSchema_(); fastOut = fastMove_(u, app, line, toStage, data); }   // fast-track route: its own checks and fields
   if (toStage === 'Screened') {
     const scr = scrOf_(appId);
     if (!data._fromScreening && sqFinalFor_(app.Line_ID) && !(scr && String(scr.Status) === 'Complete')) throw new Error('Record the screening first (candidate \u2192 Screening): this position has final screening questions.');
@@ -200,8 +203,9 @@ function apiMoveStage(appId, toStage, data) {
     if (!ob.induction || !ob.buddy) throw new Error('Record the induction date and the buddy assigned.');
     patch.Onboard_JSON = JSON.stringify(ob);
   }
+  if (fastOut) { Object.keys(fastOut.patch).forEach(function (k) { patch[k] = fastOut.patch[k]; }); if (fastOut.outcome) outcome = fastOut.outcome; }
   update_(T.APP, appId, patch, u);
-  appendHistory_(app, from, toStage, outcome, data.note, u);
+  appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
   if (toStage === 'Offer' || toStage === 'Joined') bgvTouchLine_(app.Line_ID);
   return apiPipeline(app.Line_ID);
 }

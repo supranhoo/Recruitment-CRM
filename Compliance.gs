@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '39';
+const SCHEMA_VERSION = '40';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -44,6 +44,7 @@ function ensureSchema_() {
     bgvSchema_();
     profileSchema_();
     voiceSchema_();
+    fastTrackSchema_();
     orgSchema_();
     try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); }
     dayStatusSchema_();
@@ -186,7 +187,7 @@ function apiAuditSave(data) {
 const DOC_FIELDS = {
   MRF: { BGV_Prev_Org_File: 'BGV_Prev', BGV_Current_Org_File: 'BGV_Current', JD_File: 'JD', MRF_Form_File: 'MRF_Form', Notice_Proof_File: 'Notice_Proof' },
   TEX: { Proof_File: 'Exemption_Proof' },
-  APP: { Docs_File: 'Joining_Docs', Offer_Letter_File: 'Offer_Letter' },
+  APP: { Docs_File: 'Joining_Docs', Offer_Letter_File: 'Offer_Letter', Dept_Confirm_File: 'Dept_Confirmation', Appointment_Letter_File: 'Appointment_Letter' },
   CAND: { Psychometric_File: 'Psychometric' },
   BGV: { Consent_File: 'BGV_Consent', Report_File: 'BGV_Report', Initiation_Proof_File: 'BGV_Initiation' }
 };
@@ -214,7 +215,7 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   const u = currentUser_(); ensureSchema_();
   const t = docTarget_(entity, id, field);
   if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or a TA Lead or the Head of HR can attach files to this position.');
-  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l)) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
+  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l) && !(can_(u, 'onboard') && isFast_(l))) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
   if (entity === 'TEX') {
     const l = lineOf_(t.rec.Line_ID);
     if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
