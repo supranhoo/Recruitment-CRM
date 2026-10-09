@@ -1074,6 +1074,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Daily log: recruiter picker inside Log activity** (no schema change)
+- A Recruiter picker sits at the top of the Log activity form: "My positions" by default (a recruiter with none of their own starts on All recruiters), each colleague, Not assigned, or All recruiters (positions grouped by recruiter). The Position list follows it, with a count, and is pre-selected when there is only one.
+- The history below follows the same picker (the separate Recruiter filter at the bottom is removed; From and To stay). After saving, the recruiter and position stay selected.
+- **An entry counts for the position's recruiter** when a lead or colleague types it (`apiSaveFunnel`); `Created_By` still records who typed it.
+
 **Unreleased — Fast-track hiring for W and T levels** (schema 40; new `FastTrack.gs`; ADR-047; §8.8)
 - New route per position (by grade or set by hand), Hiring routes admin tab, Onboarding role, department written-confirmation gate, W document pack, to-do suppression. `SCHEMA_VERSION` 40. Tests: E2E A15; local 40-case harness.
 

@@ -1315,9 +1315,39 @@ async function renderLineCands(p) {
   $$('tr[data-id]', el).forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
 }
 
-function activeLineOptions(selected) {
-  const mine = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status) && (isLead() || String(p.Recruiter).trim() === S.boot.user.recruiter));
-  return opts(mine.sort((a, b) => String(a.MRF_No).localeCompare(String(b.MRF_No))).map(p => [p.Line_ID, lineLabel(p)]), selected);
+const DL_ALL = '*', DL_NONE = '-';
+function dlLines() { return S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)); }
+function dlRecOf(p) { return String(p.Recruiter || '').trim() || DL_NONE; }
+/** The recruiters who have active positions, me first. */
+function dlRecruiters() {
+  const me = S.boot.user.recruiter, set = {}; dlLines().forEach(p => { set[dlRecOf(p)] = (set[dlRecOf(p)] || 0) + 1; });
+  const names = Object.keys(set).filter(x => x !== me && x !== DL_NONE).sort((a, b) => a.localeCompare(b));
+  return { me, counts: set, names, none: set[DL_NONE] || 0, total: dlLines().length };
+}
+/** My positions by default; a recruiter with none of their own starts on everyone's. */
+function dlDefaultRec() {
+  const r = dlRecruiters(); if (S.dlRec && (S.dlRec === DL_ALL || r.counts[S.dlRec])) return S.dlRec;
+  return r.counts[r.me] ? r.me : DL_ALL;
+}
+function dlRecOptions(sel) {
+  const r = dlRecruiters();
+  return `${r.counts[r.me] ? `<option value="${esc(r.me)}"${sel === r.me ? ' selected' : ''}>My positions (${esc(r.me)}) \u00b7 ${r.counts[r.me]}</option>` : ''}
+    ${r.names.map(n => `<option value="${esc(n)}"${sel === n ? ' selected' : ''}>${esc(n)} \u00b7 ${r.counts[n]}</option>`).join('')}
+    ${r.none ? `<option value="${DL_NONE}"${sel === DL_NONE ? ' selected' : ''}>Not assigned \u00b7 ${r.none}</option>` : ''}
+    <option value="${DL_ALL}"${sel === DL_ALL ? ' selected' : ''}>All recruiters \u00b7 ${r.total}</option>`;
+}
+function activeLineOptions(selected, rec) {
+  const byMrf = (a, b) => String(a.MRF_No).localeCompare(String(b.MRF_No));
+  let ls = dlLines();
+  const sel = selected && S.positions.find(p => p.Line_ID === selected);
+  if (rec && rec !== DL_ALL) ls = ls.filter(p => dlRecOf(p) === rec);
+  if (sel && !ls.includes(sel)) ls = ls.concat([sel]);
+  if (rec === DL_ALL) {
+    const groups = {}; ls.forEach(p => { (groups[dlRecOf(p)] = groups[dlRecOf(p)] || []).push(p); });
+    return '<option value=""></option>' + Object.keys(groups).sort((a, b) => a.localeCompare(b)).map(g => `<optgroup label="${esc(g === DL_NONE ? 'Not assigned' : g)}">${groups[g].sort(byMrf).map(p => `<option value="${esc(p.Line_ID)}"${p.Line_ID === selected ? ' selected' : ''}>${esc(lineLabel(p))}</option>`).join('')}</optgroup>`).join('');
+  }
+  const o = opts(ls.sort(byMrf).map(p => [p.Line_ID, lineLabel(p)]), selected, false);
+  return (ls.length === 1 ? '' : '<option value=""></option>') + o;
 }
 function dailyFormHtml(fixedLine, data) {
   data = data || { Entry_Date: today() };
@@ -1325,7 +1355,8 @@ function dailyFormHtml(fixedLine, data) {
   if (String(data.Entry_Date) >= (S.boot.cutover || '2026-10-05')) { data = Object.assign({}, data); FUNNEL_PIPED_.forEach(k => { data[k] = ''; }); }
   return `<div class="dailyform" data-entry="${esc(data.Entry_ID || '')}">
     <div class="grid">
-      ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : `<div class="field wide"><label for="dl_line">Position *</label><select id="dl_line" name="Line_ID">${activeLineOptions(data.Line_ID)}</select></div>`}
+      ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : (() => { const ln = data.Line_ID && S.positions.find(p => p.Line_ID === data.Line_ID), rec = ln ? dlRecOf(ln) : dlDefaultRec(); return `<div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
+        <div class="field"><label for="dl_line">Position *</label><select id="dl_line" name="Line_ID">${activeLineOptions(data.Line_ID, rec)}</select><span class="hint dl-count"></span></div>`; })()}
       <div class="field"><label for="dl_date">Date *</label><input id="dl_date" type="date" name="Entry_Date" value="${esc(data.Entry_Date)}" max="${today()}"></div>
       <div class="field"><label for="dl_fb">Feedback from dept</label><select id="dl_fb" name="FB_From_Dept">${opts(['Yes','No','Pending'], data.FB_From_Dept)}</select></div>
     </div>
@@ -1344,6 +1375,12 @@ function bindDailyForm(root, after) {
   };
   if ($('[name=Entry_Date]', f)) $('[name=Entry_Date]', f).addEventListener('change', syncPipe);
   syncPipe();
+  const recSel = $('#dl_rec', f), lineSel = $('#dl_line', f);
+  if (recSel && lineSel) {
+    const count = () => { const n = $$('option', lineSel).filter(o => o.value).length, c = $('.dl-count', f); if (c) c.textContent = n + (n === 1 ? ' position' : ' positions'); };
+    recSel.onchange = () => { S.dlRec = recSel.value; lineSel.innerHTML = activeLineOptions('', recSel.value); count(); };
+    count();
+  }
   $('.dl-save', f).onclick = async () => {
     const d = readForm(f); d.Entry_ID = f.dataset.entry;
     if ((d.Entry_Date || today()) >= (S.boot.cutover || '2026-10-05')) FUNNEL_PIPED_.forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
@@ -1391,13 +1428,14 @@ document.addEventListener('click', e => {
 
 async function viewDaily(v) {
   await loadPositions();
-  const f = S.dailyFilter = S.dailyFilter || { recruiter: isLead() ? '' : S.boot.user.recruiter, from: daysAgo(14), to: today() };
+  const f = S.dailyFilter = S.dailyFilter || { recruiter: '', from: daysAgo(14), to: today() };
+  S.dlRec = dlDefaultRec(); f.recruiter = S.dlRec === DL_ALL ? '' : S.dlRec === DL_NONE ? '' : S.dlRec;
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily log</h1><p>Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports.</p></div></div>
     <div id="dlTodo" class="todo-strip ov-todo">${skb('46%', 13)}${skb('140px', 28)}</div>
     <section class="panel" id="dailyNew"><h2>Log activity</h2>${dailyFormHtml(null)}</section>
-    <div class="filters" style="margin-top:22px">
-      <div class="field"><label for="dfrec">Recruiter</label><select id="dfrec">${opts(S.boot.recruiters, f.recruiter)}</select></div>
+    <p class="hint" style="margin:18px 0 0">History below follows the Recruiter chosen above.</p>
+    <div class="filters" style="margin-top:6px">
       <div class="field"><label for="dffrom">From</label><input id="dffrom" type="date" value="${f.from}"></div>
       <div class="field"><label for="dfto">To</label><input id="dfto" type="date" value="${f.to}"></div>
     </div>
@@ -1407,7 +1445,7 @@ async function viewDaily(v) {
     $('#dailyList').innerHTML = funnelTable(rows, true);
     bindEntryEdits($('#dailyList'), rows, load);
   };
-  $('#dfrec').onchange = e => { f.recruiter = e.target.value; load(); };
+  $('#dailyNew').addEventListener('change', e => { if (e.target.id !== 'dl_rec') return; f.recruiter = [DL_ALL, DL_NONE].includes(e.target.value) ? '' : e.target.value; load(); });
   $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
   $('#dfto').onchange = e => { f.to = e.target.value; load(); };
   api('apiMyTasks').then(res => {
@@ -1418,7 +1456,7 @@ async function viewDaily(v) {
       <button class="btn sm" id="dlTodoOpen">Open my to-do</button>`;
     el.hidden = false; $('#dlTodoOpen').onclick = () => go('myday', true);
   }).catch(() => { const el = $('#dlTodo'); if (el) el.remove(); });
-  bindDailyForm($('#dailyNew'), function again() { $('#dailyNew').innerHTML = '<h2>Log activity</h2>' + dailyFormHtml(null); bindDailyForm($('#dailyNew'), again); load(); });
+  bindDailyForm($('#dailyNew'), function again(saved) { $('#dailyNew').innerHTML = '<h2>Log activity</h2>' + dailyFormHtml(null, { Entry_Date: today(), Line_ID: saved && saved.Line_ID }); bindDailyForm($('#dailyNew'), again); load(); });
   load();
 }
 
