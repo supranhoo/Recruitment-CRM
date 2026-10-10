@@ -89,12 +89,13 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
  * calculations; 'ctc_codes' = change the structure choices and allowances; 'ctc_issue' = make and issue letters; 'ctc_approve' = approve letters
  * when approval is on. The ctc_* permissions other than ctc_rules can be given to other roles in CTC calculator > Access (Role_Access sheet).
  * 'voice_agent' = set up and use the voice screening call while it is being tested (Admin only, never grantable).
+ * 'voice_review' = see a voice call's result and rate, edit and complete the screening from it: the owner recruiter for own positions, leads for all. It does not place calls.
  * 'onboard' = the Onboarding team: confirm the hiring, record the joining and complete the onboarding of fast-track (W and T level) positions of any recruiter.
  */
 const PERMS_ = {
-  'Recruiter': [],
+  'Recruiter': ['voice_review'],
   'Onboarding': ['onboard'],
-  'TA Lead': ['lead', 'tat_view', 'jd_manage'],
-  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent']
+  'TA Lead': ['lead', 'tat_view', 'jd_manage', 'voice_review'],
+  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'voice_review'],
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent', 'voice_review']
 };
