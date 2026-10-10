@@ -137,13 +137,32 @@ function voiceItemsCompact_(items) {
   return items.map(function (i) { const o = { id: String(i.id), sec: i.sec, label: String(i.label || '').slice(0, 60), q: String(i.q || '').slice(0, 300), type: i.type || 'text', need: String(i.need || '').slice(0, 200), imp: i.imp || '', ko: !!i.ko };
     ['min', 'max', 'partly', 'expect'].forEach(function (k) { if (i[k] !== undefined && i[k] !== null && i[k] !== '') o[k] = i[k]; }); return o; });
 }
+
+/** Devanagari digits and the common Hindi number words as digits, so "पंद्रह दिन" reads as 15 days. */
+const VOICE_HI_NUM_ = [['शून्य', 0], ['ग्यारह', 11], ['बारह', 12], ['तेरह', 13], ['चौदह', 14], ['पंद्रह', 15], ['पन्द्रह', 15], ['पन्द्रा', 15], ['सोलह', 16], ['सत्रह', 17], ['अठारह', 18], ['उन्नीस', 19], ['बीस', 20], ['इक्कीस', 21], ['बाईस', 22], ['तेईस', 23], ['चौबीस', 24], ['पच्चीस', 25],
+  ['छब्बीस', 26], ['सत्ताईस', 27], ['अट्ठाईस', 28], ['उनतीस', 29], ['तीस', 30], ['पैंतीस', 35], ['चालीस', 40], ['पैंतालीस', 45], ['पचास', 50], ['साठ', 60], ['पैंसठ', 65], ['सत्तर', 70], ['पचहत्तर', 75], ['अस्सी', 80], ['नब्बे', 90], ['पचानवे', 95], ['सौ', 100],
+  ['दस', 10], ['नौ', 9], ['आठ', 8], ['सात', 7], ['छह', 6], ['छः', 6], ['पांच', 5], ['पाँच', 5], ['चार', 4], ['तीन', 3], ['दो', 2], ['एक', 1]];
+function voiceDigits_(text) {
+  let t = String(text || '').replace(/[०-९]/g, function (d) { return String(d.charCodeAt(0) - 0x0966); });
+  VOICE_HI_NUM_.forEach(function (p) { t = t.replace(new RegExp('(^|[^\\u0900-\\u097F])' + p[0] + '(?![\\u0900-\\u097F])', 'g'), function (m, pre) { return pre + p[1]; }); });
+  return t;
+}
+/** The agent sometimes returns its answers as one dictionary-style string, {'EDU': 'MBA', ...}, instead of lines. */
+function voiceDictToLines_(text) {
+  const t = String(text || '').trim();
+  if (t.charAt(0) !== '{') return t;
+  try { const j = JSON.parse(t); if (j && typeof j === 'object') return Object.keys(j).map(function (k) { return k + ': ' + String(j[k] == null ? '' : j[k]); }).join('\n'); } catch (e) { }
+  const out = [], re = /['"]([A-Za-z_][A-Za-z0-9_ ]*)['"]\s*:\s*(?:'([^']*)'|"([^"]*)"|([^,}]*))/g;
+  let m; while ((m = re.exec(t))) out.push(m[1] + ': ' + String(m[2] != null ? m[2] : m[3] != null ? m[3] : (m[4] || '')).trim());
+  return out.join('\n');
+}
 const VOICE_KEYS_ = ['EDU', 'EXP_TOTAL', 'EXP_RELEVANT', 'CUR_ROLE', 'CHANGE_REASON', 'CTC_CUR', 'CTC_EXP', 'NOTICE', 'LOCATION', 'RELOCATE'];
 const VOICE_ALIAS_ = [[/current ctc|ctc.{0,12}current/i, 'CTC_CUR'], [/expected ctc|ctc.{0,12}expect/i, 'CTC_EXP'], [/notice|joining|join/i, 'NOTICE'], [/education|qualification/i, 'EDU'],
   [/current role|current job|current designation/i, 'CUR_ROLE'], [/reason.{0,12}change/i, 'CHANGE_REASON'], [/location|relocat|commute/i, 'LOCATION'], [/total|experience/i, 'EXP_TOTAL']];
 /** The agent's screening_answers text -> {labels: {KEY: text}, q: {n: text}, other: [[label, text]]}. Blank answers are dropped. */
 function voiceParseAnswers_(text) {
   const out = { labels: {}, q: {}, other: [] };
-  String(text || '').split(/\r?\n/).forEach(function (line) {
+  voiceDictToLines_(text).split(/\r?\n/).forEach(function (line) {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_ \-\/,]{0,80}?)\s*:\s*(.+)$/);
     if (!m) return;
     const label = m[1].trim(), ans = m[2].trim();
@@ -159,8 +178,9 @@ function voiceParseAnswers_(text) {
 }
 /** A spoken answer as the value the screening scorer needs: years, days, Yes / No, or the text. null when it cannot be read safely. */
 function voiceNormalize_(it, text, key) {
-  const t = String(text || '').trim();
-  if (!t) return null;
+  const t0 = String(text || '').trim();
+  if (!t0) return null;
+  const t = it.type === 'text' ? t0 : voiceDigits_(t0).replace(/\u0938\u093E\u0932|\u0935\u0930\u094D\u0937/g, ' year').replace(/\u092E\u0939\u0940\u0928\u0947?/g, ' month').replace(/\u0926\u093F\u0928/g, ' day');
   if (it.type === 'number') {
     const m = t.replace(/,/g, '').match(/(\d+(\.\d+)?)/);
     if (!m) return /immediate|turant|तुरंत/i.test(t) && key === 'NOTICE' ? '0' : null;
@@ -271,6 +291,7 @@ function apiVoiceStartScreening(appId, opts) {
   const missing = voiceMissing_(cfg), problems = missing.slice();
   if (open) problems.push('A call to this candidate is already in progress (' + open.Call_ID + ')');
   if (cfg.dndRequired && !voiceDndWritten_()) problems.push('The Do Not Disturb check is not connected yet');
+  if (brief.plan.sent.length && !cfg.questionsVar) problems.push('This position has ' + brief.plan.sent.length + ' role-specific question' + (brief.plan.sent.length === 1 ? '' : 's') + ' but no questions variable is set (Admin > Voice agent), so the bot would ask only its standard questions');
   const body = voiceRequestBody_(phone, brief, cfg, '(call id)'); body.user_config.user_phone_number = '+91XXXXXX' + phone.slice(-4);
   const out = { dryRun: !!opts.dryRun, candidate: String(cand.Name || ''), phoneLast4: phone.slice(-4), questionsVersion: Number(fin.Version), brief: brief, request: body, notSent: ['gender', 'candidate_location', 'resume_highlights'],
     questionsSent: !!cfg.questionsVar, resultsReturn: cfg.webhookUrl ? 'Results will be sent to your webhook address' : 'No webhook address set: results will not come back automatically',
@@ -287,7 +308,7 @@ function apiVoiceStartScreening(appId, opts) {
   try {
     const r = voicePlaceCall_(phone, brief, cfg, row.Call_ID);
     voiceUpdate_(row.Call_ID, { Status: 'Started', Provider_Call_ID: String((r && r.callId) || ''), Status_Note: String((r && r.note) || ''), Updated_By: u.email,
-      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left }).slice(0, 45000) });
+      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left, via: cfg.questionsVar || '' }).slice(0, 45000) });
     audit_(u, 'Voice agent', row.Call_ID, 'Call placed', '', '', 'candidate ' + app.Candidate_ID + ', questions v' + fin.Version);
   } catch (e) {
     voiceUpdate_(row.Call_ID, { Status: 'Failed', Status_Note: String(e && e.message || e).slice(0, 300), Updated_By: u.email });
@@ -472,7 +493,7 @@ function voiceTurnsFromResponse_(j) {
   if (!arr) return '';
   return arr.map(function (t) {
     const who = String((t && (t.role || t.speaker || t.participant || t.sender)) || '').toLowerCase();
-    const text = String((t && (t.en_text || t.text || t.content || t.message || t.transcript)) || '').replace(/\s+/g, ' ').trim();
+    const text = String((t && (t.english_content || t.en_text || t.text || t.content || t.message || t.transcript)) || '').replace(/\s+/g, ' ').trim();
     return [/agent|assistant|bot|ai/.test(who) ? 'Agent' : 'Candidate', text];
   }).filter(function (x) { return x[1]; }).map(function (x) { return x[0] + ': ' + x[1]; }).join('\n');
 }
@@ -521,10 +542,12 @@ function apiVoiceCallDetail(callId) {
   const plan = voicePlanOf_(r), m = voiceAnswersFromVars_(plan, vars), sentIds = plan.sent.map(function (x) { return x.id; }), stdIds = plan.std.map(function (x) { return x.id; });
   const ans = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') ans[id] = { a: m.byId[id].a }; });
   const review = plan.items.map(function (it) { const x = m.byId[it.id];
-    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? 'Role question' : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
+    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? 'Role question' : 'Role question, NOT sent to the bot') : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
   const score = sqScore_(plan.items, ans);
+  const askable = plan.items.filter(function (it) { return !!m.byId[it.id] || stdIds.indexOf(it.id) >= 0 || sentIds.indexOf(it.id) >= 0; });
+  const coverage = { planned: askable.length, answered: askable.filter(function (it) { return !!m.byId[it.id]; }).length, total: plan.items.length, missing: askable.filter(function (it) { return !m.byId[it.id]; }).map(function (it) { return it.id; }), notSentVar: !!plan.sent.length && !plan.via };
   const hint = { summary: String(vars.call_summary || ''), disposition: String(vars.call_disposition || '') };
-  return { call: voiceCallOut_(r), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review, score: { pct: score.pct, band: score.band, koFailed: score.koFailed, met: score.met, gaps: score.gaps, rated: score.rated, total: score.total }, other: m.other, hint: hint, planDerived: !!plan.derived };
+  return { call: voiceCallOut_(r), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review, score: { pct: score.pct, band: score.band, koFailed: score.koFailed, met: score.met, gaps: score.gaps, rated: score.rated, total: score.total }, other: m.other, hint: hint, planDerived: !!plan.derived, coverage: coverage, sentText: voiceRoleQuestionsText_({ sent: plan.sent }) };
 }
 
 /** The calls of one card (Admin only), newest first. */

@@ -1085,6 +1085,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Voice agent: no half-empty calls, readable answers, coverage** (no schema change; ADR-049)
+- A real call is refused when the position has role-specific questions and no questions variable is set (Admin > Voice agent); the preview says so. The call row records which variable carried the questions; the result shows "NOT sent to the bot" when none did, and "Covered x of y" from the CRM's own count (the agent's disposition is only a hint).
+- The agent's answers are also read when returned as one dictionary-style string, and Hindi digits and number words (साल, महीने, दिन, पंद्रह, बीस…) are turned into numbers; an unclear yes / no ("देख सकते हैं") stays unrated for the recruiter. Transcripts fetched from the provider use the English text first.
+
 **Unreleased — Voice agent: question plan and review table** (no schema change; Voice_Calls.Plan_JSON added by `voiceSchema_`; ADR-049)
 - Call plan: standard topics are not sent again; the position's other confirmed questions are sent as a numbered list in priority order up to "Most role questions per call" (Admin, default 6) through the questions variable. The required answer and knock-out flag are not sent (this also fixes the earlier text that included "needed"). The preview shows how each question is asked; the plan is saved on the call.
 - Results: the agent's `screening_answers` lines are parsed (also the first version's lines), matched to questions, normalised (notice to days, experience to years, yes / no), scored with `sqScore_`, and shown in a review table with the agent's own summary and disposition as hints. Unreadable answers are left for the recruiter.
