@@ -15,7 +15,7 @@ const VOICE_CALLS_ = { name: 'Voice_Calls', id: 'Call_ID', prefix: 'VCL-', width
 const VOICE_CALL_COLS_ = ['Call_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Phone_Last4', 'Status', 'Status_Note', 'Provider_Call_ID', 'Questions_Version',
   'Started_By', 'Started_At', 'Completed_At', 'Transcript', 'Answers_JSON', 'Draft_Applied', 'Updated_By', 'Updated_At'];
 /** Added later: what the provider reported (answered, no answer, busy, failed), the length, the provider's interaction id, and the variables the agent filled in. */
-const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON'];
+const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON'];
 /** Results arrive here from the separate webhook receiver (docs/voice-webhook). The CRM matches each row to a call; nothing outside reads this sheet. */
 const VOICE_INBOX_ = { name: 'Voice_Inbox', cols: ['Received_At', 'Attempt_ID', 'Event_Key', 'Payload', 'Processed_At', 'Result'] };
 const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
@@ -38,7 +38,7 @@ function voiceCfg_() {
   return { enabled: String(s.VOICE_ENABLED || 'No') === 'Yes', agentId: String(s.VOICE_AGENT_ID || VOICE_DEFAULTS_.agentId), agentVersion: v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion,
     connectionId: String(s.VOICE_CONNECTION_ID || VOICE_DEFAULTS_.connectionId), fromNumber: String(s.VOICE_FROM_NUMBER || VOICE_DEFAULTS_.fromNumber), dndRequired: String(s.VOICE_DND_REQUIRED || 'Yes') !== 'No',
     orgId: String(s.VOICE_ORG_ID || VOICE_DEFAULTS_.orgId), workspaceId: String(s.VOICE_WORKSPACE_ID || VOICE_DEFAULTS_.workspaceId),
-    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''),
+    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)),
     keySet: !!key, keyHint: key ? '\u2026' + key.slice(-4) : '' };
 }
 /** What still has to be filled in before a call can be placed (empty = ready). */
@@ -50,7 +50,7 @@ function voiceMissing_(c) {
 function voiceCfgOut_(c) {
   const m = voiceMissing_(c);
   return { enabled: c.enabled, agentId: c.agentId, agentVersion: c.agentVersion, connectionId: c.connectionId, fromNumber: c.fromNumber, dndRequired: c.dndRequired, orgId: c.orgId, workspaceId: c.workspaceId,
-    openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar,
+    openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ,
     keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length, connected: voiceProviderConnected_(), dndWritten: voiceDndWritten_(), resultsWritten: voiceResultsWritten_() };
 }
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
@@ -96,6 +96,9 @@ function apiVoiceConfigSave(d) {
   const key = String(d.apiKey == null ? '' : d.apiKey).trim();
   if (key && (key.length < 16 || key.length > 300 || /\s/.test(key))) throw new Error('The API key does not look right. Paste it exactly as the provider shows it.');
   put('VOICE_AGENT_VERSION', 'agent version', ver, before.agentVersion); put('VOICE_OPENING_LINE', 'opening line', line, before.openingLine); put('VOICE_ENTRY_STATE', 'entry state', st, before.entryState);
+  const mq = d.maxQ === undefined || d.maxQ === '' ? before.maxQ : Number(d.maxQ);
+  if (!(mq >= 1 && mq <= 10) || mq % 1) throw new Error('The most role-specific questions per call must be a whole number from 1 to 10.');
+  put('VOICE_MAX_Q', 'most role questions', mq, before.maxQ);
   put('VOICE_QUESTIONS_VAR', 'questions variable', qv, before.questionsVar); put('VOICE_WEBHOOK_URL', 'webhook address', hook, before.webhookUrl);
   put('VOICE_ENABLED', 'allow calls', d.enabled === true ? 'Yes' : 'No', before.enabled ? 'Yes' : 'No');
   put('VOICE_DND_REQUIRED', 'Do Not Disturb check', d.dndRequired === false ? 'No' : 'Yes', before.dndRequired ? 'Yes' : 'No');
@@ -105,6 +108,96 @@ function apiVoiceConfigSave(d) {
   if (changed.length) audit_(u, 'Voice agent', '', 'Settings changed', '', '', changed.join(', '));   // names only, never values
   return apiVoiceConfig();
 }
+
+
+/* ---------------------------------------------------------------- the call plan and the answers ------------ */
+/**
+ * The agent asks a set of STANDARD questions itself in every call (education, experience, current role, current and expected
+ * CTC, notice period, location and relocation) and then the ROLE-SPECIFIC questions of the position, sent as a numbered list.
+ * A confirmed question that is one of the standard topics is not sent again; the agent's answer to the standard question is
+ * used for it. The rest are sent in priority order up to a limit; the others are left for the recruiter.
+ */
+const VOICE_STD_ = [['EDU', /qualification|education/i], ['EXP_RELEVANT', /relevant experience|directly relevant/i], ['EXP_TOTAL', /(total|overall).{0,24}experience|years of (total )?work/i],
+  ['NOTICE', /notice period|earliest joining|how soon.{0,12}join/i], ['CTC_CUR', /current ctc/i], ['CTC_EXP', /expected ctc/i], ['LOCATION', /current location/i],
+  ['RELOCATE', /based at|relocat|commute/i], ['CUR_ROLE', /currently employed|current role/i]];
+function voiceStdKey_(it) { const t = String(it.label || '') + ' | ' + String(it.q || ''); for (let i = 0; i < VOICE_STD_.length; i++) if (VOICE_STD_[i][1].test(t)) return VOICE_STD_[i][0]; return ''; }
+function voiceSpoken_(it) { return String(it.spoken || it.q || '').replace(/\s+/g, ' ').trim().slice(0, 200); }
+/** {std:[{key,id}], sent:[{n,id,q}], left:[id]} for a question set. */
+function voicePlan_(items, max) {
+  max = max || 6;
+  const std = [], rest = [];
+  items.forEach(function (it, ix) { const k = voiceStdKey_(it); if (k) std.push({ key: k, id: String(it.id) }); else rest.push({ it: it, ix: ix }); });
+  const rank = function (it) { return it.sec === 'E' ? (it.ko ? 0 : 1) : it.sec === 'R' ? 2 + ({ M: 0, I: 1, N: 2 }[it.imp] === undefined ? 1 : { M: 0, I: 1, N: 2 }[it.imp]) * 0.1 : 5; };
+  rest.sort(function (a, b) { return rank(a.it) - rank(b.it) || a.ix - b.ix; });
+  return { std: std, sent: rest.slice(0, max).map(function (r, n) { return { n: n + 1, id: String(r.it.id), q: voiceSpoken_(r.it) }; }), left: rest.slice(max).map(function (r) { return String(r.it.id); }) };
+}
+function voiceRoleQuestionsText_(plan) { return plan.sent.map(function (x) { return x.n + '. ' + x.q; }).join('\n'); }
+/** The compact copy of the questions kept on the call, so the analysis never depends on later edits. */
+function voiceItemsCompact_(items) {
+  return items.map(function (i) { const o = { id: String(i.id), sec: i.sec, label: String(i.label || '').slice(0, 60), q: String(i.q || '').slice(0, 300), type: i.type || 'text', need: String(i.need || '').slice(0, 200), imp: i.imp || '', ko: !!i.ko };
+    ['min', 'max', 'partly', 'expect'].forEach(function (k) { if (i[k] !== undefined && i[k] !== null && i[k] !== '') o[k] = i[k]; }); return o; });
+}
+const VOICE_KEYS_ = ['EDU', 'EXP_TOTAL', 'EXP_RELEVANT', 'CUR_ROLE', 'CHANGE_REASON', 'CTC_CUR', 'CTC_EXP', 'NOTICE', 'LOCATION', 'RELOCATE'];
+const VOICE_ALIAS_ = [[/current ctc|ctc.{0,12}current/i, 'CTC_CUR'], [/expected ctc|ctc.{0,12}expect/i, 'CTC_EXP'], [/notice|joining|join/i, 'NOTICE'], [/education|qualification/i, 'EDU'],
+  [/current role|current job|current designation/i, 'CUR_ROLE'], [/reason.{0,12}change/i, 'CHANGE_REASON'], [/location|relocat|commute/i, 'LOCATION'], [/total|experience/i, 'EXP_TOTAL']];
+/** The agent's screening_answers text -> {labels: {KEY: text}, q: {n: text}, other: [[label, text]]}. Blank answers are dropped. */
+function voiceParseAnswers_(text) {
+  const out = { labels: {}, q: {}, other: [] };
+  String(text || '').split(/\r?\n/).forEach(function (line) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_ \-\/,]{0,80}?)\s*:\s*(.+)$/);
+    if (!m) return;
+    const label = m[1].trim(), ans = m[2].trim();
+    if (!ans || /^(blank|none|n\/a|not asked|not answered|-)$/i.test(ans)) return;
+    const qn = label.match(/^Q(\d{1,2})$/i);
+    if (qn) { out.q[Number(qn[1])] = ans; return; }
+    const up = label.toUpperCase().replace(/[\s\-]+/g, '_');
+    if (VOICE_KEYS_.indexOf(up) >= 0) { out.labels[up] = ans; return; }
+    for (let i = 0; i < VOICE_ALIAS_.length; i++) if (VOICE_ALIAS_[i][0].test(label)) { if (!out.labels[VOICE_ALIAS_[i][1]]) out.labels[VOICE_ALIAS_[i][1]] = ans; return; }
+    out.other.push([label, ans]);
+  });
+  return out;
+}
+/** A spoken answer as the value the screening scorer needs: years, days, Yes / No, or the text. null when it cannot be read safely. */
+function voiceNormalize_(it, text, key) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  if (it.type === 'number') {
+    const m = t.replace(/,/g, '').match(/(\d+(\.\d+)?)/);
+    if (!m) return /immediate|turant|तुरंत/i.test(t) && key === 'NOTICE' ? '0' : null;
+    let v = Number(m[1]);
+    if (key === 'NOTICE' || /notice|joining/i.test(String(it.label))) { if (/month/i.test(t) && !/day/i.test(t)) v = v * 30; }
+    else if (/year|experience/i.test(String(it.label) + ' ' + String(it.q))) { if (/month/i.test(t) && !/year|yr/i.test(t)) v = Math.round(v / 12 * 10) / 10; }
+    return String(v);
+  }
+  if (it.type === 'yesno') {
+    if (/\b(no|not|nahi|never|unwilling|cannot|can't)\b/i.test(t)) return 'No';
+    if (/\b(yes|yeah|yep|haan|ji haan|sure|ok|okay|comfortable|willing|ready|agree|fine|definitely)\b/i.test(t)) return 'Yes';
+    return null;
+  }
+  return t.slice(0, 500);
+}
+/** The plan kept on a call (or one derived from the current questions for an older call). */
+function voicePlanOf_(call) {
+  let p = null; try { p = JSON.parse(String(call.Plan_JSON || 'null')); } catch (e) { }
+  if (p && Array.isArray(p.items)) return p;
+  const fin = sqFinalFor_(call.Line_ID), items = fin ? sqParse_(String(fin.Content)) : [], pl = voicePlan_(items, 99);
+  return { ver: fin ? Number(fin.Version) : 0, items: voiceItemsCompact_(items), std: pl.std, sent: [], left: pl.sent.map(function (x) { return x.id; }).concat(pl.left), derived: true };
+}
+/**
+ * Matches the agent's variables to the question set: standard topics by label, role questions by Q number, and any variable
+ * named like a question id. Returns {byId: {id: {raw, a}}, other, notAsked: [ids]}. `a` is the value the scorer uses ('' when it could not be read).
+ */
+function voiceAnswersFromVars_(plan, vars) {
+  const parsed = voiceParseAnswers_(vars && vars.screening_answers), byId = {}, items = {};
+  plan.items.forEach(function (i) { items[i.id] = i; });
+  const put = function (id, raw, key) { const it = items[id]; if (!it || !raw) return; const v = voiceNormalize_(it, raw, key); byId[id] = { raw: String(raw), a: v == null ? '' : v }; };
+  plan.std.forEach(function (s) { const raw = parsed.labels[s.key] || (s.key === 'RELOCATE' ? parsed.labels.LOCATION : ''); put(s.id, raw, s.key); });
+  plan.sent.forEach(function (x) { put(x.id, parsed.q[x.n], ''); });
+  Object.keys(items).forEach(function (id) { if (!byId[id] && vars && vars[id] != null && String(vars[id]).trim()) put(id, String(vars[id]), ''); });
+  return { byId: byId, other: parsed.other, notAsked: plan.items.map(function (i) { return i.id; }).filter(function (id) { return !byId[id]; }) };
+}
+/** The answers the scorer can use: {id: text} for the readable ones only. */
+function voiceDraftAnswers_(m) { const o = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') o[id] = m.byId[id].a; }); return o; }
 
 /* ---------------------------------------------------------------- the call ---------------------------------- */
 
@@ -124,15 +217,16 @@ function voicePhone_(cand) { const p = normPhone_(cand && cand.Mobile); return /
  * (eligibility and role fit; practical details are asked too but not scored). No CV, salary or other personal data.
  */
 function voiceBuildBrief_(app, line, cand, items, cfg) {
-  const first = String(cand.Name || '').trim().split(/\s+/)[0] || 'the candidate';
+  const first = String(cand.Name || '').trim().split(/\s+/)[0] || 'the candidate', plan = voicePlan_(items, cfg.maxQ);
   return { candidateFirstName: first, position: String(line.Position || ''), company: String((bgvRules_().cfg || {}).company || 'BFCL'), orgId: cfg.orgId, workspaceId: cfg.workspaceId,
-    questions: items.map(function (i) { return { id: String(i.id), section: i.sec === 'E' ? 'Eligibility' : i.sec === 'R' ? 'Role fit' : 'Practical', question: String(i.q), answerType: String(i.type || 'text'), needed: String(i.need || ''), knockOut: !!i.ko }; }) };
+    plan: plan, roleQuestions: voiceRoleQuestionsText_(plan),
+    questions: items.map(function (i) { const id = String(i.id), sent = plan.sent.filter(function (x) { return x.id === id; })[0], std = plan.std.filter(function (x) { return x.id === id; })[0];
+      return { id: id, section: i.sec === 'E' ? 'Eligibility' : i.sec === 'R' ? 'Role fit' : 'Practical', question: String(i.q), answerType: String(i.type || 'text'), needed: String(i.need || ''), knockOut: !!i.ko,
+        how: std ? 'Standard question' : sent ? 'Role question Q' + sent.n : 'Left for the recruiter' }; }) };
 }
 
-/** The questions as plain numbered text, for an agent variable the Admin has named in the settings. */
-function voiceQuestionsText_(brief) {
-  return brief.questions.map(function (q, i) { return (i + 1) + '. [' + q.section + '] ' + q.question + (q.needed ? ' (needed: ' + q.needed + ')' : ''); }).join('\n');
-}
+/** The role-specific questions as numbered spoken text. The required answer, the pass mark and the knock-out flag are never sent: the agent must not coach the candidate. */
+function voiceQuestionsText_(brief) { return brief.roleQuestions || ''; }
 /**
  * The agent variables sent with the call. Only the candidate's first name and the position are sent by default. Gender,
  * location and resume highlights are NOT sent (the agent may define them; they are left out on purpose). The questions are
@@ -192,7 +286,8 @@ function apiVoiceStartScreening(appId, opts) {
   const row = voiceLog_(u, app, cand, phone, 'Starting', '', Number(fin.Version));
   try {
     const r = voicePlaceCall_(phone, brief, cfg, row.Call_ID);
-    voiceUpdate_(row.Call_ID, { Status: 'Started', Provider_Call_ID: String((r && r.callId) || ''), Status_Note: String((r && r.note) || ''), Updated_By: u.email });
+    voiceUpdate_(row.Call_ID, { Status: 'Started', Provider_Call_ID: String((r && r.callId) || ''), Status_Note: String((r && r.note) || ''), Updated_By: u.email,
+      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left }).slice(0, 45000) });
     audit_(u, 'Voice agent', row.Call_ID, 'Call placed', '', '', 'candidate ' + app.Candidate_ID + ', questions v' + fin.Version);
   } catch (e) {
     voiceUpdate_(row.Call_ID, { Status: 'Failed', Status_Note: String(e && e.message || e).slice(0, 300), Updated_By: u.email });
@@ -300,7 +395,7 @@ function voiceTranscriptText_(turns) {
 /** The variables the agent filled in during the call, without empty ones. */
 function voiceVars_(p) {
   const src = (p && (p.final_agent_variables || p.output_agent_variables)) || {}, o = {};
-  if (src && typeof src === 'object') Object.keys(src).forEach(function (k) { const v = src[k]; if (v != null && String(v).trim() !== '' && typeof v !== 'object') o[k] = String(v).slice(0, 500); });
+  if (src && typeof src === 'object') Object.keys(src).forEach(function (k) { const v = src[k]; if (v != null && String(v).trim() !== '' && typeof v !== 'object') o[k] = String(v).slice(0, 4000); });
   return o;
 }
 /** Which of the provider's statuses count as a finished call and which as a failed one. */
@@ -332,8 +427,7 @@ function voiceIngest_(u) {
       else {
         try {
           const o = voiceOutcome_(p), vars = voiceVars_(p), tr = voiceTranscriptText_(p.interaction_transcript);
-          const fin = sqFinalFor_(call.Line_ID), ids = fin ? sqParse_(String(fin.Content)).map(function (i) { return String(i.id); }) : [], answers = {};
-          Object.keys(vars).forEach(function (k) { if (ids.indexOf(k) >= 0) answers[k] = vars[k]; });
+          const answers = voiceDraftAnswers_(voiceAnswersFromVars_(voicePlanOf_(call), vars));
           if (String(call.Status) === 'Completed' && String(call.Transcript || '')) res = 'Repeat delivery, ignored';
           else {
             apiVoiceApplyResult(call.Call_ID, { status: o.status, note: o.note, transcript: tr, answers: o.status === 'Completed' && Object.keys(answers).length ? answers : null });
@@ -408,9 +502,8 @@ function apiVoiceFetchResult(callId) {
     catch (e) { note = 'The transcript could not be fetched: ' + String(e && e.message || e).slice(0, 120); }
   }
   const failed = !inter;
-  const vars = {}; const av = a.agent_variables; if (av && typeof av === 'object') Object.keys(av).forEach(function (k) { if (av[k] != null && String(av[k]).trim() !== '' && typeof av[k] !== 'object') vars[k] = String(av[k]).slice(0, 500); });
-  const fin = sqFinalFor_(call.Line_ID), ids = fin ? sqParse_(String(fin.Content)).map(function (i) { return String(i.id); }) : [], answers = {};
-  Object.keys(vars).forEach(function (k) { if (ids.indexOf(k) >= 0) answers[k] = vars[k]; });
+  const vars = {}; const av = a.agent_variables; if (av && typeof av === 'object') Object.keys(av).forEach(function (k) { if (av[k] != null && String(av[k]).trim() !== '' && typeof av[k] !== 'object') vars[k] = String(av[k]).slice(0, 4000); });
+  const answers = voiceDraftAnswers_(voiceAnswersFromVars_(voicePlanOf_(call), vars));
   const why = failed ? ((cs || 'Not connected') + (a.failure_reason ? ': ' + String(a.failure_reason).slice(0, 150) : '')) : note;
   apiVoiceApplyResult(call.Call_ID, { status: failed ? 'Failed' : 'Completed', note: why, transcript: tr, answers: !failed && Object.keys(answers).length ? answers : null });
   voiceUpdate_(call.Call_ID, { Provider_Call_ID: att, Outcome: failed ? (cs || 'Not connected') : 'Answered', Duration_Sec: Number(a.duration_in_seconds) || '', Interaction_ID: inter, Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000) });
@@ -425,7 +518,13 @@ function apiVoiceCallDetail(callId) {
   if (!r) throw new Error('Call ' + callId + ' was not found.');
   let vars = {}; try { vars = JSON.parse(String(r.Final_Vars_JSON || '{}')); } catch (e) { }
   const lines = String(r.Transcript || '').split('\n').filter(String).map(function (l) { const i = l.indexOf(': '); return { who: l.slice(0, i), text: l.slice(i + 2) }; });
-  return { call: voiceCallOut_(r), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || '') };
+  const plan = voicePlanOf_(r), m = voiceAnswersFromVars_(plan, vars), sentIds = plan.sent.map(function (x) { return x.id; }), stdIds = plan.std.map(function (x) { return x.id; });
+  const ans = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') ans[id] = { a: m.byId[id].a }; });
+  const review = plan.items.map(function (it) { const x = m.byId[it.id];
+    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? 'Role question' : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
+  const score = sqScore_(plan.items, ans);
+  const hint = { summary: String(vars.call_summary || ''), disposition: String(vars.call_disposition || '') };
+  return { call: voiceCallOut_(r), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review, score: { pct: score.pct, band: score.band, koFailed: score.koFailed, met: score.met, gaps: score.gaps, rated: score.rated, total: score.total }, other: m.other, hint: hint, planDerived: !!plan.derived };
 }
 
 /** The calls of one card (Admin only), newest first. */
