@@ -742,6 +742,20 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .bgv-chips{list-style:none;margin:0;padding:0}.bgv-chips li{padding:5px 0;border-bottom:1px solid var(--line-2);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
 .bgv-table tr.tot td{background:var(--paper);font-weight:600}
 .bgv-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.dk-wrap{max-height:52vh;overflow:auto;border:1px solid var(--line-2);border-radius:var(--r-md)}
+.dk-table{table-layout:fixed}.dk-table .c-ask{width:52px}.dk-table .c-ord{width:96px}.dk-table .c-time{width:64px}
+.dk-table thead th{position:sticky;top:0;z-index:1}
+.dk-table td{vertical-align:top}.dk-table td input[type=checkbox]{width:18px;height:18px;margin:6px 0 0 4px}
+.dk-ord{white-space:nowrap}.dk-ord .btn{padding:2px 8px;min-width:0;line-height:1.4}.dk-ord .btn+.btn{margin-left:4px}
+.dk-sp{display:block;width:100%;box-sizing:border-box;min-height:46px;padding:6px 8px;font:inherit;line-height:1.35;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:6px;resize:vertical}
+.dk-sp:focus{outline:2px solid var(--navy-2);outline-offset:0}
+.dk-table td .sub{margin-top:4px}
+.dk-time{color:var(--muted);font-size:12px;padding-top:14px}
+@media(max-width:640px){
+  .dk-table,.dk-table tbody{display:block}.dk-table colgroup,.dk-table thead{display:none}
+  .dk-table tr{display:grid;grid-template-columns:34px 1fr 64px;grid-template-areas:"a w w" "a o t";gap:6px 8px;padding:10px 8px;border-bottom:1px solid var(--line-2)}
+  .dk-table td{border:0;padding:0}.dk-table td:nth-child(1){grid-area:a}.dk-table td:nth-child(2){grid-area:o}.dk-table td:nth-child(3){grid-area:w}.dk-table td:nth-child(4){grid-area:t;text-align:right;padding-top:4px}
+}
 /* CTC rules editor */
 .ctc-rules-head .dp-h{margin-bottom:4px}.ctc-sched{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0;padding:8px 10px;background:#E7F0FA;border-radius:var(--r-sm)}
 .ctc-sched-x{display:flex;gap:6px;margin-left:auto}.ctc-sched-x input{border:1px solid var(--line);border-radius:var(--r-sm);padding:4px 8px;min-width:220px}

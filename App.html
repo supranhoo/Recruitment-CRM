@@ -5019,15 +5019,15 @@ function voicePlanDesk(a, dk, el, P) {
   const SEC = { E: 'Eligibility', R: 'Role fit', P: 'Practical' };
   const row = x => `<tr data-id="${esc(x.id)}" data-secs="${x.secs}" data-ko="${x.ko ? 1 : 0}" data-imp="${esc(x.imp)}" data-ans="${x.answered ? 1 : 0}">
     <td><input type="checkbox" class="dk-sel" aria-label="Ask: ${esc(x.label || x.q)}" ${x.sel ? 'checked' : ''}></td>
-    <td class="nw"><button type="button" class="btn sm dk-up" title="Move up" aria-label="Move up">↑</button> <button type="button" class="btn sm dk-dn" title="Move down" aria-label="Move down">↓</button></td>
-    <td><input class="dk-sp" value="${esc(x.spoken)}" data-orig="${esc(x.spoken)}" maxlength="200" aria-label="Spoken wording">
+    <td class="dk-ord"><button type="button" class="btn sm dk-up" title="Move up" aria-label="Move up">↑</button><button type="button" class="btn sm dk-dn" title="Move down" aria-label="Move down">↓</button></td>
+    <td><textarea class="dk-sp" rows="2" data-orig="${esc(x.spoken)}" maxlength="200" aria-label="Spoken wording">${esc(x.spoken)}</textarea>
       <span class="sub">${esc(SEC[x.sec] || '')}${x.ko ? ' · <b class="miss">knock-out</b>' : ''}${x.need ? ' · needed: ' + esc(x.need) : ''}${x.answered ? ' · <b>answered earlier:</b> ' + esc(x.answer) : ''}</span></td>
-    <td class="nw sub">${x.secs} s</td></tr>`;
+    <td class="num dk-time">${x.secs} s</td></tr>`;
   const d = cpDlg(`<h2 id="cpTitle">Call plan · ${esc(dk.candidate)} · ${esc(dk.position)}</h2>
     <p class="sub">${dk.followUp ? 'This is a follow-up call: the questions with no answer yet are ticked.' : 'First call: every confirmed question is ticked.'} Untick what the bot should not ask, change the order or the spoken wording. Unticked questions stay on your own list.</p>
     <div class="btn-row"><button type="button" class="btn sm" data-pre="all">All</button><button type="button" class="btn sm" data-pre="must">Knock-outs and must-haves</button><button type="button" class="btn sm" data-pre="open">Only unanswered</button><button type="button" class="btn sm" data-pre="none">None</button></div>
     <p id="dkTotal" style="margin:10px 0"></p>
-    <div class="table-wrap" style="max-height:48vh;overflow:auto"><table class="bgv-table"><thead><tr><th>Ask</th><th>Order</th><th>Question as the bot says it</th><th>Time</th></tr></thead><tbody id="dkRows">${dk.items.map(row).join('')}</tbody></table></div>
+    <div class="dk-wrap"><table class="bgv-table dk-table"><colgroup><col class="c-ask"><col class="c-ord"><col><col class="c-time"></colgroup><thead><tr><th>Ask</th><th>Order</th><th>Question as the bot says it</th><th class="num">Time</th></tr></thead><tbody id="dkRows">${dk.items.map(row).join('')}</tbody></table></div>
     <div id="dkCheck" style="margin-top:10px"></div>
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn" id="dkPrev">Check the plan</button><button class="btn primary" id="dkGo">Place the call</button></div>`);
   const rows = () => $$('#dkRows tr', d);
@@ -5037,6 +5037,8 @@ function voicePlanDesk(a, dk, el, P) {
     $('#dkTotal', d).innerHTML = `<b>${n}</b> of ${rows().length} questions · about <b>${n ? mins : 0} min</b>${warn ? ' · <b class="miss">That is a long call for a candidate. Consider fewer questions.</b>' : ''}`;
     $('#dkGo', d).disabled = !n;
   };
+  const grow = t => { t.style.height = 'auto'; t.style.height = Math.max(46, t.scrollHeight + 2) + 'px'; };
+  d.addEventListener('input', e => { if (e.target.classList.contains('dk-sp')) grow(e.target); });
   d.addEventListener('change', e => { if (e.target.classList.contains('dk-sel')) total(); });
   d.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -5066,7 +5068,7 @@ function voicePlanDesk(a, dk, el, P) {
     try { await api('apiVoiceStartScreening', a.App_ID, { followUp: dk.followUp, plan: plan() }); toast('The call has been placed.'); d.close(); voiceCardSection(el, a, P); }
     catch (err) { toast(err, true); busy(e.target, false, 'Place the call'); }
   };
-  total();
+  total(); $$('.dk-sp', d).forEach(grow);
 }
 const VOICE_RATE_ = { M: ['Meets', 'ok'], P: ['Partly', ''], G: ['Does not meet', 'miss'] };
 function voiceResultDialog(r) {
