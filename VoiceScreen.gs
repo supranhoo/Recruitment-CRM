@@ -14,6 +14,10 @@
 const VOICE_CALLS_ = { name: 'Voice_Calls', id: 'Call_ID', prefix: 'VCL-', width: 5 };
 const VOICE_CALL_COLS_ = ['Call_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Phone_Last4', 'Status', 'Status_Note', 'Provider_Call_ID', 'Questions_Version',
   'Started_By', 'Started_At', 'Completed_At', 'Transcript', 'Answers_JSON', 'Draft_Applied', 'Updated_By', 'Updated_At'];
+/** Added later: what the provider reported (answered, no answer, busy, failed), the length, the provider's interaction id, and the variables the agent filled in. */
+const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON'];
+/** Results arrive here from the separate webhook receiver (docs/voice-webhook). The CRM matches each row to a call; nothing outside reads this sheet. */
+const VOICE_INBOX_ = { name: 'Voice_Inbox', cols: ['Received_At', 'Attempt_ID', 'Event_Key', 'Payload', 'Processed_At', 'Result'] };
 const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
 const VOICE_OPEN_STATUSES_ = ['Starting', 'Started'];
 const VOICE_KEY_PROP_ = 'VOICE_API_KEY';
@@ -23,7 +27,7 @@ const VOICE_DEFAULTS_ = { orgId: '01a11b5b-1fcf-7fc7-b673-8ebbe5e5dd0c', workspa
 const VOICE_API_BASE_ = 'https://apps.sarvam.ai/api';
 
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
-function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); }
+function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols); }
 function requireVoiceAdmin_(u) { if (!can_(u, 'voice_agent')) throw new Error('Only the CRM admin can use the voice agent while it is being tested.'); }
 
 /* ---------------------------------------------------------------- settings ---------------------------------- */
@@ -52,12 +56,13 @@ function voiceCfgOut_(c) {
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
 function voicePlaceWritten_() { return true; }
 function voiceDndWritten_() { return false; }
-function voiceResultsWritten_() { return false; }
+function voiceResultsWritten_() { return true; }
 /** True when a call can be placed with the Do Not Disturb rule honoured (the check, or the Admin has switched it off). */
 function voiceProviderConnected_() { return voicePlaceWritten_() && voiceDndWritten_(); }
 
 function apiVoiceConfig() {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  try { voiceIngest_(u); } catch (e) { }
   const calls = voiceCallsRows_();
   const o = voiceCfgOut_(voiceCfg_());
   o.calls = calls.length; o.recent = calls.slice(-15).reverse().map(voiceCallOut_);
@@ -106,7 +111,8 @@ function apiVoiceConfigSave(d) {
 function voiceCallOut_(r) {
   const at = function (v) { return v instanceof Date ? fmt_(v, TZ, 'd MMM yyyy, HH:mm') : String(v || ''); };
   return { id: String(r.Call_ID), app: String(r.App_ID), cand: String(r.Candidate_ID), line: String(r.Line_ID), last4: String(r.Phone_Last4 || ''), status: String(r.Status), note: String(r.Status_Note || ''),
-    startedBy: String(r.Started_By || ''), startedAt: at(r.Started_At), completedAt: at(r.Completed_At), draft: String(r.Draft_Applied || '') === 'Yes', hasTranscript: !!String(r.Transcript || '') };
+    startedBy: String(r.Started_By || ''), startedAt: at(r.Started_At), completedAt: at(r.Completed_At), draft: String(r.Draft_Applied || '') === 'Yes', hasTranscript: !!String(r.Transcript || ''),
+    outcome: String(r.Outcome || ''), duration: Number(r.Duration_Sec) || 0, hasResult: !!(String(r.Transcript || '') || String(r.Final_Vars_JSON || '')) };
 }
 function voiceCallsRows_(appId) { voiceSchema_(); return readTable_(VOICE_CALLS_.name).rows.filter(function (r) { return !appId || String(r.App_ID) === String(appId); }); }
 
@@ -147,7 +153,7 @@ function voiceRequestBody_(phone, brief, cfg, callId) {
     if (cfg.openingLine) body.app_config.app_overrides.initial_bot_message = cfg.openingLine;
     if (cfg.entryState) body.app_config.app_overrides.initial_state_name = cfg.entryState;
   }
-  if (cfg.webhookUrl) body.webhook_config = { url: cfg.webhookUrl, metadata: { lead_id: String(callId || '') } };
+  if (cfg.webhookUrl) body.webhook_config = { url: cfg.webhookUrl, metadata: { call_id: String(callId || ''), lead_id: String(callId || '') } };
   return body;
 }
 
@@ -217,7 +223,7 @@ function voicePlaceCall_(phone, brief, cfg, callId) {
     const msg = j && (j.message || j.detail || j.error || (j.errors && JSON.stringify(j.errors))) || text;
     throw new Error('The provider refused the call (HTTP ' + code + '): ' + String(typeof msg === 'string' ? msg : JSON.stringify(msg)).replace(key, '***').replace(/\s+/g, ' ').slice(0, 200));
   }
-  const id = j && (j.id || j.outbound_id || j.call_id || j.uuid || (j.data && (j.data.id || j.data.outbound_id || j.data.call_id)));
+  const id = j && (j.attempt_id || j.id || j.outbound_id || j.call_id || j.uuid || (j.data && (j.data.attempt_id || j.data.id || j.data.outbound_id || j.data.call_id)));
   return { callId: id ? String(id) : '', note: id ? '' : 'Placed; the provider returned no call id. Response: ' + text.replace(/\s+/g, ' ').slice(0, 160) };
 }
 
@@ -283,8 +289,78 @@ function apiVoiceApplyResult(callId, result) {
   return { call: voiceCallOut_(voiceCallsRows_().filter(function (r) { return String(r.Call_ID) === String(callId); })[0]), drafted: drafted, skipped: skipped };
 }
 
+
+/* ---------------------------------------------------------------- results coming back ----------------------- */
+
+/** A call's transcript as text: "Agent: ..." / "Candidate: ...". */
+function voiceTranscriptText_(turns) {
+  if (!Array.isArray(turns)) return '';
+  return turns.map(function (t) { const who = String(t && t.role) === 'agent' ? 'Agent' : 'Candidate'; return [who, String((t && (t.en_text || t.text)) || '').replace(/\s+/g, ' ').trim()]; }).filter(function (x) { return x[1]; }).map(function (x) { return x[0] + ': ' + x[1]; }).join('\n');
+}
+/** The variables the agent filled in during the call, without empty ones. */
+function voiceVars_(p) {
+  const src = (p && (p.final_agent_variables || p.output_agent_variables)) || {}, o = {};
+  if (src && typeof src === 'object') Object.keys(src).forEach(function (k) { const v = src[k]; if (v != null && String(v).trim() !== '' && typeof v !== 'object') o[k] = String(v).slice(0, 500); });
+  return o;
+}
+/** Which of the provider's statuses count as a finished call and which as a failed one. */
+function voiceOutcome_(p) {
+  const st = String(p.status || p.completion_status || '').toLowerCase();
+  if (st === 'connected' || st === 'completed' || st === 'partial') return { status: 'Completed', outcome: st === 'partial' ? 'Partly answered' : 'Answered', note: '' };
+  const why = { no_answer: 'No answer', busy: 'Busy', failed: 'Failed' }[st] || (st ? st : 'No result');
+  return { status: 'Failed', outcome: why, note: why + (p.failure_reason ? ': ' + String(p.failure_reason).slice(0, 150) : '') };
+}
+/**
+ * Reads the rows the webhook receiver wrote to Voice_Inbox and records each result on its call: status, outcome, length,
+ * transcript, the agent's variables, and a DRAFT screening when a variable is named after a question id. A repeated delivery
+ * (the provider retries) is marked and ignored. Safe to call often; Admin screens call it before they list calls.
+ */
+function voiceIngest_(u) {
+  voiceSchema_();
+  const t = readTable_(VOICE_INBOX_.name, true), todo = t.rows.filter(function (r) { return !String(r.Processed_At || ''); });
+  if (!todo.length) return 0;
+  const calls = voiceCallsRows_();
+  let n = 0;
+  todo.forEach(function (r) {
+    let res = '', p = null;
+    try { p = JSON.parse(String(r.Payload || '')); } catch (e) { res = 'Unreadable payload'; }
+    if (p) {
+      const meta = (p.webhook_config && p.webhook_config.metadata) || p.metadata || {}, att = String(p.attempt_id || r.Attempt_ID || '');
+      const call = calls.filter(function (c) { return (meta.call_id && String(c.Call_ID) === String(meta.call_id)) || (att && String(c.Provider_Call_ID) === att); })[0];
+      if (!call) res = 'No matching call';
+      else if (String(call.Interaction_ID || '') && String(call.Interaction_ID) === String(p.interaction_id || '') && String(call.Final_Vars_JSON || '') !== '') res = 'Repeat delivery, ignored';
+      else {
+        try {
+          const o = voiceOutcome_(p), vars = voiceVars_(p), tr = voiceTranscriptText_(p.interaction_transcript);
+          const fin = sqFinalFor_(call.Line_ID), ids = fin ? sqParse_(String(fin.Content)).map(function (i) { return String(i.id); }) : [], answers = {};
+          Object.keys(vars).forEach(function (k) { if (ids.indexOf(k) >= 0) answers[k] = vars[k]; });
+          if (String(call.Status) === 'Completed' && String(call.Transcript || '')) res = 'Repeat delivery, ignored';
+          else {
+            apiVoiceApplyResult(call.Call_ID, { status: o.status, note: o.note, transcript: tr, answers: o.status === 'Completed' && Object.keys(answers).length ? answers : null });
+            voiceUpdate_(call.Call_ID, { Outcome: o.outcome, Duration_Sec: Number(p.duration) || '', Interaction_ID: String(p.interaction_id || ''), Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000), Provider_Call_ID: att || String(call.Provider_Call_ID || '') });
+            res = 'Recorded on ' + call.Call_ID; n++;
+          }
+        } catch (e) { res = 'Error: ' + String(e && e.message || e).slice(0, 150); }
+      }
+    }
+    t.sheet.getRange(r._row, t.headers.indexOf('Processed_At') + 1, 1, 2).setValues([[new Date(), res]]);
+  });
+  dropStale_(VOICE_INBOX_.name);
+  return n;
+}
+/** One call's result for the card: outcome, length, transcript lines and the variables the agent filled in. Admin only. */
+function apiVoiceCallDetail(callId) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const r = voiceCallsRows_().filter(function (x) { return String(x.Call_ID) === String(callId); })[0];
+  if (!r) throw new Error('Call ' + callId + ' was not found.');
+  let vars = {}; try { vars = JSON.parse(String(r.Final_Vars_JSON || '{}')); } catch (e) { }
+  const lines = String(r.Transcript || '').split('\n').filter(String).map(function (l) { const i = l.indexOf(': '); return { who: l.slice(0, i), text: l.slice(i + 2) }; });
+  return { call: voiceCallOut_(r), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || '') };
+}
+
 /** The calls of one card (Admin only), newest first. */
 function apiVoiceCallsFor(appId) {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  try { voiceIngest_(u); } catch (e) { }
   return voiceCallsRows_(appId).reverse().map(voiceCallOut_);
 }

@@ -4950,7 +4950,7 @@ async function renderVoiceAdmin(el) {
       <p class="hint" style="margin-top:0">An AI voice agent calls the candidate and asks the position’s confirmed screening questions. The answers come back as a <b>draft</b> screening for the recruiter to check; nothing is completed or moved by the call. Candidates on the Do Not Disturb list are never called. This is visible to the Admin only. The API key is kept on the server and is never shown again.</p>
       ${C.missing.length ? `<div class="note warn-note"><b>Still to fill in:</b> ${esc(C.missing.join(', '))}.</div>` : ''}
       ${C.dndWritten || !C.dndRequired ? '' : '<div class="note">The call itself is connected. The <b>Do Not Disturb check</b> is not connected yet, and it is required, so no call is placed. Use <b>Preview the call</b> on a candidate\u2019s card to check exactly what would be sent.</div>'}
-      ${C.resultsWritten ? '' : '<div class="note">Results coming back from the call (disposition, summary and answers) are not connected yet. A call can be placed once the Do Not Disturb check is connected, but its answers will not fill the draft screening yet.</div>'}
+      ${C.resultsWritten && C.webhookUrl ? '' : C.resultsWritten ? '<div class="note"><b>Results:</b> no webhook address is set, so a call\u2019s transcript and answers will not come back. Set up the small receiver (docs\/voice-webhook in the repository) and paste its address below.</div>' : '<div class="note">Results coming back from the call (disposition, summary and answers) are not connected yet. A call can be placed once the Do Not Disturb check is connected, but its answers will not fill the draft screening yet.</div>'}
       <div class="grid">
         <div class="field wide"><div class="rs-row"><label class="chk"><input type="checkbox" id="vcOn" ${C.enabled ? 'checked' : ''}> Allow calls (the Admin can start a call from a candidate’s card)</label></div></div>
         <div class="field"><label for="vcAgent">Agent id</label><input id="vcAgent" value="${esc(C.agentId)}" maxlength="100" autocomplete="off"></div>
@@ -4963,7 +4963,7 @@ async function renderVoiceAdmin(el) {
         <div class="field wide"><label for="vcLine">Opening line <span class="opt">(optional; leave blank to use the agent\u2019s own)</span></label><input id="vcLine" value="${esc(C.openingLine)}" maxlength="300"></div>
         <div class="field"><label for="vcState">Entry state <span class="opt">(optional)</span></label><input id="vcState" value="${esc(C.entryState)}" maxlength="80"></div>
         <div class="field"><label for="vcQv">Agent variable that receives the questions <span class="opt">(optional)</span></label><input id="vcQv" value="${esc(C.questionsVar)}" maxlength="60" placeholder="e.g. screening_questions"><span class="hint">Define this variable in the agent first. Blank: the questions are not sent and the agent uses its own.</span></div>
-        <div class="field wide"><label for="vcHook">Webhook address <span class="opt">(where the provider sends the result; needs a public https address)</span></label><input id="vcHook" value="${esc(C.webhookUrl)}" maxlength="400" placeholder="https:\/\/\u2026"></div>
+        <div class="field wide"><label for="vcHook">Webhook address <span class="opt">(where the provider sends the result: the receiver\u2019s address, ending ?key=\u2026)</span></label><input id="vcHook" value="${esc(C.webhookUrl)}" maxlength="400" placeholder="https:\/\/\u2026"></div>
         <div class="field wide"><div class="rs-row"><label class="chk"><input type="checkbox" id="vcDnd" ${C.dndRequired ? 'checked' : ''}> Check the Do Not Disturb list before every call (recommended; on)</label></div></div></div>
       <div class="drawer-actions" style="position:static">${C.keySet ? '<button class="btn" id="vcClear">Remove the API key</button>' : ''}<button class="btn primary" id="vcSave">Save</button></div></section>
     <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent calls</h2><span class="hint">${C.calls} in total</span></div>
@@ -4989,8 +4989,10 @@ async function voiceCardSection(el, a, P) {
   const last = calls[0];
   el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
     <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
-    ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
-    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button></div><span class="hint" id="vcMsg"></span></section>`;
+    ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
+    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Check for the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
+  if ($('#vcRes', el)) $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id)); } catch (err) { toast(err, true); } busy(e.target, false, 'View the result'); };
+  if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Checking\u2026'); await voiceCardSection(el, a, P); };
   const run = async (dry, btn) => {
     busy(btn, true, dry ? 'Checking…' : 'Calling…');
     try {
@@ -5001,6 +5003,17 @@ async function voiceCardSection(el, a, P) {
   };
   $('#vcPrev', el).onclick = e => run(true, e.target);
   $('#vcGo', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); };
+}
+function voiceResultDialog(r) {
+  const c = r.call;
+  cpDlg(`<h2 id="cpTitle">Voice call ${esc(c.id)} · result</h2>
+    <p class="sub"><b class="${VOICE_STATUS_CLASS_[c.status] || ''}">${esc(c.status)}</b>${c.outcome ? ' · ' + esc(c.outcome) : ''}${c.duration ? ' · ' + Math.floor(c.duration / 60) + ' min ' + (c.duration % 60) + ' s' : ''} · ${esc(c.startedAt)}${c.draft ? ' · draft screening written' : ''}</p>
+    <div class="note warn-note">The agent\u2019s notes and the transcript are a machine record. Check them against what you know before you use them; nothing here completes the screening.</div>
+    <h4>What the agent noted</h4>
+    ${r.vars.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Item</th><th>Answer</th></tr></thead><tbody>${r.vars.map(v => `<tr><td>${esc(v[0])}</td><td>${esc(v[1])}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">The agent returned no answers. Its variables are set up in the Sarvam agent; see the voice agent settings.</p>'}
+    <h4>Transcript</h4>
+    ${r.transcript.length ? `<div class="cvtext" style="white-space:pre-wrap;max-height:320px;overflow:auto">${r.transcript.map(t => `<b>${esc(t.who)}:</b> ${esc(t.text)}`).join('\n')}</div>` : '<p class="hint">No transcript came back (the call may not have connected).</p>'}
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
 }
 function voicePreviewDialog(r) {
   const b = r.brief;
