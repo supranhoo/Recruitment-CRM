@@ -1090,6 +1090,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Voice result review: edit, rate, complete; one count; who can see it** (no schema change; ADR-050)
+- The result window is now a working screen: what the candidate said can be edited, each answer rated (Meets / Partly / Does not meet; numbers and yes / no are rated automatically), then **Save to the screening draft** or **Confirm and complete the screening** (needs every eligibility and role-fit question rated; moves the candidate to Screened). `apiVoiceReviewSave` writes through `apiSaveScreening`; earlier draft answers are kept. A screening already completed is not overwritten.
+- **Who:** new permission `voice_review` (Recruiter for own positions, TA Lead, Head of HR, Admin for all). It shows the result section on the card and allows rating and completing; **placing calls, settings and fetching results stay Admin only** (`voice_agent`). A webhook result for a position the signed-in user may not handle stays in the inbox until someone who may handles it. Role matrix updated.
+- **One definition of "answered"** for the card, the call-plan desk and the result window (`voiceCombined_`): a question counts when some call gave a usable answer; an unclear yes / no (for example "देख सकते हैं") stays open and is asked again; an unreadable number counts as answered and is flagged for the recruiter to correct. The call length is shown in whole seconds.
+
 **Unreleased — Call-plan desk layout fix** (no schema change; `App.html`, `Styles.html`)
 - The wording boxes were one-line inputs a few characters wide and the Time cell broke its row. The wording is now a full-width box that grows to the whole question, the table has fixed column widths and a sticky header, and on a phone each question stacks (tick and wording, then order and time).
 
