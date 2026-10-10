@@ -1090,6 +1090,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Call-plan desk layout fix** (no schema change; `App.html`, `Styles.html`)
+- The wording boxes were one-line inputs a few characters wide and the Time cell broke its row. The wording is now a full-width box that grows to the whole question, the table has fixed column widths and a sticky header, and on a phone each question stacks (tick and wording, then order and time).
+
 **Unreleased — Voice agent: call-plan desk** (no schema change; ADR-050)
 - New desk before a call (`apiVoicePlanDraft`, `voicePlanDesk` in App.html): every confirmed question with a tick box, up / down order, editable spoken wording, time per question and a total with a warning above 12 questions or 8 minutes; presets All, Knock-outs and must-haves, Only unanswered, None. A follow-up (earlier result exists) starts with the unanswered ticked. "Check the plan" shows what the bot is sent and any problem.
 - From agent version 5 (`VOICE_LISTONLY_FROM_`) the CRM sends exactly the ticked questions, numbered, through the questions variable; answers are matched by Q number. Older versions keep the earlier behaviour (standard questions in the agent, role questions limited by "Most role questions per call").
