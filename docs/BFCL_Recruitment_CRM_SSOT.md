@@ -1085,6 +1085,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Voice agent: follow-up call for the questions still missing** (no schema change; ADR-049)
+- New "Ask the remaining questions" (and "Preview the follow-up") on a card whose last call has a result: the plan is every question with no usable answer from any call, in priority order (up to 10), sent through the questions variable with `call_mode = follow_up`; the agent skips its standard questions and asks only those. Answers from all calls are combined per question (latest wins); the draft screening keeps answers already in it (earlier calls or typed by the recruiter) and only fills the empty ones. The card shows "n of m questions still without an answer".
+- Agent version 3 (frozen) holds the matching prompt: finish-the-list check before closing, a clear yes / no, the missing half of a two-part question, `call_mode`, and English digit answer lines. Tested with simulated chats in full and follow-up modes before it was frozen.
+
 **Unreleased — Voice agent: no half-empty calls, readable answers, coverage** (no schema change; ADR-049)
 - A real call is refused when the position has role-specific questions and no questions variable is set (Admin > Voice agent); the preview says so. The call row records which variable carried the questions; the result shows "NOT sent to the bot" when none did, and "Covered x of y" from the CRM's own count (the agent's disposition is only a hint).
 - The agent's answers are also read when returned as one dictionary-style string, and Hindi digits and number words (साल, महीने, दिन, पंद्रह, बीस…) are turned into numbers; an unclear yes / no ("देख सकते हैं") stays unrated for the recruiter. Transcripts fetched from the provider use the English text first.

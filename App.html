@@ -4990,18 +4990,21 @@ async function voiceCardSection(el, a, P) {
   const last = calls[0];
   el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
     <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
-    ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
-    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
+    ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.hasResult && last.totalQ ? (last.remaining > 0 ? ` · <b class="miss">${last.remaining} of ${last.totalQ} questions still without an answer</b>` : ' · every question has an answer') : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
+    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Preview the follow-up</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
   if ($('#vcRes', el)) $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id)); } catch (err) { toast(err, true); } busy(e.target, false, 'View the result'); };
   if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Fetching\u2026'); try { await api('apiVoiceFetchResult', last.id); toast('The result was fetched.'); } catch (err) { toast(err, true); } await voiceCardSection(el, a, P); };
-  const run = async (dry, btn) => {
+  const run = async (dry, btn, fu) => {
+    const label = btn.textContent;
     busy(btn, true, dry ? 'Checking…' : 'Calling…');
     try {
-      const r = await api('apiVoiceStartScreening', a.App_ID, { dryRun: dry });
+      const r = await api('apiVoiceStartScreening', a.App_ID, { dryRun: dry, followUp: !!fu });
       if (dry) voicePreviewDialog(r); else { toast('The call has been placed.'); voiceCardSection(el, a, P); }
     } catch (e) { toast(e, true); }
-    busy(btn, false, dry ? 'Preview the call' : 'Place the call');
+    busy(btn, false, label);
   };
+  if ($('#vcFuPrev', el)) $('#vcFuPrev', el).onclick = e => run(true, e.target, true);
+  if ($('#vcFu', el)) $('#vcFu', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); };
   $('#vcPrev', el).onclick = e => run(true, e.target);
   $('#vcGo', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); };
 }
