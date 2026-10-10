@@ -4990,9 +4990,9 @@ async function voiceCardSection(el, a, P) {
   el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
     <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
     ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
-    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Check for the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
+    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
   if ($('#vcRes', el)) $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id)); } catch (err) { toast(err, true); } busy(e.target, false, 'View the result'); };
-  if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Checking\u2026'); await voiceCardSection(el, a, P); };
+  if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Fetching\u2026'); try { await api('apiVoiceFetchResult', last.id); toast('The result was fetched.'); } catch (err) { toast(err, true); } await voiceCardSection(el, a, P); };
   const run = async (dry, btn) => {
     busy(btn, true, dry ? 'Checking…' : 'Calling…');
     try {

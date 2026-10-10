@@ -348,6 +348,76 @@ function voiceIngest_(u) {
   dropStale_(VOICE_INBOX_.name);
   return n;
 }
+
+/* ---------------------------------------------------------------- fetching a call's result ----------------- */
+
+/** GET on the provider's Analytics service for this agent: .../analytics/v1/{org}/{workspace}/{app}{path}. The key stays in the header and is scrubbed from errors. */
+function voiceAnalyticsGet_(cfg, path, params) {
+  const key = voiceKey_();
+  if (!key) throw new Error('The API key is not set.');
+  const qs = Object.keys(params || {}).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+  const url = VOICE_API_BASE_ + '/analytics/v1/' + encodeURIComponent(cfg.orgId) + '/' + encodeURIComponent(cfg.workspaceId) + '/' + encodeURIComponent(cfg.agentId) + path + (qs ? '?' + qs : '');
+  let resp;
+  try { resp = UrlFetchApp.fetch(url, { method: 'get', headers: { 'X-API-Key': key }, muteHttpExceptions: true }); }
+  catch (e) { throw new Error('Could not reach the voice provider (' + String(e && e.message || e).replace(key, '***').slice(0, 120) + ').'); }
+  const code = resp.getResponseCode(), text = String(resp.getContentText() || '');
+  let j = null; try { j = JSON.parse(text); } catch (e) { }
+  if (code < 200 || code >= 300) {
+    const msg = j && (j.message || j.detail || j.error || (j.errors && JSON.stringify(j.errors))) || text;
+    throw new Error('The provider refused the request (HTTP ' + code + '): ' + String(typeof msg === 'string' ? msg : JSON.stringify(msg)).replace(key, '***').replace(/\s+/g, ' ').slice(0, 200));
+  }
+  return j;
+}
+/** The turns of a transcript response, whatever the wrapper is called, as "Agent: ..." / "Candidate: ..." lines. '' when none are recognised. */
+function voiceTurnsFromResponse_(j) {
+  let arr = Array.isArray(j) ? j : null;
+  ['transcript', 'turns', 'items', 'messages', 'data', 'interaction_transcript', 'conversation'].forEach(function (k) {
+    if (!arr && j && Array.isArray(j[k])) arr = j[k];
+    if (!arr && j && j[k] && typeof j[k] === 'object') ['transcript', 'turns', 'items', 'messages'].forEach(function (k2) { if (!arr && Array.isArray(j[k][k2])) arr = j[k][k2]; });
+  });
+  if (!arr) return '';
+  return arr.map(function (t) {
+    const who = String((t && (t.role || t.speaker || t.participant || t.sender)) || '').toLowerCase();
+    const text = String((t && (t.en_text || t.text || t.content || t.message || t.transcript)) || '').replace(/\s+/g, ' ').trim();
+    return [/agent|assistant|bot|ai/.test(who) ? 'Agent' : 'Candidate', text];
+  }).filter(function (x) { return x[1]; }).map(function (x) { return x[0] + ': ' + x[1]; }).join('\n');
+}
+/**
+ * Pulls one call's result from the provider by its attempt id (for a call whose webhook never arrived, or that is still
+ * waiting): attempt record -> interaction id -> transcript. Records it the same way a webhook result is recorded.
+ */
+function apiVoiceFetchResult(callId) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const call = voiceCallsRows_().filter(function (r) { return String(r.Call_ID) === String(callId); })[0];
+  if (!call) throw new Error('Call ' + callId + ' was not found.');
+  if (String(call.Status) === 'Completed' && String(call.Transcript || '')) throw new Error('This call already has its result.');
+  let att = String(call.Provider_Call_ID || '');
+  if (!att) { const m = String(call.Status_Note || '').match(/"attempt_id"\s*:\s*"([0-9A-Za-z\-]{8,80})"/); att = m ? m[1] : ''; }
+  if (!att) throw new Error('This call has no provider attempt id, so its result cannot be fetched.');
+  const cfg = voiceCfg_(), started = call.Started_At instanceof Date ? call.Started_At : new Date(call.Started_At || Date.now());
+  const iso = function (d) { return Utilities.formatDate(d, 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'"); };
+  const j = voiceAnalyticsGet_(cfg, '/attempts', { start_datetime: iso(new Date(started.getTime() - 6 * 3600000)), end_datetime: iso(new Date(started.getTime() + 2 * 86400000)), limit: 20,
+    filter_conditions: JSON.stringify([{ id: '1', field: 'attempt_id', operator: 'equals', value: att }]) });
+  const items = Array.isArray(j) ? j : (j && (j.items || j.data || j.results)) || [];
+  const a = items.filter(function (x) { return String(x.attempt_id) === att; })[0];
+  if (!a) throw new Error('The provider has no record of that call for the days searched. Check the agent id in the settings, and that the call is not older than the provider keeps its records.');
+  const inter = String(a.interaction_id || ''), cs = String(a.connectivity_status || '');
+  let tr = '', note = '';
+  if (inter) {
+    try { const tj = voiceAnalyticsGet_(cfg, '/transcripts/' + encodeURIComponent(inter)); tr = voiceTurnsFromResponse_(tj); if (!tr) { tr = JSON.stringify(tj).slice(0, 15000); note = 'The transcript layout was not recognised; the raw text is shown.'; } }
+    catch (e) { note = 'The transcript could not be fetched: ' + String(e && e.message || e).slice(0, 120); }
+  }
+  const failed = !inter;
+  const vars = {}; const av = a.agent_variables; if (av && typeof av === 'object') Object.keys(av).forEach(function (k) { if (av[k] != null && String(av[k]).trim() !== '' && typeof av[k] !== 'object') vars[k] = String(av[k]).slice(0, 500); });
+  const fin = sqFinalFor_(call.Line_ID), ids = fin ? sqParse_(String(fin.Content)).map(function (i) { return String(i.id); }) : [], answers = {};
+  Object.keys(vars).forEach(function (k) { if (ids.indexOf(k) >= 0) answers[k] = vars[k]; });
+  const why = failed ? ((cs || 'Not connected') + (a.failure_reason ? ': ' + String(a.failure_reason).slice(0, 150) : '')) : note;
+  apiVoiceApplyResult(call.Call_ID, { status: failed ? 'Failed' : 'Completed', note: why, transcript: tr, answers: !failed && Object.keys(answers).length ? answers : null });
+  voiceUpdate_(call.Call_ID, { Provider_Call_ID: att, Outcome: failed ? (cs || 'Not connected') : 'Answered', Duration_Sec: Number(a.duration_in_seconds) || '', Interaction_ID: inter, Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000) });
+  audit_(u, 'Voice agent', call.Call_ID, 'Result fetched', '', '', failed ? 'not connected' : 'transcript ' + (tr ? 'yes' : 'no'));
+  return voiceCallOut_(voiceCallsRows_().filter(function (r) { return String(r.Call_ID) === String(callId); })[0]);
+}
+
 /** One call's result for the card: outcome, length, transcript lines and the variables the agent filled in. Admin only. */
 function apiVoiceCallDetail(callId) {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
