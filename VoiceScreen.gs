@@ -27,6 +27,8 @@ const VOICE_DEFAULTS_ = { orgId: '01a11b5b-1fcf-7fc7-b673-8ebbe5e5dd0c', workspa
 const VOICE_API_BASE_ = 'https://apps.sarvam.ai/api';
 /** From this agent version on, the agent has no questions of its own: it asks the numbered list the CRM sends (the call-plan desk). */
 const VOICE_LISTONLY_FROM_ = 5;
+/** From this agent version on, the agent also has the question_criteria variable and returns screening_ratings (suggested ratings for the descriptive answers). */
+const VOICE_RATINGS_FROM_ = 6;
 
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
 function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols); }
@@ -43,7 +45,7 @@ function voiceCfg_() {
   return { enabled: String(s.VOICE_ENABLED || 'No') === 'Yes', agentId: String(s.VOICE_AGENT_ID || VOICE_DEFAULTS_.agentId), agentVersion: v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion,
     connectionId: String(s.VOICE_CONNECTION_ID || VOICE_DEFAULTS_.connectionId), fromNumber: String(s.VOICE_FROM_NUMBER || VOICE_DEFAULTS_.fromNumber), dndRequired: String(s.VOICE_DND_REQUIRED || 'Yes') !== 'No',
     orgId: String(s.VOICE_ORG_ID || VOICE_DEFAULTS_.orgId), workspaceId: String(s.VOICE_WORKSPACE_ID || VOICE_DEFAULTS_.workspaceId),
-    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_,
+    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_, ratings: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_RATINGS_FROM_,
     keySet: !!key, keyHint: key ? '\u2026' + key.slice(-4) : '' };
 }
 /** What still has to be filled in before a call can be placed (empty = ready). */
@@ -140,7 +142,8 @@ function voiceRoleQuestionsText_(plan) { return plan.sent.map(function (x) { ret
 /** The compact copy of the questions kept on the call, so the analysis never depends on later edits. */
 function voiceItemsCompact_(items) {
   return items.map(function (i) { const o = { id: String(i.id), sec: i.sec, label: String(i.label || '').slice(0, 60), q: String(i.q || '').slice(0, 300), type: i.type || 'text', need: String(i.need || '').slice(0, 200), imp: i.imp || '', ko: !!i.ko };
-    ['min', 'max', 'partly', 'expect'].forEach(function (k) { if (i[k] !== undefined && i[k] !== null && i[k] !== '') o[k] = i[k]; }); return o; });
+    ['min', 'max', 'partly', 'expect'].forEach(function (k) { if (i[k] !== undefined && i[k] !== null && i[k] !== '') o[k] = i[k]; });
+    if (i.good) o.good = String(i.good).slice(0, 200); if (i.watch) o.watch = String(i.watch).slice(0, 160); return o; });
 }
 
 /** Devanagari digits and the common Hindi number words as digits, so "पंद्रह दिन" reads as 15 days. */
@@ -178,6 +181,17 @@ function voiceParseAnswers_(text) {
     if (VOICE_KEYS_.indexOf(up) >= 0) { out.labels[up] = ans; return; }
     for (let i = 0; i < VOICE_ALIAS_.length; i++) if (VOICE_ALIAS_[i][0].test(label)) { if (!out.labels[VOICE_ALIAS_[i][1]]) out.labels[VOICE_ALIAS_[i][1]] = ans; return; }
     out.other.push([label, ans]);
+  });
+  return out;
+}
+/** The agent's screening_ratings text -> {id: {r: 'M'|'P'|'G', why}} for the questions it was sure about ("Unclear" gives nothing). */
+function voiceParseRatings_(text, plan) {
+  const out = {}, map = { meets: 'M', partly: 'P', 'does not meet': 'G', 'not met': 'G' };
+  voiceDictToLines_(text).split(/\r?\n/).forEach(function (line) {
+    const m = line.match(/^\s*Q(\d{1,2})\s*:\s*(meets|partly|does not meet|not met|unclear)\b\s*(?:[-\u2013\u2014:|]\s*)?(.*)$/i);
+    if (!m) return;
+    const r = map[m[2].toLowerCase()], x = plan.sent.filter(function (s) { return s.n === Number(m[1]); })[0];
+    if (r && x) out[x.id] = { r: r, why: String(m[3] || '').replace(/\s+/g, ' ').trim().slice(0, 160) };
   });
   return out;
 }
@@ -290,6 +304,8 @@ function voiceAnswersFromVars_(plan, vars) {
   plan.std.forEach(function (s) { const raw = parsed.labels[s.key] || (s.key === 'RELOCATE' ? parsed.labels.LOCATION : ''); put(s.id, raw, s.key); });
   plan.sent.forEach(function (x) { put(x.id, parsed.q[x.n], ''); });
   plan.sent.forEach(function (x) { if (byId[x.id]) return; const it = items[x.id], k = it ? voiceStdKey_(it) : ''; if (k && parsed.labels[k]) put(x.id, parsed.labels[k], k); });
+  // "the whole experience is relevant": the relevant years are the total years
+  plan.items.forEach(function (it) { const id = String(it.id); if (voiceStdKey_(it) === 'EXP_RELEVANT' && byId[id] && byId[id].a === '' && /\b(entire|whole|all|full|complete)\b|\u0938\u093E\u0930\u093E|\u092A\u0942\u0930\u093E/i.test(byId[id].raw)) { const tot = plan.items.filter(function (i) { return voiceStdKey_(i) === 'EXP_TOTAL' && byId[String(i.id)] && byId[String(i.id)].a !== ''; })[0]; if (tot) byId[id].a = byId[String(tot.id)].a; } });
   Object.keys(items).forEach(function (id) { if (!byId[id] && vars && vars[id] != null && String(vars[id]).trim()) put(id, String(vars[id]), ''); });
   return { byId: byId, unclear: unclear, other: parsed.other, notAsked: plan.items.map(function (i) { return i.id; }).filter(function (id) { return !byId[id]; }) };
 }
@@ -316,7 +332,7 @@ function voicePhone_(cand) { const p = normPhone_(cand && cand.Mobile); return /
 function voiceBuildBrief_(app, line, cand, items, cfg, planOverride) {
   const first = String(cand.Name || '').trim().split(/\s+/)[0] || 'the candidate', plan = planOverride || voicePlan_(items, cfg.maxQ);
   return { followUp: !!(planOverride && planOverride.mode === 'follow_up'), candidateFirstName: first, position: String(line.Position || ''), company: String((bgvRules_().cfg || {}).company || 'BFCL'), orgId: cfg.orgId, workspaceId: cfg.workspaceId,
-    plan: plan, roleQuestions: voiceRoleQuestionsText_(plan),
+    plan: plan, roleQuestions: voiceRoleQuestionsText_(plan), criteria: voiceCriteriaText_(plan, items),
     questions: items.map(function (i) { const id = String(i.id), sent = plan.sent.filter(function (x) { return x.id === id; })[0], std = plan.std.filter(function (x) { return x.id === id; })[0];
       return { id: id, section: i.sec === 'E' ? 'Eligibility' : i.sec === 'R' ? 'Role fit' : 'Practical', question: String(i.q), answerType: String(i.type || 'text'), needed: String(i.need || ''), knockOut: !!i.ko,
         how: std ? 'Standard question' : sent ? (plan.mode === 'follow_up' ? 'Follow-up question Q' : 'Role question Q') + sent.n : plan.mode === 'follow_up' ? 'Answered earlier' : 'Left for the recruiter' }; }) };
@@ -324,6 +340,15 @@ function voiceBuildBrief_(app, line, cand, items, cfg, planOverride) {
 
 /** The role-specific questions as numbered spoken text. The required answer, the pass mark and the knock-out flag are never sent: the agent must not coach the candidate. */
 function voiceQuestionsText_(brief) { return brief.roleQuestions || ''; }
+/**
+ * What each asked question requires, for the agent's post-call rating step only: one line per number, never read by the live bot
+ * (the agent prompt does not use this variable). Practical questions have no requirement and are left out.
+ */
+function voiceCriteriaText_(plan, items) {
+  const by = {}; items.forEach(function (i) { by[String(i.id)] = i; });
+  return plan.sent.map(function (x) { const i = by[x.id]; if (!i || i.sec === 'P' || !(i.need || i.good)) return '';
+    return 'Q' + x.n + ' | ' + String(i.q).replace(/\s+/g, ' ').slice(0, 110) + ' | required: ' + String(i.need || '').replace(/\s+/g, ' ').slice(0, 160) + (i.good ? ' | a good answer: ' + String(i.good).replace(/\s+/g, ' ').slice(0, 160) : '') + (i.watch ? ' | a worry: ' + String(i.watch).replace(/\s+/g, ' ').slice(0, 120) : '') + (i.ko ? ' | knock-out' : ''); }).filter(String).join('\n');
+}
 /**
  * The agent variables sent with the call. Only the candidate's first name and the position are sent by default. Gender,
  * location and resume highlights are NOT sent (the agent may define them; they are left out on purpose). The questions are
@@ -333,6 +358,7 @@ function voiceAgentVars_(brief, cfg) {
   const v = { candidate_name: brief.candidateFirstName, role_applied: brief.position };
   if (cfg.questionsVar) v[cfg.questionsVar] = voiceQuestionsText_(brief);
   if (brief.followUp) v.call_mode = 'follow_up';
+  if (cfg.ratings && brief.criteria) v.question_criteria = brief.criteria;
   return v;
 }
 /** The provider's outbound request body, as in the provider's own example. `phone` is the 10-digit mobile. */
@@ -645,20 +671,20 @@ function apiVoiceCallDetail(callId) {
   let vars = {}; try { vars = JSON.parse(String(r.Final_Vars_JSON || '{}')); } catch (e) { }
   const lines = String(r.Transcript || '').split('\n').filter(String).map(function (l) { const i = l.indexOf(': '); return { who: l.slice(0, i), text: l.slice(i + 2) }; });
   const plan = voicePlanOf_(r), m = voiceAnswersFromVars_(plan, vars), sentIds = plan.sent.map(function (x) { return x.id; }), stdIds = plan.std.map(function (x) { return x.id; });
-  const all = voiceCombined_(r.App_ID, plan.items), scr = scrOf_(r.App_ID);
+  const all = voiceCombined_(r.App_ID, plan.items), scr = scrOf_(r.App_ID), rates = voiceParseRatings_(vars.screening_ratings, plan);
   let cur = {}; try { cur = scr ? JSON.parse(String(scr.Answers_JSON || '{}')) : {}; } catch (e) { cur = {}; }
   const ans = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') ans[id] = { a: m.byId[id].a }; });
   const review = plan.items.map(function (it) { const x = m.byId[it.id], c = cur[it.id], auto = x && x.a !== '' ? sqAuto_(it, x.a) : '';
     return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type,
       how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? (plan.listOnly ? 'Asked' : plan.mode === 'follow_up' ? 'Follow-up question' : 'Role question') : 'Question, NOT sent to the bot') : plan.mode === 'follow_up' ? 'Answered in an earlier call' : 'Left for the recruiter',
-      answer: x ? x.raw : '', value: x ? x.a : '', rating: auto, unclear: m.unclear[it.id] || '',
+      answer: x ? x.raw : '', value: x ? x.a : '', rating: auto, suggest: !auto && x && rates[it.id] ? rates[it.id] : null, unclear: m.unclear[it.id] || '',
       earlier: !x && all[it.id] ? { call: all[it.id].call, answer: all[it.id].raw } : null,   // answered in another call of this candidate
       cur: c ? { a: String(c.a == null ? '' : c.a), r: String(c.r || '') } : null }; });
   const score = sqScore_(plan.items, ans);
   const asked = plan.items.filter(function (it) { return stdIds.indexOf(it.id) >= 0 || sentIds.indexOf(it.id) >= 0; });
   const open = plan.items.filter(function (it) { return !all[it.id]; }).map(function (it) { return it.id; });
   const coverage = { asked: asked.length, answered: asked.filter(function (it) { return !!m.byId[it.id]; }).length, unclear: Object.keys(m.unclear).length, total: plan.items.length, overallAnswered: plan.items.length - open.length, open: open,
-    toRate: review.filter(function (x) { return x.sec !== 'P' && (x.value !== '' || x.answer) && !x.rating && !(x.cur && x.cur.r); }).length, autoRated: review.filter(function (x) { return !!x.rating; }).length,
+    toRate: review.filter(function (x) { return x.sec !== 'P' && (x.value !== '' || x.answer) && !x.rating && !x.suggest && !(x.cur && x.cur.r); }).length, autoRated: review.filter(function (x) { return !!x.rating; }).length, suggested: review.filter(function (x) { return !!x.suggest; }).length,
     notSentVar: !!plan.sent.length && !plan.via && !plan.derived };
   const hint = { summary: String(vars.call_summary || ''), disposition: String(vars.call_disposition || '') };
   return { call: voiceCallOut_(r), appId: String(r.App_ID), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review,
