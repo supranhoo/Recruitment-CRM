@@ -255,7 +255,8 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Audit_Checks** | `Audit_ID` (AUD-) | Monthly 20 % sample: Month, Entity, Record_ID, Label, Recruiter, Result (Pending/Correct/Error), Error_Field, Critical, Remarks. |
 | **TAT_Rules** | `Rule_ID` (TR-) | Version_ID, Effective_From, Level, Standard_Days, Grace_Days, Risk_Pct, Status (Active/Superseded), Note, Created_By/At. |
 | **MRF / Applications (fast-track columns)** | MRF: Hiring_Route (blank = by grade / Fast-track / Standard). Applications: Dept_Confirm_On, Dept_Confirm_By, Dept_Confirm_File, Appointment_Date, Appointment_Letter_File | Schema 40 (ADR-047) |
-| **Voice_Calls** | Call_ID (VCL-), App_ID, Candidate_ID, Line_ID, Phone_Last4, Status, Status_Note, Provider_Call_ID, Questions_Version, Started_By/At, Completed_At, Transcript, Answers_JSON, Draft_Applied, Updated_By/At | Schema 38 (ADR-045). Admin only |
+| **Voice_Calls** | Call_ID (VCL-), App_ID, Candidate_ID, Line_ID, Phone_Last4, Status, Status_Note, Provider_Call_ID, Questions_Version, Started_By/At, Completed_At, Transcript, Answers_JSON, Draft_Applied, Outcome, Duration_Sec, Interaction_ID, Final_Vars_JSON, Updated_By/At | Schema 38 (ADR-045); result columns added by `voiceSchema_` (ADR-048). Admin only |
+| **Voice_Inbox** | Received_At, Attempt_ID, Event_Key, Payload, Processed_At, Result | Written only by the separate webhook receiver (`docs/voice-webhook`); read by `voiceIngest_`. ADR-048. Admin only |
 | **Candidate_Profiles** | Candidate_ID (key), Profile_JSON, Source, Parsed_On, Reviewed_By, Reviewed_On, Updated_By, Updated_At | Schema 35 (ADR-044). One row per candidate; JSON holds the facts, checks are calculated on read |
 | **CV_Parse_Log** | `Log_ID` | Candidate_ID, File_Name, Parsed_JSON, Saved_JSON, Chars, By, At (parser pilot accuracy). |
 | **Audit_Log** | — | Timestamp, User, Sheet, Record_ID, Action, Field, Old_Value, New_Value. Append-only change history. |
@@ -968,6 +969,11 @@ Context: HR often fills a vacancy by hiring in a neighbouring grade. Per grade t
 Decision: cover is computed inside one department and one pay band, nearest grade first, and only the residual vacancy and excess use warning colours. Substitutions are shown neutrally, listed in a Grade mix monitor, and an upgrade keeps a one-line note with approver and review date (Head of HR, Admin). Monitoring is count-based; a budget CTC per grade table is left for later.
 Consequences: the vacancy figures drop against the per-grade view while net vacancy (315) is unchanged; bands are a constant (`ORG_BANDS_`); notes must be reviewed by date; a hire in a covered grade is flagged as "check before hiring".
 
+**ADR-048 — Voice call results come back through a separate webhook receiver that can only write one inbox sheet** (10 Oct, user decision)
+Context: the provider POSTs each call's result (attempt_id, status, duration, interaction_id, final agent variables, transcript, our metadata) to a public address; the CRM web app is sign-in only and must not be opened to the public.
+Decision: a separate tiny Apps Script project (`docs/voice-webhook`, deployed "Anyone") checks a secret in the address and appends one row to `Voice_Inbox`; the CRM matches rows to calls (our `call_id` in the webhook metadata, else the `attempt_id`) and records outcome, length, transcript and the agent's variables; answers fill a DRAFT screening only for variables named like a question id. Repeated deliveries are ignored.
+Consequences: whoever holds the address can post a result, so the secret is rotated by changing the property; transcripts are personal data and stay Admin-only; the provider documents no signature, so the secret in the address is the only check.
+
 **ADR-047 — Blue-collar (W, T) hiring uses a fast-track route that skips stages rather than removing them** (9 Oct, user decisions)
 Context: for helpers and ITI trainees the multi-stage process is slow; the real process is call, send to the department, written confirmation, hiring confirmation by the onboarding team, onboarding.
 Decision: reuse the 11 stages and skip the unneeded ones on fast-track positions; gate the hiring on the department's written confirmation file; short W document pack; new Onboarding role limited to the last three stages; levels configurable.
@@ -1073,6 +1079,9 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
 
 ### 2026-09-30
+
+**Unreleased — Voice call results come back** (no schema bump; `voiceSchema_` adds columns and `Voice_Inbox`; ADR-048)
+- The call response's `attempt_id` is stored; our call id is sent in the webhook metadata. New `docs/voice-webhook` (receiver project and set-up steps). `voiceIngest_` records outcome, duration, transcript and the agent's variables on the call; a variable named like a question id fills a draft screening. New `apiVoiceCallDetail`; the card shows outcome and length, "View the result", and "Check for the result".
 
 **Unreleased — Daily log: the day's grid replaces the form** (no schema change)
 - The Log activity form is replaced by a grid: Recruiter picker and Date (today) at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks typed in the row. Today's existing entry is shown in the row; a row is saved with **Save**, or all changed rows with **Save all changes** (an existing entry is updated, a new one created). Pipeline counts for the day are shown under the position. Past entries are locked as before. For dates before 5 Oct the grid also shows the typed pipeline columns.
