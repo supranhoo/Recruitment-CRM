@@ -4991,7 +4991,7 @@ async function voiceCardSection(el, a, P) {
   el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
     <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
     ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.hasResult && last.totalQ ? (last.remaining > 0 ? ` · <b class="miss">${last.remaining} of ${last.totalQ} questions still without an answer</b>` : ' · every question has an answer') : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
-    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Place the call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Preview the follow-up</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
+    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Choose questions and call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Open the call plan</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
   if ($('#vcRes', el)) $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id)); } catch (err) { toast(err, true); } busy(e.target, false, 'View the result'); };
   if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Fetching\u2026'); try { await api('apiVoiceFetchResult', last.id); toast('The result was fetched.'); } catch (err) { toast(err, true); } await voiceCardSection(el, a, P); };
   const run = async (dry, btn, fu) => {
@@ -5003,10 +5003,70 @@ async function voiceCardSection(el, a, P) {
     } catch (e) { toast(e, true); }
     busy(btn, false, label);
   };
-  if ($('#vcFuPrev', el)) $('#vcFuPrev', el).onclick = e => run(true, e.target, true);
-  if ($('#vcFu', el)) $('#vcFu', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); };
+  const openDesk = async (btn, fu, legacy) => {
+    const label = btn.textContent; busy(btn, true, 'Opening\u2026');
+    let dk; try { dk = await api('apiVoicePlanDraft', a.App_ID); } catch (err) { toast(err, true); busy(btn, false, label); return; }
+    busy(btn, false, label);
+    if (dk.listOnly) voicePlanDesk(a, dk, el, P); else legacy();
+  };
+  if ($('#vcFuPrev', el)) $('#vcFuPrev', el).onclick = e => openDesk(e.target, true, () => run(true, e.target, true));
+  if ($('#vcFu', el)) $('#vcFu', el).onclick = e => openDesk(e.target, true, () => { if (confirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); });
   $('#vcPrev', el).onclick = e => run(true, e.target);
-  $('#vcGo', el).onclick = e => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); };
+  $('#vcGo', el).onclick = e => openDesk(e.target, false, () => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); });
+}
+/** The call-plan desk: tick which questions the bot asks, in which order and wording, before the call is placed. */
+function voicePlanDesk(a, dk, el, P) {
+  const SEC = { E: 'Eligibility', R: 'Role fit', P: 'Practical' };
+  const row = x => `<tr data-id="${esc(x.id)}" data-secs="${x.secs}" data-ko="${x.ko ? 1 : 0}" data-imp="${esc(x.imp)}" data-ans="${x.answered ? 1 : 0}">
+    <td><input type="checkbox" class="dk-sel" aria-label="Ask: ${esc(x.label || x.q)}" ${x.sel ? 'checked' : ''}></td>
+    <td class="nw"><button type="button" class="btn sm dk-up" title="Move up" aria-label="Move up">↑</button> <button type="button" class="btn sm dk-dn" title="Move down" aria-label="Move down">↓</button></td>
+    <td><input class="dk-sp" value="${esc(x.spoken)}" data-orig="${esc(x.spoken)}" maxlength="200" aria-label="Spoken wording">
+      <span class="sub">${esc(SEC[x.sec] || '')}${x.ko ? ' · <b class="miss">knock-out</b>' : ''}${x.need ? ' · needed: ' + esc(x.need) : ''}${x.answered ? ' · <b>answered earlier:</b> ' + esc(x.answer) : ''}</span></td>
+    <td class="nw sub">${x.secs} s</td></tr>`;
+  const d = cpDlg(`<h2 id="cpTitle">Call plan · ${esc(dk.candidate)} · ${esc(dk.position)}</h2>
+    <p class="sub">${dk.followUp ? 'This is a follow-up call: the questions with no answer yet are ticked.' : 'First call: every confirmed question is ticked.'} Untick what the bot should not ask, change the order or the spoken wording. Unticked questions stay on your own list.</p>
+    <div class="btn-row"><button type="button" class="btn sm" data-pre="all">All</button><button type="button" class="btn sm" data-pre="must">Knock-outs and must-haves</button><button type="button" class="btn sm" data-pre="open">Only unanswered</button><button type="button" class="btn sm" data-pre="none">None</button></div>
+    <p id="dkTotal" style="margin:10px 0"></p>
+    <div class="table-wrap" style="max-height:48vh;overflow:auto"><table class="bgv-table"><thead><tr><th>Ask</th><th>Order</th><th>Question as the bot says it</th><th>Time</th></tr></thead><tbody id="dkRows">${dk.items.map(row).join('')}</tbody></table></div>
+    <div id="dkCheck" style="margin-top:10px"></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button><button class="btn" id="dkPrev">Check the plan</button><button class="btn primary" id="dkGo">Place the call</button></div>`);
+  const rows = () => $$('#dkRows tr', d);
+  const total = () => {
+    const sel = rows().filter(r => $('.dk-sel', r).checked), n = sel.length, secs = sel.reduce((t, r) => t + Number(r.dataset.secs), 0), mins = Math.max(1, Math.round(secs / 60));
+    const warn = n > dk.warnQuestions || mins > dk.warnMinutes;
+    $('#dkTotal', d).innerHTML = `<b>${n}</b> of ${rows().length} questions · about <b>${n ? mins : 0} min</b>${warn ? ' · <b class="miss">That is a long call for a candidate. Consider fewer questions.</b>' : ''}`;
+    $('#dkGo', d).disabled = !n;
+  };
+  d.addEventListener('change', e => { if (e.target.classList.contains('dk-sel')) total(); });
+  d.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const tr = b.closest('tr[data-id]');
+    if (b.classList.contains('dk-up') && tr && tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+    if (b.classList.contains('dk-dn') && tr && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+    if (b.dataset.pre) { rows().forEach(r => { const on = { all: true, none: false, must: r.dataset.ko === '1' || r.dataset.imp === 'M', open: r.dataset.ans !== '1' }[b.dataset.pre]; $('.dk-sel', r).checked = on; }); total(); }
+  });
+  const plan = () => {
+    const ids = [], spoken = {};
+    rows().forEach(r => { if (!$('.dk-sel', r).checked) return; ids.push(r.dataset.id); const sp = $('.dk-sp', r); if (sp.value.trim() && sp.value !== sp.dataset.orig) spoken[r.dataset.id] = sp.value.trim(); });
+    return { ids, spoken };
+  };
+  $('#dkPrev', d).onclick = async e => {
+    busy(e.target, true, 'Checking…');
+    try {
+      const r = await api('apiVoiceStartScreening', a.App_ID, { dryRun: true, followUp: dk.followUp, plan: plan() });
+      $('#dkCheck', d).innerHTML = `<div class="note ${r.ready ? '' : 'warn-note'}">${r.ready ? '<b>Ready to call.</b>' : '<b>Not ready:</b> ' + esc(r.problems.join('; ')) + '.'} ${(r.warnings || []).length ? esc(r.warnings.join('; ')) + '.' : ''}</div>
+        <details open><summary>What the bot is sent</summary><pre class="cvtext" style="white-space:pre-wrap">${esc(r.request.app_config.agent_variables.role_questions || '')}</pre></details>`;
+    } catch (err) { toast(err, true); }
+    busy(e.target, false, 'Check the plan');
+  };
+  $('#dkGo', d).onclick = async e => {
+    const n = plan().ids.length;
+    if (!confirm('Call ' + dk.candidate + ' now and ask ' + n + (n === 1 ? ' question' : ' questions') + '?')) return;
+    busy(e.target, true, 'Calling…');
+    try { await api('apiVoiceStartScreening', a.App_ID, { followUp: dk.followUp, plan: plan() }); toast('The call has been placed.'); d.close(); voiceCardSection(el, a, P); }
+    catch (err) { toast(err, true); busy(e.target, false, 'Place the call'); }
+  };
+  total();
 }
 const VOICE_RATE_ = { M: ['Meets', 'ok'], P: ['Partly', ''], G: ['Does not meet', 'miss'] };
 function voiceResultDialog(r) {
