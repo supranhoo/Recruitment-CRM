@@ -25,6 +25,8 @@ const VOICE_KEY_PROP_ = 'VOICE_API_KEY';
 const VOICE_DEFAULTS_ = { orgId: '01a11b5b-1fcf-7fc7-b673-8ebbe5e5dd0c', workspaceId: '01a11b5b-1fd6-79b4-b64a-2a0d9c3c8fef',
   agentId: 'Conversatio-85617fe5-386e', agentVersion: 1, connectionId: '14185236-97-20b5ee4b-4097', fromNumber: '+918064269699' };
 const VOICE_API_BASE_ = 'https://apps.sarvam.ai/api';
+/** From this agent version on, the agent has no questions of its own: it asks the numbered list the CRM sends (the call-plan desk). */
+const VOICE_LISTONLY_FROM_ = 5;
 
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
 function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols); }
@@ -38,7 +40,7 @@ function voiceCfg_() {
   return { enabled: String(s.VOICE_ENABLED || 'No') === 'Yes', agentId: String(s.VOICE_AGENT_ID || VOICE_DEFAULTS_.agentId), agentVersion: v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion,
     connectionId: String(s.VOICE_CONNECTION_ID || VOICE_DEFAULTS_.connectionId), fromNumber: String(s.VOICE_FROM_NUMBER || VOICE_DEFAULTS_.fromNumber), dndRequired: String(s.VOICE_DND_REQUIRED || 'Yes') !== 'No',
     orgId: String(s.VOICE_ORG_ID || VOICE_DEFAULTS_.orgId), workspaceId: String(s.VOICE_WORKSPACE_ID || VOICE_DEFAULTS_.workspaceId),
-    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)),
+    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_,
     keySet: !!key, keyHint: key ? '\u2026' + key.slice(-4) : '' };
 }
 /** What still has to be filled in before a call can be placed (empty = ready). */
@@ -50,7 +52,7 @@ function voiceMissing_(c) {
 function voiceCfgOut_(c) {
   const m = voiceMissing_(c);
   return { enabled: c.enabled, agentId: c.agentId, agentVersion: c.agentVersion, connectionId: c.connectionId, fromNumber: c.fromNumber, dndRequired: c.dndRequired, orgId: c.orgId, workspaceId: c.workspaceId,
-    openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ,
+    openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
     keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length, connected: voiceProviderConnected_(), dndWritten: voiceDndWritten_(), resultsWritten: voiceResultsWritten_() };
 }
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
@@ -215,6 +217,56 @@ function voiceFollowUpPlan_(appId, items) {
   return { mode: 'follow_up', std: [], sent: ord.slice(0, 10).map(function (r, n) { return { n: n + 1, id: String(r.it.id), q: voiceSpoken_(r.it) }; }), left: ord.slice(10).map(function (r) { return String(r.it.id); }) };
 }
 
+
+/* ---------------------------------------------------------------- the call-plan desk ----------------------- */
+/** The order the questions are asked in by default: facts about the person first, role questions in the middle, location, notice and pay last. */
+function voiceOrderRank_(it) {
+  const k = voiceStdKey_(it), std = { EDU: 1, EXP_TOTAL: 2, EXP_RELEVANT: 3, CUR_ROLE: 4, RELOCATE: 20, LOCATION: 21, NOTICE: 22, CTC_CUR: 23, CTC_EXP: 24 };
+  if (k) return std[k] || 25;
+  if (it.sec === 'E') return it.ko ? 5 : 6;
+  if (it.sec === 'R') return 7 + ({ M: 0, I: 1, N: 2 }[it.imp] === undefined ? 1 : { M: 0, I: 1, N: 2 }[it.imp]) * 0.1;
+  return 10;
+}
+function voiceSecs_(it) { return (it.type === 'yesno' ? 8 : it.type === 'number' ? 12 : 25) + 4; }
+const VOICE_WARN_Q_ = 12, VOICE_WARN_MIN_ = 8;
+/** What the desk shows for a card: every confirmed question, the default ticks, and the time estimate. */
+function voiceDeskDraft_(appId, items) {
+  const have = voiceCombined_(appId, items), follow = Object.keys(have).length > 0 || voiceCallsRows_(appId).some(function (r) { return String(r.Final_Vars_JSON || '') !== ''; });
+  const ordered = items.map(function (it, ix) { return { it: it, ix: ix }; }).sort(function (a, b) { return voiceOrderRank_(a.it) - voiceOrderRank_(b.it) || a.ix - b.ix; }).map(function (x) { return x.it; });
+  let sel;
+  if (follow) sel = ordered.filter(function (it) { return !have[String(it.id)]; }).map(function (it) { return String(it.id); });
+  else {   // the same position called before: start from what was asked then
+    const prev = voiceCallsRows_().filter(function (r) { return String(r.Line_ID) === String(items.length ? (appOf_(appId).Line_ID) : '') && String(r.Plan_JSON || '') !== ''; }).pop();
+    let ids = null; try { const p = JSON.parse(String(prev && prev.Plan_JSON || 'null')); if (p && p.listOnly && p.sent && p.sent.length) ids = p.sent.map(function (x) { return String(x.id); }); } catch (e) { }
+    const known = {}; items.forEach(function (it) { known[String(it.id)] = true; });
+    sel = ids ? ordered.filter(function (it) { return ids.indexOf(String(it.id)) >= 0; }).map(function (it) { return String(it.id); }) : ordered.map(function (it) { return String(it.id); });
+    if (ids && !sel.length) sel = ordered.map(function (it) { return String(it.id); });
+  }
+  return { followUp: follow, sel: sel, items: ordered.map(function (it) { const id = String(it.id), h = have[id];
+    return { id: id, sec: it.sec, label: String(it.label || ''), q: String(it.q || ''), spoken: voiceSpoken_(it), type: it.type || 'text', ko: !!it.ko, imp: it.imp || '', need: String(it.need || ''), key: voiceStdKey_(it), secs: voiceSecs_(it), answered: !!h, answer: h ? h.raw : '', sel: sel.indexOf(id) >= 0 }; }) };
+}
+/** A plan from the recruiter's ticks: {ids: [in the order to ask], spoken: {id: wording}}. */
+function voicePlanFromSelection_(items, selection, followUp) {
+  const known = {}; items.forEach(function (it) { known[String(it.id)] = it; });
+  const ids = []; (selection && selection.ids || []).forEach(function (id) { id = String(id); if (known[id] && ids.indexOf(id) < 0) ids.push(id); });
+  if (!ids.length) throw new Error('Tick at least one question to ask.');
+  const sp = (selection && selection.spoken) || {};
+  const sent = ids.map(function (id, n) { const it = Object.assign({}, known[id]); const w = String(sp[id] || '').replace(/\s+/g, ' ').trim(); if (w) it.spoken = w.slice(0, 200); return { n: n + 1, id: id, q: voiceSpoken_(it) }; });
+  return { mode: followUp ? 'follow_up' : 'full', std: [], sent: sent, left: items.map(function (it) { return String(it.id); }).filter(function (id) { return ids.indexOf(id) < 0; }), listOnly: true,
+    secs: sent.reduce(function (t, x) { return t + voiceSecs_(known[x.id]); }, 0) };
+}
+/** Admin only: the desk's data for one card (every question, default ticks, estimate and the thresholds that warn). */
+function apiVoicePlanDraft(appId) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  try { voiceIngest_(u); } catch (e) { }
+  const app = appOf_(appId), line = lineOf_(app.Line_ID), cand = candRow_(app.Candidate_ID) || {}, fin = sqFinalFor_(app.Line_ID);
+  if (!fin) throw new Error('This position has no final screening questions yet. Confirm them in JD & questions first.');
+  const items = sqParse_(String(fin.Content)).filter(function (i) { return i.sec === 'E' || i.sec === 'R' || i.sec === 'P'; }), cfg = voiceCfg_();
+  const d = voiceDeskDraft_(appId, items);
+  return { candidate: String(cand.Name || ''), position: String(line.Position || ''), questionsVersion: Number(fin.Version), followUp: d.followUp, items: d.items, listOnly: cfg.listOnly, warnQuestions: VOICE_WARN_Q_, warnMinutes: VOICE_WARN_MIN_,
+    missing: voiceMissing_(cfg), varSet: !!cfg.questionsVar };
+}
+
 /** The plan kept on a call (or one derived from the current questions for an older call). */
 function voicePlanOf_(call) {
   let p = null; try { p = JSON.parse(String(call.Plan_JSON || 'null')); } catch (e) { }
@@ -232,6 +284,7 @@ function voiceAnswersFromVars_(plan, vars) {
   const put = function (id, raw, key) { const it = items[id]; if (!it || !raw) return; const v = voiceNormalize_(it, raw, key); byId[id] = { raw: String(raw), a: v == null ? '' : v }; };
   plan.std.forEach(function (s) { const raw = parsed.labels[s.key] || (s.key === 'RELOCATE' ? parsed.labels.LOCATION : ''); put(s.id, raw, s.key); });
   plan.sent.forEach(function (x) { put(x.id, parsed.q[x.n], ''); });
+  plan.sent.forEach(function (x) { if (byId[x.id]) return; const it = items[x.id], k = it ? voiceStdKey_(it) : ''; if (k && parsed.labels[k]) put(x.id, parsed.labels[k], k); });
   Object.keys(items).forEach(function (id) { if (!byId[id] && vars && vars[id] != null && String(vars[id]).trim()) put(id, String(vars[id]), ''); });
   return { byId: byId, other: parsed.other, notAsked: plan.items.map(function (i) { return i.id; }).filter(function (id) { return !byId[id]; }) };
 }
@@ -308,7 +361,12 @@ function apiVoiceStartScreening(appId, opts) {
   if (!items.length) throw new Error('The final screening questions are empty.');
   const cfg = voiceCfg_();
   let fup = null;
-  if (opts.followUp) {
+  if (opts.plan || cfg.listOnly) {
+    // The agent has no questions of its own from this version on: it asks the numbered list. The recruiter's ticks (or all questions) are the plan.
+    const dd = voiceDeskDraft_(appId, items), follow = opts.plan ? !!opts.followUp : dd.followUp;
+    fup = voicePlanFromSelection_(items, opts.plan || { ids: dd.sel }, follow);
+    if (opts.plan && !cfg.listOnly) throw new Error('The question desk needs agent version ' + VOICE_LISTONLY_FROM_ + ' or later (Admin > Voice agent > Agent version). The selected agent version still asks its own standard questions.');
+  } else if (opts.followUp) {
     if (!voiceCallsRows_(appId).some(function (r) { return String(r.Final_Vars_JSON || '') !== ''; })) throw new Error('There is no earlier call with a result for this candidate, so there is nothing to follow up. Place a normal call first.');
     fup = voiceFollowUpPlan_(appId, items);
     if (!fup.sent.length) throw new Error('Every question already has an answer from the earlier call or calls. There is nothing left to ask.');
@@ -318,12 +376,14 @@ function apiVoiceStartScreening(appId, opts) {
   const missing = voiceMissing_(cfg), problems = missing.slice();
   if (open) problems.push('A call to this candidate is already in progress (' + open.Call_ID + ')');
   if (cfg.dndRequired && !voiceDndWritten_()) problems.push('The Do Not Disturb check is not connected yet');
-  if (fup && !cfg.questionsVar) problems.push('A follow-up call needs the questions variable to be set (Admin > Voice agent), and an agent version that has the call_mode variable (version 3 or later)');
+  if (fup && fup.listOnly && !cfg.questionsVar) problems.push('The questions variable is not set (Admin > Voice agent): the agent asks only the questions it is sent, so it would ask nothing');
+  else if (fup && !cfg.questionsVar) problems.push('A follow-up call needs the questions variable to be set (Admin > Voice agent), and an agent version that has the call_mode variable (version 3 or later)');
   if (!fup && brief.plan.sent.length && !cfg.questionsVar) problems.push('This position has ' + brief.plan.sent.length + ' role-specific question' + (brief.plan.sent.length === 1 ? '' : 's') + ' but no questions variable is set (Admin > Voice agent), so the bot would ask only its standard questions');
   const body = voiceRequestBody_(phone, brief, cfg, '(call id)'); body.user_config.user_phone_number = '+91XXXXXX' + phone.slice(-4);
   const out = { dryRun: !!opts.dryRun, candidate: String(cand.Name || ''), phoneLast4: phone.slice(-4), questionsVersion: Number(fin.Version), brief: brief, request: body, notSent: ['gender', 'candidate_location', 'resume_highlights'],
     questionsSent: !!cfg.questionsVar, resultsReturn: cfg.webhookUrl ? 'Results will be sent to your webhook address' : 'No webhook address set: results will not come back automatically',
-    dnd: cfg.dndRequired ? 'Required: checked before every call' : 'Not required (switched off)', ready: !problems.length, problems: problems };
+    dnd: cfg.dndRequired ? 'Required: checked before every call' : 'Not required (switched off)', ready: !problems.length, problems: problems,
+    warnings: (function () { const w = [], n = brief.plan.sent.length, mins = Math.round((brief.plan.secs || 0) / 60); if (n > VOICE_WARN_Q_) w.push(n + ' questions in one call is a lot for a candidate'); if (mins > VOICE_WARN_MIN_) w.push('about ' + mins + ' minutes is a long call'); return w; })(), estimate: { questions: brief.plan.sent.length, seconds: brief.plan.secs || 0 } };
   if (opts.dryRun) return out;
   if (problems.length) throw new Error('The call was not placed: ' + problems.join('; ') + '.');
   // 1) Do Not Disturb, 2) the call. Both are provider-specific and written when the provider API is known.
@@ -336,7 +396,7 @@ function apiVoiceStartScreening(appId, opts) {
   try {
     const r = voicePlaceCall_(phone, brief, cfg, row.Call_ID);
     voiceUpdate_(row.Call_ID, { Status: 'Started', Provider_Call_ID: String((r && r.callId) || ''), Status_Note: String((r && r.note) || ''), Updated_By: u.email,
-      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left, via: cfg.questionsVar || '', mode: brief.plan.mode || 'full' }).slice(0, 45000) });
+      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left, via: cfg.questionsVar || '', mode: brief.plan.mode || 'full', listOnly: !!brief.plan.listOnly }).slice(0, 45000) });
     audit_(u, 'Voice agent', row.Call_ID, 'Call placed', '', '', 'candidate ' + app.Candidate_ID + ', questions v' + fin.Version);
   } catch (e) {
     voiceUpdate_(row.Call_ID, { Status: 'Failed', Status_Note: String(e && e.message || e).slice(0, 300), Updated_By: u.email });
@@ -573,7 +633,7 @@ function apiVoiceCallDetail(callId) {
   const plan = voicePlanOf_(r), m = voiceAnswersFromVars_(plan, vars), sentIds = plan.sent.map(function (x) { return x.id; }), stdIds = plan.std.map(function (x) { return x.id; });
   const ans = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') ans[id] = { a: m.byId[id].a }; });
   const review = plan.items.map(function (it) { const x = m.byId[it.id];
-    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? (plan.mode === 'follow_up' ? 'Follow-up question' : 'Role question') : 'Role question, NOT sent to the bot') : plan.mode === 'follow_up' ? 'Answered in an earlier call' : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
+    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? (plan.listOnly ? 'Asked' : plan.mode === 'follow_up' ? 'Follow-up question' : 'Role question') : 'Question, NOT sent to the bot') : plan.mode === 'follow_up' ? 'Answered in an earlier call' : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
   const score = sqScore_(plan.items, ans);
   const askable = plan.items.filter(function (it) { return !!m.byId[it.id] || stdIds.indexOf(it.id) >= 0 || sentIds.indexOf(it.id) >= 0; });
   const coverage = { planned: askable.length, answered: askable.filter(function (it) { return !!m.byId[it.id]; }).length, total: plan.items.length, missing: askable.filter(function (it) { return !m.byId[it.id]; }).map(function (it) { return it.id; }), notSentVar: !!plan.sent.length && !plan.via };
