@@ -196,6 +196,25 @@ function voiceNormalize_(it, text, key) {
   }
   return t.slice(0, 500);
 }
+
+/** Every call of a card, oldest first, that has a result: the answers matched to the questions, the latest answer to a question wins. {byId: {id: {raw, a, call}}, items}. */
+function voiceCombined_(appId, items) {
+  const byId = {};
+  voiceCallsRows_(appId).filter(function (c) { return String(c.Final_Vars_JSON || '') !== ''; }).sort(function (a, b) { return String(a.Call_ID) < String(b.Call_ID) ? -1 : 1; }).forEach(function (c) {
+    let vars = {}; try { vars = JSON.parse(String(c.Final_Vars_JSON || '{}')); } catch (e) { }
+    const plan = voicePlanOf_(c), m = voiceAnswersFromVars_(plan, vars);
+    Object.keys(m.byId).forEach(function (id) { const x = m.byId[id]; const it = (items || plan.items).filter(function (i) { return String(i.id) === id; })[0]; if (it && (x.a !== '' || it.type === 'text')) byId[id] = { raw: x.raw, a: x.a, call: String(c.Call_ID) }; });
+  });
+  return byId;
+}
+/** The questions with no usable answer from any call yet, in priority order (all of them, up to 10): the plan of a follow-up call. */
+function voiceFollowUpPlan_(appId, items) {
+  const have = voiceCombined_(appId, items), rest = items.filter(function (i) { return !have[String(i.id)]; });
+  const rank = function (it) { return it.sec === 'E' ? (it.ko ? 0 : 1) : it.sec === 'R' ? 2 + ({ M: 0, I: 1, N: 2 }[it.imp] === undefined ? 1 : { M: 0, I: 1, N: 2 }[it.imp]) * 0.1 : 5; };
+  const ord = rest.map(function (it, ix) { return { it: it, ix: ix }; }).sort(function (a, b) { return rank(a.it) - rank(b.it) || a.ix - b.ix; });
+  return { mode: 'follow_up', std: [], sent: ord.slice(0, 10).map(function (r, n) { return { n: n + 1, id: String(r.it.id), q: voiceSpoken_(r.it) }; }), left: ord.slice(10).map(function (r) { return String(r.it.id); }) };
+}
+
 /** The plan kept on a call (or one derived from the current questions for an older call). */
 function voicePlanOf_(call) {
   let p = null; try { p = JSON.parse(String(call.Plan_JSON || 'null')); } catch (e) { }
@@ -236,13 +255,13 @@ function voicePhone_(cand) { const p = normPhone_(cand && cand.Mobile); return /
  * What the agent is told: the candidate's first name, the position, the company, and the confirmed screening questions
  * (eligibility and role fit; practical details are asked too but not scored). No CV, salary or other personal data.
  */
-function voiceBuildBrief_(app, line, cand, items, cfg) {
-  const first = String(cand.Name || '').trim().split(/\s+/)[0] || 'the candidate', plan = voicePlan_(items, cfg.maxQ);
-  return { candidateFirstName: first, position: String(line.Position || ''), company: String((bgvRules_().cfg || {}).company || 'BFCL'), orgId: cfg.orgId, workspaceId: cfg.workspaceId,
+function voiceBuildBrief_(app, line, cand, items, cfg, planOverride) {
+  const first = String(cand.Name || '').trim().split(/\s+/)[0] || 'the candidate', plan = planOverride || voicePlan_(items, cfg.maxQ);
+  return { followUp: !!(planOverride && planOverride.mode === 'follow_up'), candidateFirstName: first, position: String(line.Position || ''), company: String((bgvRules_().cfg || {}).company || 'BFCL'), orgId: cfg.orgId, workspaceId: cfg.workspaceId,
     plan: plan, roleQuestions: voiceRoleQuestionsText_(plan),
     questions: items.map(function (i) { const id = String(i.id), sent = plan.sent.filter(function (x) { return x.id === id; })[0], std = plan.std.filter(function (x) { return x.id === id; })[0];
       return { id: id, section: i.sec === 'E' ? 'Eligibility' : i.sec === 'R' ? 'Role fit' : 'Practical', question: String(i.q), answerType: String(i.type || 'text'), needed: String(i.need || ''), knockOut: !!i.ko,
-        how: std ? 'Standard question' : sent ? 'Role question Q' + sent.n : 'Left for the recruiter' }; }) };
+        how: std ? 'Standard question' : sent ? (plan.mode === 'follow_up' ? 'Follow-up question Q' : 'Role question Q') + sent.n : plan.mode === 'follow_up' ? 'Answered earlier' : 'Left for the recruiter' }; }) };
 }
 
 /** The role-specific questions as numbered spoken text. The required answer, the pass mark and the knock-out flag are never sent: the agent must not coach the candidate. */
@@ -255,6 +274,7 @@ function voiceQuestionsText_(brief) { return brief.roleQuestions || ''; }
 function voiceAgentVars_(brief, cfg) {
   const v = { candidate_name: brief.candidateFirstName, role_applied: brief.position };
   if (cfg.questionsVar) v[cfg.questionsVar] = voiceQuestionsText_(brief);
+  if (brief.followUp) v.call_mode = 'follow_up';
   return v;
 }
 /** The provider's outbound request body, as in the provider's own example. `phone` is the 10-digit mobile. */
@@ -286,12 +306,20 @@ function apiVoiceStartScreening(appId, opts) {
   if (!phone) throw new Error('The candidate has no valid 10-digit mobile number on file.');
   const items = sqParse_(String(fin.Content)).filter(function (i) { return i.sec === 'E' || i.sec === 'R' || i.sec === 'P'; });
   if (!items.length) throw new Error('The final screening questions are empty.');
-  const cfg = voiceCfg_(), brief = voiceBuildBrief_(app, line, cand, items, cfg);
+  const cfg = voiceCfg_();
+  let fup = null;
+  if (opts.followUp) {
+    if (!voiceCallsRows_(appId).some(function (r) { return String(r.Final_Vars_JSON || '') !== ''; })) throw new Error('There is no earlier call with a result for this candidate, so there is nothing to follow up. Place a normal call first.');
+    fup = voiceFollowUpPlan_(appId, items);
+    if (!fup.sent.length) throw new Error('Every question already has an answer from the earlier call or calls. There is nothing left to ask.');
+  }
+  const brief = voiceBuildBrief_(app, line, cand, items, cfg, fup);
   const open = voiceCallsRows_(appId).filter(function (r) { return VOICE_OPEN_STATUSES_.indexOf(String(r.Status)) >= 0 && (Date.now() - new Date(r.Started_At).getTime()) < 30 * 60000; })[0];
   const missing = voiceMissing_(cfg), problems = missing.slice();
   if (open) problems.push('A call to this candidate is already in progress (' + open.Call_ID + ')');
   if (cfg.dndRequired && !voiceDndWritten_()) problems.push('The Do Not Disturb check is not connected yet');
-  if (brief.plan.sent.length && !cfg.questionsVar) problems.push('This position has ' + brief.plan.sent.length + ' role-specific question' + (brief.plan.sent.length === 1 ? '' : 's') + ' but no questions variable is set (Admin > Voice agent), so the bot would ask only its standard questions');
+  if (fup && !cfg.questionsVar) problems.push('A follow-up call needs the questions variable to be set (Admin > Voice agent), and an agent version that has the call_mode variable (version 3 or later)');
+  if (!fup && brief.plan.sent.length && !cfg.questionsVar) problems.push('This position has ' + brief.plan.sent.length + ' role-specific question' + (brief.plan.sent.length === 1 ? '' : 's') + ' but no questions variable is set (Admin > Voice agent), so the bot would ask only its standard questions');
   const body = voiceRequestBody_(phone, brief, cfg, '(call id)'); body.user_config.user_phone_number = '+91XXXXXX' + phone.slice(-4);
   const out = { dryRun: !!opts.dryRun, candidate: String(cand.Name || ''), phoneLast4: phone.slice(-4), questionsVersion: Number(fin.Version), brief: brief, request: body, notSent: ['gender', 'candidate_location', 'resume_highlights'],
     questionsSent: !!cfg.questionsVar, resultsReturn: cfg.webhookUrl ? 'Results will be sent to your webhook address' : 'No webhook address set: results will not come back automatically',
@@ -308,7 +336,7 @@ function apiVoiceStartScreening(appId, opts) {
   try {
     const r = voicePlaceCall_(phone, brief, cfg, row.Call_ID);
     voiceUpdate_(row.Call_ID, { Status: 'Started', Provider_Call_ID: String((r && r.callId) || ''), Status_Note: String((r && r.note) || ''), Updated_By: u.email,
-      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left, via: cfg.questionsVar || '' }).slice(0, 45000) });
+      Plan_JSON: JSON.stringify({ ver: Number(fin.Version), items: voiceItemsCompact_(items), std: brief.plan.std, sent: brief.plan.sent, left: brief.plan.left, via: cfg.questionsVar || '', mode: brief.plan.mode || 'full' }).slice(0, 45000) });
     audit_(u, 'Voice agent', row.Call_ID, 'Call placed', '', '', 'candidate ' + app.Candidate_ID + ', questions v' + fin.Version);
   } catch (e) {
     voiceUpdate_(row.Call_ID, { Status: 'Failed', Status_Note: String(e && e.message || e).slice(0, 300), Updated_By: u.email });
@@ -392,7 +420,10 @@ function apiVoiceApplyResult(callId, result) {
       const fin = sqFinalFor_(call.Line_ID), items = fin ? sqParse_(String(fin.Content)) : [], answers = {};
       if (fin && Number(fin.Version) !== Number(call.Questions_Version)) skipped = 'The questions changed after the call started, so the answers were not written.';
       else {
-        items.forEach(function (i) { const a = result.answers[i.id]; if (a != null && String(a).trim() !== '') { answers[i.id] = { a: String(a).replace(/\s+/g, ' ').trim().slice(0, 500) }; drafted++; } });
+        let prev = {}; try { prev = scr ? JSON.parse(String(scr.Answers_JSON || '{}')) : {}; } catch (e) { prev = {}; }
+        items.forEach(function (i) { const a = result.answers[i.id], p = prev[i.id];
+          if (p && String(p.a || '').trim() !== '') answers[i.id] = p;   // an answer already in the draft (from an earlier call or typed by the recruiter) is kept
+          else if (a != null && String(a).trim() !== '') { answers[i.id] = { a: String(a).replace(/\s+/g, ' ').trim().slice(0, 500) }; drafted++; } });
         if (drafted) apiSaveScreening(call.App_ID, { answers: answers, note: 'Draft from voice call ' + callId + '. Check every answer against the call before completing.', complete: false });
       }
     }
@@ -542,7 +573,7 @@ function apiVoiceCallDetail(callId) {
   const plan = voicePlanOf_(r), m = voiceAnswersFromVars_(plan, vars), sentIds = plan.sent.map(function (x) { return x.id; }), stdIds = plan.std.map(function (x) { return x.id; });
   const ans = {}; Object.keys(m.byId).forEach(function (id) { if (m.byId[id].a !== '') ans[id] = { a: m.byId[id].a }; });
   const review = plan.items.map(function (it) { const x = m.byId[it.id];
-    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? 'Role question' : 'Role question, NOT sent to the bot') : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
+    return { id: it.id, sec: it.sec, q: it.q, need: it.need, ko: !!it.ko, type: it.type, how: stdIds.indexOf(it.id) >= 0 ? 'Standard' : sentIds.indexOf(it.id) >= 0 ? (plan.via || plan.derived ? (plan.mode === 'follow_up' ? 'Follow-up question' : 'Role question') : 'Role question, NOT sent to the bot') : plan.mode === 'follow_up' ? 'Answered in an earlier call' : 'Left for the recruiter', answer: x ? x.raw : '', value: x ? x.a : '', rating: x && x.a !== '' ? sqAuto_(it, x.a) : '' }; });
   const score = sqScore_(plan.items, ans);
   const askable = plan.items.filter(function (it) { return !!m.byId[it.id] || stdIds.indexOf(it.id) >= 0 || sentIds.indexOf(it.id) >= 0; });
   const coverage = { planned: askable.length, answered: askable.filter(function (it) { return !!m.byId[it.id]; }).length, total: plan.items.length, missing: askable.filter(function (it) { return !m.byId[it.id]; }).map(function (it) { return it.id; }), notSentVar: !!plan.sent.length && !plan.via };
@@ -554,5 +585,8 @@ function apiVoiceCallDetail(callId) {
 function apiVoiceCallsFor(appId) {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
   try { voiceIngest_(u); } catch (e) { }
-  return voiceCallsRows_(appId).reverse().map(voiceCallOut_);
+  const out = voiceCallsRows_(appId).reverse().map(voiceCallOut_);
+  const top = out.filter(function (c) { return c.hasResult; })[0];
+  if (top) { try { const app = appOf_(appId), fin = sqFinalFor_(app.Line_ID); if (fin) { const items = sqParse_(String(fin.Content)), have = voiceCombined_(appId, items); top.remaining = items.filter(function (i) { return !have[String(i.id)]; }).length; top.totalQ = items.length; } } catch (e) { } }
+  return out;
 }
