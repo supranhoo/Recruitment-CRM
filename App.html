@@ -6361,18 +6361,20 @@ async function viewPipeline(v) {
     if ($('#apMove')) $('#apMove').onclick = async () => {
       const root = $('#apNext'); const bad = checkAttachments(root); if (bad) return toast(bad, true);
       if (fastRoute() && next === 'Confirmed' && !a.Dept_Confirm_File && !$$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0])) return toast('Attach the department\u2019s written confirmation (a photo, scan or PDF of the CV or form with its remarks).', true);
-      if (fastRoute() && next === 'Offer' && !a.Dept_Confirm_File) return toast('The department\u2019s written confirmation is not attached yet. Attach it under Papers, then confirm the hiring.', true);
+      const needPaper = fastRoute() && next === 'Offer' && !a.Dept_Confirm_File, paperChosen = $$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0]);
+      if (needPaper && !paperChosen && !(isLead() && ($('[name=paperException]', root) || {}).value)) return toast('Attach the department\u2019s written confirmation in the field above, then confirm the hiring.', true);
       const payload = collectStage(next, root, a);
       const b = $('#apMove'); busy(b, true, 'Saving\u2026');
       try {
-        let np;
+        let np, uploaded = false;
+        if (needPaper && paperChosen) { await uploadAttachments('APP', a.App_ID, root); uploaded = true; delete payload.paperException; }   /* the paper must be on the card before the hiring can be confirmed */
         try { np = await api('apiMoveStage', a.App_ID, next, payload); }
         catch (e0) {
           const m0 = String((e0 && e0.message) || e0).replace(/^Error:\s*/, '');
           if (!m0.startsWith('BGV open:') || !confirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
           payload.bgvAck = true; np = await api('apiMoveStage', a.App_ID, next, payload);
         }
-        if ($$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
+        if (!uploaded && $$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
         await refreshLine(a.Line_ID);
         toast(`${a.cand.name} moved to ${PN(next)}`); after(np);
       } catch (e) { toast(e, true); busy(b, false, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
@@ -6403,8 +6405,10 @@ async function viewPipeline(v) {
       if (s === 'Shared') return [{ k: 'note', l: 'Sent to (department / HOD), and anything the candidate was told', wide: true }];
       if (s === 'Confirmed') return [{ k: 'result', l: 'Department\u2019s decision', t: 'select', opts: FAST_RESULTS, noBlank: true, req: true }, { k: 'by', l: 'Confirmed by (name in the department)', req: true }, { k: 'date', l: 'Date of the confirmation', t: 'date', req: true },
         { k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation (the CV or form with its remarks)', t: 'file', wide: true, hint: 'Required: a photo, scan or PDF. The hiring cannot be confirmed without it.' }, note];
-      if (s === 'Offer') return [{ k: 'confirmedOn', l: 'Hiring confirmed on', t: 'date', req: true }, { k: 'edoj', l: 'Expected joining date (optional)', t: 'date' }, { k: 'ctc', l: 'Wage / CTC offered (optional)' },
-        { k: 'Offer_Letter_File', l: 'Signed offer letter (only if one was given)', t: 'file', wide: true }, note];
+      if (s === 'Offer') return (a.Dept_Confirm_File ? [] : [{ k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation (required, not attached yet)', t: 'file', wide: true, hint: 'Attach the signed CV or form with the department\u2019s remarks (photo, scan or PDF). The hiring cannot be confirmed without it.' }]
+        .concat(isLead() ? [{ k: 'paperException', l: 'Cannot attach it? Reason (TA Lead or Head of HR only)', wide: true, hint: 'For a candidate the department confirmed before this step existed. The reason is recorded.' }] : []))
+        .concat([{ k: 'confirmedOn', l: 'Hiring confirmed on', t: 'date', req: true }, { k: 'edoj', l: 'Expected joining date (optional)', t: 'date' }, { k: 'ctc', l: 'Wage / CTC offered (optional)' },
+          { k: 'Offer_Letter_File', l: 'Signed offer letter (only if one was given)', t: 'file', wide: true }, note]);
       if (s === 'Joined') return [{ k: 'doj', l: 'Actual joining date', t: 'date', req: true }, { k: 'appointmentDate', l: 'Appointment letter given on (optional)', t: 'date' },
         { k: 'Appointment_Letter_File', l: 'Appointment letter (copy)', t: 'file', wide: true }].concat(docFields).concat([{ k: 'Docs_File', l: 'Joining documents (combined file)', t: 'file', wide: true }, note]);
       if (s === 'Onboarded') return [{ k: 'induction', l: 'Induction completed on', t: 'date', req: true }, { k: 'buddy', l: 'Buddy assigned', req: true }, { k: 'hrms', l: 'HRMS, J-controls and access set up', t: 'select', opts: ['Yes', 'No'], noBlank: true }].concat(docFields)
@@ -6450,7 +6454,7 @@ async function viewPipeline(v) {
     if (fastRoute()) {
       const docs = () => { const d = {}; P.docSections.forEach(([k]) => { d[k] = raw['doc_' + k]; }); return d; };
       if (s === 'Confirmed') Object.assign(out, { result: raw.result, by: raw.by, date: raw.date });
-      if (s === 'Offer') Object.assign(out, { confirmedOn: raw.confirmedOn, offerDate: raw.confirmedOn, edoj: raw.edoj, ctc: raw.ctc });
+      if (s === 'Offer') Object.assign(out, { confirmedOn: raw.confirmedOn, offerDate: raw.confirmedOn, edoj: raw.edoj, ctc: raw.ctc, paperException: raw.paperException });
       if (s === 'Joined') Object.assign(out, { doj: raw.doj, appointmentDate: raw.appointmentDate, docs: docs() });
       if (s === 'Onboarded') Object.assign(out, { onboard: { induction: raw.induction, buddy: raw.buddy, hrms: raw.hrms }, docs: docs(), exception: raw.exception });
       return out;

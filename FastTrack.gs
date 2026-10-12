@@ -85,7 +85,11 @@ function fastMove_(u, app, line, toStage, data) {
     if (res === 'Hold') { out.patch.Status = 'On hold'; out.patch.Status_Reason = 'Department put the candidate on hold'; }
   }
   if (toStage === 'Offer') {
-    if (!String(app.Dept_Confirm_File || '').trim()) throw new Error('Attach the department’s written confirmation first (open the candidate, “Department confirmed” step). The hiring is confirmed only on that paper.');
+    if (!String(app.Dept_Confirm_File || '').trim()) {
+      const why = clean_(String(data.paperException || '')).trim();
+      if (!why || !isLead_(u)) throw new Error('Attach the department’s written confirmation first (the field above “Confirm the hiring”). The hiring is confirmed only on that paper; a TA Lead or the Head of HR can record a reason instead for a candidate confirmed before this step existed.');
+      out.note = (out.note ? out.note + ' ' : '') + 'Department paper not attached. Reason (' + u.email + '): ' + why.slice(0, 300);
+    }
     out.patch.Offer_CTC = clean_(String(data.ctc || ''));
     const on = data.offerDate || data.confirmedOn || ymd_(new Date());
     if (ymd_(on) > ymd_(new Date())) throw new Error('The date the hiring was confirmed cannot be in the future.');
