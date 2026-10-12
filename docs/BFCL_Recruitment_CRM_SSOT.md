@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Document version** | 1.18 (v62 deployed: grades and designations separated; UI speed changes unreleased) |
-| **Describes app version** | **v62** (Apps Script deployment version 62, 29 Sep 2026) |
-| **Database schema version** | **27** (Script Property `SCHEMA_V`) |
+| **Document version** | 1.19 (brought up to date with deployment version 99, 12 Oct 2026) |
+| **Describes app version** | **v99** (Apps Script deployment version 99, 12 Oct 2026) |
+| **Database schema version** | **40** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -58,6 +58,8 @@ The BFCL Recruitment CRM replaces the Excel "MRF Tracker / CV Tracker" workbook 
 |---|---|
 | Apps Script project | Script ID `122O8qTkAJrxOf9VFA6ETHArMe-t3w3wnMB0eZQD9cazv2u9zO28I6xNI`, owned by `ankitchoudharymba@gmail.com` |
 | Live web app (fixed URL, never changes between versions) | `https://script.google.com/macros/s/AKfycbySIs5CLOQUp32R_roFHW3wlSlYe0cHah_-sNyJHPWLjxUTfI30RrmOD8PKQekX3s9xeg/exec` |
+| Deployed version | **99** (12 Oct 2026). Releases are `clasp push -f` then `clasp deploy -i <deployment id> -V <next version>`; rollback is the same command with the previous version number |
+| Voice agent (Sarvam) | Agent app `Conversatio-85617fe5-386e` ("BFCL HR Screening"); calls through `apps.sarvam.ai`, results come back through the separate webhook receiver (`docs/voice-webhook`, §8.7). API key only in Script Property `VOICE_API_KEY` |
 | Test deployment (HEAD, used before each publish) | `https://script.google.com/macros/s/AKfycbzoKHKHmTjgU5l2XK8XCXaiFNHp-sDzA3XmdZ_QsRSM/dev` |
 | Database | Google Sheet "BFCL Recruitment CRM - Database" `1MY4Zpvb7TROiqj_fkbsYCP-gNZaRJAwldenhGC7UyVQ` (ID also held in Script Property `DB_ID`) |
 | CV folder | Drive folder "BFCL Recruitment CRM - CVs" (Setting `CV_FOLDER_ID`); sub-folders **JD** (`JD_FOLDER_ID`), **Archive** (`CV_ARCHIVE_FOLDER_ID`), "Position documents", "Psychometric reports", "Joining documents" |
@@ -81,7 +83,7 @@ The BFCL Recruitment CRM replaces the Excel "MRF Tracker / CV Tracker" workbook 
 
 ### 3.2 Roles
 
-Four roles (constant `ROLE_LIST`): **Admin, Head of HR, TA Lead, Recruiter**. Older or informal values in the Users sheet are normalised by `normRole_`: `Head`, `Head HR`, `HR Head`, `Head of HR` → Head of HR; `TA Lead`, `Lead TA`, `TL`, `Lead` → TA Lead; `Admin`, `Administrator` → Admin; anything else → Recruiter.
+Five roles (constant `ROLE_LIST`): **Admin, Head of HR, TA Lead, Recruiter, Onboarding**. Onboarding is a narrow role for the team that confirms hiring and onboards fast-track (W and T level) joiners (§8.8); it holds only the `onboard` permission. Older or informal values in the Users sheet are normalised by `normRole_`: `Head`, `Head HR`, `HR Head`, `Head of HR` → Head of HR; `TA Lead`, `Lead TA`, `TL`, `Lead` → TA Lead; `Admin`, `Administrator` → Admin; anything else → Recruiter.
 
 Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.gs; ADR-021):
 
@@ -98,6 +100,10 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `system` | Backups, candidate archive run, system tools, JD library import | – | – | – | ✓ |
 | `bgv_decide` | Decide on a BGV discrepancy or unverified result (§11.8) | – | – | ✓ | ✓ |
 | `org_manage` | Import the manpower report; edit the organogram structure, heads, HODs, the department mapping and grade notes (§11.9) | – | – | ✓ | ✓ |
+| `tat_exempt` | Approve, reject, grant and revoke TAT exemptions; verify or reject notice extensions (§7.4, ADR-039) | – | – | ✓ | ✓ |
+| `voice_review` | See a voice call's result and rate, edit and complete the screening from it (§8.7): a recruiter for own positions, leads for all. Does not place calls | ✓ (own) | ✓ | ✓ | ✓ |
+| `voice_agent` | Set up the voice agent (Admin → Voice agent), place and fetch calls (§8.7). Never grantable | – | – | – | ✓ |
+| `onboard` | Confirm the hiring, record the joining and complete onboarding of any fast-track position, and nothing else (§8.8). Held by the Onboarding role | – | – | – | – |
 | `ctc_use` | Use the CTC calculator (§11.7). The `ctc_*` permissions other than `ctc_rules` can be given to other roles in CTC calculator → Access (Role_Access sheet, ADR-041); the table shows the launch defaults | – | – | – | ✓ |
 | `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
 | `ctc_view_all` | See everyone's CTC calculations | – | – | – | ✓ |
@@ -160,7 +166,10 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
 | `Org.gs` | Organogram (schema 36): `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`; `apiOrganogram`, `apiOrgImport`, `apiOrgAdmin`, `apiOrgSaveStructure`, `apiOrgSaveMap`; pure helpers `orgKey_`, `orgCategory_`, `orgRollup_`, `orgReadReport_` |
-| `VoiceScreen.gs` | Voice screening call scaffold (schema 38; admin only): settings, `apiVoiceStartScreening`, call log, `apiVoiceApplyResult`; provider functions are stubs |
+| `VoiceScreen.gs` | Voice screening call (schemas 38–39; §8.7): settings, question plan (`voicePlan_`, `voiceDeskDraft_`), `apiVoiceStartScreening`, results (`voiceIngest_`, `apiVoiceFetchResult`, `apiVoiceCallDetail`), answer parsing and normalising, suggested ratings, review save (`apiVoiceReviewSave`), `voiceSchema_` self-healing columns |
+| `FastTrack.gs` | Fast-track hiring route for W and T levels (schema 40; §8.8): route by grade, stage skipping, department-confirmation and W document-pack gates, Onboarding role, `paperException` |
+| `Exemptions.gs` | TAT exemptions and notice-extension verification (schema 28; ADR-039) |
+| `docs/voice-webhook/` | Separate tiny Apps Script project (deployed "Anyone") that receives Sarvam's call results and appends them to `Voice_Inbox` (ADR-048); not part of the main project |
 | `CvProfile.gs` | CV profile (schema 35): `cvExtractProfile_`, `cvDerive_`, `apiGetProfile`, `apiBuildProfile`, `apiSaveProfile`, `apiProfileExport` |
 | `Bgv.gs` `BgvGov.gs` | BGV tracker (schema 34; governance: Drive folders, retention purge, audit export; efficiency: `apiBgvImport`, `bgvJoinGuard_`, email templates; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
 | `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
@@ -523,7 +532,15 @@ Server-side, paged search. Every typed word must match somewhere (name, mobile, 
 - Profile fields: Function_Area (fixed list, e.g. Production / Operations, Mechanical Maintenance, Electrical Maintenance, Instrumentation & Automation, …), Key_Skills, Total_Exp_Years (or first number in the legacy experience text), Current_Location, Expected_CTC (parsed to LPA from "8 LPA", "65000 per month", …), Notice_Days.
 - **"Find candidates for this position"** (`apiSuggestForLine`) scores pool candidates: function matches the department's function **+3**; shared title/skill words **+2 each (max +4)** (stop-words ignored); experience vs the grade minimum from Policy Appendix F (degree: M1 25, M2 20, M3 15, M4 10, M5 6, M6 4, M7 2 years; 12th/ITI: M3 20, M4 16, M5 12, M6 12, M7 10) **+2** if met, **+1** if ≥ 75 %, **−1** if below; notice ≤ 30 days **+1**. Needs a function or title match and a score ≥ 2; ranked by score then recency; each result lists its reasons. One click adds to the pipeline.
 
-### 8.7 Voice screening call (`VoiceScreen.gs`; ADR-045; schema 38; Admin only, test)
+### 8.7 Voice screening call (`VoiceScreen.gs`; ADR-045, 048, 049, 050; schemas 38–39; Admin places calls, recruiters review)
+
+**Current state (v99).** The paragraphs below were written when the call was a scaffold; where they say a part is "not written", read this block first.
+- **Working:** placing a call (Sarvam outbound API), the question plan, results coming back through the webhook receiver (or fetched by attempt id), the call-plan desk, a follow-up call for questions still missing, the review table with suggested ratings, and a recruiter completing the screening from the result (`voice_review`).
+- **Question plan** (`voicePlan_`, `apiVoicePlanDraft`, `voiceDeskDraft_`): the Admin opens a call-plan desk on the card: the standard facts first, then the position's role questions, location/notice/pay last; wording and which questions to ask are editable; a warning shows above 12 questions or 8 minutes. The plan is stored on the call (`Plan_JSON`).
+- **Agent variables:** `candidate_name`, `role_applied`, `role_questions` (all numbered questions; the questions variable name is a setting), `call_mode` (`full` or `follow_up`), `question_criteria` (read after the call only). Outputs: `call_summary`, `call_disposition` (completed / not_interested / callback_requested / incomplete_screening / wrong_number), `screening_answers` (one Q-line per answer, English, digits), `screening_ratings` (Q1: Meets / Partly / Does not meet / Unclear with a reason; agent version 6 and later, `VOICE_RATINGS_FROM_`; list-only prompt from version 5, `VOICE_LISTONLY_FROM_`). A call with role questions and no questions variable set is refused.
+- **Result and review:** `voiceAnswersFromVars_` and `voiceParseAnswers_` turn the agent's text into answers (Hindi digits and words, dictionary-style lines, aliases); `voiceCombined_` is the single definition of "answered", used by the card, the desk and the dialog so the counts agree. The review dialog is editable: the recruiter changes answers, accepts or edits the suggested rating, and may complete the screening; it saves through the normal screening save (`apiSaveScreening`), so scoring is unchanged. The agent only suggests; the recruiter decides.
+- **Permissions:** `voice_agent` (Admin only): settings, place and fetch calls. `voice_review` (recruiter for own positions; TA Lead, Head of HR and Admin for all): see, rate, edit, complete.
+- **Parked by the business (not built):** language switching (English for M1–M3 and Hindi otherwise, per-profile start language), a short question set for W/T levels, profile packs, the provider's Do Not Disturb list API (`voiceDndCheck_` still a stub; the check can be switched off for tests), accuracy feedback on the suggested ratings. Needs one more real call on agent version 6 to confirm post-call `screening_ratings` (the provider's simulated chats do not run the post-call step).
 
 - **Settings** (Admin → **Voice agent**; permission `voice_agent`): allow calls, agent id, connection id, calling number, organisation and workspace id, Do Not Disturb check (on), API key (Script Property `VOICE_API_KEY`; the page shows only "set, ends …1234"; the key is never returned, logged or stored in Settings). Changes are audited by name, never by value.
 - **On a pipeline card** (Admin, position has final questions, card active): **Preview the call** shows who would be called (last 4 digits), what the agent is told (first name, position, company, the questions with type and what is needed, knock-outs marked), the Do Not Disturb rule and what still blocks a call. **Place the call** runs the checks (settings, valid 10-digit mobile, active card, final questions, no call already in progress for this card in the last 30 minutes, Do Not Disturb), logs the call and calls the provider.
@@ -633,6 +650,7 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 - Per position per day: CVs sourced, CVs reviewed, HR 1st round, shared with dept, shortlisted by dept, interviews done, selected (whole numbers ≥ 0), HOD feedback, remarks. At least one count or a remark. Date not in the future.
 - **From the switch-over date only CVs sourced and CVs reviewed are typed**; the other columns are counted from candidate moves (ADR-015).
 - **Edit window (v21):** recruiters can edit only entries **they** logged, **on the day they saved them**; locked from midnight. `lead` users can always correct.
+- **Log activity is a day grid:** a Recruiter picker (My positions by default, each colleague, Not assigned, All recruiters) and a Date at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks; **Save** per row or **Save all changes**. An entry counts for the position's recruiter even when a lead types it (`Created_By` records who typed it).
 - A "Today's tasks" strip shows the recruiter's open/critical counts and next 3 tasks.
 
 ### 10.2 My day and day notes (`Daily_Summary`)
@@ -849,6 +867,8 @@ Approved against existing manpower by division, department and grade, with the d
 | Change history | lead | §11.6 |
 | Tools | lead (system actions Admin) | Back up now; Recalculate TAT (Admin); weekly email test/on/off; archive status and **Archive now**; CV parser accuracy; database/folder links |
 | HOD contacts | lead | Department → HOD name/email |
+| Hiring routes | lead | Which grades/levels use the fast-track route (default W1–W5 and T; §8.8) |
+| Voice agent | `voice_agent` (Admin) | Allow calls, agent id and version, connection id, calling number, organisation and workspace id, questions variable, Do Not Disturb check, API key (write-only), call log (§8.7) |
 | Task rules | lead | Due/critical hours and on/off per rule |
 | TAT exemptions | lead (act: `tat_exempt` = Head of HR, Admin) | Awaiting the Head of HR (oldest first, Approve / Reject), notice extensions to review (Verify / Reject), register with filters and CSV, reasons editor (add, deactivate; no rename) |
 | Grades & designations | lead | Grades: band, active, add a grade (code + starting TAT days). Designations: add, rename (carried to every position of that grade using the old name), move to another grade (only while unused), deactivate, note. Short forms are expanded on save (Sr → Senior, Engr → Engineer, SE → Senior Engineer). All changes audited (`apiGradeSetup`, `apiSaveGradeSetup`) |
@@ -877,7 +897,7 @@ Settings are cached up to 10 minutes; Admin → Tools → Recalculate TAT applie
 
 ### 12.3 Script Properties
 
-`DB_ID`, `SCHEMA_V`, `IDMAX_<table>`, `DASH_DIRTY_AT`, `ARCHIVE_VER`, version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`).
+`DB_ID`, `SCHEMA_V`, `VOICE_API_KEY` (the Sarvam key; write-only from the Admin page), `VOICE_LISTONLY_FROM_` and `VOICE_RATINGS_FROM_` are code constants for agent versions, not properties. The webhook receiver (`docs/voice-webhook`) keeps its own properties (secret `key` checked against the `?key=` in its address, and the database id).  `IDMAX_<table>`, `DASH_DIRTY_AT`, `ARCHIVE_VER`, version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`).
 
 ### 12.4 Backups
 
@@ -994,7 +1014,7 @@ Context: HR defined a new structure (16 divisions, 59 departments, grades M / W 
 Decision: keep `M_Departments` and `MRF` untouched; add `Org_*` sheets and a mapping from each CRM department to a new one. Existing manpower is imported from the HR report as a dated snapshot (replace on each import), not typed in; open positions are joined live through the mapping. Everyone signed in can view; `org_manage` (Head of HR, Admin) imports and edits.
 Consequences: no migration of positions; a department missing from the mapping blocks the import and shows as a warning; the snapshot ages until the next import; HODs on the organogram are not yet synchronised with the HOD contacts used for task messages.
 
-**ADR-045 — A voice agent places the first screening call; admin-only while it is tested; the CRM never completes the screening from a call** (8 Oct, user decision)
+**ADR-045 (voice; the number was used twice, the organogram one is above and is cited as ADR-045 in §11.9) — A voice agent places the first screening call; admin-only while it is tested; the CRM never completes the screening from a call** (8 Oct, user decision)
 Context: the first screening is a phone call asking the position's confirmed questions. A voice-AI service can place it. Calling candidates sends their first name and number to an outside service (Policy §19, DPDP).
 Decision: permission `voice_agent` (Admin only, never grantable); instant outbound, one call at a time, from a button on a pipeline card; the Do Not Disturb list is checked before every call and a number on it is never called; the agent is told the candidate's first name, the position, the company and the confirmed questions only (no CV, salary or other details); the API key lives in Script Properties and is never sent to a browser or written to the change log; answers come back as a **draft** screening for the recruiter to check, never a completed one and never over a completed one.
 Consequences: scaffold first, then the call itself (written from the provider's own request example, the documentation host being blocked in the build session); the Do Not Disturb check and the return of results wait for their API details. Calling out needs the script's external-request permission, which makes every user re-approve the app once. How results arrive (a message from the provider, or fetched afterwards) decides whether a separate public web address is needed. Gender, location and resume highlights are not sent to the agent.
@@ -1013,7 +1033,7 @@ Context: 2,000–5,000 CVs expected in months; the Candidates page downloaded ev
 **ADR-020 — Daily-log edits only on the day saved** (25 Sep)
 Decision: recruiters edit their own entries only on the day they saved them; leads correct later. Consequences: stable daily figures; corrections are visible and attributable.
 
-**ADR-021 — Four roles with named permissions; no user deletion; automatic access** (26 Sep)
+**ADR-021 — Four roles (a fifth, Onboarding, was added with ADR-047) with named permissions; no user deletion; automatic access** (26 Sep)
 Decision: Admin, Head of HR, TA Lead, Recruiter; ~60 role checks replaced with named permissions mapped in one place (`PERMS_`), tested per role; Admin → Users with automatic sharing/unsharing of the database and CV folder, guards (self, last Admin, unique and non-renamable recruiter names, reassignment on deactivation) and full audit. TA Lead edits all positions (user decision). Consequences: least privilege; role changes take effect immediately; access no longer depends on running a script by hand.
 
 **ADR-022 — Two TAT clocks** (26 Sep)
@@ -1086,147 +1106,147 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 
 ## 14. Changelog
 
-All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
+All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
 
-**Unreleased — Fast-track: confirming the hiring when the department paper is missing** (no schema change)
+**Fast-track: confirming the hiring when the department paper is missing** (no schema change)
 - The "Confirm the hiring" step needs the department's written confirmation, but the file field was only on the earlier step and under Papers, lower on the card, so a recruiter who had uploaded other papers could not move the card and could not see why. The Offer form now shows the missing paper as its own required field at the top (uploaded first, then the move is made), with a clear message.
 - A TA Lead or the Head of HR can instead record a reason for a candidate the department confirmed before the paper step existed (stored in the stage history). A recruiter cannot.
 
-**Unreleased — Voice agent: suggested ratings for descriptive answers** (no schema change; ADR-050; agent version 6, `VOICE_RATINGS_FROM_`)
+**Voice agent: suggested ratings for descriptive answers** (no schema change; ADR-050; agent version 6, `VOICE_RATINGS_FROM_`)
 - Numbers and yes / no are rated by the scorer; descriptive answers (qualification, hands-on experience, a difficult problem) have no formula. From agent version 6 the CRM sends `question_criteria` (what each numbered question requires, a good answer, a worry, knock-out; practical questions left out) and the agent's post-call step returns `screening_ratings` (Q1: Meets / Partly / Does not meet / Unclear, with a short reason). The live bot's prompt does not use the criteria variable, so it cannot coach the candidate. The result window preselects the suggestion, marks it "suggested: check it" with the reason, and counts them; a recruiter still confirms every rating. If the post-call step does not return ratings, nothing is suggested and the recruiter rates as before (fallback if needed: an AI step in the CRM, which needs the owner's approval because it sends transcript text to an AI service).
 - "The whole experience is relevant" now reads as the same number of years as the total.
 
-**Unreleased — Voice result review: edit, rate, complete; one count; who can see it** (no schema change; ADR-050)
+**Voice result review: edit, rate, complete; one count; who can see it** (no schema change; ADR-050)
 - The result window is now a working screen: what the candidate said can be edited, each answer rated (Meets / Partly / Does not meet; numbers and yes / no are rated automatically), then **Save to the screening draft** or **Confirm and complete the screening** (needs every eligibility and role-fit question rated; moves the candidate to Screened). `apiVoiceReviewSave` writes through `apiSaveScreening`; earlier draft answers are kept. A screening already completed is not overwritten.
 - **Who:** new permission `voice_review` (Recruiter for own positions, TA Lead, Head of HR, Admin for all). It shows the result section on the card and allows rating and completing; **placing calls, settings and fetching results stay Admin only** (`voice_agent`). A webhook result for a position the signed-in user may not handle stays in the inbox until someone who may handles it. Role matrix updated.
 - **One definition of "answered"** for the card, the call-plan desk and the result window (`voiceCombined_`): a question counts when some call gave a usable answer; an unclear yes / no (for example "देख सकते हैं") stays open and is asked again; an unreadable number counts as answered and is flagged for the recruiter to correct. The call length is shown in whole seconds.
 
-**Unreleased — Call-plan desk layout fix** (no schema change; `App.html`, `Styles.html`)
+**Call-plan desk layout fix** (no schema change; `App.html`, `Styles.html`)
 - The wording boxes were one-line inputs a few characters wide and the Time cell broke its row. The wording is now a full-width box that grows to the whole question, the table has fixed column widths and a sticky header, and on a phone each question stacks (tick and wording, then order and time).
 
-**Unreleased — Voice agent: call-plan desk** (no schema change; ADR-050)
+**Voice agent: call-plan desk** (no schema change; ADR-050)
 - New desk before a call (`apiVoicePlanDraft`, `voicePlanDesk` in App.html): every confirmed question with a tick box, up / down order, editable spoken wording, time per question and a total with a warning above 12 questions or 8 minutes; presets All, Knock-outs and must-haves, Only unanswered, None. A follow-up (earlier result exists) starts with the unanswered ticked. "Check the plan" shows what the bot is sent and any problem.
 - From agent version 5 (`VOICE_LISTONLY_FROM_`) the CRM sends exactly the ticked questions, numbered, through the questions variable; answers are matched by Q number. Older versions keep the earlier behaviour (standard questions in the agent, role questions limited by "Most role questions per call").
 - Agent version 5: no fixed standard section, answers as Q lines, one polite offer to finish quickly when a candidate must leave, then respect a second refusal.
 
-**Unreleased — Voice agent: follow-up call for the questions still missing** (no schema change; ADR-049)
+**Voice agent: follow-up call for the questions still missing** (no schema change; ADR-049)
 - New "Ask the remaining questions" (and "Preview the follow-up") on a card whose last call has a result: the plan is every question with no usable answer from any call, in priority order (up to 10), sent through the questions variable with `call_mode = follow_up`; the agent skips its standard questions and asks only those. Answers from all calls are combined per question (latest wins); the draft screening keeps answers already in it (earlier calls or typed by the recruiter) and only fills the empty ones. The card shows "n of m questions still without an answer".
 - Agent version 3 (frozen) holds the matching prompt: finish-the-list check before closing, a clear yes / no, the missing half of a two-part question, `call_mode`, and English digit answer lines. Tested with simulated chats in full and follow-up modes before it was frozen.
 
-**Unreleased — Voice agent: no half-empty calls, readable answers, coverage** (no schema change; ADR-049)
+**Voice agent: no half-empty calls, readable answers, coverage** (no schema change; ADR-049)
 - A real call is refused when the position has role-specific questions and no questions variable is set (Admin > Voice agent); the preview says so. The call row records which variable carried the questions; the result shows "NOT sent to the bot" when none did, and "Covered x of y" from the CRM's own count (the agent's disposition is only a hint).
 - The agent's answers are also read when returned as one dictionary-style string, and Hindi digits and number words (साल, महीने, दिन, पंद्रह, बीस…) are turned into numbers; an unclear yes / no ("देख सकते हैं") stays unrated for the recruiter. Transcripts fetched from the provider use the English text first.
 
-**Unreleased — Voice agent: question plan and review table** (no schema change; Voice_Calls.Plan_JSON added by `voiceSchema_`; ADR-049)
+**Voice agent: question plan and review table** (no schema change; Voice_Calls.Plan_JSON added by `voiceSchema_`; ADR-049)
 - Call plan: standard topics are not sent again; the position's other confirmed questions are sent as a numbered list in priority order up to "Most role questions per call" (Admin, default 6) through the questions variable. The required answer and knock-out flag are not sent (this also fixes the earlier text that included "needed"). The preview shows how each question is asked; the plan is saved on the call.
 - Results: the agent's `screening_answers` lines are parsed (also the first version's lines), matched to questions, normalised (notice to days, experience to years, yes / no), scored with `sqScore_`, and shown in a review table with the agent's own summary and disposition as hints. Unreadable answers are left for the recruiter.
 
-**Unreleased — Voice call results come back** (no schema bump; `voiceSchema_` adds columns and `Voice_Inbox`; ADR-048)
+**Voice call results come back** (no schema bump; `voiceSchema_` adds columns and `Voice_Inbox`; ADR-048)
 - The call response's `attempt_id` is stored; our call id is sent in the webhook metadata. New `docs/voice-webhook` (receiver project and set-up steps). `voiceIngest_` records outcome, duration, transcript and the agent's variables on the call; a variable named like a question id fills a draft screening. New `apiVoiceCallDetail`; the card shows outcome and length, "View the result" and "Fetch the result". **Fetch by attempt id** (`apiVoiceFetchResult`) recovers a call whose webhook never arrived from the provider's Analytics service: `GET /analytics/v1/{org}/{workspace}/{app}/attempts` (start/end datetime required, `filter_conditions` on `attempt_id`) gives the interaction id, then `/transcripts/{interaction_id}`; the attempt id is also read from an earlier call's saved response note.
 
-**Unreleased — Daily log: the day's grid replaces the form** (no schema change)
+**Daily log: the day's grid replaces the form** (no schema change)
 - The Log activity form is replaced by a grid: Recruiter picker and Date (today) at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks typed in the row. Today's existing entry is shown in the row; a row is saved with **Save**, or all changed rows with **Save all changes** (an existing entry is updated, a new one created). Pipeline counts for the day are shown under the position. Past entries are locked as before. For dates before 5 Oct the grid also shows the typed pipeline columns.
 - The history below stays for date ranges; its Edit opens the entry for its own position.
 
-**Unreleased — Daily log: recruiter picker inside Log activity** (no schema change)
+**Daily log: recruiter picker inside Log activity** (no schema change)
 - A Recruiter picker sits at the top of the Log activity form: "My positions" by default (a recruiter with none of their own starts on All recruiters), each colleague, Not assigned, or All recruiters (positions grouped by recruiter). The Position list follows it, with a count, and is pre-selected when there is only one.
 - The history below follows the same picker (the separate Recruiter filter at the bottom is removed; From and To stay). After saving, the recruiter and position stay selected.
 - **An entry counts for the position's recruiter** when a lead or colleague types it (`apiSaveFunnel`); `Created_By` still records who typed it.
 
-**Unreleased — Fast-track hiring for W and T levels** (schema 40; new `FastTrack.gs`; ADR-047; §8.8)
+**Fast-track hiring for W and T levels** (schema 40; new `FastTrack.gs`; ADR-047; §8.8)
 - New route per position (by grade or set by hand), Hiring routes admin tab, Onboarding role, department written-confirmation gate, W document pack, to-do suppression. `SCHEMA_VERSION` 40. Tests: E2E A15; local 40-case harness.
 
-**Unreleased — Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
+**Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
 - A seat filled at another grade of the same band, in the same department, is covered, not vacant and not excess. Key figures now show truly vacant, covered by another grade, true over-strength, and truly vacant with no MRF; the net vacant figure stays beside them. Covered seats use a neutral marker; only residuals use warning colours.
 - New Grade mix tab (substitutions with direction, grade steps, note status and review date, CSV); department drawer lists the substitutions; Admin → Org structure → Grade notes.
 - New sheet `Org_Grade_Notes`; new APIs `apiOrgSaveNote`, `apiOrgCloseNote` (`org_manage`). `SCHEMA_VERSION` 37.
 - Tests: E2E O16–O22; local checks reproduce Report_4 (410 vacant, 95 over-strength, 207 covered, net 315).
 
-**Unreleased — Organogram** (schema 36; new Org.gs; ADR-045; §11.9)
+**Organogram** (schema 36; new Org.gs; ADR-045; §11.9)
 - New Reports → Organogram: approved against existing manpower by division, department and grade (M, W, T), division heads and HODs, open MRFs and vacant seats with no MRF. Tree, by-department table and grade matrix, CSV, department drawer with open positions.
 - New Admin → Org structure (`org_manage`, Head of HR and Admin): import the manpower report (checked first, replaces the snapshot), edit divisions, departments and HODs, map the existing CRM departments to the new ones.
 - New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
 - Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
 
-**Unreleased — Voice agent form fixes** (no schema change)
+**Voice agent form fixes** (no schema change)
 - The webhook box showed `https: <div class=` : a literal `//` inside the page script is mangled by Apps Script's page handling (the reason the CDN addresses are written `https:\/\/`). Written the same way. The two tick boxes were stretched to the full width of their column (`.field input{width:100%}`) and pushed their text to the right; check boxes inside a field are now their natural size. **Rule: never write `//` inside App.html script text; write `\/\/` or build it from `String.fromCharCode(47, 47)`.**
 
-**Unreleased — Voice call section always visible to the Admin** (no schema change)
+**Voice call section always visible to the Admin** (no schema change)
 - The Voice screening call section on a pipeline card was hidden when the position had no confirmed screening questions, so the Admin could not tell why it was missing. It now shows on every active card for the Admin; without confirmed questions it says so and names the steps to finish (JD final, Questions final in JD Master) instead of the buttons.
 
-**Unreleased — Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
+**Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
 - The Admin → Voice agent page failed with *The database has no sheet named "Voice_Calls"*: the schema step that creates it did not run (the stored schema number was already at or above the code's, most likely because another build with the same number had been deployed to the same script). The voice functions now create the call-log sheet themselves when it is missing (as the CV profile sheet already did), and the schema number is raised to 39 so the step runs once everywhere. **Rule for new sheets:** create them from a `xxxSchema_()` called both from `ensureSchema_` and from the first read, so a skipped schema step cannot break a page; and when several builds are deployed to one script, give each a different schema number.
 
-**Unreleased — Voice screening call, the call itself** (no schema change; §8.7)
+**Voice screening call, the call itself** (no schema change; §8.7)
 - The outbound call is written to the provider's request example (agent id and version, connection, calling number, candidate first name and position as variables, optional opening line, entry state, questions variable and webhook), with the exact request shown in the preview. Gender, location and resume highlights are not sent. The known agent, connection and number are the defaults. Saving the settings now validates everything before writing anything (a bad value no longer leaves half the settings changed). `script.external_request` added to `appsscript.json`: **every user re-approves the app once**. Do Not Disturb check and results are still to be connected; with Do Not Disturb required, no call is placed yet.
 - Tests: 53 server cases (the request URL, header and body, id parsing, refusal and network errors with the key scrubbed, optional settings, validation before writes), browser run of the settings and preview.
 
-**Unreleased — Voice screening call, scaffold** (schema 38; new `VoiceScreen.gs`; ADR-045; §8.7; Admin only)
+**Voice screening call, scaffold** (schema 38; new `VoiceScreen.gs`; ADR-045; §8.7; Admin only)
 - Admin → Voice agent settings, an Admin-only Preview / Place the call on pipeline cards, the Do Not Disturb rule, the brief, the call log, and draft screening answers from a result. The provider connection (Do Not Disturb check and the call itself) is not written yet, so no call can be placed.
 - Tests: 39 server cases (permissions, settings, key never exposed, preview, every refusal, Do Not Disturb, logging, results, draft rules), browser run of the settings page and the preview, E2E V1.
 
-**Unreleased — Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
+**Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
 - Editing a Daily log entry from the switch-over date was refused with "HR 1st round, shared … counted from the candidate pipeline": the list now carries the pipeline counts, the Edit form filled its hidden pipeline fields with them, and the server refused them. Now the form never carries those fields (cleared when shown, cleared when the date moves past the switch-over, and sent as 0), and the server **drops** them for entries from the switch-over date instead of refusing (a stale page cannot be blocked either). Entries before the switch-over save as before. Tests: 6 more server cases (23), browser run of the edit form and a date change.
 
-**Unreleased — Daily log shows the pipeline counts** (no schema change)
+**Daily log shows the pipeline counts** (no schema change)
 - From the switch-over date (`PIPELINE_CUTOVER`, 5 Oct) the Daily log list, My day entries and a position's activity history had blank HR R1, Shared, Shortlisted, Interviews and Selected columns, because those are counted from Pipeline moves and the list showed only typed entries. `apiListFunnel` now adds the pipeline counts per day, position and recruiter (credited to the position's recruiter, backward moves by a lead cancel as in the KPI), onto the typed entry of the same day or as a "Pipeline" row of its own; old typed values in those columns are ignored from that date, so nothing is counted twice; days before the switch-over are unchanged. Counts are buttons that list the candidates behind them. Tests: 17 server cases, browser run, E2E M1.
 
-**Unreleased — Screening dialog redesign** (no schema or server change; scoring unchanged)
+**Screening dialog redesign** (no schema or server change; scoring unchanged)
 - Cause of the broken look: the CTC calculator's `.seg` class overrode the screening rating buttons (they became a 2×2 grid). The screening now has its own `.scr-seg`; its answer boxes share the app's input style.
 - Compact row (question, knock-out / must pill, "Needed", answer and Meets / Partly / Gap side by side, 5 rows per screen instead of 3 on a 1366×768 laptop); fixed header and footer with the questions filling the rest; the result names the knock-outs not met (click to jump); counts of Met / Partly / Gap / Unrated; section chips with "to rate" counts; **Next unrated**; the reason for each automatic rating ("3, needed 4+ → Gap"), "Changed by you (auto: Gap) · Undo"; Complete screening is stopped with a clear message that jumps to the first unrated question; keyboard: arrows or 1 / 2 / 3 on a rating; radio-group semantics; full-screen on phones.
 - Tests: browser run at 1366, 1500, 1920, 1024 and 390 px (before and after screenshots), keyboard, undo, jump, blocked and successful completion; found and fixed a lost first click caused by the header being rebuilt on blur.
 
-**Unreleased — CV profile, fixes from the first real CV** (no schema change)
+**CV profile, fixes from the first real CV** (no schema change)
 - A company name with "Pvt. Ltd." was read as a sentence, so the employer under the role line was lost; a degree with an institute and dates (even with no Education heading) was read as a job; "Bachelor/Batchelor/Master of Science / Commerce / Arts / Business" are now recognised as degrees (also for the Education field); generic tools and skill sentences ("basic MS Office") are no longer listed as certificates; when the CV states far more experience than the dated jobs add up to, the warning says earlier jobs may not have been read and names the first dated job. After a build, **Show the text that was read** lets the recruiter see what the parser saw. Tests: 58 parser cases.
 
-**Unreleased — CV profile, phase A1** (schema 35; new `CvProfile.gs`; ADR-044; §8.6)
+**CV profile, phase A1** (schema 35; new `CvProfile.gs`; ADR-044; §8.6)
 - Employment timeline, education, certifications, languages, links, achievements, skills matrix with evidence, industry exposure; checks for gaps, short stays, overlaps and stated-versus-counted experience; reading confidence; facts-only summary; review and correct; Excel-ready export. No AI service; no date of birth, gender, marital status, religion, nationality or photograph is read.
 - Tests: 52 parser cases on seven CV layouts (one-line, three-line, labelled, sentence, year-only, no history, OCR duplicates), 20 server cases (build, review, replace, validation, sanitising, export), browser run (build, edit, save, export; 1500 px and 390 px), E2E L1–L4.
 
-**Unreleased — BGV tracker, phase 4: governance** (schema 34; new `BgvGov.gs`; ADR-043; §11.8)
+**BGV tracker, phase 4: governance** (schema 34; new `BgvGov.gs`; ADR-043; §11.8)
 - Restricted Drive folders per recruiter (nightly and on demand), retention list and Admin "Purge now", file-view logging and the audit export; Governance tab on the tracker.
 - Tests: 51 server cases (folders, access, moves, removal of a user, due rules, purge incl. a file that cannot be deleted, scrubbed change log, export), browser run of the tab (Admin and lead views, 1500 px and 390 px), E2E K18–K20.
 
-**Unreleased — BGV tracker, phase 3: efficiency** (no schema change; §11.8)
+**BGV tracker, phase 3: efficiency** (no schema change; §11.8)
 - Vendor spreadsheet import (dry run, then apply), email templates with a company name and placeholders (Rules tab), Email… in the case, and a confirmation when a card is moved to Joined with the previous-employer BGV still open.
 - Tests: 93 server cases (dates, statuses, check names, dry-run and apply import, template and rules save, join guard), browser run (paste, CSV and xlsx import, mapping, dry run, apply with skip, email dialog, Rules editors, 1500 px and 390 px), E2E K15–K17.
 
-**Unreleased — BGV tracker, phase 2: monitoring** (no schema change; §11.8)
+**BGV tracker, phase 2: monitoring** (no schema change; §11.8)
 - To-dos (consent, chaser, report before joining, review) that open the case; Overview strip and tracker tile for results to decide and cases past a limit; Reports tab (recruiter scorecard, type, month, vendor scorecard, departments, discrepancies, CSV); weekly email line; data check (14); KPI scorecard reads the BGV cases with identical scoring and treats a waived case as not a miss.
 - Tests: 66 server cases (to-dos, summary, reports, weekly, data check), KPI parity test (identical scoring from fields and from cases, waived, cancelled), browser run of the Overview links, decision filter, Reports and task opening; E2E K10–K14.
 
-**Unreleased — BGV tracker, phase 1: foundation** (schema 33; new `Bgv.gs`; ADR-042; §11.8)
+**BGV tracker, phase 1: foundation** (schema 33; new `Bgv.gs`; ADR-042; §11.8)
 - BGV tracker page (My BGV / All cases / Vendors / Rules), case drawer (next step with consent, vendor and report rules, checks, outcome and the Head of HR's decision, documents, timeline), cases opened automatically at Offer and Joined and carried over from the position fields, status lines on the pipeline card, candidate and position, read-only BGV fields on the position form with the start dates mirrored.
 - New permission `bgv_decide` (Head of HR, Admin); sheets BGV_Cases, BGV_Checks, BGV_Log, BGV_Vendors, BGV_Rules; attachments entity BGV.
 - Tests: 49 server cases (scope, due dates, carry-over, permissions, status rules, decision flow, rules), browser run of the tracker, E2E K1–K9.
 
-**Unreleased — CTC calculator: link to a candidate or position** (schema 32)
+**CTC calculator: link to a candidate or position** (schema 32)
 - Linked-to search in the calculator; CTC block on the pipeline card, candidate profile and position drawer (ctc_use only) with Calculate CTC and Attach; name and current/expected CTC filled from the candidate when clear; For column, search and CSV; remove link. `apiCtcFor`, `apiCtcLink`; E2E I12g–I12i; 57 server cases.
 
-**Unreleased — CTC calculator, phase 4: access, preview and approval** (schema 31; ADR-041)
+**CTC calculator, phase 4: access, preview and approval** (schema 31; ADR-041)
 - Access tab (Admin): five permissions by role with reasons and history; no-codes and no-letters roles; Preview as a role; optional approval of letters (submit, approve and issue, return with a note, withdraw); letter footer shows who prepared and approved; re-run link kept when a re-run draft is edited.
 - `Role_Access` sheet; `CTC_Calcs` gains Submitted_By/At, Decided_By/At, Decision_Note; setting CTC_APPROVAL; `effectivePerms_`, `ctcGrants_`; `apiCtcAccess`, `apiCtcAccessSave`, `apiCtcSubmit`, `apiCtcReview`. Tests: 43 server cases (roles, enforcement, approval flow, outdated rules), browser run of the Access tab, preview, submit, return and approve; E2E I12b–I12f.
 
-**Unreleased — CTC calculator: hike on current pay**
+**CTC calculator: hike on current pay**
 - Candidate's current CTC / Gross / Net and ask (monthly or yearly); target by a hike % on CTC, Gross, Net or CTC and Net; hike comparison panel with like-for-like and every-combination hikes for the offer and the ask; use the ask as the target; saved with the calculation; E2E I12a.
 
-**Unreleased — CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
+**CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
 - Rules tab (Admin): draft version copied from the rules in force; edit items, amounts, percentages, caps, conditions, slabs, choices, allowances (add/remove), letter and terms; live problems; save; test bench with item-level changes; put in force from today or a later date with reason and remark; scheduled versions shown and cancellable; automatic change summary stored with each version.
 - `apiCtcDraftNew`, `apiCtcDraftSave`, `apiCtcDraftDiscard`, `apiCtcActivate`, `apiCtcRetire`; `ctcCheck_`, `ctcDiff_`. Tests: 16 server cases, browser run of the editor, E2E I13–I17.
 
-**Unreleased — CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 30: adds `CTC_Calcs` and Updated_By/At on `CTC_Rules`; §11.7)
+**CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 30: adds `CTC_Calcs` and Updated_By/At on `CTC_Rules`; §11.7)
 - Save draft, Letter preview (English / Hindi / both), Issue (PDF kept in Drive "CTC letters", record locked), PDF and PNG downloads for issued letters, Saved calculations tab with search, CSV, re-run with before/now comparison, superseding, discard.
 - `CTC_Calcs` sheet; `apiCtcSave`, `apiCtcIssue`, `apiCtcDiscard`, `apiCtcList`, `apiCtcGet`, `apiCtcVersion`; `letter` block in the rules (company, headings, signatory).
 - Tests: 20 server cases (drafts, ownership, locking, PDF check, supersede, outdated rules, discard, roles), full browser flow including a real PDF and PNG, E2E I8–I12.
 
-**Unreleased — CTC calculator, phase 1** (schema 29; new `Ctc.gs`; ADR-040; §11.7)
+**CTC calculator, phase 1** (schema 29; new `Ctc.gs`; ADR-040; §11.7)
 - **CTC calculator page** (Daily work; `ctc_use`, Admin only): target on Total CTC / Gross CTC / Gross / Net, optional Name, Grade and Designation, structure choices and allowances, live result with status, tiles, grouped monthly/yearly structure, reasons for nil items, negative Other-allowances warning, CSV, version history.
 - **CTC_Rules** sheet seeded with V1 from the "CTC Calculator" sheet (reason "Initial setup"). `apiCtcRules`, `apiCtcCalc`. New permissions `ctc_use`, `ctc_rules`, `ctc_view_all` (Admin); Roles matrix updated.
 - Tests: workbook sample on all four bases, 20,000 random structures against a cell-by-cell transcription of the sheet, solver against brute force, API access by role, browser checks at 1500 px and 390 px; E2E I1–I7.
 
-**Unreleased — TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
+**TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
 - **Request** (position drawer → TAT exemptions; the position's recruiter or a lead): extra days or a paused date range (ended, not overlapping another pause), reason, remark, proof (required when the reason says so; `apiUploadDoc` entity `TEX`). **Decide** (`tat_exempt`: Head of HR, Admin): approve (proof enforced), reject or revoke with a note, or grant directly. Withdraw while pending. All audited.
 - **Effect**: approved days add to Final_TAT and approved pauses come off Days_Taken for the clocks the reason names (recruiter clock + KPI and/or position clock); a paused day already on hold counts once. Drawer readout shows e.g. "50 standard + 15 notice + 10 exemption = 75 d · 6 d paused"; positions list shows an "Exempt" badge.
 - **Notice extension**: a notice above the grace needs "Notice period proof" attached when it is entered or changed; the Head of HR can verify or reject it (rejected = not counted). New data check "Notice beyond the grace without proof" (13 checks).
@@ -1235,7 +1255,7 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - Admin → **TAT exemptions** tab; Overview to-do strip and weekly email show exemptions awaiting the Head of HR; Roles matrix updated. The Daily_Funnel `Exemption_Days` column is legacy (from the tracker) and unused.
 - Tests: calculation cases (notice kept/rejected, per-clock days, pauses clipped and not double-counted with holds, month lock), approval API cases as recruiter / other recruiter / Head of HR / Admin, KPI cases, browser checks of the drawer section and Admin tab; E2E X1–X6.
 
-**Unreleased — Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
+**Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
 - New page (all users; leads see every department, a recruiter their own positions), period last 30 / 90 / 180 days or custom, from records already kept:
   - **CV feedback time**: a card's time at "Shared with department" (Stage_History) until the department confirms or the card is rejected, put on hold or withdrawn; average, median, number over the 24 h policy (Appendix A step 3); CVs waiting now with the oldest.
   - **JD / screening-question validation**: each version's shared date to the department's reply (Position_Docs); average reply, versions awaiting now.
@@ -1245,7 +1265,7 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
   - Click a department to filter its positions; click a position to open it; Download CSV on every table.
 - Limits: sharing logged only as daily counts (not by moving cards) cannot be timed; migrated history rows are skipped as their share time is unknown.
 - E2E: D19b checks the report's shape.
-**Unreleased — More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
+**More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
 Measured in a browser harness at 1780×900 (1366×768 in brackets), before → after:
 - Candidate card (Pipeline): 1000 px wide, 1.78 screens tall → up to 1680 px (97% of the screen), **1.12** screens (2.10 → 1.71). Three columns: next step and joining follow-ups | interviews and other actions | screening, documents, offer, onboarding and history. Short form fields sit two to a row.
 - Position drawer (and every side drawer): 1000 → up to 1320 px wide; a long form's sections sit side by side in two columns and each section's fields flow into two or more columns: 3.77 → **2.22** screens (4.48 → 2.64).
@@ -1253,7 +1273,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 - Wide pop-ups (JD & questions, JD picker, close position, job posts) 1000 → 1280 px; screening 1040 → 1320 px; share with department 720 → 920 px; screening-questions view and editor, add-a-candidate search and panel-member form 520 → 860 px.
 - Overview at 1366 px: the right column no longer pushes the page 118 px sideways (grid items could not shrink below their table width).
 
-**Unreleased — Overview pipeline alerts: full details and honest risk** (no schema change)
+**Overview pipeline alerts: full details and honest risk** (no schema change)
 - *Joiners at risk* no longer depends only on a risk picked at a check-in: it also lists joiners whose expected joining date has passed with no joining recorded (Red), whose offer is not accepted 7 days after the letter (`OFFER_ACCEPT_RISK_DAYS_`, Amber), and whose joining is recorded on the position while the card was not moved to Joined (Amber). Each item says why. The box states how many joiners have never been checked on (risk not known).
 - `pipelineAlerts_` returns every item with its detail: candidate and mobile, position, MRF, grade, department, recruiter, stage and since when, offer / acceptance / expected joining dates, last check-in (date, mode, risk, response, note, by) and number of check-ins, next check-in, what is pending and for how many days; HOD for department feedback. Sorted longest pending first.
 - Overview: box titles and "View all N" open a pop-up with the three lists as tabs, recruiter filter and search, an ageing summary (never checked in / no next check-in / overdue / due today; Red / Amber; waiting over 3 days), "Open card" to the candidate in the Pipeline, and Download CSV.
@@ -1262,7 +1282,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 
 ### 2026-09-29
 
-**Unreleased — UI speed and stability** (no schema change)
+**UI speed and stability** (no schema change)
 - Screens no longer re-ask the server for the positions list on every menu click: the list in memory is shown at once and checked in the background (at most every 15 s, or on the next screen after any server action); if it changed, the list is swapped and the Positions screen redraws. After a save the next load still waits for the server as before. The list is prefetched 1.5 s after the first page, and simultaneous requests share one call.
 - A position drawer opened from memory re-reads that position: untouched, it redraws with the newer values; once typed in, it warns so a colleague's change is not overwritten.
 - Overview: to-do counts and pipeline alerts are requested together with the dashboard, and their space is reserved, so the page no longer jumps (layout shift 0.18 → 0 in the browser harness). Daily log reserves its tasks strip; the switch-over banner and a position's open tasks are drawn from the last answer on later visits.
@@ -1473,7 +1493,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-37 Org_Grade_Notes (organogram grade cover, unreleased) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (unreleased) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+40 fast-track hiring: MRF.Hiring_Route, Applications dept-confirmation and appointment columns · 39 Voice_Calls sheet repaired by the self-healing `voiceSchema_` · 38 Voice_Calls (voice screening scaffold) · 37 Org_Grade_Notes (organogram grade cover, unreleased) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (unreleased) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
@@ -1498,6 +1518,10 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 25 joinings on days other than Monday/Thursday; 20 missing/invalid mobiles; 23 duplicate groups; test records ("AGM - TA_TEST" position, test candidate) to remove through the app.
 
 ### 15.4 Planned features (roadmap)
+- **Supabase migration (planned, not started).** Move the database from Google Sheets to Supabase Postgres in phases: schema and parity checker, outbox dual-write (sheets stay the source while Supabase is verified), resumable backfill, browser-direct reads with short-lived JWTs and row-level security for sub-200 ms lists, then cut over after a soak period of about two weeks. Drive keeps the files. The `service_role` key stays server-side only. Waiting on the business: project and region (nearest existing projects are Tokyo and Singapore; none in Mumbai), approval of browser-direct reads, soak length, approval to host candidate personal data there, data volumes, and the go-ahead to start Phase 0/1.
+- **Voice agent, parked items:** see the end of the current-state block in §8.7.
+- **Fast-track later phases:** see §8.8.
+- **JD matching (A2)** and the missing jobs for one candidate (needs the CV text) are parked.
 - **JD engine phases 3–5** (phase 2, the JD Maker, delivered in v49 except suggested screening questions and standard workman profiles by trade × level): (3) JD Check — upload/paste the department's JD, statement matching against the library, gap report (missing / conflict / weaker / duplicate / new / relevance), merged proposed JD; (4) HOD confirmation loop — pre-written Teams/Outlook message, per-item decisions, versioned confirmed JD, *JD confirmed on*, to-do rule; (5) learning loop — new confirmed items to a proposals queue with duplicate check and approval into the library. Open decisions: standard workman profiles (trade × level, per Appendix F) to seed the library; confirmation strictness (block pipeline or critical to-do; recommended: sourcing may start, with a critical to-do). Decided: BFCL Word JD template (compact, no employee acceptance box; M5+ acceptance to be tracked in the CRM).
 - **Phase 4 — stage timings per band** (W/T same as M initially), wired into the to-do and Missed rules (Appendix A per band).
 - **Positions month filter** (From/To + choice of date field).
