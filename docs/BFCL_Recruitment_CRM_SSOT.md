@@ -1090,6 +1090,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Unreleased — Fast-track: confirming the hiring when the department paper is missing** (no schema change)
+- The "Confirm the hiring" step needs the department's written confirmation, but the file field was only on the earlier step and under Papers, lower on the card, so a recruiter who had uploaded other papers could not move the card and could not see why. The Offer form now shows the missing paper as its own required field at the top (uploaded first, then the move is made), with a clear message.
+- A TA Lead or the Head of HR can instead record a reason for a candidate the department confirmed before the paper step existed (stored in the stage history). A recruiter cannot.
+
 **Unreleased — Voice agent: suggested ratings for descriptive answers** (no schema change; ADR-050; agent version 6, `VOICE_RATINGS_FROM_`)
 - Numbers and yes / no are rated by the scorer; descriptive answers (qualification, hands-on experience, a difficult problem) have no formula. From agent version 6 the CRM sends `question_criteria` (what each numbered question requires, a good answer, a worry, knock-out; practical questions left out) and the agent's post-call step returns `screening_ratings` (Q1: Meets / Partly / Does not meet / Unclear, with a short reason). The live bot's prompt does not use the criteria variable, so it cannot coach the candidate. The result window preselects the suggestion, marks it "suggested: check it" with the reason, and counts them; a recruiter still confirms every rating. If the post-call step does not return ratings, nothing is suggested and the recruiter rates as before (fallback if needed: an AI step in the CRM, which needs the owner's approval because it sends transcript text to an AI service).
 - "The whole experience is relevant" now reads as the same number of years as the total.
