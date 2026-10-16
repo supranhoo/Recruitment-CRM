@@ -429,7 +429,7 @@ function pipelineAlerts_(onlyRecruiter) {
     out.counts[a.Stage] = (out.counts[a.Stage] || 0) + 1;
     const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {}, st = String(a.Stage);
     const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0, fu = fus[a.App_ID] || { n: 0, last: null };
-    const edoj = ymd_(a.EDOJ) || ymd_(l.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
+    const edoj = ymd_(l.EDOJ) || ymd_(a.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
     const brief = { app: a.App_ID, line: a.Line_ID, cand: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
       position: String(l.Position || ''), mrf: String(l.MRF_No || a.MRF_No || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''),
       recruiter: String(a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
