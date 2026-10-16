@@ -1110,6 +1110,13 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit batch 2: pipeline integrity** (no schema change; 16 Oct 2026)
+- Stage history rows are written under the lock (`appendHistory_`), so two moves in one second cannot share a row or an ID. `withLock_` no longer takes the lock twice in one run.
+- Saving a position computes its stored TAT from the whole record (hold days, exemptions, replacement start), not only the fields on the form.
+- A card cannot be Rejected at Offer or Pre-joining (record a backout instead), and nothing but a lead's move back changes a card that has Joined.
+- **Expected joining date** can be changed on an Offer or Pre-joining card (`apiSetEdoj`): updates the position and the card together and writes a history line. The date cannot be before the offer date.
+- Only a lead can change a position's recruiter, also through a direct call.
+
 **Audit batch 1: editor-only functions and attachments locked down** (no schema change; 16 Oct 2026)
 - `setup`, `shareWithTeam`, `installTriggers`, `nightlyJob`, `refreshDashboardJob`, `weeklySummaryJob` and `e2eTest` are reachable from a browser; each now requires the database owner or an Admin when called by a signed-in user (`requireEditorOrAdmin_`); the editor and triggers are unaffected.
 - Opening an attachment (`apiGetDoc`): joining papers, offer, appointment and department-confirmation files need the position's recruiter, a lead, or (fast-track) the Onboarding role; exemption proof needs the recruiter, a lead or `tat_exempt`; legacy BGV files on a position need the recruiter or a lead. Uploading a candidate's psychometric file needs the position's recruiter or a lead.

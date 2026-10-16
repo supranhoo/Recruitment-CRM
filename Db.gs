@@ -260,10 +260,13 @@ function dropStale_(name) {
   if (CACHED_TABLES_.indexOf(name) >= 0) dropTableCache_(name);
 }
 
+var _lockDepth_ = 0;
 function withLock_(fn) {
+  if (_lockDepth_ > 0) return fn();   // already inside the lock in this run: do not take it twice
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Someone else is saving right now. Try again in a few seconds.');
-  try { return fn(); } finally { lock.releaseLock(); }
+  _lockDepth_++;
+  try { return fn(); } finally { _lockDepth_--; lock.releaseLock(); }
 }
 
 /** Normalises client input: only editable fields, dates parsed, text cleaned. */
