@@ -99,6 +99,7 @@ function apiSavePosition(data) {
   if (!patch.Position || !patch.Grade || !patch.Dept || !patch.Receipt_Date) throw new Error('Position, grade, department and MRF receipt date are required.');
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;
+  if (old) { delete patch.BGV_Prev_Org_Date; delete patch.BGV_Current_Org_Date; delete patch.BGV_Remarks; }   // read-only on an existing position: the BGV tracker keeps them
   if (old && !isLead_(u)) delete patch.Recruiter;   // only a lead reassigns a position (the form locks it; this closes the direct call)
   checkDesignation_(patch, old);
   // Notice beyond the grace extends the TAT automatically, so it needs proof; a changed notice resets the Head of HR's check.
@@ -346,6 +347,10 @@ function apiSaveCandidate(data, force) {
       if ((patch.Mobile && a.mobile === patch.Mobile) || (patch.Email && a.email === patch.Email)) dups.push({ id: a.id, name: a.name, position: a.position, hr: a.hr, archived: true, last: a.last });
     });
     if (dups.length) return { duplicates: dups };
+  }
+  if (patch.Line_ID) {   // attaching a candidate to a position needs the right to edit that position
+    const was = data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null;
+    if (!was || String(was.Line_ID || '') !== String(patch.Line_ID)) requireLineEdit_(u, patch.Line_ID);
   }
   const rec = data.Candidate_ID ? update_(T.CAND, data.Candidate_ID, patch, u) : insert_(T.CAND, Object.assign({ Sourced_By: u.recruiter }, patch), u);
   if (rec.Line_ID) ensureApp_(rec, u);

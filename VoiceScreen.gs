@@ -557,6 +557,9 @@ function voiceOutcome_(p) {
  * (the provider retries) is marked and ignored. Safe to call often; Admin screens call it before they list calls.
  */
 function voiceIngest_(u) {
+  return withLock_(function () { return voiceIngestRun_(u); });   // two people (or the 30-minute job) must not process the same rows at once
+}
+function voiceIngestRun_(u) {
   voiceSchema_();
   const t = readTable_(VOICE_INBOX_.name, true), todo = t.rows.filter(function (r) { return !String(r.Processed_At || ''); });
   if (!todo.length) return 0;
@@ -569,7 +572,10 @@ function voiceIngest_(u) {
       const meta = (p.webhook_config && p.webhook_config.metadata) || p.metadata || {}, att = String(p.attempt_id || r.Attempt_ID || '');
       const call = calls.filter(function (c) { return (meta.call_id && String(c.Call_ID) === String(meta.call_id)) || (att && String(c.Provider_Call_ID) === att); })[0];
       if (call && !voiceCanReview_(u, lineOf_(call.Line_ID))) { skip = true; }   // someone who may handle it will process it
-      else if (!call) res = 'No matching call';
+      else if (!call) {   // the result can arrive before our call record carries the provider's id: keep it for an hour before giving up
+        const age = r.Received_At instanceof Date ? Date.now() - r.Received_At.getTime() : 1e12;
+        if (age < 3600000) skip = true; else res = 'No matching call';
+      }
       else if (String(call.Interaction_ID || '') && String(call.Interaction_ID) === String(p.interaction_id || '') && String(call.Final_Vars_JSON || '') !== '') res = 'Repeat delivery, ignored';
       else {
         try {

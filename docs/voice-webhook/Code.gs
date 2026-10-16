@@ -54,7 +54,8 @@ function doPost(e) {
       var from = Math.max(2, last - 199), keys = sh.getRange(from, 3, last - from + 1, 1).getValues();
       for (var i = 0; i < keys.length; i++) if (String(keys[i][0]) === key) return out_({ ok: true, duplicate: true });
     }
-    sh.appendRow([new Date(), String(p.attempt_id), key, text, '', '']);
+    var safe = function (v) { v = String(v); return /^[=+@\t\r]|^-[A-Za-z(@$]/.test(v) ? "'" + v : v; };   // never let a value be read as a formula
+    sh.appendRow([new Date(), safe(p.attempt_id), safe(key), safe(text), '', '']);
   } finally { lock.releaseLock(); }
   return out_({ ok: true });
 }

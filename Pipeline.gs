@@ -396,6 +396,11 @@ function apiSaveScreeningQuestions(lineId, questions, confirmedOn) {
 function apiSaveJobPost(data) {
   const u = currentUser_(); ensureSchema_();
   const line = requireLineEdit_(u, data.Line_ID);
+  if (data.Post_ID) {   // the post being changed must belong to the position the caller may edit
+    const ex = readTable_(T.POST.name).rows.filter(function (r) { return String(r.Post_ID) === String(data.Post_ID); })[0];
+    if (!ex) throw new Error('That job post was not found.');
+    if (String(ex.Line_ID) !== String(data.Line_ID)) throw new Error('That job post belongs to another position.');
+  }
   const patch = prepare_(T.POST, data);
   if (!patch.Channel || !patch.Posted_On) throw new Error('Channel and posting date are required.');
   if (patch.Post_Type === 'Internal (IJP)' && patch.Closes_On && daysBetween_(ymd_(patch.Posted_On), ymd_(patch.Closes_On)) < 21) {
