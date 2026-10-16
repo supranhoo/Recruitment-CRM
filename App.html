@@ -21,6 +21,13 @@ function fresh(fn, ...args) {
     throw e;
   });
 }
+/* Anything that fails without being caught shows a message instead of failing silently (the same message is shown once per 5 seconds). */
+(function () {
+  let lastMsg = '', lastAt = 0;
+  const show = m => { m = String(m || '').slice(0, 300); if (!m || (m === lastMsg && Date.now() - lastAt < 5000)) return; lastMsg = m; lastAt = Date.now(); try { toast(m, true); } catch (e) { } };
+  window.addEventListener('unhandledrejection', ev => { const r = ev.reason; show(r && r.message ? r.message : r); });
+  window.addEventListener('error', ev => { if (ev && ev.message && !/ResizeObserver|^Script error/.test(ev.message)) show('Something went wrong on this page: ' + ev.message + '. Reload the page; if it keeps happening, tell the admin what you were doing.'); });
+})();
 const UPDATED_MSG = 'The app was just updated. Reload the page (Ctrl + Shift + R) to continue.';
 /** Set localStorage 'bfcl.perf' to '1' to log every server call's time in the browser console. */
 let PERF = false; try { PERF = localStorage.getItem('bfcl.perf') === '1'; } catch (e) { }

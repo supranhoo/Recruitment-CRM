@@ -1112,6 +1112,12 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit batch 6: going back a stage, error handler, tests and the error appendix** (no schema change; 16 Oct 2026)
+- Moving a card back (lead): going back before Joined clears the joining date on the position, the candidate and the card; going back before Offer clears Offer sent, offer date, expected joining date and the selected candidate on the position and the dates on the card, so no report keeps counting the hire or the offer.
+- Anything that fails in the browser without being caught now shows a message (once per 5 seconds) instead of failing silently.
+- E2E checks added for formula-safe text, calendar-valid dates, the fast-track Offer gate and the editor-only guard.
+- §17 now lists the refusal messages of the voice, fast-track, exemptions, BGV, BGV governance, organogram, CV profile, grades, departments, JD Master and KPI code.
+
 **Audit batch 5: security hardening** (no schema change; 16 Oct 2026)
 - Every cell written through the app is checked: text that a spreadsheet would run as a formula (starts with = + @, a tab or carriage return, or a minus before a letter, bracket or $) is stored as plain text. The webhook receiver does the same.
 - Attaching a candidate to a position needs the right to edit that position. A job post can be changed only from the position it belongs to.
@@ -1896,3 +1902,219 @@ Generated mechanically from the v46 source: every message the server can show a 
 ### Import (editor only) (`Import.gs`)
 
 - A database was already imported (Script Properties → DB_ID). Delete that property first to import again.
+
+### Added in v105: the files written after v46 (generated from the source)
+
+Messages that begin a sentence and then name a record or a value are shown with the fixed part only. A message is raised only when the action is refused; nothing is changed when it appears.
+
+### Voice screening call (`VoiceScreen.gs`)
+
+- You can see a voice result only for your own positions (a TA Lead or the Head of HR sees all).
+- Only the CRM admin can use the voice agent while it is being tested.
+- The calling number must be 8 to 15 digits, with an optional leading +.
+- The agent version must be a whole number from 1 to 9999.
+- The opening line is limited to 300 characters.
+- The entry state name is limited to 80 characters.
+- The questions variable name may use letters, digits and _ only, and must not start with a digit.
+- The webhook address must start with https:// .
+- The API key does not look right. Paste it exactly as the provider shows it.
+- The most role-specific questions per call must be a whole number from 1 to 10.
+- Tick at least one question to ask.
+- This position has no final screening questions yet. Confirm them in JD & questions first.
+- This candidate is
+- The candidate has no valid 10-digit mobile number on file.
+- The final screening questions are empty.
+- The question desk needs agent version
+- There is no earlier call with a result for this candidate, so there is nothing to follow up. Place a normal call first.
+- Every question already has an answer from the earlier call or calls. There is nothing left to ask.
+- The call was not placed:
+- This number is on the Do Not Disturb list. No call was placed.
+- The call could not be placed:
+- The Do Not Disturb check is not connected yet.
+- The API key is not set.
+- Could not reach the voice provider (
+- The provider refused the call (HTTP
+- This call already has its result.
+- The provider refused the request (HTTP
+- This call has no provider attempt id, so its result cannot be fetched.
+- The provider has no record of that call for the days searched. Check the agent id in the settings, and that the call is not older than the provider keeps its records.
+- The screening was already completed. Reopen it from the pipeline card (Continue screening) to change it.
+
+### Fast-track route (`FastTrack.gs`)
+
+- Record the department’s decision: Suitable, Not suitable or Hold.
+- Add the name of the person in the department who confirmed.
+- Add the date of the department’s confirmation.
+- The confirmation date cannot be in the future.
+- Record the department’s decision first (the Department confirmed step): the hiring cannot be confirmed before the department has said the candidate is suitable.
+- Attach the department’s written confirmation first (the field above “Confirm the hiring”). The hiring is confirmed only on that paper; a TA Lead or the Head of HR can record a reason instead for a candidate confirmed before this step existed.
+- The date the hiring was confirmed cannot be in the future.
+- The appointment letter date cannot be in the future.
+- Joining documents not verified:
+- Only the Head of HR or the admin can change which levels use the fast-track route.
+
+### TAT exemptions (`Exemptions.gs`)
+
+- This position closed and its KPI month is locked (changes were allowed until
+- Only the Head of HR or the admin can decide TAT exemptions.
+- Pick a reason from the list.
+- Write a remark explaining the exemption.
+- Enter the extra days as a whole number (1 or more).
+- Enter the pause from and to dates.
+- The pause cannot end before it starts.
+- A pause can be requested once it has ended (the to date cannot be in the future).
+- The pause is before the TAT started (
+- These dates overlap exemption
+- The position of this exemption was not found.
+- This request is already
+- Give a reason for rejecting.
+- The reason "
+- Choose Approve or Reject.
+- Only a pending request can be withdrawn.
+- Only an approved exemption can be revoked.
+- Give a reason for revoking.
+- Choose Verify or Reject.
+- Give a reason for rejecting the notice extension.
+- Attach the notice proof before verifying.
+- Only a TA Lead, the Head of HR or the admin can see the exemption register.
+- A reason cannot be blank.
+- Max days for "
+- A reason cannot be renamed (past exemptions refer to it). Deactivate it and add a new one.
+
+### BGV tracker (`Bgv.gs`)
+
+- This case is
+- Choose a vendor from the list.
+- Unknown outcome.
+- Only a TA Lead or the Head of HR can waive a BGV case.
+- Only a TA Lead or the Head of HR can reopen a closed case.
+- Record the candidate’s consent date first. Nothing is checked without consent.
+- Choose the vendor (or "Direct" if BFCL verifies without one).
+- Add at least one check before starting.
+- This case has no start date yet.
+- The report date cannot be before the start date.
+- Record the outcome first.
+- This result needs the Head of HR’s decision before the case can be closed.
+- Give the reason for cancelling.
+- Unknown kind of entry.
+- Write the note.
+- Choose one of the checks:
+- Unknown check status.
+- Describe what was found.
+- That check was not found.
+- Only the Head of HR or the admin can decide on a BGV discrepancy.
+- A decision is recorded once the report is in (status Report received or Under review).
+- Only a discrepancy or an unverified result needs a decision. Record the outcome first.
+- Choose one of the decisions.
+- Write the reason for the decision (at least 10 characters).
+- Only a TA Lead, the Head of HR or the admin can change the BGV vendors.
+- Enter the vendor’s name.
+- Standard turnaround must be 1 to 60 days.
+- Enter a valid email address.
+- A vendor named
+- Company name for the emails: 2 to 60 characters.
+- Pick the date the new rules take effect.
+- The rules can take effect from today or a later date, not the past.
+- Choose the reason for the change.
+- Write a remark of at least 10 characters: what changed and why.
+- Nothing changed.
+- Only a TA Lead, the Head of HR or the admin can see the BGV reports.
+- The start of the period is after its end.
+- The file has no rows to import.
+- Import up to 120 rows at a time (this file has
+- No case number or vendor reference on this row.
+- The reference matches
+- No case has this number or vendor reference.
+- This case belongs to
+- This case has not been started yet. Start it first (consent and vendor).
+- BGV open: The previous-employer background verification (
+
+### BGV governance (`BgvGov.gs`)
+
+- The restricted BGV folder is not ready for
+- Only a TA Lead, the Head of HR or the admin can open BGV governance.
+- Select the cases to purge.
+- Purge up to 40 cases at a time.
+- Give the reason or approval reference (at least 10 characters).
+- Not past retention (or already purged):
+- Only the Head of HR or the admin can export the BGV audit trail.
+- Choose valid dates.
+- The start date is after its end.
+- Export up to one year at a time.
+
+### Organogram (`Org.gs`)
+
+- Only the Head of HR or the admin can import the manpower report.
+- The file has more than
+- Only the Head of HR or the admin can change the organisation structure.
+- Keep the head name for
+- Keep the HOD name for
+- Check the email for
+- Pick a division for
+- Only the Head of HR or the admin can add grade notes.
+- Pick a department from the organogram.
+- Grades must be from the list (M1 to M7, T, W1 to W5).
+- The approved grade and the grade it is filled at are the same.
+- A grade can only cover for another grade in the same band (
+- Seats must be a whole number, 1 or more.
+- Keep the reason under 300 characters.
+- Write a reason for filling a
+- Enter who approved the higher grade.
+- Pick a review date for the higher grade.
+- Only the Head of HR or the admin can close grade notes.
+- Only the Head of HR or the admin can change the department mapping.
+
+### CV profile (`CvProfile.gs`)
+
+- This profile is too large to store. Remove some of the long text.
+- This profile was reviewed by
+- No text could be read from this CV, so no profile was built.
+
+### Grades and designations (`Grades.gs`)
+
+- Pick the designation for this
+- Only a TA Lead, the Head of HR or the admin can see grade settings.
+- Only a TA Lead, the Head of HR or the admin can change grades and designations.
+- Keep the band for
+- A grade code is a letter followed by up to four letters or digits, for example M8.
+- Enter the standard TAT days for
+- A designation cannot be blank
+- Pick a grade for "
+
+### Departments report (`Departments.gs`)
+
+- The start date is after the end date.
+
+### JD Master (`JdMaster.gs`)
+
+- Only the admin can import the JD library.
+- This file is not the BFCL Master JD Library: the sheet
+- This import was replaced or has expired. Start again.
+- Another admin started a different import. Start again.
+- Only a TA Lead, the Head of HR or the admin can change the JD library.
+- Unknown confirmation.
+- Nothing to confirm.
+- The designation cannot be empty.
+- Pick a BFCL grade.
+- Pick a department from the Skill Competency Framework.
+- Minimum experience must be a number of years from 0 to 40.
+- The Recruitment Policy (Appendix F) sets at least
+- Status must be Active, Variant or Retired.
+- Say which job profile this is a variant of.
+- Pick the competency department before confirming it.
+- The Skill Competency Framework has no
+- That item was not found. Reload the job profile.
+- Keep it under 600 characters.
+- Unknown status.
+- This job profile already has that
+- Pick the skill type.
+- Pick the KRA category.
+- Write the responsibility category.
+- Keep category names under 120 characters.
+- Write the responsibility.
+- Keep responsibilities under 600 characters.
+- This job profile already has that responsibility (
+- Responsibility
+- The JD library has not been imported yet (JD Master).
+- Set the position’s grade before creating its JD.
+- Library profile

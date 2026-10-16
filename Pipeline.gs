@@ -155,6 +155,19 @@ function apiMoveStage(appId, toStage, data) {
   if (ti <= fi && !isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can move a candidate back to an earlier stage.');
   if (ti < fi) daySnapDropAll_();
   const patch = { Stage: toStage, Stage_Since: new Date() };
+  if (ti < fi) {   // moving back undoes what the later stages recorded on the position and the candidate, so nothing still counts the joining or the offer
+    if (fi >= STAGES.indexOf('Joined') && ti < STAGES.indexOf('Joined')) {
+      update_(T.MRF, line.Line_ID, { Actual_DOJ: '' }, u);
+      update_(T.CAND, app.Candidate_ID, { DOJ: '' }, u);
+      patch.Actual_DOJ = '';
+    }
+    if (fi >= STAGES.indexOf('Offer') && ti < STAGES.indexOf('Offer')) {
+      const mp = { Offer_Sent: 'No', Offer_Date: '', EDOJ: '' };
+      if (String(line.Candidate_ID || '') === String(app.Candidate_ID)) mp.Candidate_ID = '';
+      update_(T.MRF, line.Line_ID, mp, u);
+      patch.Offer_Date = ''; patch.EDOJ = ''; patch.Offer_Accepted_On = '';
+    }
+  }
   let outcome = '';
   let fastOut = null;
   if (ti > fi && isFast_(line)) { fastTrackSchema_(); fastOut = fastMove_(u, app, line, toStage, data); }   // fast-track route: its own checks and fields
@@ -216,7 +229,7 @@ function apiMoveStage(appId, toStage, data) {
   if (fastOut) { Object.keys(fastOut.patch).forEach(function (k) { patch[k] = fastOut.patch[k]; }); if (fastOut.outcome) outcome = fastOut.outcome; }
   update_(T.APP, appId, patch, u);
   appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
-  if (toStage === 'Offer' || toStage === 'Joined') bgvTouchLine_(app.Line_ID);
+  if (toStage === 'Offer' || toStage === 'Joined' || ti < fi) bgvTouchLine_(app.Line_ID);
   return apiPipeline(app.Line_ID);
 }
 
