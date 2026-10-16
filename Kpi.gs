@@ -89,7 +89,7 @@ function computeKpis_(fy) {
     return k[month] = k[month] || cell();
   };
   const inFy = function (m) { return months.indexOf(m) >= 0; };
-  const exCtx = { exempt: exemptIndex_() }, exToday = ymd_(new Date());
+  const exCtx = { exempt: exemptIndex_() }, exToday = ymd_(new Date()), ruleCtx = tatContext_();
 
   lines.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
@@ -97,7 +97,7 @@ function computeKpis_(fy) {
     const status = positionStatus_(l);
     // Recruiter clock adjustments, as on the TAT screens: approved exemptions that apply to the recruiter, notice beyond
     // the grace (unless the Head of HR rejected it) and on-hold / paused days, which are not counted against the recruiter.
-    const ex = exemptFor_(exCtx, l, 'r'), notice = noticeExt_(l, grace), hold = Number(l.Hold_Days) || 0;
+    const ex = exemptFor_(exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(ruleCtx, l.Grade, receipt).grace : grace), hold = Number(l.Hold_Days) || 0;
     const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || exToday) : 0;
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };

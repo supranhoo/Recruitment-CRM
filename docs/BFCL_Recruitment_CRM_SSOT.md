@@ -1110,6 +1110,15 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit batch 3: integrity of backouts, dates, closures and screens** (no schema change; 16 Oct 2026)
+- A backout runs under one lock, and a retry after an interruption finishes the replacement without writing the withdrawal twice.
+- Dates: the offer letter date, acceptance date and joining date cannot be in the future; acceptance and joining cannot be before the offer date; a day that does not exist (30 Feb) is refused instead of rolling into March.
+- The replacement MRF no longer inherits the earlier candidate's notice period, proof or extension.
+- Close without hiring: candidates moved to another position take their scheduled interviews and candidate link with them (their interview is no longer cancelled), and a candidate saved against a replaced or removed position no longer gets a card there.
+- The Joiners-at-risk list, the Overview alerts and card to-dos follow the position's recruiter, not the copy on the card.
+- The KPI uses the notice grace of the TAT rule, as the TAT screens do. Positions closed without a hire (Not Needed, No Vacancy, On Hold) get no Achieved or Missed result.
+- Lists and to-dos refresh when the data they use changes (documents, screenings, departments, rules, BGV, exemptions, pipeline moves).
+
 **Audit batch 2: pipeline integrity** (no schema change; 16 Oct 2026)
 - Stage history rows are written under the lock (`appendHistory_`), so two moves in one second cannot share a row or an ID. `withLock_` no longer takes the lock twice in one run.
 - Saving a position computes its stored TAT from the whole record (hold days, exemptions, replacement start), not only the fields on the form.

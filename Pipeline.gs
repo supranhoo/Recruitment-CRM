@@ -49,6 +49,7 @@ function appendHistory_(app, from, to, outcome, note, u) {
   t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
   PropertiesService.getScriptProperties().setProperty('KPI_DIRTY_AT', String(Date.now()));
+  PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));   // a move changes the Overview counts
   });
 }
 
@@ -57,7 +58,7 @@ function ensureApp_(cand, u) {
   const t = readTable_(T.APP.name, true);
   if (t.rows.some(function (a) { return a.Candidate_ID === cand.Candidate_ID && a.Line_ID === cand.Line_ID; })) return null;
   const line = lineOf_(cand.Line_ID);
-  if (!line) return null;
+  if (!line || ['Replaced', 'Removed'].indexOf(positionStatus_(line)) >= 0) return null;   // no cards on a position that was replaced or removed
   const stage = stageFromCandidate_(cand);
   const rejected = /reject/i.test(txt_(cand.HR_Result) || txt_(cand.Tech_Result));
   const app = insert_(T.APP, { Candidate_ID: cand.Candidate_ID, Line_ID: cand.Line_ID, MRF_No: line.MRF_No, Recruiter: line.Recruiter,
@@ -180,6 +181,7 @@ function apiMoveStage(appId, toStage, data) {
   }
   if (toStage === 'Offer') {
     if (!data.offerDate) throw new Error('Add the offer letter date.');
+    if (ymd_(parseYmd_(data.offerDate)) > ymd_(new Date())) throw new Error('The offer letter date cannot be in the future.');
     patch.Offer_CTC = clean_(String(data.ctc || ''));
     patch.Offer_Date = parseYmd_(data.offerDate);
     patch.EDOJ = data.edoj ? parseYmd_(data.edoj) : (line.EDOJ || '');
@@ -188,11 +190,17 @@ function apiMoveStage(appId, toStage, data) {
   }
   if (toStage === 'Prejoin') {
     if (!data.acceptedOn) throw new Error('Add the date the candidate accepted the offer.');
+    if (ymd_(parseYmd_(data.acceptedOn)) > ymd_(new Date())) throw new Error('The acceptance date cannot be in the future.');
+    const offD = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (offD && ymd_(parseYmd_(data.acceptedOn)) < offD) throw new Error('The acceptance date cannot be before the offer date (' + offD + ').');
     patch.Offer_Accepted_On = parseYmd_(data.acceptedOn);
     patch.Risk = 'Green';
   }
   if (toStage === 'Joined') {
     if (!data.doj) throw new Error('Add the actual joining date.');
+    if (ymd_(parseYmd_(data.doj)) > ymd_(new Date())) throw new Error('The actual joining date cannot be in the future. Record the joining on the day the candidate joins.');
+    const offJ = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (offJ && ymd_(parseYmd_(data.doj)) < offJ) throw new Error('The joining date cannot be before the offer date (' + offJ + ').');
     bgvJoinGuard_(app, data);
     update_(T.CAND, app.Candidate_ID, { DOJ: parseYmd_(data.doj) }, u);
     patch.Actual_DOJ = parseYmd_(data.doj);
@@ -238,16 +246,26 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
     if (app.Offer_Date && ymd_(when) < ymd_(app.Offer_Date)) throw new Error('The backout date cannot be before this candidate\u2019s offer date (' + ymd_(app.Offer_Date) + ').');
     patch.Backout_Date = when; patch.Backout_Reason = clean_(String(reason || ''));
   }
-  update_(T.APP, appId, patch, u);
-  appendHistory_(app, stage, stage, backout ? 'Backout' : status, reason, u);
-  if (backout) bgvTouchLine_(app.Line_ID);
-  if (backout) {
-    const repl = createReplacement_(line, app, when, String(reason || ''), u);
+  if (!backout) {
+    update_(T.APP, appId, patch, u);
+    appendHistory_(app, stage, stage, status, reason, u);
+    return apiPipeline(app.Line_ID);
+  }
+  // One backout is one piece of work: under one lock, and a retry after an interruption finishes the replacement
+  // without writing the withdrawal and its history a second time.
+  return withLock_(function () {
+    const fresh = appOf_(appId), done = String(fresh.Status) === 'Withdrawn' && !!ymd_(fresh.Backout_Date);
+    if (!done) {
+      update_(T.APP, appId, patch, u);
+      appendHistory_(app, stage, stage, 'Backout', reason, u);
+      bgvTouchLine_(app.Line_ID);
+    }
+    const when2 = done ? parseYmd_(ymd_(fresh.Backout_Date)) : when;
+    const repl = createReplacement_(line, fresh, when2, String(reason || fresh.Backout_Reason || ''), u);
     const out = apiPipeline(repl.Line_ID);
     out.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: repl.Line_ID, toMrf: String(repl.MRF_No), moved: repl._moved };
     return out;
-  }
-  return apiPipeline(app.Line_ID);
+  });
 }
 
 /** Changes the expected joining date of an offered or pre-joining candidate (position and card together); the recruiter of the position or a lead. */
@@ -302,6 +320,7 @@ function createReplacement_(line, app, when, reason, u) {
   const skip = ['Line_ID', 'MRF_No', 'Offer_Sent', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Candidate_ID', 'Replaced_By', 'Replaced_On',
     'Parent_Line_ID', 'TAT_Start_From', 'No_Vacancy_Date', 'Not_Needed_Date', 'Remarks', 'Position_Status', 'Standard_TAT', 'Exemption_Days', 'Final_TAT',
     'TAT_End_Date', 'Days_Taken', 'TAT_Result', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
+    'Notice_Period_Days', 'Notice_Proof_File', 'Notice_Ext_Status', 'Notice_Ext_Note', 'Notice_Ext_By', 'Notice_Ext_On',
     'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Reconciled_On', 'Reconciled_By', 'Reconcile_Note'];
   const obj = {};
   t.headers.forEach(function (h) { if (skip.indexOf(h) < 0 && line[h] !== undefined) obj[h] = line[h]; });
@@ -447,14 +466,14 @@ function pipelineAlerts_(onlyRecruiter) {
   STAGES.forEach(function (s) { out.counts[s] = 0; });
   readTable_(T.APP.name).rows.forEach(function (a) {
     if (String(a.Status) !== 'Active') return;
-    if (onlyRecruiter && String(a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
+    if (onlyRecruiter && String((lines[a.Line_ID] || {}).Recruiter || a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
     out.counts[a.Stage] = (out.counts[a.Stage] || 0) + 1;
     const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {}, st = String(a.Stage);
     const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0, fu = fus[a.App_ID] || { n: 0, last: null };
     const edoj = ymd_(l.EDOJ) || ymd_(a.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
     const brief = { app: a.App_ID, line: a.Line_ID, cand: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
       position: String(l.Position || ''), mrf: String(l.MRF_No || a.MRF_No || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''),
-      recruiter: String(a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
+      recruiter: String(l.Recruiter || a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
       daysInStage: since ? Math.floor((now - since) / DAY) : null, risk: String(a.Risk || ''), next: ymd_(a.Next_Followup),
       offer: offer, accepted: accepted, edoj: edoj, edojIn: edoj ? -daysFrom(edoj) : null, fuCount: fu.n, last: fu.last };
     if (brief.last) delete brief.last.at;

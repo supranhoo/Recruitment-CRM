@@ -85,7 +85,7 @@ function tatClock_(l, ctx, start, status, end, which) {
   const days = start ? Math.max(0, daysBetween_(start, stop) - hold - paused) : '';
   let result = '';
   if (days !== '') {
-    if (status === 'Removed') result = '';
+    if (status === 'Removed' || status === 'No Vacancy' || status === 'Not Needed' || status === 'On Hold') result = '';   // closed without a hire: no achieved or missed
     else if (status === 'Open' || status === 'Offered') result = days > fin ? 'Overdue' : (days >= rule.risk * fin ? 'At risk' : 'On track');
     else if (status === 'Replaced') result = 'Replaced';
     else result = days > fin ? 'Missed' : 'Achieved';
