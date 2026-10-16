@@ -185,7 +185,9 @@ function parseYmd_(s) {
   if (s instanceof Date) return s;
   const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) throw new Error('Invalid date "' + s + '". Use the date picker.');
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) throw new Error('Invalid date "' + s + '". That day does not exist in the calendar.');
+  return d;
 }
 
 /** Blocks formula injection: text starting with = + @ is stored as plain text. */

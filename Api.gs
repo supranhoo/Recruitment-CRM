@@ -54,10 +54,10 @@ function apiGetPosition(lineId) {
  * Stamps are read before the data is built, so a write during the build can only cause an extra refetch.
  */
 const FETCHABLE_ = {
-  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions'], per: 'day', packed: true },
+  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
-  apiListFunnel: { tables: ['Daily_Funnel', 'Users'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members'], per: 'hour', packed: false }
+  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF'], per: 'day', packed: true },
+  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
   const u = currentUser_();

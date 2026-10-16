@@ -197,7 +197,7 @@ function computeTasks_() {
 
   apps.forEach(function (a) {
     const l = lines[a.Line_ID]; if (!l) return;
-    const rec = String(a.Recruiter || l.Recruiter), c = cands[a.Candidate_ID] || {};
+    const rec = String(l.Recruiter || a.Recruiter), c = cands[a.Candidate_ID] || {};
     const who = candName(a), ctxt = who + ' \u00b7 ' + lineLabel(l), since = ms_(a.Stage_Since), st = String(a.Stage);
     const mine = intsByApp[a.App_ID] || [];
 
@@ -430,7 +430,7 @@ function taskState_() {
 /** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
-  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members']);
+  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
