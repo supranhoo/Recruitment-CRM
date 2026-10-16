@@ -127,6 +127,11 @@ function apiSavePosition(data) {
   }
   const oldText = old ? String(old.JD_Text || '').trim() : '', newText = String(rec.JD_Text || '').trim();
   if (newText && newText !== oldText && 'JD_Text' in patch) pdocAddJd_(u, rec.Line_ID, { content: newText, source: 'Typed on the position form' });
+  if (old && 'EDOJ' in patch && ymd_(old.EDOJ) !== ymd_(rec.EDOJ)) {   // keep the card's copy of the expected joining date in step
+    readTable_(T.APP.name).rows.forEach(function (ap) {
+      if (ap.Line_ID === rec.Line_ID && String(ap.Status) === 'Active' && ['Offer', 'Prejoin'].indexOf(String(ap.Stage)) >= 0 && ymd_(ap.EDOJ) !== ymd_(rec.EDOJ)) update_(T.APP, ap.App_ID, { EDOJ: rec.EDOJ || '' }, u);
+    });
+  }
   bgvTouchLine_(rec.Line_ID);
   const o = toClient_(lineOf_(rec.Line_ID) || rec); o._canEdit = true; delete o._row;
   return o;

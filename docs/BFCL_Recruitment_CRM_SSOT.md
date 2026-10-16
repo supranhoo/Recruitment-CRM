@@ -1110,6 +1110,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Joiners at risk: expected joining date follows the position** (no schema change; 16 Oct 2026)
+- The Overview alert and the pipeline alert read the card's own copy of the expected joining date before the position's, and editing the date on the position never reached the card, so a mistyped or stale date (for example 11 Jul instead of 7 Nov) kept showing Red "has passed". The position's date is now authoritative (the card copy is only a fallback), and changing it on the position also updates the Offer / Pre-joining card of that position.
+
 **Fast-track: confirming the hiring when the department paper is missing** (no schema change)
 - The "Confirm the hiring" step needs the department's written confirmation, but the file field was only on the earlier step and under Papers, lower on the card, so a recruiter who had uploaded other papers could not move the card and could not see why. The Offer form now shows the missing paper as its own required field at the top (uploaded first, then the move is made), with a clear message.
 - A TA Lead or the Head of HR can instead record a reason for a candidate the department confirmed before the paper step existed (stored in the stage history). A recruiter cannot.
