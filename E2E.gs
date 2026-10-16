@@ -1,4 +1,5 @@
 function e2eTest() {
+  requireEditorOrAdmin_();
   const src = DriveApp.getFileById(DB_SPREADSHEET_ID);
   const copy = src.makeCopy('E2E TEST COPY - safe to delete');
   const trash = [];

@@ -34,6 +34,21 @@ function requireAdmin_(u) {
   if (u.role !== ROLES.ADMIN) throw new Error('Only the CRM admin can do this.');
 }
 
+/**
+ * For functions meant to be run from the script editor or by a trigger (setup, sharing, jobs, test harness). They are also
+ * callable from the browser, so a signed-in web user must be the database owner or an Admin. A trigger or the editor has no
+ * browser user and passes.
+ */
+function requireEditorOrAdmin_() {
+  const email = (Session.getActiveUser().getEmail() || '').toLowerCase();
+  if (!email) return;
+  try {
+    const owner = DriveApp.getFileById(ss_().getId()).getOwner();
+    if (owner && String(owner.getEmail()).toLowerCase() === email) return;
+  } catch (e) { }
+  requireAdmin_(currentUser_());
+}
+
 /** Recruiters edit their own positions; Head and Admin edit all. */
 function canEditLine_(u, line) {
   return isLead_(u) || String(line.Recruiter).trim().toLowerCase() === u.recruiter.trim().toLowerCase();
