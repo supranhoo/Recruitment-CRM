@@ -99,6 +99,7 @@ function apiSavePosition(data) {
   if (!patch.Position || !patch.Grade || !patch.Dept || !patch.Receipt_Date) throw new Error('Position, grade, department and MRF receipt date are required.');
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;
+  if (old && !isLead_(u)) delete patch.Recruiter;   // only a lead reassigns a position (the form locks it; this closes the direct call)
   checkDesignation_(patch, old);
   // Notice beyond the grace extends the TAT automatically, so it needs proof; a changed notice resets the Head of HR's check.
   if ('Notice_Period_Days' in patch) {
@@ -114,7 +115,7 @@ function apiSavePosition(data) {
   if ((patch.Approval_Status === 'Not Needed' || patch.Approval_Status === 'On Hold') && !patch.Not_Needed_Date) throw new Error('Add the date the position was marked ' + patch.Approval_Status + '.');
   if (patch.Actual_DOJ && String(patch.Offer_Sent).toUpperCase() !== 'YES') throw new Error('Set Offer sent to Yes before entering the actual joining date.');
   guardPipelineFields_(patch, old, u);
-  Object.assign(patch, storedTat_(computeTat_(patch, ctx)));
+  Object.assign(patch, storedTat_(computeTat_(Object.assign({}, old || {}, patch), ctx)));   // the whole record, so hold days, exemptions and replacement start count
   let rec;
   if (data.Line_ID) {
     rec = update_(T.MRF, data.Line_ID, patch, u, function (old) {

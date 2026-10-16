@@ -6315,6 +6315,7 @@ async function viewPipeline(v) {
           ${interviewSecHtml(a, canEdit && active)}
           ${canEdit ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
             ${active && ['Offer', 'Prejoin'].includes(a.Stage) ? `<div class="field" style="margin-top:8px"><label for="apBoDate">Backout date</label><input id="apBoDate" type="date" value="${today()}" max="${today()}"></div>
+              <div class="field" style="margin-top:8px"><label for="apEdoj">Expected joining date</label><div class="rc-act"><input id="apEdoj" type="date" value="${esc(a.EDOJ || P.line.EDOJ || '')}"><button class="btn sm" id="apEdojSave">Change</button></div></div>
               <p class="hint">Recording a backout closes ${esc(P.line.MRF_No || 'this MRF')} and raises the replacement MRF (policy 9.5). Other active candidates move to it, and its TAT counts from the original start.</p>` : ''}
             ${isLead() ? `<details class="rc-keep" style="margin-top:10px"><summary>Linked in error? (head and admin)</summary><div class="rc-act"><input id="apUnlinkWhy" placeholder="Reason for the correction (required)" aria-label="Reason"><button class="btn sm" id="apUnlink">Remove this card</button></div><p class="hint">Removes the card without recording a backout, and sends the position back to the switch-over check so the right candidate can be linked. The history is kept.</p></details>` : ''}
             <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
@@ -6393,6 +6394,9 @@ async function viewPipeline(v) {
     if ($('#apBack')) $('#apBack').onchange = async e => {
       if (!e.target.value) return;
       try { after(await api('apiMoveStage', a.App_ID, e.target.value, { note: 'Moved back by a lead (correction)' })); toast('Moved back'); } catch (err) { toast(err, true); }
+    };
+    if ($('#apEdojSave')) $('#apEdojSave').onclick = async () => {
+      try { const np = await api('apiSetEdoj', a.App_ID, $('#apEdoj').value); await refreshLine(a.Line_ID); toast('Expected joining date changed'); after(np); } catch (e) { toast(e, true); }
     };
     if ($('#apFuSave')) $('#apFuSave').onclick = async () => {
       try { after(await api('apiAddFollowup', a.App_ID, readForm($('#apFu')))); toast('Check-in logged'); } catch (e) { toast(e, true); }

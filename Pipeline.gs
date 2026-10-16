@@ -39,6 +39,7 @@ function stageFromCandidate_(c) {
 }
 
 function appendHistory_(app, from, to, outcome, note, u) {
+  withLock_(function () {   // the next number and the row are written together, so two moves in one second cannot share a row
   const t = readTable_(T.HIST.name, true);
   let n = 0;
   t.rows.forEach(function (r) { const m = String(r.Hist_ID).match(/(\d+)$/); if (m) n = Math.max(n, +m[1]); });
@@ -48,6 +49,7 @@ function appendHistory_(app, from, to, outcome, note, u) {
   t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
   PropertiesService.getScriptProperties().setProperty('KPI_DIRTY_AT', String(Date.now()));
+  });
 }
 
 /** Creates the application for a candidate linked to a position, if there is none yet. */
@@ -225,6 +227,8 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
     if (holder) throw new Error(holder + ' already holds the offer for this position, so this candidate cannot be reactivated at the offer stage.');
   }
   const backout = status === 'Withdrawn' && ['Offer', 'Prejoin'].indexOf(stage) >= 0;
+  if (status !== 'Active' && STAGES.indexOf(stage) >= STAGES.indexOf('Joined')) throw new Error('This candidate has already joined. Ask a TA Lead or the Head of HR to move the card back first if the joining was recorded in error.');
+  if (status === 'Rejected' && ['Offer', 'Prejoin'].indexOf(stage) >= 0) throw new Error('A candidate who holds an offer cannot be rejected here. If they backed out, use \u201cRecord backout\u201d, which closes the MRF and raises the replacement.');
   const patch = { Status: status, Status_Reason: clean_(String(reason || '')), Risk: status === 'Active' ? app.Risk : '' };
   let when = null;
   if (backout) {
@@ -243,6 +247,24 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
     out.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: repl.Line_ID, toMrf: String(repl.MRF_No), moved: repl._moved };
     return out;
   }
+  return apiPipeline(app.Line_ID);
+}
+
+/** Changes the expected joining date of an offered or pre-joining candidate (position and card together); the recruiter of the position or a lead. */
+function apiSetEdoj(appId, date) {
+  const u = currentUser_(); ensureSchema_();
+  const app = appOf_(appId);
+  const line = requireLineEdit_(u, app.Line_ID);
+  requireNotReplaced_(line);
+  if (String(app.Status) !== 'Active' || ['Offer', 'Prejoin'].indexOf(String(app.Stage)) < 0) throw new Error('The expected joining date can be changed only while the candidate is at Offer or Pre-joining.');
+  const d = parseYmd_(date);
+  if (!d || isNaN(d)) throw new Error('Pick the new expected joining date.');
+  const off = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+  if (off && ymd_(d) < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+  const was = ymd_(line.EDOJ) || ymd_(app.EDOJ);
+  update_(T.MRF, line.Line_ID, { EDOJ: d }, u);
+  update_(T.APP, appId, { EDOJ: d }, u);
+  appendHistory_(app, String(app.Stage), String(app.Stage), 'Expected joining changed', (was ? was + ' to ' : 'set to ') + ymd_(d), u);
   return apiPipeline(app.Line_ID);
 }
 
