@@ -897,7 +897,9 @@ Settings are cached up to 10 minutes; Admin → Tools → Recalculate TAT applie
 
 ### 12.3 Script Properties
 
-`DB_ID`, `SCHEMA_V`, `VOICE_API_KEY` (the Sarvam key; write-only from the Admin page), `VOICE_LISTONLY_FROM_` and `VOICE_RATINGS_FROM_` are code constants for agent versions, not properties. The webhook receiver (`docs/voice-webhook`) keeps its own properties (secret `key` checked against the `?key=` in its address, and the database id).  `IDMAX_<table>`, `DASH_DIRTY_AT`, `ARCHIVE_VER`, version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`).
+Stored as Script Properties (not in the sheet): `DB_ID`, `SCHEMA_V` (schema version reached), `SCHEMA_RETRY_AT` (set for 10 minutes after a failed schema step), `IDMAX_<table>` (highest ID ever issued, so IDs are never reused), `DASH_DIRTY_AT` and `KPI_DIRTY_AT` (data changed since the last snapshot), `ARCHIVE_VER`, `ARCHIVE_LAST_RUN`, `ARCHIVE_LAST_RESULT`, `LAST_BACKUP`, `LAST_BACKUP_AT`, `WEEKLY_TRIGGER_BY`, `WEEKLY_LAST_SENT`, `BGV_SWEEP_AT`, `JDM_VERSION`, `JDM_IMPORT`, `VOICE_API_KEY` (the Sarvam key; write-only from the Admin page), and the job-health keys `JOB_LOG` (last 20 failed job steps), `JOB_OK_nightly` and `JOB_OK_refresh` (last finished run) and `JOB_MAIL_<job>_<step>` (the day an Admin was last e-mailed about that step). The webhook receiver (`docs/voice-webhook`) keeps its own properties (the secret checked against `?key=` and the database id). Only version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`). `VOICE_LISTONLY_FROM_` and `VOICE_RATINGS_FROM_` are code constants for agent versions, not properties.
+
+**Scheduled jobs** (installed by `installTriggers`, run under the Admin's account): nightly at 01:00 (schema, backup with a check that the copy opens and has every sheet and position, BGV folders, TAT recalculation, snapshot) and every 30 minutes (schema, to-dos, candidate archive, voice results, daily-review pre-build, snapshot when data changed). Each step runs on its own: a failing step is recorded, the others still run, and the Admins are e-mailed once a day per failing step. Admin → Tools shows the last finished run of each job, whether the triggers exist, whether the last backup is older than 36 hours, and the recent failures.
 
 ### 12.4 Backups
 
@@ -1109,6 +1111,13 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Audit batch 4: scheduled jobs and schema safety** (no schema change; 16 Oct 2026)
+- Each step of the nightly and 30-minute jobs runs on its own; failures are logged (Admin → Tools) and the Admins are e-mailed once a day per failing step. Admin → Tools also shows the last run of each job, missing triggers and an old backup.
+- The nightly backup checks that the copy opens, has every sheet and the same number of positions.
+- The 30-minute job processes voice results that arrived (before, only when someone opened a voice screen).
+- Schema upgrade steps run on their own: one failing step is logged and retried after 10 minutes instead of stopping the app; the schema version is recorded only when every step succeeded.
+- `apiSaveAppDetails` (unused, and able to bypass stage checks) was removed.
 
 **Audit batch 3: integrity of backouts, dates, closures and screens** (no schema change; 16 Oct 2026)
 - A backout runs under one lock, and a retry after an interruption finishes the replacement without writing the withdrawal twice.

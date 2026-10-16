@@ -8,7 +8,12 @@ function backupDb_() {
   const it = base.getFoldersByName('BFCL Recruitment CRM - Backups');
   const folder = it.hasNext() ? it.next() : base.createFolder('BFCL Recruitment CRM - Backups');
   const name = 'DB backup ' + fmt_(new Date(), TZ, 'yyyy-MM-dd HH:mm');
-  file.makeCopy(name, folder);
+  const copy = file.makeCopy(name, folder);
+  // Prove the copy opens and has every sheet and the same number of positions before it counts as a backup.
+  const src = ss_(), chk = SpreadsheetApp.openById(copy.getId());
+  if (chk.getSheets().length !== src.getSheets().length) throw new Error('The backup copy has ' + chk.getSheets().length + ' sheets, the database has ' + src.getSheets().length + '.');
+  const mrfS = src.getSheetByName(T.MRF.name), mrfC = chk.getSheetByName(T.MRF.name);
+  if (!mrfC || mrfC.getLastRow() !== mrfS.getLastRow()) throw new Error('The backup copy has a different number of positions from the database.');
   const keep = Number(settings_().BACKUP_KEEP_DAYS) || 14;
   const cutoff = Date.now() - keep * 86400000;
   const files = folder.getFiles();
@@ -19,6 +24,7 @@ function backupDb_() {
     if (f.getDateCreated().getTime() < cutoff) { f.setTrashed(true); removed++; } else kept++;
   }
   PropertiesService.getScriptProperties().setProperty('LAST_BACKUP', name);
+  PropertiesService.getScriptProperties().setProperty('LAST_BACKUP_AT', new Date().toISOString());
   return { name: name, kept: kept, removed: removed, folder: folder.getUrl() };
 }
 
@@ -30,8 +36,40 @@ function apiBackupNow() {
 function apiAdminInfo() {
   const u = currentUser_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can open this page.');
-  return { lastBackup: PropertiesService.getScriptProperties().getProperty('LAST_BACKUP') || '' };
+  const props = PropertiesService.getScriptProperties();
+  let errors = []; try { errors = JSON.parse(props.getProperty('JOB_LOG') || '[]'); } catch (e) { errors = []; }
+  const bk = props.getProperty('LAST_BACKUP_AT') || '';
+  const triggers = ScriptApp.getProjectTriggers().map(function (t) { return String(t.getHandlerFunction()); });
+  return { lastBackup: props.getProperty('LAST_BACKUP') || '',
+    backupStale: !bk || Date.now() - new Date(bk).getTime() > 36 * 3600000,
+    jobs: { nightly: props.getProperty('JOB_OK_nightly') || '', refresh: props.getProperty('JOB_OK_refresh') || '' },
+    triggers: { nightly: triggers.indexOf('nightlyJob') >= 0, refresh: triggers.indexOf('refreshDashboardJob') >= 0, weekly: triggers.indexOf('weeklySummaryJob') >= 0 },
+    errors: errors.slice(0, 10) };
 }
+
+/* ---------------- Scheduled-job health ---------------- */
+
+/** Records a failed step of a scheduled job (last 20 kept) and e-mails the Admins once per job step per day. Never throws. */
+function jobLog_(job, step, err) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let log = []; try { log = JSON.parse(props.getProperty('JOB_LOG') || '[]'); } catch (e) { log = []; }
+    const msg = String(err && err.message || err).slice(0, 300);
+    log.unshift({ at: new Date().toISOString(), job: job, step: step, msg: msg });
+    props.setProperty('JOB_LOG', JSON.stringify(log.slice(0, 20)));
+    const day = ymd_(new Date()), key = 'JOB_MAIL_' + job + '_' + step;
+    if (props.getProperty(key) === day) return;
+    props.setProperty(key, day);
+    const to = readTable_('Users').rows.filter(function (r) { return normRole_(r.Role) === ROLES.ADMIN && String(r.Active || 'Yes') !== 'No' && r.Email; }).map(function (r) { return String(r.Email); });
+    if (to.length) MailApp.sendEmail(to.join(','), 'BFCL Recruitment CRM: ' + job + ' job step failed (' + step + ')',
+      'The ' + job + ' job step "' + step + '" failed at ' + fmt_(new Date(), TZ, 'd MMM yyyy HH:mm') + ' IST.\n\n' + msg + '\n\nOpen Admin \u2192 Tools to see the recent failures. This e-mail is sent once a day per failing step.');
+  } catch (e) { console.error('jobLog_: ' + e); }
+}
+/** Runs one step of a scheduled job so a failure in it does not stop the rest, and is recorded. */
+function runStep_(job, step, fn) {
+  try { return fn(); } catch (e) { console.error(job + ' / ' + step + ': ' + e); jobLog_(job, step, e); return undefined; }
+}
+function jobDone_(job) { try { PropertiesService.getScriptProperties().setProperty('JOB_OK_' + job, new Date().toISOString()); } catch (e) { } }
 
 /** Change history from Audit_Log, newest first (max 300 rows). */
 function apiAuditLog(f) {

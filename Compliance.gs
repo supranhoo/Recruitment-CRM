@@ -13,55 +13,130 @@ const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / K
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
+  if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a moment ago: do not repeat it on every page load
   withLock_(function () {
     if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
-    addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
-      'Tech_Panel', 'Final_Panel']);
-    seedPanelMembers_();
-    addColumns_(T.FUNNEL.name, ['CV_Reviewed']);
-    pipelineSchema_();
-    addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
+    const failed = [];
+    // Each step runs on its own: a failing one is recorded and does not take the rest (or the whole app) down with it.
+    const step_ = function (name, fn) { try { fn(); } catch (e) { failed.push(name); console.error('Schema step ' + name + ': ' + e); jobLog_('schema', name, e); } };
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
+        'Tech_Panel', 'Final_Panel']);
+    });
+    step_('seedPanelMembers_', function () {
+      seedPanelMembers_();
+    });
+    step_('addColumns_ T.FUNNEL.name', function () {
+      addColumns_(T.FUNNEL.name, ['CV_Reviewed']);
+    });
+    step_('pipelineSchema_', function () {
+      pipelineSchema_();
+    });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
+    });
     try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); }
-    addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
-    tasksSchema_();
-    addColumns_(T.MRF.name, ['Parent_Line_ID', 'Replaced_By', 'Replaced_On', 'TAT_Start_From']);
-    addColumns_(T.APP.name, ['Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Backout_Reason']);
-    reconcileSchema_();
-    closureSchema_();
-    addColumns_(T.PANEL.name, ['To_Date', 'Kind']);
-    archiveSchema_();
-    poolSchema_();
-    parseSchema_();
-    usersSchema_();
-    tatSchema_();
-    jdmSchema_();
-    pdocSchema_();
-    scrSchema_();
-    gradeDesigMigrate_();
-    gradeDesigSchema_();
-    exemptSchema_();
-    ctcSchema_();
-    bgvSchema_();
-    profileSchema_();
-    voiceSchema_();
-    fastTrackSchema_();
-    orgSchema_();
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
+    });
+    step_('tasksSchema_', function () {
+      tasksSchema_();
+    });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['Parent_Line_ID', 'Replaced_By', 'Replaced_On', 'TAT_Start_From']);
+    });
+    step_('addColumns_ T.APP.name', function () {
+      addColumns_(T.APP.name, ['Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Backout_Reason']);
+    });
+    step_('reconcileSchema_', function () {
+      reconcileSchema_();
+    });
+    step_('closureSchema_', function () {
+      closureSchema_();
+    });
+    step_('addColumns_ T.PANEL.name', function () {
+      addColumns_(T.PANEL.name, ['To_Date', 'Kind']);
+    });
+    step_('archiveSchema_', function () {
+      archiveSchema_();
+    });
+    step_('poolSchema_', function () {
+      poolSchema_();
+    });
+    step_('parseSchema_', function () {
+      parseSchema_();
+    });
+    step_('usersSchema_', function () {
+      usersSchema_();
+    });
+    step_('tatSchema_', function () {
+      tatSchema_();
+    });
+    step_('jdmSchema_', function () {
+      jdmSchema_();
+    });
+    step_('pdocSchema_', function () {
+      pdocSchema_();
+    });
+    step_('scrSchema_', function () {
+      scrSchema_();
+    });
+    step_('gradeDesigMigrate_', function () {
+      gradeDesigMigrate_();
+    });
+    step_('gradeDesigSchema_', function () {
+      gradeDesigSchema_();
+    });
+    step_('exemptSchema_', function () {
+      exemptSchema_();
+    });
+    step_('ctcSchema_', function () {
+      ctcSchema_();
+    });
+    step_('bgvSchema_', function () {
+      bgvSchema_();
+    });
+    step_('profileSchema_', function () {
+      profileSchema_();
+    });
+    step_('voiceSchema_', function () {
+      voiceSchema_();
+    });
+    step_('fastTrackSchema_', function () {
+      fastTrackSchema_();
+    });
+    step_('orgSchema_', function () {
+      orgSchema_();
+    });
     try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); }
-    dayStatusSchema_();
-    addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
-      'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    addColumns_(T.CAND.name, ['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']);
-    addSheet_('Observations', ['Obs_ID', 'Obs_Date', 'Line_ID', 'MRF_No', 'Recruiter', 'Type', 'Description', 'Status',
-      'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    addSheet_('Audit_Checks', ['Audit_ID', 'Month', 'Entity', 'Record_ID', 'Label', 'Recruiter', 'Result', 'Error_Field', 'Critical',
-      'Remarks', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    const s = readTable_('Settings', true);
-    if (!s.rows.some(function (r) { return r.Key === 'KPI_CAPTURE_FROM'; })) {
-      const next = new Date(); next.setDate(1); next.setMonth(next.getMonth() + 1);
-      s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + fmt_(next, TZ, 'yyyy-MM'),
-        'First month scored for psychometric, BGV, observation and audit KPIs']);
-    }
-    props.setProperty('SCHEMA_V', SCHEMA_VERSION);
+    step_('dayStatusSchema_', function () {
+      dayStatusSchema_();
+    });
+    step_('addSheet_ Daily_Summary', function () {
+      addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
+        'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('addColumns_ T.CAND.name', function () {
+      addColumns_(T.CAND.name, ['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']);
+    });
+    step_('addSheet_ Observations', function () {
+      addSheet_('Observations', ['Obs_ID', 'Obs_Date', 'Line_ID', 'MRF_No', 'Recruiter', 'Type', 'Description', 'Status',
+        'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('addSheet_ Audit_Checks', function () {
+      addSheet_('Audit_Checks', ['Audit_ID', 'Month', 'Entity', 'Record_ID', 'Label', 'Recruiter', 'Result', 'Error_Field', 'Critical',
+        'Remarks', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('KPI_CAPTURE_FROM setting', function () {
+      const s = readTable_('Settings', true);
+      if (!s.rows.some(function (r) { return r.Key === 'KPI_CAPTURE_FROM'; })) {
+        const next = new Date(); next.setDate(1); next.setMonth(next.getMonth() + 1);
+        s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + fmt_(next, TZ, 'yyyy-MM'),
+          'First month scored for psychometric, BGV, observation and audit KPIs']);
+      }
+    });
+    if (failed.length) props.setProperty('SCHEMA_RETRY_AT', String(Date.now() + 10 * 60000));
+    else { props.setProperty('SCHEMA_V', SCHEMA_VERSION); props.deleteProperty('SCHEMA_RETRY_AT'); }
     dropTableCache_();
     _tables = {};
   });
