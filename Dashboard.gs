@@ -67,16 +67,20 @@ function markDashDirty_(sheetName) {
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */
 function refreshDashboardJob() {
   requireEditorOrAdmin_();
-  try { reconcileTasks_(); } catch (e) { console.error('To-do reconcile failed: ' + e); }
-  try { archiveDaily_(); } catch (e) { console.error('Candidate archive failed: ' + e); }
-  try {
+  runStep_('refresh', 'schema', function () { ensureSchema_(); });
+  runStep_('refresh', 'to-dos', function () { reconcileTasks_(); });
+  runStep_('refresh', 'candidate archive', function () { archiveDaily_(); });
+  runStep_('refresh', 'voice results', function () {   // results are processed here, not only when someone opens a voice screen
+    voiceIngest_({ email: 'system', name: 'Scheduled job', role: ROLES.ADMIN, recruiter: '', perms: effectivePerms_(ROLES.ADMIN) });
+  });
+  runStep_('refresh', 'daily review pre-build', function () {
     const y = fmt_(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
     if (typeof daySnapGet_ === 'function' && !daySnapGet_(y)) { _tables = {}; daySnapPut_(y, dayData_(y, '')); _tables = {}; }
-  } catch (e) { console.error('Daily review pre-build failed: ' + e); }
+  });
   const dirtyAt = Number(PropertiesService.getScriptProperties().getProperty('DASH_DIRTY_AT') || 0);
-  const snap = readSnapshot_();
-  if (snap && dirtyAt <= Number(snap.builtAtMs || 0)) return;
-  buildSnapshot_('scheduled refresh');
+  const snap = runStep_('refresh', 'read snapshot', function () { return readSnapshot_(); });
+  if (!(snap && dirtyAt <= Number(snap.builtAtMs || 0))) runStep_('refresh', 'dashboard snapshot', function () { buildSnapshot_('scheduled refresh'); });
+  jobDone_('refresh');
 }
 
 /** Run once after this update (safe to re-run): installs the nightly and 30-minute jobs. */

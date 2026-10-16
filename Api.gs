@@ -561,9 +561,11 @@ function recomputeAllTat_() {
 /** Nightly job installed by setup(): keeps TAT columns in the sheet current for anyone reading it directly. */
 function nightlyJob() {
   requireEditorOrAdmin_();
-  try { backupDb_(); } catch (e) { console.error('Backup failed: ' + e); }
-  try { bgvSyncFolders_(); } catch (e) { console.error('BGV folders: ' + e); }
-  recomputeAllTat_();
+  runStep_('nightly', 'schema', function () { ensureSchema_(); });
+  runStep_('nightly', 'backup', function () { backupDb_(); });
+  runStep_('nightly', 'bgv folders', function () { bgvSyncFolders_(); });
+  runStep_('nightly', 'recalculate TAT', function () { recomputeAllTat_(); });
   _tables = {};
-  buildSnapshot_('nightly refresh');
+  runStep_('nightly', 'dashboard snapshot', function () { buildSnapshot_('nightly refresh'); });
+  jobDone_('nightly');
 }

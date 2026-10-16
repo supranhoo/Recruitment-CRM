@@ -349,20 +349,6 @@ function createReplacement_(line, app, when, reason, u) {
   return repl;
 }
 
-/** Saves checklist-type details without moving the stage (documents, onboarding, screening answers). */
-function apiSaveAppDetails(appId, data) {
-  const u = currentUser_(); ensureSchema_();
-  const app = appOf_(appId);
-  requireLineEdit_(u, app.Line_ID);
-  const patch = {};
-  if (data.docs) patch.Docs_JSON = JSON.stringify(data.docs);
-  if (data.onboard) patch.Onboard_JSON = JSON.stringify(data.onboard);
-  if (data.answers) patch.Screening_JSON = JSON.stringify(data.answers);
-  if (data.ctc !== undefined) patch.Offer_CTC = clean_(String(data.ctc));
-  update_(T.APP, appId, patch, u);
-  return apiPipeline(app.Line_ID);
-}
-
 /** Pre-joining fail-safe: logs a check-in with the candidate and sets the risk and next check-in. */
 function apiAddFollowup(appId, data) {
   const u = currentUser_(); ensureSchema_();
