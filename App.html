@@ -700,6 +700,25 @@ function resumePositionDialog(p, after) {
     catch (e) { toast(e, true); busy(b, false); }
   };
 }
+/** The candidate who backed out confirms they will join: the Head of HR or admin reinstates the card on the same MRF. */
+async function reinstateDialog(app, after) {
+  if (!app) return toast('There is no backed-out candidate on this position.', true);
+  let pv;
+  try { pv = await api('apiReinstatePreview', app.App_ID); } catch (e) { return toast(e, true); }
+  const d = cpDlg(`<h2 id="cpTitle">Candidate will join after all</h2>
+    <p><b>${esc(pv.candidate)}</b> backed out of ${esc(pv.mrf)}${app.Backout_Date ? ' on ' + fmtDate(app.Backout_Date) : ''}.</p>
+    ${pv.allowed ? `<p class="hint">${esc(pv.mrf)} becomes an offered position again with ${esc(pv.candidate)} on it.${pv.replMrf ? ` The replacement ${esc(pv.replMrf)} is removed${pv.moveCount ? ` and its ${pv.moveCount} live candidate${pv.moveCount === 1 ? '' : 's'} move back to ${esc(pv.mrf)}` : ''}.` : ''} The backout stays in the history as reversed, and it no longer counts in the offer backout rate. TAT keeps counting from the original start.</p>
+      <div class="rc-grid"><label>Expected joining date<input type="date" id="rnEdoj" min="${esc(pv.offerDate || '')}"></label></div>
+      <div class="field"><label for="rnWhy">Reason (who confirmed, when and how)</label><textarea id="rnWhy" rows="3" style="width:100%"></textarea></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rnSave">Reinstate on ${esc(pv.mrf)}</button></div>`
+    : `<div class="note warn-note">${pv.blockers.map(esc).join('<br>')}</div><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`}`);
+  if (!pv.allowed) return;
+  $('#rnSave', d).onclick = async () => {
+    const b = $('#rnSave', d); busy(b, true);
+    try { await api('apiReinstateBackout', app.App_ID, { reason: $('#rnWhy', d).value, edoj: $('#rnEdoj', d).value }); d.close(); toast(`${pv.candidate} is back on ${pv.mrf}. Log a check-in with the candidate.`); after(); }
+    catch (e) { toast(e, true); busy(b, false); }
+  };
+}
 let RC_LAST = null;
 function rcBannerInto(el) {
   if (!el) return;
@@ -6136,7 +6155,7 @@ async function viewPipeline(v) {
     const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
     const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
     $('#pBody').innerHTML = `
-      ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button></div>` : ''}
+      ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
       <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d, v], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span>${v ? `<button class="linkbtn rview" data-rview="${v[0]}">${v[1]}</button>` : ''}</div></div>`).join('')}</div>
         <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button><button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}</div></section>
@@ -6172,6 +6191,7 @@ async function viewPipeline(v) {
     if ($('#pClosePos')) $('#pClosePos').onclick = () => loadPositions(true).then(() => closePositionDialog(lineById(f.line), reloadBoard));
     if ($('#pResume')) $('#pResume').onclick = () => loadPositions(true).then(() => resumePositionDialog(lineById(f.line), reloadBoard));
     lineTasksInto($('#pTasks'), f.line, firstTasks || undefined); firstTasks = null;
+    if ($('#pReinstate')) $('#pReinstate').onclick = () => reinstateDialog(P.apps.filter(a => a.Status === 'Withdrawn' && a.Backout_Date).sort((a, b) => String(b.Backout_Date).localeCompare(String(a.Backout_Date)))[0], () => { S.posStale = true; go('pipeline', false); });
     if ($('#pGoRepl')) $('#pGoRepl').onclick = () => { f.line = P.line.Replaced_By; f.closed = false; go('pipeline', false); };
     if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.line = P.line.Parent_Line_ID; f.closed = true; go('pipeline', false); };
     if (!canEdit) return;

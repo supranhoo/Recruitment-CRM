@@ -362,6 +362,93 @@ function createReplacement_(line, app, when, reason, u) {
   return repl;
 }
 
+
+/* ---------------- A candidate who backed out confirms they will join (Head of HR, Admin) ---------------- */
+
+/** What stands in the way of reinstating a backed-out card, and which live cards would move back from the replacement MRF. */
+function reinstateInfo_(app) {
+  const line = lineOf_(app.Line_ID), blockers = [];
+  const cand = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
+  const out = { line: line, repl: null, move: [], blockers: blockers, candName: cand ? String(cand.Name) : String(app.Candidate_ID), resume: false };
+  if (!line) { blockers.push('The position was not found.'); return out; }
+  if (String(app.Status) !== 'Withdrawn' || !ymd_(app.Backout_Date) || ['Offer', 'Prejoin'].indexOf(String(app.Stage)) < 0) {
+    blockers.push('This card is not a backout at Offer or Pre-joining, so there is nothing to reverse.'); return out;
+  }
+  if (!String(line.Replaced_By || '').trim()) { out.resume = true; }   // the position is already open again (an interrupted reinstatement): finish it
+  else {
+    const repl = lineOf_(line.Replaced_By);
+    if (!repl) { blockers.push('The replacement MRF was not found.'); return out; }
+    out.repl = repl;
+    const mrf = String(repl.MRF_No || repl.Line_ID);
+    const holder = liveOfferHolder_(repl.Line_ID, '');
+    if (holder) blockers.push(holder + ' already holds the offer on ' + mrf + '. Record that backout first, or ask the Head of HR to decide which candidate keeps the position.');
+    if (repl.Actual_DOJ) blockers.push('A candidate has already joined on ' + mrf + ', so it cannot be removed.');
+    if (String(repl.Replaced_By || '').trim()) blockers.push(mrf + ' was itself replaced after another backout.');
+    out.move = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === repl.Line_ID && ['Active', 'On hold'].indexOf(String(a.Status)) >= 0; });
+  }
+  const other = liveOfferHolder_(line.Line_ID, app.App_ID);
+  if (other) blockers.push(other + ' already holds the offer on ' + String(line.MRF_No || line.Line_ID) + '.');
+  if (positionStatus_(Object.assign({}, line, { Replaced_By: '' })) === 'Removed') blockers.push('This position was removed. Restore it first.');
+  return out;
+}
+
+function requireReinstater_(u) {
+  if (!can_(u, 'withdraw_offer')) throw new Error('Only the Head of HR or the admin can reinstate a candidate who backed out.');
+}
+
+/** For the confirmation dialog: whether the reinstatement is possible and what it will do. */
+function apiReinstatePreview(appId) {
+  const u = currentUser_(); ensureSchema_(); requireReinstater_(u);
+  const info = reinstateInfo_(appOf_(appId));
+  return { allowed: info.blockers.length === 0, blockers: info.blockers, candidate: info.candName,
+    mrf: info.line ? String(info.line.MRF_No || info.line.Line_ID) : '', replMrf: info.repl ? String(info.repl.MRF_No || info.repl.Line_ID) : '', moveCount: info.move.length,
+    offerDate: ymd_((appOf_(appId)).Offer_Date) || (info.line ? ymd_(info.line.Offer_Date) : '') };
+}
+
+/**
+ * The candidate who backed out confirms they will join: the card becomes Active again on the same MRF, the replacement MRF is
+ * removed (its live cards move back) and the position is open again as Offered. The earlier backout stays in the history. Under
+ * one lock; a retry after an interruption finishes the remaining steps.
+ */
+function apiReinstateBackout(appId, d) {
+  const u = currentUser_(); ensureSchema_(); requireReinstater_(u);
+  d = d || {};
+  const reason = clean_(String(d.reason || '')).trim();
+  if (!reason) throw new Error('Add the reason: who confirmed, when and how.');
+  if (!d.edoj) throw new Error('Add the expected joining date.');
+  const edoj = parseYmd_(d.edoj);
+  return withLock_(function () {
+    const app = appOf_(appId);
+    const first = lineOf_(app.Line_ID);
+    if (String(app.Status) === 'Active' && first && !String(first.Replaced_By || '').trim() && !ymd_(app.Backout_Date)) return apiPipeline(app.Line_ID);   // already done
+    const info = reinstateInfo_(app);
+    if (info.blockers.length) throw new Error(info.blockers[0]);
+    const line = info.line, off = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (off && ymd_(edoj) < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+    ensureActiveCandidate_(app.Candidate_ID, u);
+    const mrf = String(line.MRF_No || line.Line_ID), stage = String(app.Stage);
+    if (info.repl) {
+      info.move.forEach(function (a) {   // the reverse of createReplacement_: live cards, their interviews and the candidate link go back
+        update_(T.APP, a.App_ID, { Line_ID: line.Line_ID, MRF_No: line.MRF_No, Recruiter: line.Recruiter }, u);
+        appendHistory_(Object.assign({}, a, { Line_ID: line.Line_ID }), a.Stage, a.Stage, 'Moved', 'Moved back to ' + mrf + ' because the backout was reversed', u);
+        readTable_(T.INT.name, true).rows.forEach(function (i) { if (i.App_ID === a.App_ID && i.Status === 'Scheduled') update_(T.INT, i.Interview_ID, { Line_ID: line.Line_ID }, u); });
+        const cc = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === a.Candidate_ID; })[0];
+        if (cc && cc.Line_ID === info.repl.Line_ID) update_(T.CAND, a.Candidate_ID, { Line_ID: line.Line_ID }, u);
+      });
+      const rp = { Approval_Status: 'Created in error', Closure_Reason: ('Backout reversed: ' + info.candName + ' will join ' + mrf).slice(0, 300) };
+      update_(T.MRF, info.repl.Line_ID, Object.assign(rp, storedTat_(computeTat_(Object.assign({}, info.repl, rp), tatContext_()))), u);
+    }
+    const lp = { Replaced_By: '', Replaced_On: '', Backout_Date: '', Candidate_ID: app.Candidate_ID, Offer_Sent: 'Yes', EDOJ: edoj };
+    update_(T.MRF, line.Line_ID, Object.assign(lp, storedTat_(computeTat_(Object.assign({}, line, lp), tatContext_()))), u);
+    update_(T.APP, appId, { Status: 'Active', Status_Reason: '', Backout_Date: '', Backout_Reason: '', EDOJ: edoj, Risk: 'Amber',
+      Next_Followup: parseYmd_(ymd_(new Date(Date.now() + 2 * 86400000))) }, u);
+    appendHistory_(app, stage, stage, 'Backout reversed', reason, u);
+    bgvTouchLine_(line.Line_ID);
+    daySnapDropAll_();
+    return apiPipeline(line.Line_ID);
+  });
+}
+
 /** Pre-joining fail-safe: logs a check-in with the candidate and sets the risk and next check-in. */
 function apiAddFollowup(appId, data) {
   const u = currentUser_(); ensureSchema_();

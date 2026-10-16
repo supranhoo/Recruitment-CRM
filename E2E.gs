@@ -47,6 +47,7 @@ function e2eRun_(trash) {
   t('S1 formula-safe text', function () { return clean_('=1+1') === "'=1+1" && clean_('-IMPORTXML(1)') === "'-IMPORTXML(1)" && clean_('-5') === '-5' && plainCell_('+1') === "'+1" && plainCell_('Normal') === 'Normal'; });
   t('S2 calendar-valid dates', function () { let bad = false; try { parseYmd_('2026-02-30'); } catch (e) { bad = true; } return bad && ymd_(parseYmd_('2026-11-07')) === '2026-11-07'; });
   t('S3 fast-track Offer needs the department decision', function () { let bad = false; try { fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'Shared' }, { Grade: 'W2' }, 'Offer', {}); } catch (e) { bad = /department/i.test(String(e.message)); } return bad; });
+  t('S5 reinstate a backout is available', function () { return typeof apiReinstateBackout === 'function' && typeof apiReinstatePreview === 'function' && typeof reinstateInfo_ === 'function'; });
   t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
   t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 

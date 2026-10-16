@@ -627,6 +627,8 @@ Withdrawing a card at **Offer or Pre-joining** is a **backout**:
 4. Other Active/On-hold cards (backups) move to the replacement with a history note; their scheduled interviews and candidate links move too.
 5. A to-do "Replacement MRF: move the next candidate forward" is raised.
 
+**Reinstating a candidate who backed out (v107; `apiReinstateBackout`; Head of HR and Admin, permission `withdraw_offer`; ADR-051).** When a candidate who backed out confirms they will join, the backout is reversed on the **same MRF** (button "Candidate will join after all" on the replaced position's board). It needs a reason (who confirmed, when, how) and the new expected joining date (not before the offer date), and is refused while the replacement MRF has a live offer holder or a joining, or was itself replaced. Then, under one lock: the live cards on the replacement move back to the original MRF with their interviews; the replacement is closed as "Created in error" (a lead can restore it); the original position stops being Replaced and is Offered again with this candidate and the new date (Backout_Date cleared, so the KPI no longer counts the backout; the offer still counts); the card is Active again at its stage with Risk Amber and a check-in due in two days; BGV cases are re-checked. The history keeps both "Backout" and "Backout reversed". TAT keeps counting from the original start. A retry after an interruption finishes the remaining steps.
+
 Effects: the vacancy is counted once (Replaced excluded from open counts; the closure counts when the replacement closes); backout rate counts named backout events. **Offer withdrawn by the company** (via Close without hiring) is *not* a backout.
 
 ### 9.7 Switch-over check (`Reconcile.gs`, ADR-015)
@@ -1106,11 +1108,17 @@ Decision: each save creates a new version in `JDM_Drafts` with the composed cont
 **ADR-029 — Release safety** (ongoing)
 Decision: every patch is checksum-verified before and after; unchanged files are verified too; each release passes the full suites and a 48-step browser click-through twice; the served page is compared with the source; new server functions are introduced tolerant of Google's propagation window (v25 lesson). Consequences: 46 releases without data loss; one rolled-back release (v25).
 
+**ADR-051 — A backout can be reversed by the Head of HR or Admin while the replacement MRF has no offer** (16 Oct)
+Context: candidates sometimes confirm they will join after backing out; a backout closes the MRF as Replaced and raises a replacement, so the card could not be restored. Decision: a reinstatement on the same MRF, allowed only when the replacement holds no offer or joining; the replacement is removed and its cards move back; the history keeps both events and the KPI no longer counts the reversed backout. Consequence: if the replacement already has an offer, the Head of HR must resolve that first.
+
 ## 14. Changelog
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Reinstate a candidate who backed out** (no schema change; ADR-051; 16 Oct 2026)
+- New `apiReinstatePreview` / `apiReinstateBackout` and a "Candidate will join after all" button on a replaced position's board (Head of HR, Admin). See §9.6.
 
 **Audit batch 6: going back a stage, error handler, tests and the error appendix** (no schema change; 16 Oct 2026)
 - Moving a card back (lead): going back before Joined clears the joining date on the position, the candidate and the card; going back before Offer clears Offer sent, offer date, expected joining date and the selected candidate on the position and the dates on the card, so no report keeps counting the hire or the offer.
