@@ -388,6 +388,11 @@ function reinstateInfo_(app) {
   }
   const other = liveOfferHolder_(line.Line_ID, app.App_ID);
   if (other) blockers.push(other + ' already holds the offer on ' + String(line.MRF_No || line.Line_ID) + '.');
+  readTable_(T.APP.name).rows.forEach(function (a) {   // the same person may meanwhile have accepted an offer somewhere else
+    if (a.Candidate_ID !== app.Candidate_ID || a.App_ID === app.App_ID || String(a.Status) !== 'Active' || STAGES.indexOf(String(a.Stage)) < STAGES.indexOf('Offer')) return;
+    const ol = lineOf_(a.Line_ID);
+    blockers.push(out.candName + ' now holds an offer on ' + (ol ? String(ol.MRF_No || ol.Line_ID) : a.Line_ID) + '. Settle that first.');
+  });
   if (positionStatus_(Object.assign({}, line, { Replaced_By: '' })) === 'Removed') blockers.push('This position was removed. Restore it first.');
   return out;
 }
@@ -402,7 +407,8 @@ function apiReinstatePreview(appId) {
   const info = reinstateInfo_(appOf_(appId));
   return { allowed: info.blockers.length === 0, blockers: info.blockers, candidate: info.candName,
     mrf: info.line ? String(info.line.MRF_No || info.line.Line_ID) : '', replMrf: info.repl ? String(info.repl.MRF_No || info.repl.Line_ID) : '', moveCount: info.move.length,
-    offerDate: ymd_((appOf_(appId)).Offer_Date) || (info.line ? ymd_(info.line.Offer_Date) : '') };
+    offerDate: ymd_((appOf_(appId)).Offer_Date) || (info.line ? ymd_(info.line.Offer_Date) : ''),
+    edoj: info.line ? (ymd_(info.line.EDOJ) || ymd_(appOf_(appId).EDOJ)) : '', today: ymd_(new Date()) };
 }
 
 /**
@@ -415,8 +421,7 @@ function apiReinstateBackout(appId, d) {
   d = d || {};
   const reason = clean_(String(d.reason || '')).trim();
   if (!reason) throw new Error('Add the reason: who confirmed, when and how.');
-  if (!d.edoj) throw new Error('Add the expected joining date.');
-  const edoj = parseYmd_(d.edoj);
+  const given = d.edoj ? ymd_(parseYmd_(d.edoj)) : '';
   return withLock_(function () {
     const app = appOf_(appId);
     const first = lineOf_(app.Line_ID);
@@ -424,7 +429,11 @@ function apiReinstateBackout(appId, d) {
     const info = reinstateInfo_(app);
     if (info.blockers.length) throw new Error(info.blockers[0]);
     const line = info.line, off = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
-    if (off && ymd_(edoj) < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+    if (given && off && given < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+    // A new date replaces the one on record; with none given the one on record stays, but only if it is still ahead.
+    const prior = ymd_(line.EDOJ) || ymd_(app.EDOJ), use = given || prior, todayS = ymd_(new Date());
+    if (!use || use < todayS) throw new Error(given ? 'The expected joining date cannot be in the past.' : 'Add the new expected joining date: ' + (prior ? 'the earlier one (' + prior + ') has already passed.' : 'none is recorded.'));
+    const edoj = parseYmd_(use);
     ensureActiveCandidate_(app.Candidate_ID, u);
     const mrf = String(line.MRF_No || line.Line_ID), stage = String(app.Stage);
     if (info.repl) {
