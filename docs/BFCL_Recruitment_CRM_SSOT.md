@@ -1110,6 +1110,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit batch 1: editor-only functions and attachments locked down** (no schema change; 16 Oct 2026)
+- `setup`, `shareWithTeam`, `installTriggers`, `nightlyJob`, `refreshDashboardJob`, `weeklySummaryJob` and `e2eTest` are reachable from a browser; each now requires the database owner or an Admin when called by a signed-in user (`requireEditorOrAdmin_`); the editor and triggers are unaffected.
+- Opening an attachment (`apiGetDoc`): joining papers, offer, appointment and department-confirmation files need the position's recruiter, a lead, or (fast-track) the Onboarding role; exemption proof needs the recruiter, a lead or `tat_exempt`; legacy BGV files on a position need the recruiter or a lead. Uploading a candidate's psychometric file needs the position's recruiter or a lead.
+
 **Joiners at risk: expected joining date follows the position** (no schema change; 16 Oct 2026)
 - The Overview alert and the pipeline alert read the card's own copy of the expected joining date before the position's, and editing the date on the position never reached the card, so a mistyped or stale date (for example 11 Jul instead of 7 Nov) kept showing Red "has passed". The position's date is now authoritative (the card copy is only a fallback), and changing it on the position also updates the Offer / Pre-joining card of that position.
 

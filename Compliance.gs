@@ -221,6 +221,10 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
     if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
     if (['Pending', 'Approved'].indexOf(String(t.rec.Status)) < 0) throw new Error('Proof can be attached only to a pending or approved exemption.');
   }
+  if (entity === 'CAND') {
+    const l = t.rec.Line_ID ? lineOf_(t.rec.Line_ID) : null;
+    if (!(isLead_(u) || (l ? canEditLine_(u, l) : String(t.rec.Created_By || '').toLowerCase() === u.email))) throw new Error('Only the recruiter of this candidate\u2019s position, a TA Lead or the Head of HR can attach this file.');
+  }
   if (entity === 'BGV') { bgvRequireWork_(u, t.rec); if (t.rec.Purged_On) throw new Error('This case was purged under the retention rule. Files cannot be added.'); }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
   const ext = (String(fileName).match(/\.[a-z0-9]+$/i) || [''])[0];
@@ -235,11 +239,23 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   return file.getUrl();
 }
 
+/** Who may open an attachment: joining papers and letters, exemption proof and BGV files are not open to every signed-in user. */
+function docReadGuard_(u, entity, rec, field) {
+  if (entity === 'BGV') { bgvRequireWork_(u, rec); return; }
+  if (entity === 'APP' || entity === 'TEX') {
+    const l = lineOf_(rec.Line_ID);
+    const ok = l && (canEditLine_(u, l) || (entity === 'APP' && can_(u, 'onboard') && isFast_(l)) || (entity === 'TEX' && can_(u, 'tat_exempt')));
+    if (!ok) throw new Error('You do not have access to this file. Only ' + (l ? l.Recruiter + ', ' : '') + 'a TA Lead or the Head of HR can open it.');
+    return;
+  }
+  if (entity === 'MRF' && /^BGV_/.test(field) && !(isLead_(u) || canEditLine_(u, rec))) throw new Error('BGV files are visible only to the position\u2019s recruiter, a TA Lead or the Head of HR.');
+}
+
 /** Returns an attachment as base64 for the in-app viewer. */
 function apiGetDoc(entity, id, field) {
   const u = currentUser_();
   const t = docTarget_(entity, id, field);
-  if (entity === 'BGV') bgvRequireWork_(u, t.rec);
+  docReadGuard_(u, entity, t.rec, field);
   const fid = cvFileId_(t.rec[field]);
   if (!fid) throw new Error('No file is attached here yet.');
   let file;

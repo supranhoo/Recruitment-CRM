@@ -66,6 +66,7 @@ function markDashDirty_(sheetName) {
 
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */
 function refreshDashboardJob() {
+  requireEditorOrAdmin_();
   try { reconcileTasks_(); } catch (e) { console.error('To-do reconcile failed: ' + e); }
   try { archiveDaily_(); } catch (e) { console.error('Candidate archive failed: ' + e); }
   try {
@@ -80,6 +81,7 @@ function refreshDashboardJob() {
 
 /** Run once after this update (safe to re-run): installs the nightly and 30-minute jobs. */
 function installTriggers() {
+  requireEditorOrAdmin_();
   ScriptApp.getProjectTriggers().forEach(function (t) {
     const h = t.getHandlerFunction();
     if (h === 'nightlyJob' || h === 'refreshDashboardJob') ScriptApp.deleteTrigger(t);

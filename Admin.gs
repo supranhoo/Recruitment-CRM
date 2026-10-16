@@ -160,6 +160,7 @@ function apiSendSummaryTest() {
 }
 
 function weeklySummaryJob() {
+  requireEditorOrAdmin_();
   if (String(settings_().WEEKLY_SUMMARY || 'Off') !== 'On') return;
   const to = summaryRecipients_();
   if (to.length) sendSummary_(to, false);
