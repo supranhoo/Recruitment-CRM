@@ -1112,6 +1112,15 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit batch 5: security hardening** (no schema change; 16 Oct 2026)
+- Every cell written through the app is checked: text that a spreadsheet would run as a formula (starts with = + @, a tab or carriage return, or a minus before a letter, bracket or $) is stored as plain text. The webhook receiver does the same.
+- Attaching a candidate to a position needs the right to edit that position. A job post can be changed only from the position it belongs to.
+- Position form: the BGV dates and remarks of an existing position can no longer be written through it (the BGV tracker keeps them).
+- Fast-track: the hiring cannot be confirmed (Offer) before the department's decision has been recorded.
+- Voice results: processing runs under the lock, and a result that arrives before our call record carries the provider's id is kept for an hour instead of being discarded as "No matching call".
+- Profile links are kept only as http(s) addresses.
+- Not changed (needs a business decision): any signed-in user can still edit any candidate record; the Onboarding role still sees the whole pipeline; unknown role text in the Users sheet still counts as Recruiter.
+
 **Audit batch 4: scheduled jobs and schema safety** (no schema change; 16 Oct 2026)
 - Each step of the nightly and 30-minute jobs runs on its own; failures are logged (Admin → Tools) and the Admins are e-mailed once a day per failing step. Admin → Tools also shows the last run of each job, missing triggers and an old backup.
 - The nightly backup checks that the copy opens, has every sheet and the same number of positions.

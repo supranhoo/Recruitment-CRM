@@ -194,8 +194,12 @@ function parseYmd_(s) {
 function clean_(v) {
   if (typeof v !== 'string') return v;
   v = v.trim();
-  return /^[=+@]/.test(v) ? "'" + v : v;
+  return FORMULA_START_.test(v) ? "'" + v : v;
 }
+/** Text a spreadsheet would run as a formula: starts with = + @, a minus before a letter, bracket or $, or a tab / carriage return. */
+const FORMULA_START_ = /^(?:[=+@\t\r]|-(?=[A-Za-z(@$]))/;
+/** Last line of defence for every write: any string that would be read as a formula is stored as plain text. */
+function plainCell_(v) { return typeof v === 'string' && FORMULA_START_.test(v) ? "'" + v : v; }
 
 /**
  * Next ID for a table. IDs are never reused: besides the rows now in the sheet, the highest number ever
@@ -291,7 +295,7 @@ function insert_(def, obj, user) {
     obj[def.id] = nextId_(def, t.rows);
     if (t.headers.indexOf('Created_By') >= 0) { obj.Created_By = user.email; obj.Created_At = now; }
     if (t.headers.indexOf('Updated_By') >= 0) { obj.Updated_By = user.email; obj.Updated_At = now; }
-    const row = jdmRow_(def.name, t.headers.map(function (h) { return obj[h] === undefined ? '' : obj[h]; }));
+    const row = jdmRow_(def.name, t.headers.map(function (h) { return obj[h] === undefined ? '' : plainCell_(obj[h]); }));
     t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
     audit_(user, def.name, obj[def.id], 'Create', '', '', '');
     markDashDirty_(def.name);
@@ -315,7 +319,7 @@ function update_(def, id, patch, user, guard) {
     });
     if (!changes.length) return rec;
     if (t.headers.indexOf('Updated_By') >= 0) { rec.Updated_By = user.email; rec.Updated_At = new Date(); }
-    const row = jdmRow_(def.name, t.headers.map(function (h) { return rec[h] === undefined ? '' : rec[h]; }));
+    const row = jdmRow_(def.name, t.headers.map(function (h) { return rec[h] === undefined ? '' : plainCell_(rec[h]); }));
     t.sheet.getRange(rec._row, 1, 1, row.length).setValues([row]);
     changes.forEach(function (c) { audit_(user, def.name, id, 'Update', c[0], c[1], c[2]); });
     if (typeof daySnapTouch_ === 'function') daySnapTouch_(def.name, changes, null, rec);

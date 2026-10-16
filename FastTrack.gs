@@ -85,6 +85,7 @@ function fastMove_(u, app, line, toStage, data) {
     if (res === 'Hold') { out.patch.Status = 'On hold'; out.patch.Status_Reason = 'Department put the candidate on hold'; }
   }
   if (toStage === 'Offer') {
+    if (!ymd_(app.Dept_Confirm_On)) throw new Error('Record the department\u2019s decision first (the Department confirmed step): the hiring cannot be confirmed before the department has said the candidate is suitable.');
     if (!String(app.Dept_Confirm_File || '').trim()) {
       const why = clean_(String(data.paperException || '')).trim();
       if (!why || !isLead_(u)) throw new Error('Attach the department’s written confirmation first (the field above “Confirm the hiring”). The hiring is confirmed only on that paper; a TA Lead or the Head of HR can record a reason instead for a candidate confirmed before this step existed.');

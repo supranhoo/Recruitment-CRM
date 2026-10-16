@@ -361,6 +361,8 @@ function cvSummary_(p, cand, d) {
 
 /* ------------------------------------------------------------------ storing ---------------------------------------- */
 
+/** A profile link is kept only when it is an http(s) address, so a javascript: link cannot be stored. */
+function cvSafeLink_(v) { v = String(v || '').trim(); return v && !/^https?:\/\//i.test(v) ? (/^[a-z][a-z0-9+.-]*:/i.test(v) ? '' : 'https://' + v) : v; }
 /** Keeps only the expected shape, with every text capped, before anything from the browser is stored. */
 function cvProfileClean_(x) {
   x = x && typeof x === 'object' ? x : {};
@@ -368,7 +370,7 @@ function cvProfileClean_(x) {
   const arr = function (a, n) { return Array.isArray(a) ? a.slice(0, n) : []; };
   const ym = function (v) { v = String(v || ''); return /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/.test(v) ? v : ''; };
   const L = x.links || {};
-  const p = { v: 1, links: { linkedin: s(L.linkedin, 150), github: s(L.github, 150), portfolio: s(L.portfolio, 150) },
+  const p = { v: 1, links: { linkedin: cvSafeLink_(s(L.linkedin, 150)), github: cvSafeLink_(s(L.github, 150)), portfolio: cvSafeLink_(s(L.portfolio, 150)) },
     employment: arr(x.employment, 25).map(function (e) { e = e || {}; const o = { employer: s(e.employer, 80), role: s(e.role, 80), start: ym(e.start), end: ym(e.end), current: e.current === true || e.current === 'true', approx: e.approx === true, conf: e.conf === 'found' ? 'found' : 'check', duties: arr(e.duties, 4).map(function (d) { return s(d, 180); }).filter(String) };
       if (o.current) o.end = ''; return o; }).filter(function (e) { return e.employer || e.role; }),
     education: arr(x.education, 8).map(function (e) { e = e || {}; return { level: s(e.level, 30), discipline: s(e.discipline, 40), institute: s(e.institute, 90), year: /^(?:19|20)\d{2}$/.test(String(e.year || '')) ? String(e.year) : '', score: s(e.score, 20), conf: e.conf === 'found' ? 'found' : 'check' }; }).filter(function (e) { return e.level || e.institute; }),
