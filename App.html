@@ -708,7 +708,8 @@ async function reinstateDialog(app, after) {
   const d = cpDlg(`<h2 id="cpTitle">Candidate will join after all</h2>
     <p><b>${esc(pv.candidate)}</b> backed out of ${esc(pv.mrf)}${app.Backout_Date ? ' on ' + fmtDate(app.Backout_Date) : ''}.</p>
     ${pv.allowed ? `<p class="hint">${esc(pv.mrf)} becomes an offered position again with ${esc(pv.candidate)} on it.${pv.replMrf ? ` The replacement ${esc(pv.replMrf)} is removed${pv.moveCount ? ` and its ${pv.moveCount} live candidate${pv.moveCount === 1 ? '' : 's'} move back to ${esc(pv.mrf)}` : ''}.` : ''} The backout stays in the history as reversed, and it no longer counts in the offer backout rate. TAT keeps counting from the original start.</p>
-      <div class="rc-grid"><label>Expected joining date<input type="date" id="rnEdoj" min="${esc(pv.offerDate || '')}"></label></div>
+      <div class="rc-grid"><label>New expected joining date<input type="date" id="rnEdoj" min="${esc(pv.today > (pv.offerDate || '') ? pv.today : pv.offerDate || '')}" value="${esc(pv.edoj && pv.edoj >= pv.today ? pv.edoj : '')}"></label></div>
+      <p class="hint">${pv.edoj ? (pv.edoj >= pv.today ? 'The date on record is ' + esc(fmtDate(pv.edoj)) + '. Change it if the candidate gave a new one.' : 'The date on record (' + esc(fmtDate(pv.edoj)) + ') has passed, so a new date is needed.') : 'No expected joining date is recorded yet.'}</p>
       <div class="field"><label for="rnWhy">Reason (who confirmed, when and how)</label><textarea id="rnWhy" rows="3" style="width:100%"></textarea></div>
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rnSave">Reinstate on ${esc(pv.mrf)}</button></div>`
     : `<div class="note warn-note">${pv.blockers.map(esc).join('<br>')}</div><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`}`);

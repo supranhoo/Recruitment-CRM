@@ -153,6 +153,11 @@ function bgvEnsureCases_(onlyLine) {
   cases.forEach(function (c) { const k = c.Line_ID + '|' + c.Type; (byKey[k] = byKey[k] || []).push(c); (byLine[c.Line_ID] = byLine[c.Line_ID] || []).push(c); });
   const names = bgvCandidateNames_();
   const apps = {}; readTable_(T.APP.name).rows.forEach(function (a) { if (String(a.Status) === 'Active' || String(a.Status) === 'Withdrawn') (apps[a.Line_ID] = apps[a.Line_ID] || []).push(a); });
+  let _rein = null;   // App_ID -> date of the latest "Backout reversed", read only when a case has to be created
+  const reinstatedOn_ = function () {
+    if (!_rein) { _rein = {}; readTable_(T.HIST.name).rows.forEach(function (h) { if (String(h.Outcome) === 'Backout reversed') { const day = ymd_(h.Changed_At); if (day > (_rein[h.App_ID] || '')) _rein[h.App_ID] = day; } }); }
+    return _rein;
+  };
   const fresh = [], checks = [], logs = [];
   const setCell = function (row, col, val) { const c = sheetT.headers.indexOf(col); if (c >= 0) sheetT.sheet.getRange(row, c + 1).setValue(val); };
   const sys = 'system', now = new Date();
@@ -193,7 +198,10 @@ function bgvEnsureCases_(onlyLine) {
       if (type === BGV_TYPES_[1] && l.BGV_Current_Org_File) o.Initiation_Proof_File = String(l.BGV_Current_Org_File);
       fresh.push(o);
     };
-    if (offer) make(BGV_TYPES_[0], offer, addDays_(offer, cfg.prevInitDays), bgvResultDue_(offer, doj || edoj, cfg));
+    // After a reinstated backout the earlier cases stay cancelled and the new ones are timed from the day the candidate came back.
+    const reinAt = app ? reinstatedOn_()[app.App_ID] || '' : '';
+    const offerT = reinAt && reinAt > offer ? reinAt : offer;
+    if (offer) make(BGV_TYPES_[0], offerT, addDays_(offerT, cfg.prevInitDays), bgvResultDue_(offerT, doj || edoj, cfg));
     if (doj && status === 'Closed') make(BGV_TYPES_[1], doj, addDays_(doj, cfg.currInitDays), '');
   });
   if (fresh.length) {
