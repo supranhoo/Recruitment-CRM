@@ -1028,7 +1028,10 @@ function apiSaveScreening(appId, d) {
     answers[it.id] = { a: a, r: it.sec === 'P' ? '' : (x.o && r ? r : (auto || (it.type === 'text' ? r : ''))), o: !!(x.o && r && auto && r !== auto) };
   });
   const res = sqScore_(items, answers);
-  if (d.complete && !res.complete) throw new Error('Rate every eligibility and role-fit answer before completing (' + (res.total - res.rated) + ' left).');
+  if (d.complete && !res.complete) {
+    const open = items.filter(function (it) { return it.sec !== 'P' && !(res.ratings || {})[it.id]; }).map(function (it) { return '\u201c' + String(it.q || it.id).slice(0, 70) + '\u201d'; });
+    throw new Error('Rate every eligibility and role-fit answer before completing (' + (res.total - res.rated) + ' left): ' + open.slice(0, 3).join('; ') + (open.length > 3 ? '; \u2026' : '') + '.');
+  }
   const st = pdocState_(app.Line_ID);
   const patch = { Line_ID: String(app.Line_ID), Candidate_ID: String(app.Candidate_ID), MRF_No: String(line.MRF_No || ''), Position: String(line.Position), SQ_Doc_ID: sqDoc, SQ_Version: sqVer,
     JD_Version: st.jdFinal ? st.jdFinalVersion : '', Items_JSON: JSON.stringify(items), Answers_JSON: JSON.stringify(answers), Note: clean_(String(d.note || '')).slice(0, 1000),

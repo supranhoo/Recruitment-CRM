@@ -1117,6 +1117,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Voice review: "Rate every … (1 left)" after every row was rated** (no schema change; 17 Oct 2026)
+- The screening is scored on its own saved questions, while the voice review shows the questions the call used. When those differ (the questions were edited after the call, or the saved draft was made on another version), a rated row could be dropped and the save failed with "1 left". Saving from the voice review now compares the two: it restarts the screening on the current questions when they match the call's, and otherwise says that the questions changed (and to use Continue screening).
+- The "Rate every eligibility and role-fit answer" message now names the questions still unrated.
+
 **Reinstating a backout: expected joining date and BGV** (no schema change; 16 Oct 2026)
 - The expected joining date is optional in the dialog: a new date replaces the one on the position and the card; with none given the date on record is kept, but only if it is still ahead (a past date is refused). The dialog shows the date on record.
 - A candidate who now holds an offer on another position cannot be reinstated until that is settled.
