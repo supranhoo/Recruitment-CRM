@@ -1117,6 +1117,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Screening: a rating on a question with no readable answer is kept** (no schema change; 17 Oct 2026)
+- A number or yes / no question whose answer was missing or unreadable could be given a rating on screen, but the server dropped it when saving (it kept a manual rating only where an automatic one existed), so completing the screening failed with "Rate every … (1 left)". The rating the recruiter chooses is now kept in that case too (stored as the recruiter's rating). Found with the message that now names the question; the test reproduces the old failure and passes with the fix.
+
 **Voice review: "Rate every … (1 left)" after every row was rated** (no schema change; 17 Oct 2026)
 - The screening is scored on its own saved questions, while the voice review shows the questions the call used. When those differ (the questions were edited after the call, or the saved draft was made on another version), a rated row could be dropped and the save failed with "1 left". Saving from the voice review now compares the two: it restarts the screening on the current questions when they match the call's, and otherwise says that the questions changed (and to use Continue screening).
 - The "Rate every eligibility and role-fit answer" message now names the questions still unrated.

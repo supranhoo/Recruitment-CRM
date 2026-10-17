@@ -1025,7 +1025,7 @@ function apiSaveScreening(appId, d) {
     const x = (d.answers || {})[it.id] || {};
     const a = clean_(String(x.a == null ? '' : x.a)).slice(0, 500), r = ['M', 'P', 'G'].indexOf(x.r) >= 0 ? x.r : '';
     const auto = sqAuto_(it, a);
-    answers[it.id] = { a: a, r: it.sec === 'P' ? '' : (x.o && r ? r : (auto || (it.type === 'text' ? r : ''))), o: !!(x.o && r && auto && r !== auto) };
+    answers[it.id] = { a: a, r: it.sec === 'P' ? '' : (x.o && r ? r : (auto || (it.type === 'text' ? r : ''))), o: !!(x.o && r && r !== auto) };   // a rating given by the recruiter over the automatic one, or where the answer cannot be read or was not given
   });
   const res = sqScore_(items, answers);
   if (d.complete && !res.complete) {
