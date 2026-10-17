@@ -718,7 +718,17 @@ function apiVoiceReviewSave(callId, d) {
     const a = String(x.a == null ? '' : x.a).replace(/\s+/g, ' ').trim().slice(0, 500), r = ['M', 'P', 'G'].indexOf(x.r) >= 0 ? x.r : '', auto = sqAuto_(it, a);
     answers[id] = { a: a, r: r, o: !!(r && it.type !== 'text' && r !== auto) };
   });
-  const out = apiSaveScreening(app.App_ID, { answers: answers, note: String(d.note || 'Reviewed from voice call ' + callId + '.').slice(0, 500), complete: !!d.complete });
+  // The screening is scored on its own saved questions. If they are not the questions this call used (they were edited since),
+  // answers would land on the wrong items or be dropped, so restart on the current questions when those match, or say so.
+  const ids = function (list) { return list.map(function (i) { return String(i.id); }).sort().join('|'); };
+  const fin = sqFinalFor_(app.Line_ID), finItems = fin ? sqParse_(String(fin.Content)) : [];
+  let target = finItems, restart = false;
+  if (scr) { try { target = JSON.parse(String(scr.Items_JSON || '[]')); } catch (e) { target = []; } }
+  if (ids(target) !== ids(plan.items)) {
+    if (scr && fin && ids(finItems) === ids(plan.items)) restart = true;
+    else throw new Error('The screening questions were changed after this call (the call used version ' + (plan.ver || '?') + (scr ? ', the saved screening version ' + Number(scr.SQ_Version) : ', the position now has version ' + (fin ? Number(fin.Version) : '?')) + '). Open the candidate\u2019s card and use Continue screening to start it on the current questions.');
+  }
+  const out = apiSaveScreening(app.App_ID, { answers: answers, note: String(d.note || 'Reviewed from voice call ' + callId + '.').slice(0, 500), complete: !!d.complete, restart: restart });
   audit_(u, 'Voice agent', callId, d.complete ? 'Screening completed from the call' : 'Screening draft saved from the call', '', '', Object.keys(d.answers || {}).length + ' answers');
   return out;
 }
