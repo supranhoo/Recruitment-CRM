@@ -35,7 +35,7 @@ function e2eRun_(trash) {
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 14; });
+  t('A6 data checks', function () { return apiDataChecks().length === 15; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });
@@ -49,6 +49,7 @@ function e2eRun_(trash) {
   t('S3 fast-track Offer needs the department decision', function () { let bad = false; try { fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'Shared' }, { Grade: 'W2' }, 'Offer', {}); } catch (e) { bad = /department/i.test(String(e.message)); } return bad; });
   t('S5 reinstate a backout is available', function () { return typeof apiReinstateBackout === 'function' && typeof apiReinstatePreview === 'function' && typeof reinstateInfo_ === 'function'; });
   t('S6 fast-track Offer for a card added at a later stage with the paper', function () { const o = fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'HR', Dept_Confirm_File: 'https://example.com/f' }, { Grade: 'W2' }, 'Offer', {}); return /not recorded/.test(o.note || ''); });
+  t('S7 one daily-log entry per position and day', function () { return typeof funnelDuplicates_ === 'function' && Array.isArray(funnelDuplicates_()) && typeof apiRemoveDuplicateEntries === 'function'; });
   t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
   t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 
