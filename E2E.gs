@@ -48,6 +48,7 @@ function e2eRun_(trash) {
   t('S2 calendar-valid dates', function () { let bad = false; try { parseYmd_('2026-02-30'); } catch (e) { bad = true; } return bad && ymd_(parseYmd_('2026-11-07')) === '2026-11-07'; });
   t('S3 fast-track Offer needs the department decision', function () { let bad = false; try { fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'Shared' }, { Grade: 'W2' }, 'Offer', {}); } catch (e) { bad = /department/i.test(String(e.message)); } return bad; });
   t('S5 reinstate a backout is available', function () { return typeof apiReinstateBackout === 'function' && typeof apiReinstatePreview === 'function' && typeof reinstateInfo_ === 'function'; });
+  t('S6 fast-track Offer for a card added at a later stage with the paper', function () { const o = fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'HR', Dept_Confirm_File: 'https://example.com/f' }, { Grade: 'W2' }, 'Offer', {}); return /not recorded/.test(o.note || ''); });
   t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
   t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 

@@ -916,6 +916,7 @@ Stored as Script Properties (not in the sheet): `DB_ID`, `SCHEMA_V` (schema vers
 5. Try on the **test deployment** where relevant, then **Deploy → Manage deployments → Edit → New version → Deploy** on the fixed deployment (URL never changes).
 6. Update the local "live" baselines and the source zip; update this document (§14).
 7. **Propagation caution (v25 incident):** for a short time after a release Google may serve a page built against the previous version's function list. New server functions must be tolerated as missing by the page, or introduced a release before the page calls them.
+- **New refusal rules (gates):** before release, list the live records the rule would refuse (for example fast-track cards at Offer without a recorded department decision) and decide what happens to them; a rule that blocks existing live work is changed or comes with a way through it (lesson from the v105 fast-track gate).
 
 ### 12.6 Test assets
 
@@ -1116,6 +1117,10 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Fast-track: confirming the hiring blocked for a card added at a later stage** (no schema change; 24 Oct 2026)
+- Audit batch 5 (v105) refused "Confirm the hiring" unless the Department confirmed step had saved the department's decision date. A candidate added to a fast-track position at a later stage (the card was created from the candidate record at HR interview, with the department's written confirmation attached) never went through that step, so the hiring could not be confirmed. The gate now accepts either the saved decision, or a card that is already past the Department confirmed step with the department's written confirmation attached (the history notes that the date was not recorded). A card before that step, or without the paper, is still refused.
+- RCA (5 whys): the user saw the refusal; because the new rule required `Dept_Confirm_On`; because the rule assumed every fast-track card passes the Confirmed step; because cards can also be created at a later stage from the candidate record (`ensureApp_`, `stageFromCandidate_`) and by a lead's move; because the rule was written from the audit finding and tested on synthetic cards only, without counting how many live cards would fail it before release. CAPA: corrected gate (above); a test for a later-stage card with the paper; before a new gate ships, run it against the live cards and list who would be blocked (see §12.5 step on gates).
 
 **Screening: a rating on a question with no readable answer is kept** (no schema change; 17 Oct 2026)
 - A number or yes / no question whose answer was missing or unreadable could be given a rating on screen, but the server dropped it when saving (it kept a manual rating only where an automatic one existed), so completing the screening failed with "Rate every … (1 left)". The rating the recruiter chooses is now kept in that case too (stored as the recruiter's rating). Found with the message that now names the question; the test reproduces the old failure and passes with the fix.
