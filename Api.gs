@@ -277,9 +277,21 @@ function apiSaveFunnel(data) {
   if (scorecardDerived_(ymd_(patch.Entry_Date))) FUNNEL_METRICS.forEach(function (m) { if (TYPED_METRICS_.indexOf(m) < 0) patch[m] = 0; });
   if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error('Enter at least one count or a remark.');
   patch.MRF_No = line.MRF_No;
+  return withLock_(function () {
   let rec;
-  if (data.Entry_ID) {
-    rec = update_(T.FUNNEL, data.Entry_ID, patch, u, function (old) {
+  // One entry per position and day: a "new" entry for a position and day that already has one (a second click, a slow reply, a second tab,
+  // a lead and a recruiter typing the same row) updates that entry with the numbers sent; it never adds a second one.
+  let entryId = data.Entry_ID;
+  if (!entryId) {
+    const day = ymd_(patch.Entry_Date);
+    const same = readTable_(T.FUNNEL.name, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')); })[0];
+    if (same) {
+      if (!isLead_(u) && String(same.Created_By).toLowerCase() !== u.email) throw new Error('An entry for this position and day already exists (logged by ' + String(same.Created_By) + '). Ask a TA Lead to change it.');
+      entryId = same.Entry_ID;
+    }
+  }
+  if (entryId) {
+    rec = update_(T.FUNNEL, entryId, patch, u, function (old) {
       if (!isLead_(u) && String(old.Created_By).toLowerCase() !== u.email) throw new Error('You can only edit entries you logged.');
       if (!canEditEntry_(u, old)) throw new Error('This entry was saved on ' + (old.Created_At instanceof Date ? fmt_(old.Created_At, TZ, 'd MMM yyyy') : String(old.Created_At || 'an earlier day')) + '. Entries can be changed only on the day they are saved. Ask a TA Lead or the Head of HR to correct it.');
     });
@@ -290,6 +302,43 @@ function apiSaveFunnel(data) {
   }
   const o = toClient_(rec); delete o._row;
   return o;
+  });
+}
+const FUNNEL_REMOVED_RE_ = /^\[duplicate removed/;
+/** Entries logged more than once for one position and day: [{keep, extra: [entries]}], earliest first. */
+function funnelDuplicates_() {
+  const by = {};
+  readTable_(T.FUNNEL.name).rows.forEach(function (r) {
+    if (!r.Entry_ID || FUNNEL_REMOVED_RE_.test(String(r.Remarks || ''))) return;
+    const k = String(r.Line_ID) + '|' + ymd_(r.Entry_Date);
+    (by[k] = by[k] || []).push(r);
+  });
+  const out = [];
+  Object.keys(by).forEach(function (k) {
+    const list = by[k]; if (list.length < 2) return;
+    list.sort(function (a, b) { return (a.Created_At instanceof Date ? a.Created_At.getTime() : 0) - (b.Created_At instanceof Date ? b.Created_At.getTime() : 0) || String(a.Entry_ID).localeCompare(String(b.Entry_ID)); });
+    out.push({ keep: list[0], extra: list.slice(1) });
+  });
+  return out;
+}
+function funnelSame_(a, b) {
+  return FUNNEL_METRICS.every(function (m) { return (Number(a[m]) || 0) === (Number(b[m]) || 0); }) && String(a.Remarks || '').trim() === String(b.Remarks || '').trim() && String(a.FB_From_Dept || '') === String(b.FB_From_Dept || '');
+}
+/** A lead removes the extra copies that are identical to the first entry of the day (counts zeroed, marked, audited; nothing is deleted). Entries with different numbers are left for a person to decide. */
+function apiRemoveDuplicateEntries() {
+  const u = currentUser_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can remove duplicate entries.');
+  let removed = 0, left = 0;
+  funnelDuplicates_().forEach(function (g) {
+    g.extra.forEach(function (e) {
+      if (!funnelSame_(g.keep, e)) { left++; return; }
+      const p = { Remarks: '[duplicate removed by ' + u.email + ' on ' + ymd_(new Date()) + '; same as ' + g.keep.Entry_ID + ']', FB_From_Dept: '' };
+      FUNNEL_METRICS.forEach(function (m) { p[m] = 0; });
+      update_(T.FUNNEL, e.Entry_ID, p, u);
+      removed++;
+    });
+  });
+  return { removed: removed, left: left };
 }
 
 /* ---------------- Candidates ---------------- */

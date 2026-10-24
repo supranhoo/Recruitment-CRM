@@ -1412,7 +1412,7 @@ function bindDailyForm(root, after) {
     const d = readForm(f); d.Entry_ID = f.dataset.entry;
     if ((d.Entry_Date || today()) >= (S.boot.cutover || '2026-10-05')) FUNNEL_PIPED_.forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
     const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
-    try { const saved = await api('apiSaveFunnel', d); toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
+    try { const saved = await api('apiSaveFunnel', d); if (saved && saved.Entry_ID) f.dataset.entry = saved.Entry_ID; toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
     catch (e) { toast(e, true); busy(btn, false, label); }
   };
 }
@@ -1495,7 +1495,7 @@ async function dailyGrid(box, onRec) {
       const mark = () => { tr.classList.add('dg-dirty'); const b = $('.dg-save', tr); if (b) b.disabled = false; sync(); };
       $$('[data-k]', tr).forEach(i => { i.addEventListener('input', mark); i.addEventListener('change', mark); });
       const b = $('.dg-save', tr);
-      if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { await api('apiSaveFunnel', payload(tr)); toast('Saved'); onRec(null, true); await draw(); } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
+      if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { const sv = await api('apiSaveFunnel', payload(tr)); if (sv && sv.Entry_ID) tr.dataset.entry = sv.Entry_ID; toast('Saved'); onRec(null, true); await draw(); } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
     });
     $('#dgAll', box).onclick = async () => {
       const trs = $$('tr.dg-dirty', box), b = $('#dgAll', box); busy(b, true, 'Saving…'); let ok = 0; const bad = [];
@@ -3668,8 +3668,14 @@ async function viewAdmin(v) {
   const total = checks.reduce((s, c) => s + c.count, 0);
   el.innerHTML = `<p style="margin:0 0 14px;color:var(--ink-2)">${total ? `${total} records to look at. Click a record to open and fix it.` : 'No problems found.'}</p>
     ${checks.map(c => `<details class="check" ${c.count ? '' : 'data-ok'}><summary><span class="check-n ${c.count ? '' : 'zero'}">${c.count}</span><span><b>${esc(c.title)}</b><span class="sub">${esc(c.why)}</span></span></summary>
-      ${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+      ${c.key === 'daily_dup' && c.count && isLead() ? '<div style="margin:8px 0"><button class="btn sm" id="dupFix">Remove the identical duplicates</button></div>' : ''}${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+  if ($('#dupFix')) $('#dupFix').onclick = async e => {
+    if (!confirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;
+    busy(e.target, true, 'Removing…');
+    try { const r = await api('apiRemoveDuplicateEntries'); toast(r.removed + ' duplicate' + (r.removed === 1 ? '' : 's') + ' removed' + (r.left ? '; ' + r.left + ' with different numbers left for you to check' : '')); S.posStale = true; go('admin', false); } catch (err) { toast(err, true); busy(e.target, false, 'Remove the identical duplicates'); }
+  };
   $$('#adBody tr[data-id]').forEach(tr => tr.onclick = async () => {
+    if (tr.dataset.e === 'FUNNEL') return;
     if (tr.dataset.e === 'CAND') openCandidate(tr.dataset.id); else { await loadPositions(); positionDrawer(lineById(tr.dataset.id)); }
   });
 }

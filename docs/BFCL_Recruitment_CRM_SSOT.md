@@ -651,6 +651,7 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 
 - Per position per day: CVs sourced, CVs reviewed, HR 1st round, shared with dept, shortlisted by dept, interviews done, selected (whole numbers ≥ 0), HOD feedback, remarks. At least one count or a remark. Date not in the future.
 - **From the switch-over date only CVs sourced and CVs reviewed are typed**; the other columns are counted from candidate moves (ADR-015).
+- **One entry per position and day (v112):** saving an entry for a position and day that already has one updates that entry with the numbers sent (it never adds a second). A recruiter cannot change an entry that someone else logged (the message names who); a lead can. Admin → Data checks lists entries logged twice for one position and day, and a lead can remove the identical copies (counts zeroed, marked "[duplicate removed …]", audited; nothing is deleted); copies with different numbers are left for a person to decide.
 - **Edit window (v21):** recruiters can edit only entries **they** logged, **on the day they saved them**; locked from midnight. `lead` users can always correct.
 - **Log activity is a day grid:** a Recruiter picker (My positions by default, each colleague, Not assigned, All recruiters) and a Date at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks; **Save** per row or **Save all changes**. An entry counts for the position's recruiter even when a lead types it (`Created_By` records who typed it).
 - A "Today's tasks" strip shows the recruiter's open/critical counts and next 3 tasks.
@@ -1117,6 +1118,11 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Daily log: the same entry appeared twice** (no schema change; 24 Oct 2026)
+- Cause: a new entry was always inserted, with no check for an existing one for the same position and day; a second click, a slow reply, a stale list, a second tab or a lead and a recruiter typing the same row each created another copy, and the counts of both were added up (3 CVs showed as 6). The grid's Save did not remember the new entry's id.
+- Fix: one entry per position and day (a second save updates the first, under the lock); the grid and the Log form remember the id after saving; Admin → Data checks lists duplicates ("Daily log entries logged twice…") and leads can remove the identical copies. E2E A6 now expects 15 data checks.
+- Behaviour change: a second save for the same position and day replaces the numbers instead of adding another entry.
 
 **Fast-track: confirming the hiring blocked for a card added at a later stage** (no schema change; 24 Oct 2026)
 - Audit batch 5 (v105) refused "Confirm the hiring" unless the Department confirmed step had saved the department's decision date. A candidate added to a fast-track position at a later stage (the card was created from the candidate record at HR interview, with the department's written confirmation attached) never went through that step, so the hiring could not be confirmed. The gate now accepts either the saved decision, or a card that is already past the Department confirmed step with the department's written confirmation attached (the history notes that the date was not recorded). A card before that step, or without the paper, is still refused.
