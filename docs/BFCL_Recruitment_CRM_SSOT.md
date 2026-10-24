@@ -918,6 +918,7 @@ Stored as Script Properties (not in the sheet): `DB_ID`, `SCHEMA_V` (schema vers
 6. Update the local "live" baselines and the source zip; update this document (§14).
 7. **Propagation caution (v25 incident):** for a short time after a release Google may serve a page built against the previous version's function list. New server functions must be tolerated as missing by the page, or introduced a release before the page calls them.
 - **New refusal rules (gates):** before release, list the live records the rule would refuse (for example fast-track cards at Offer without a recorded department decision) and decide what happens to them; a rule that blocks existing live work is changed or comes with a way through it (lesson from the v105 fast-track gate).
+- **Release number:** set `BUILD_ID` in Config.gs to the version about to be deployed (the next number after the last `clasp deploy`) before `clasp push`. It is shown in the rail footer tooltip and on Admin → Tools, and the page compares its own copy with the server's: when they differ a banner asks the user to reload. Use it to answer "which version am I looking at?".
 
 ### 12.6 Test assets
 
@@ -1118,6 +1119,9 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Release number visible in the app** (no schema change; v113; 24 Oct 2026)
+- `BUILD_ID` is shown in the rail footer tooltip and on Admin → Tools (page and server), and a banner asks for a reload when the page was served from another release than the server it talks to.
 
 **Daily log: the same entry appeared twice** (no schema change; 24 Oct 2026)
 - Cause: a new entry was always inserted, with no check for an existing one for the same position and day; a second click, a slow reply, a stale list, a second tab or a lead and a recruiter typing the same row each created another copy, and the counts of both were added up (3 CVs showed as 6). The grid's Save did not remember the new entry's id.
