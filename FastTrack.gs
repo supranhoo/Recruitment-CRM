@@ -85,7 +85,13 @@ function fastMove_(u, app, line, toStage, data) {
     if (res === 'Hold') { out.patch.Status = 'On hold'; out.patch.Status_Reason = 'Department put the candidate on hold'; }
   }
   if (toStage === 'Offer') {
-    if (!ymd_(app.Dept_Confirm_On)) throw new Error('Record the department\u2019s decision first (the Department confirmed step): the hiring cannot be confirmed before the department has said the candidate is suitable.');
+    // The department's decision must be on record: either the Department confirmed step was completed (date and name saved), or the
+    // card is already past that step (for example a candidate added at a later stage) and the department's written confirmation is attached.
+    if (!ymd_(app.Dept_Confirm_On)) {
+      const past = STAGES.indexOf(String(app.Stage)) >= STAGES.indexOf('Confirmed'), paper = !!String(app.Dept_Confirm_File || '').trim();
+      if (!(past && paper)) throw new Error('Record the department\u2019s decision first (the Department confirmed step), or attach the department\u2019s written confirmation to a card that is already past that step: the hiring cannot be confirmed before the department has said the candidate is suitable.');
+      out.note = (out.note ? out.note + ' ' : '') + 'Department decision date not recorded on the card; the attached written confirmation is the evidence.';
+    }
     if (!String(app.Dept_Confirm_File || '').trim()) {
       const why = clean_(String(data.paperException || '')).trim();
       if (!why || !isLead_(u)) throw new Error('Attach the department’s written confirmation first (the field above “Confirm the hiring”). The hiring is confirmed only on that paper; a TA Lead or the Head of HR can record a reason instead for a candidate confirmed before this step existed.');
