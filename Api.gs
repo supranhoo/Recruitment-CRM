@@ -9,6 +9,7 @@ function apiBootstrap() {
   const lists = {};
   readTable_('M_Lists').rows.forEach(function (r) { (lists[r.List] = lists[r.List] || []).push(String(r.Value)); });
   return {
+    build: BUILD_ID,
     user: u,
     depts: readTable_('M_Departments').rows.map(function (r) { return { dept: String(r.Dept), bu: String(r.Business_Unit), division: String(r.Division || '') }; }),
     grades: gradesForClient_(),
