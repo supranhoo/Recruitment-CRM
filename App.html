@@ -1195,12 +1195,12 @@ function positionDrawer(p) {
   if (!data.BGV_Required) data.BGV_Required = 'Auto';
   const ro = !isNew && (!p._canEdit || p.Position_Status === 'Removed');
   const body = openDrawer(isNew ? 'Add MRF position' : `${p.Position}`, `
-    ${isNew ? '' : `<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="details">Details</button><button role="tab" data-t="log">Daily log</button><button role="tab" data-t="cands">Candidates</button></div>`}
+    ${isNew ? '' : `<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="details">Details</button><button role="tab" data-t="cands">Candidates</button></div>`}
     <div id="tab-details">
       ${ro ? `<div class="note">This position is assigned to ${esc(p.Recruiter)}. You can view it; only they, a TA Lead or the Head of HR can edit it.</div>` : ''}
       ${!isNew && p.Replaced_By ? `<div class="note warn-note">Closed after a backout on ${fmtDate(p.Replaced_On)}. Replaced by <b>${esc((lineById(p.Replaced_By) || {}).MRF_No || p.Replaced_By)}</b> (policy 9.5).</div>` : ''}
       ${!isNew && p.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc((lineById(p.Parent_Line_ID) || {}).MRF_No || p.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(p.TAT_Start_From)}.</div>` : ''}
-      ${isNew ? '' : `<p style="margin:12px 0 0"><button class="btn" id="openPipe">Open candidate pipeline</button></p>`}
+      ${isNew ? '' : `<p style="margin:12px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="openPipe">Open candidate pipeline</button><button class="btn" id="openDaily">Daily log of this position</button></p>`}
       ${isNew ? '' : '<div id="posTasks"></div>'}
       <div class="readout" id="tatReadout"></div>
       ${isNew ? '' : '<div id="posExempt"></div>'}
@@ -1213,7 +1213,7 @@ function positionDrawer(p) {
       <div id="posForm">${wrapForm(form(positionFields(isNew, data, p), data, ro))}</div>
       ${ro ? '' : `<div class="drawer-actions"><button class="btn" id="pCancel">Cancel</button><button class="btn primary" id="pSave">${isNew ? 'Add position' : 'Save changes'}</button></div>`}
     </div>
-    <div id="tab-log" hidden></div><div id="tab-cands" hidden></div>`);
+    <div id="tab-cands" hidden></div>`);
   const readout = () => {
     const t = previewTat(Object.assign({}, data, readForm($('#posForm'))));
     const ruleTag = v => v ? ` \u00b7 rule ${esc(v)}` : '';
@@ -1257,6 +1257,7 @@ function positionDrawer(p) {
     $('#f__jdFileId', body).value = file.id; const el = $('#jdPicked', body); el.textContent = 'Chosen: ' + file.name + ' (attached when you save)'; el.className = '';
   });
   if ($('#jdMakeBtn', body)) $('#jdMakeBtn', body).onclick = () => { if (isNew) { toast('Save the position first, then create its JD.', true); return; } openJdMaker(p.Line_ID); };
+  if ($('#openDaily', body)) $('#openDaily', body).onclick = () => { S.dailyFilter = dailyPositionFilter(p); closeDrawer(); go('daily', true); };
   if ($('#openPipe', body)) $('#openPipe', body).onclick = () => { S.pipe = Object.assign(S.pipe || {}, { line: p.Line_ID }); closeDrawer(); go('pipeline', true); };
   initMulti(body);
   const gsel = $('#f_Grade', body); if (gsel) gsel.addEventListener('change', () => {
@@ -1287,8 +1288,7 @@ function positionDrawer(p) {
   $('#posForm').addEventListener('change', readout);
   $$('.tabs button', body).forEach(b => b.addEventListener('click', () => {
     $$('.tabs button', body).forEach(x => x.setAttribute('aria-selected', x === b));
-    ['details','log','cands'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.t);
-    if (b.dataset.t === 'log') renderLineLog(p);
+    ['details','cands'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.t);
     if (b.dataset.t === 'cands') renderLineCands(p);
   }));
   if (ro) return;
@@ -1326,26 +1326,13 @@ function positionDrawer(p) {
   };
 }
 
-async function renderLineLog(p) {
-  const el = $('#tab-log'); el.innerHTML = `<div style="margin-top:12px">${skRows(6, 5)}</div>`;
-  const rows = await fresh('apiListFunnel', { lineId: p.Line_ID });
-  const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
-  el.innerHTML = `
-    <div class="readout" style="grid-template-columns:repeat(3,1fr);margin-top:12px">${METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join('')}</div>
-    <h3 id="llHead" style="margin:18px 0 8px;font-size:16px">Log today's activity</h3>
-    <div id="llForm">${dailyFormHtml(p.Line_ID)}</div>
-    <h3 style="margin:18px 0 8px;font-size:16px">History (${rows.length} entries)</h3>
-    <div id="llHist">${funnelTable(rows, false)}</div>`;
-  bindDailyForm($('#llForm', el), saved => renderLineLog(p));
-  $$('#llHist [data-edit]', el).forEach(b => b.onclick = () => {
-    const r = rows.find(x => x.Entry_ID === b.dataset.edit);
-    $('#llHead', el).innerHTML = `Editing the entry for ${fmtDate(r.Entry_Date)} <button class="btn sm" id="llCancel">Cancel</button>`;
-    $('#llForm', el).innerHTML = dailyFormHtml(p.Line_ID, r);
-    bindDailyForm($('#llForm', el), () => renderLineLog(p));
-    $('#llCancel', el).onclick = () => renderLineLog(p);
-    $('#llHead', el).scrollIntoView({ block: 'start', behavior: 'smooth' });
-  });
+/** The Daily log page filter that shows one position: from its receipt date (at most 180 days back) to today. */
+function dailyPositionFilter(p) {
+  const floor = daysAgo(180), rc = String(p.Receipt_Date || '').slice(0, 10);
+  return { recruiter: '', line: p.Line_ID, from: rc && rc > floor ? rc : floor, to: today() };
 }
+/** Totals of each metric over the rows (the tiles above a position's history). */
+function funnelTotals(rows) { const t = {}; METRICS.forEach(([k]) => { t[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0); }); return t; }
 
 async function renderLineCands(p) {
   const el = $('#tab-cands'); el.innerHTML = `<div style="margin-top:12px">${skRows(5, 3)}</div>`;
@@ -1470,21 +1457,24 @@ document.addEventListener('click', e => {
 });
 
 /** The day's grid on the Daily log page: one row per position, the day's numbers typed in the row. */
-async function dailyGrid(box, onRec) {
-  const cut = S.boot.cutover || '2026-10-05', st = S.dlGrid = S.dlGrid || {};
+async function dailyGrid(box, onRec, fixed) {
+  // `fixed` ({ rec, date }) is the My day grid: one recruiter, one day, no pickers.
+  const cut = S.boot.cutover || '2026-10-05', st = fixed ? { date: fixed.date } : (S.dlGrid = S.dlGrid || {});
   if (!st.date) st.date = today();
   const dirty = () => $$('tr.dg-dirty', box).length;
   const guard = () => !dirty() || confirm('You have unsaved numbers. Discard them?');
   const draw = async () => {
-    const rec = S.dlRec = dlDefaultRec(), piped = st.date >= cut, day = st.date;
+    const rec = fixed ? fixed.rec : (S.dlRec = dlDefaultRec()), piped = st.date >= cut, day = st.date;
     const cols = METRICS.filter(([k]) => !piped || ['CV_Sourced', 'CV_Reviewed'].includes(k));
     const lines = dlLines().filter(p => rec === DL_ALL || dlRecOf(p) === rec).sort((a, b) => dlRecOf(a).localeCompare(dlRecOf(b)) || String(a.MRF_No).localeCompare(String(b.MRF_No)));
-    box.innerHTML = `<h2>Log activity</h2><div class="grid" style="margin-bottom:8px">
+    box.innerHTML = `${fixed ? '' : `<h2>Log activity</h2><div class="grid" style="margin-bottom:8px">
         <div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
-        <div class="field"><label for="dl_date">Date</label><input id="dl_date" type="date" value="${esc(day)}" max="${today()}"></div></div>
+        <div class="field"><label for="dl_date">Date</label><input id="dl_date" type="date" value="${esc(day)}" max="${today()}"></div></div>`}
         <div id="dgBody">${skRows(4, 5)}</div>`;
-    $('#dl_rec', box).onchange = e => { if (!guard()) { e.target.value = rec; return; } S.dlRec = e.target.value; onRec(e.target.value); draw(); };
-    $('#dl_date', box).onchange = e => { if (!guard()) { e.target.value = day; return; } st.date = e.target.value || today(); draw(); };
+    if (!fixed) {
+      $('#dl_rec', box).onchange = e => { if (!guard()) { e.target.value = rec; return; } S.dlRec = e.target.value; onRec(e.target.value); draw(); };
+      $('#dl_date', box).onchange = e => { if (!guard()) { e.target.value = day; return; } st.date = e.target.value || today(); draw(); };
+    }
     let rows = [];
     try { rows = await fresh('apiListFunnel', { recruiter: '', from: day, to: day }); } catch (e) { toast(e, true); }
     if (st.date !== day) return;
@@ -1525,25 +1515,30 @@ async function dailyGrid(box, onRec) {
 
 async function viewDaily(v) {
   await loadPositions();
-  const f = S.dailyFilter = S.dailyFilter || { recruiter: '', from: daysAgo(14), to: today() };
-  S.dlRec = dlDefaultRec(); f.recruiter = S.dlRec === DL_ALL ? '' : S.dlRec === DL_NONE ? '' : S.dlRec;
+  const f = S.dailyFilter = S.dailyFilter || { recruiter: '', line: '', from: daysAgo(14), to: today() };
+  S.dlRec = dlDefaultRec(); if (!f.line) f.recruiter = S.dlRec === DL_ALL ? '' : S.dlRec === DL_NONE ? '' : S.dlRec;
+  const posList = dlLines().concat(f.line && !dlLines().some(p => p.Line_ID === f.line) && lineById(f.line) ? [lineById(f.line)] : [])
+    .sort((a, b) => String(a.MRF_No).localeCompare(String(b.MRF_No)));
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily log</h1><p>Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports.</p></div></div>
     <div id="dlTodo" class="todo-strip ov-todo">${skb('46%', 13)}${skb('140px', 28)}</div>
     <section class="panel" id="dailyNew">${skRows(4, 5)}</section>
-    <h2 style="margin:22px 0 0;font-size:16px">History</h2><p class="hint" style="margin:2px 0 0">Follows the Recruiter chosen above. Pick a date range to look back or change an earlier entry.</p>
+    <h2 style="margin:22px 0 0;font-size:16px">History</h2><p class="hint" style="margin:2px 0 0">Follows the Recruiter chosen above, or pick one position to see its totals and every recruiter's entries. Pick a date range to look back or change an earlier entry.</p>
     <div class="filters" style="margin-top:6px">
+      <div class="field"><label for="dfline">Position</label><select id="dfline"><option value="">All positions</option>${posList.map(p => `<option value="${esc(p.Line_ID)}"${p.Line_ID === f.line ? ' selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Recruiter || 'Not assigned')}</option>`).join('')}</select></div>
       <div class="field"><label for="dffrom">From</label><input id="dffrom" type="date" value="${f.from}"></div>
       <div class="field"><label for="dfto">To</label><input id="dfto" type="date" value="${f.to}"></div>
     </div>
     <div id="dailyList">${skRows(8, 6)}</div>`;
   const load = async () => {
-    const rows = await fresh('apiListFunnel', { recruiter: f.recruiter, from: f.from, to: f.to });
-    $('#dailyList').innerHTML = funnelTable(rows, true);
+    const rows = await fresh('apiListFunnel', f.line ? { lineId: f.line, from: f.from, to: f.to } : { recruiter: f.recruiter, from: f.from, to: f.to });
+    const tot = funnelTotals(rows);
+    $('#dailyList').innerHTML = (f.line ? `<div class="readout" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join('')}</div>` : '') + funnelTable(rows, true);
     bindEntryEdits($('#dailyList'), rows, load);
   };
   $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
   $('#dfto').onchange = e => { f.to = e.target.value; load(); };
+  $('#dfline').onchange = e => { f.line = e.target.value; load(); };
   api('apiMyTasks').then(res => {
     const el = $('#dlTodo'); if (!el) return;
     const next = res.tasks.slice(0, 3);
@@ -3998,7 +3993,7 @@ async function viewMyDay(v) {
     <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
     <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
-      ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity for a position</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
+      ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
   $('#mdDate').onchange = e => { f.date = e.target.value || today(); go('myday', false); };
   api('apiMonthMissed', today().slice(0, 7), me).then(r => {
@@ -4026,11 +4021,12 @@ async function viewMyDay(v) {
   drawTasks();
   bindFunnelPeople($('#mdFunnel'), r.people, false);
   if ($('#mdTodo')) api('apiMyTasks').then(res => { const el = $('#mdTodo'); if (el) renderTodo(el, res); }).catch(e => { const el = $('#mdTodo'); if (el) el.innerHTML = `<p class="hint">${esc(e)}</p>`; });
-  loadPositions().then(() => fresh('apiListFunnel', { from: f.date, to: f.date, mine: true })).then(rows => {
+  const loadEntries = () => fresh('apiListFunnel', { from: f.date, to: f.date, mine: true }).then(rows => {
     const el = $('#mdEntries'); if (!el) return;
     el.innerHTML = rows.length ? funnelTable(rows, true) + '<p class="hint">Entries can be edited until midnight on the day they are saved.</p>' : '<p class="hint">You have not logged any activity for this day yet.</p>';
     bindEntryEdits(el, rows, () => go('myday', false));
   }).catch(() => { const el = $('#mdEntries'); if (el) el.innerHTML = ''; });
+  loadPositions().then(loadEntries);
   if (!editable) return;
   $('#mdNote').addEventListener('input', later);
   $('#mdNote').addEventListener('blur', () => { if (timer) save(); });
@@ -4038,8 +4034,7 @@ async function viewMyDay(v) {
   $('#mdAdd').onclick = add;
   $('#mdNewTask').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   await loadPositions();
-  $('#mdLog').innerHTML = dailyFormHtml(null, { Entry_Date: f.date });
-  bindDailyForm($('#mdLog'), () => { toast('Activity logged'); go('myday', false); });
+  dailyGrid($('#mdLog'), (rec, saved) => { if (saved) loadEntries(); }, { rec: me, date: f.date });
 }
 
 function todoReviewHtml(r) {

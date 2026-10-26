@@ -659,6 +659,7 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 - **Edit window (v21):** recruiters can edit only entries **they** logged, **on the day they saved them**; locked from midnight. `lead` users can always correct.
 - **Log activity is a day grid:** a Recruiter picker (My positions by default, each colleague, Not assigned, All recruiters) and a Date at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks; **Save** per row or **Save all changes**. An entry counts for the position's recruiter even when a lead types it (`Created_By` records who typed it).
 - A "Today's tasks" strip shows the recruiter's open/critical counts and next 3 tasks.
+- **One place to log (v120):** the position side panel has no Daily log tab any more (Details and Candidates only). Its button "Daily log of this position" opens the Daily log page filtered to that position (from its receipt date, at most 180 days back, to today). The page's History has a **Position** filter: with a position chosen it shows the six totals and every recruiter's entries for it (`apiListFunnel` with `lineId`); "All positions" returns to the recruiter view. **My day** uses the same day grid (fixed to the signed-in recruiter and the day being viewed) instead of the old single-entry form; the edit drawer (`dailyFormHtml`) remains the one form for changing an earlier entry.
 
 ### 10.2 My day and day notes (`Daily_Summary`)
 
@@ -1128,6 +1129,9 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**One Daily log: removed from the position side panel** (no schema change; v120; 26 Oct 2026)
+- The side panel's Daily log tab and the My day single-entry form duplicated the Daily log page and were hard for recruiters to use. The tab is gone; a button opens the Daily log page filtered to the position, whose History gained a Position filter with totals. My day now shows the same day grid as the Daily log page. Same `apiSaveFunnel` and sheet throughout, so no data changes.
 
 **Speed: the 30-minute to-do reconcile no longer holds the shared lock while it computes** (no schema change; v119; 26 Oct 2026)
 - `reconcileTasks_` worked out the to-do list (about ten sheets) inside the shared lock, so everybody's saves waited for it. It now computes first and takes the lock only to write the changes.
