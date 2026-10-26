@@ -716,6 +716,8 @@ Scorecard derivation (`pipelineEvents_`, from `PIPELINE_CUTOVER`): HR 1st round 
 
 **HOD contacts** (Admin → HOD contacts; `M_Departments.HOD_Name/HOD_Email`, lead-editable, email validated) address the pre-written messages.
 
+**The (i) on a to-do (v115).** Each to-do, and each item in the Missed list of the Daily review / My day summary, has a small (i). Hover, keyboard focus or a tap shows the latest 5 actions on it, newest first: chased, snoozed or done, with who, when and the note (`taskNotes_`, from `Task_Actions`, last 60 days; on a Missed item only what had been entered before the end of the reviewed day). With none it says "No comments entered yet." "I've chased" and "Done" now open an optional one-line note (200 characters) before they are recorded; the snooze reason is still required.
+
 ### 10.5 Interview scheduling (`apiScheduleInterview`, `apiInterviewAction`)
 
 From a pipeline card: round (Technical/HR), date, time, duration, mode (**Teams** or **In person**), location, panel (≥ 1). Refused if the time is more than an hour in the past or any panel member is logged unavailable (conflict text lists who and why). The recruiter then opens a pre-filled **Teams meeting / Outlook invite** from their own account (the app cannot see Teams replies). Actions: **Confirm** attendance; **Panel unavailable** (who + reason → automatic Panel_Unavailability entry + Reschedule task); **Cancel**. Closing a position cancels its scheduled interviews.
@@ -1123,6 +1125,9 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**To-dos: an (i) showing the notes entered** (no schema change; v115; 26 Oct 2026)
+- Notes entered when a to-do is chased, snoozed or done are now visible from an (i) on the to-do lists and on the Missed list of the Daily review. An optional note can be typed when chasing or completing. See §10.4.
 
 **Pipeline: search and filters for the position list** (no schema change; v114; 26 Oct 2026)
 - Search, Recruiter, Division, Department, Status and Grade-band filters, Previous / Next, remembered filters and a candidate-name search on the Candidate pipeline page. New `apiPipelineFind`. See §9.0.
