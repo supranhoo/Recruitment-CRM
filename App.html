@@ -3347,12 +3347,12 @@ async function renderUsers(el, v) {
     const q = f.q.toLowerCase();
     const rows = r.users.filter(x => (f.inactive || x.active) && (!f.role || x.role === f.role) && (!q || [x.name, x.email, x.recruiter].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => (b.active - a.active) || r.roles.indexOf(a.role) - r.roles.indexOf(b.role) || a.name.localeCompare(b.name));
-    $('#usList', el).innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Recruiter name</th><th>Status</th><th>Access</th><th class="num">Open positions</th><th>Added</th></tr></thead><tbody>
+    $('#usList', el).innerHTML = `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Recruiter name</th><th>Official email</th><th>Status</th><th>Access</th><th class="num">Open positions</th><th>Added</th></tr></thead><tbody>
       ${rows.map(x => `<tr data-email="${esc(x.email)}" ${r.canEdit ? '' : 'style="cursor:default"'}><td>${esc(x.name)}${x.email === r.me ? ' <span class="sub" style="display:inline">(you)</span>' : ''}<span class="sub">${esc(x.email)}</span></td>
-        <td><span class="role-badge role-${esc(x.role.replace(/[^A-Za-z]/g, '').toLowerCase())}">${esc(x.role)}</span></td><td>${esc(x.recruiter)}</td>
+        <td><span class="role-badge role-${esc(x.role.replace(/[^A-Za-z]/g, '').toLowerCase())}">${esc(x.role)}</span></td><td>${esc(x.recruiter)}</td><td>${x.official ? esc(x.official) : '<span class="muted">same as sign-in</span>'}</td>
         <td>${x.active ? 'Active' : '<span class="muted">Inactive</span>'}</td>
         <td>${x.access === null ? '<span class="muted">\u2014</span>' : x.access === x.active ? (x.active ? '<span class="ok-tick">\u2713</span> Has access' : '<span class="muted">No access</span>') : `<span class="miss">${x.active ? 'Missing' : 'Still has access'}</span>${r.canEdit ? ` <button class="btn sm" data-fix="${esc(x.email)}">Fix access</button>` : ''}`}</td>
-        <td class="num">${x.openPositions || ''}</td><td>${x.addedOn ? fmtDate(x.addedOn) : '<span class="muted">before user management</span>'}<span class="sub">${esc(x.addedBy)}</span></td></tr>`).join('') || '<tr><td colspan="7" class="empty">No users match.</td></tr>'}
+        <td class="num">${x.openPositions || ''}</td><td>${x.addedOn ? fmtDate(x.addedOn) : '<span class="muted">before user management</span>'}<span class="sub">${esc(x.addedBy)}</span></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No users match.</td></tr>'}
       </tbody></table></div><p class="pager">${rows.length} of ${r.users.length} users</p>`;
     $$('[data-fix]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); busy(b, true); try { toast(await api('apiFixAccess', b.dataset.fix)); renderUsers(el, v); } catch (err) { toast(err, true); busy(b, false, 'Fix access'); } });
     if (r.canEdit) $$('#usList tr[data-email]', el).forEach(tr => tr.onclick = () => userDrawer(r, r.users.find(x => x.email === tr.dataset.email), () => renderUsers(el, v)));
@@ -3373,12 +3373,13 @@ async function renderUsers(el, v) {
 }
 function userDrawer(r, x, done) {
   const isNew = !x;
-  x = x || { email: '', name: '', role: 'Recruiter', recruiter: '', active: true };
+  x = x || { email: '', name: '', role: 'Recruiter', recruiter: '', official: '', active: true };
   const b = openDrawer(isNew ? 'Add user' : x.name, `<fieldset><div id="usForm" class="grid">
       <div class="field"><label for="u_name">Name *</label><input id="u_name" value="${esc(x.name)}"></div>
       <div class="field"><label for="u_email">Google account email *</label><input id="u_email" type="email" value="${esc(x.email)}" ${isNew ? '' : 'disabled'}><span class="hint">${isNew ? 'The account they sign in with. It cannot be changed later.' : 'The sign-in account cannot be changed.'}</span></div>
       <div class="field"><label for="u_role">Role *</label><select id="u_role">${opts(r.roles, x.role, false)}</select><span class="hint" id="u_roleHint"></span></div>
       <div class="field"><label for="u_rec">Recruiter name</label><input id="u_rec" value="${esc(x.recruiter)}" placeholder="Defaults to the name"><span class="hint">The name positions are assigned under. It cannot be changed once it has positions or candidates.</span></div>
+      <div class="field"><label for="u_off">Official email</label><input id="u_off" type="email" value="${esc(x.official || '')}" placeholder="Same as the sign-in account"><span class="hint">Where the weekly summary and other mail is sent, if different from the sign-in account. It does not change who can sign in.</span></div>
       ${isNew ? '' : `<div class="field wide"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="u_active" ${x.active ? 'checked' : ''}> Active (can sign in)</label></div>`}
     </div></fieldset><div id="usReassign"></div>
     <div class="drawer-actions"><button class="btn" id="usCancel">Cancel</button><button class="btn primary" id="usSave">${isNew ? 'Add user' : 'Save changes'}</button></div>`);
@@ -3388,7 +3389,7 @@ function userDrawer(r, x, done) {
   $('#usCancel', b).onclick = closeDrawer;
   const save = async reassignTo => {
     const btn = $('#usSave', b); busy(btn, true, 'Saving\u2026');
-    const d = { isNew, email: $('#u_email', b).value, name: $('#u_name', b).value, role: $('#u_role', b).value, recruiter: $('#u_rec', b).value, active: isNew ? true : $('#u_active', b).checked, reassignTo };
+    const d = { isNew, email: $('#u_email', b).value, name: $('#u_name', b).value, role: $('#u_role', b).value, recruiter: $('#u_rec', b).value, official: $('#u_off', b).value, active: isNew ? true : $('#u_active', b).checked, reassignTo };
     try {
       const res = await api('apiSaveUser', d);
       if (res.needsReassign) {

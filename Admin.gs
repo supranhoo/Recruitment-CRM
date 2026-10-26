@@ -104,7 +104,7 @@ function jobLog_(job, step, err) {
     const day = ymd_(new Date()), key = 'JOB_MAIL_' + job + '_' + step;
     if (props.getProperty(key) === day) return;
     props.setProperty(key, day);
-    const to = readTable_('Users').rows.filter(function (r) { return normRole_(r.Role) === ROLES.ADMIN && String(r.Active || 'Yes') !== 'No' && r.Email; }).map(function (r) { return String(r.Email); });
+    const to = readTable_('Users').rows.filter(function (r) { return normRole_(r.Role) === ROLES.ADMIN && String(r.Active || 'Yes') !== 'No' && mailTo_(r); }).map(mailTo_).filter(function (e, i, all) { return all.indexOf(e) === i; });
     if (to.length) MailApp.sendEmail(to.join(','), 'BFCL Recruitment CRM: ' + job + ' job step failed (' + step + ')',
       'The ' + job + ' job step "' + step + '" failed at ' + fmt_(new Date(), TZ, 'd MMM yyyy HH:mm') + ' IST.\n\n' + msg + '\n\nOpen Admin \u2192 Tools to see the recent failures. This e-mail is sent once a day per failing step.');
   } catch (e) { console.error('jobLog_: ' + e); }
@@ -217,8 +217,8 @@ function setSetting_(key, value, note) {
 function summaryRecipients_() {
   const extra = String(settings_().WEEKLY_SUMMARY_TO || '').split(/[,;\s]+/).filter(function (e) { return /@/.test(e); });
   const leads = readTable_('Users').rows.filter(function (r) {
-    return String(r.Active || 'Yes') !== 'No' && (PERMS_[normRole_(r.Role)] || []).indexOf('lead') >= 0 && /@/.test(String(r.Email));
-  }).map(function (r) { return String(r.Email).trim().toLowerCase(); });
+    return String(r.Active || 'Yes') !== 'No' && (PERMS_[normRole_(r.Role)] || []).indexOf('lead') >= 0 && mailTo_(r);
+  }).map(mailTo_);
   return leads.concat(extra).filter(function (e, i, all) { return all.indexOf(e) === i; });
 }
 
@@ -242,8 +242,9 @@ function apiSetWeekly(on) {
 
 function apiSendSummaryTest() {
   const u = currentUser_(); requireAdmin_(u);
-  sendSummary_([u.email], true);
-  return 'Sent to ' + u.email;
+  const to = mailOfLogin_(u.email);
+  sendSummary_([to], true);
+  return 'Sent to ' + to;
 }
 
 function weeklySummaryJob() {

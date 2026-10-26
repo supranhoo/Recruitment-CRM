@@ -1130,6 +1130,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Official email separate from the sign-in account** (schema 41; v121; 26 Oct 2026)
+- `Users.Email` stays the Google sign-in and the only key for access, sharing and audit. A new optional `Users.Official_Email` (Admin → Users → "Official email") is where correspondence goes. `mailTo_(row)` returns the official address if it is valid, else the sign-in account; every sender uses it: the Monday weekly summary (each active TA Lead, Head of HR and Admin, plus any extras in `Settings.WEEKLY_SUMMARY_TO`, de-duplicated), the summary test (to the caller's official address) and job-failure alerts to Admins. An invalid official address is refused on save. `M_Recruiters.Email` still holds the sign-in account. Rule for any future mail: resolve the address with `mailTo_` / `mailOfLogin_`, never use `Users.Email` directly.
+
 **One Daily log: removed from the position side panel** (no schema change; v120; 26 Oct 2026)
 - The side panel's Daily log tab and the My day single-entry form duplicated the Daily log page and were hard for recruiters to use. The tab is gone; a button opens the Daily log page filtered to the position, whose History gained a Position filter with totals. My day now shows the same day grid as the Daily log page. Same `apiSaveFunnel` and sheet throughout, so no data changes.
 

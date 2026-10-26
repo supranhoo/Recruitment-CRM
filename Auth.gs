@@ -10,6 +10,20 @@ function currentUser_() {
   return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: effectivePerms_(role) };
 }
 
+/** A plausible e-mail address, lower-cased and trimmed; '' when it is not one. */
+function cleanMail_(s) { const e = String(s == null ? '' : s).trim().toLowerCase(); return /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(e) ? e : ''; }
+/**
+ * Where mail for a Users row goes: the official address when one is recorded, else the sign-in account.
+ * The sign-in account (Users.Email) stays the only key for access; correspondence uses this.
+ */
+function mailTo_(row) { return cleanMail_(row && row.Official_Email) || cleanMail_(row && row.Email); }
+/** The mail address for a sign-in account (falls back to the account itself). */
+function mailOfLogin_(email) {
+  const k = String(email || '').trim().toLowerCase();
+  const r = readTable_('Users').rows.filter(function (x) { return String(x.Email || '').trim().toLowerCase() === k; })[0];
+  return r ? mailTo_(r) : k;
+}
+
 /** Accepts older or informal role names from the Users sheet: "Head", "Head HR", "Lead TA" and so on. */
 function normRole_(r) {
   const s = String(r || '').trim().toLowerCase().replace(/[^a-z]/g, '');
