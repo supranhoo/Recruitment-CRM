@@ -3977,11 +3977,16 @@ async function viewMyDay(v) {
         ${r.candidates.length ? `<h2 style="margin-top:16px">Candidates added (${r.candidates.length})</h2><ul class="work">${r.candidates.map(c => `<li><button class="linklike" data-cand="${esc(c.id)}">${esc(c.name)}</button> \u00b7 ${esc(c.position)}</li>`).join('')}</ul>` : ''}
       </section>
     </div>
+    <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
     <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity for a position</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
   $('#mdDate').onchange = e => { f.date = e.target.value || today(); go('myday', false); };
+  api('apiMonthMissed', today().slice(0, 7), me).then(r => {
+    const el = $('#mdMonthBody'); if (!el) return; const x = r.rows[0], P = mmLabel(r.prev);
+    el.innerHTML = x ? `<p><b>${x.missed}</b> missed in ${esc(mmLabel(r.month))} so far (${x.open} still open) \u00b7 ${mmDelta(x.change)} compared with ${esc(P)} (${x.prev})</p>${mmDetail(r.items[x.recruiter] || [])}` : `<p class="hint">Nothing missed in ${esc(mmLabel(r.month))} so far.</p>`;
+  }).catch(() => { const el = $('#mdMonthBody'); if (el) el.innerHTML = ''; });
   bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList }, () => go('myday', false));
   $$('[data-cand]', v).forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
   let timer, saving = Promise.resolve();
@@ -4025,14 +4030,50 @@ function todoReviewHtml(r) {
   return `${cl ? `<h3>Positions closed or put on hold</h3><ul class="work">${cl}</ul>` : ''}<h3>To-do</h3><p class="todo-acts">${t.acts.done} done \u00b7 ${t.acts.chased} chased \u00b7 ${t.acts.snoozed} snoozed</p>
     ${t.missed.length ? `<div class="missed"><b class="miss">Missed (${t.missed.length})</b><ul class="work">${t.missed.map(m => `<li><b>${esc(m.title)}</b> \u00b7 ${esc(m.context)} \u00b7 <span class="miss">${esc(m.late)} late</span>${taskInfo(m.notes)} ${m.chaseable ? '\u00b7 ' + (m.chases ? 'chased ' + m.chases + '\u00d7' : 'not chased') : ''}${m.snoozed ? ` \u00b7 snoozed: ${esc(m.snoozed)}` : ''}</li>`).join('')}</ul></div>` : '<p class="hint">Nothing missed.</p>'}`;
 }
+/** Missed to-dos of a month, recruiter by recruiter (leads), from the Daily review's Month view. */
+const MM_MONTHS_ = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const mmLabel = m => MM_MONTHS_[+String(m).slice(5, 7) - 1] + ' ' + String(m).slice(0, 4);
+function mmLastMonth() { const t = today(), y = +t.slice(0, 4), m = +t.slice(5, 7); return m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0'); }
+function mmDelta(n) { return n > 0 ? `<span class="miss" title="More than the month before">\u25b2 ${n}</span>` : n < 0 ? `<span class="ok-t" title="Fewer than the month before">\u25bc ${-n}</span>` : '<span class="sub">\u2013</span>'; }
+function mmDetail(items) {
+  return items.length ? `<table class="mm-detail-t"><thead><tr><th>To-do</th><th>Became critical</th><th>Closed</th><th class="num">Days late</th><th class="num">Chased</th><th><span class="sr-only">Notes</span></th></tr></thead><tbody>${items.map(i => `<tr><td>${esc(i.context)}<span class="sub">${esc(i.kind)}</span></td><td class="nw">${fmtDate(i.critOn)}</td><td class="nw">${i.open ? '<span class="miss">still open</span>' : fmtDate(i.closedOn)}</td><td class="num">${i.daysLate}</td><td class="num">${i.chases}</td><td>${taskInfo(i.notes)}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">No details.</p>';
+}
+async function viewMonthMissed(v) {
+  const f = S.review;
+  if (!f.month) f.month = mmLastMonth();
+  v.innerHTML = `<div class="page-head"><div><h1>Daily review</h1><p>Missed to-dos of a month, recruiter by recruiter. A to-do counts once in the month it became critical without being done.</p></div>
+      <div class="filters" style="margin:0"><div class="chips" role="group" aria-label="View" style="margin:0"><button class="chip" id="drDay" aria-pressed="false">Day</button><button class="chip" id="drMon" aria-pressed="true">Month</button></div>
+        <div class="field"><label for="mmMonth">Month</label><input id="mmMonth" type="month" value="${esc(f.month)}" max="${esc(today().slice(0, 7))}"></div></div></div>
+    <div id="mmBody">${skRows(4, 6)}</div>`;
+  $('#drDay').onclick = () => { f.mode = 'day'; go('review', false); };
+  $('#mmMonth').onchange = e => { f.month = e.target.value || mmLastMonth(); go('review', false); };
+  let r; try { r = await api('apiMonthMissed', f.month, ''); } catch (e) { $('#mmBody').innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  if (!$('#mmBody')) return;
+  const L = mmLabel(r.month), P = mmLabel(r.prev);
+  $('#mmBody').innerHTML = `${r.partial ? `<div class="note">${L} is still running: the figures are to date.</div>` : ''}
+    ${r.rows.length ? `<div class="table-wrap"><table class="mm-table"><thead><tr><th>Recruiter</th><th class="num">Missed</th><th class="num">Still open</th><th class="num">Closed late</th><th class="num" title="Days from becoming critical to completion, or to the end of the month if still open">Avg days late</th><th class="num">Chased</th><th>Most missed</th><th class="num" title="Compared with ${esc(P)}">vs ${esc(P)}</th></tr></thead><tbody>
+      ${r.rows.map((x, i) => `<tr class="mm-row"><td><button class="linklike" data-mm="${i}" aria-expanded="false"><b>${esc(x.recruiter)}</b></button></td><td class="num"><b>${x.missed}</b></td><td class="num">${x.open}</td><td class="num">${x.late}</td><td class="num">${x.avgLate}</td><td class="num">${x.chased}</td><td>${x.kinds.slice(0, 2).map(k => `${esc(k.title)} <span class="sub" style="display:inline">\u00d7${k.n}</span>`).join('<br>')}</td><td class="num">${mmDelta(x.change)}</td></tr>
+        <tr class="mm-detail" hidden><td colspan="8">${mmDetail(r.items[x.recruiter] || [])}</td></tr>`).join('')}
+      <tr class="mm-total"><td><b>Team</b></td><td class="num"><b>${r.total.missed}</b></td><td class="num">${r.total.open}</td><td class="num">${r.total.missed - r.total.open}</td><td></td><td></td><td></td><td class="num">${mmDelta(r.total.missed - r.total.prev)}</td></tr></tbody></table></div>`
+      : `<div class="empty">Nothing missed in ${esc(L)}.</div>`}
+    <p class="hint">${r.carried ? `${r.carried} to-do${r.carried === 1 ? '' : 's'} that became critical earlier ${r.carried === 1 ? 'was' : 'were'} still open on the 1st: they count in the month they became critical. ` : ''}${r.none ? `${r.none} recruiter${r.none === 1 ? ' had' : 's had'} nothing missed.` : ''}</p>
+    ${r.rows.length ? '<div class="btn-row"><button class="btn" id="mmCsv">Download the table (CSV)</button><button class="btn" id="mmCsv2">Download the details (CSV)</button></div>' : ''}`;
+  $$('[data-mm]', $('#mmBody')).forEach(b => b.onclick = () => { const row = b.closest('tr').nextElementSibling, open = row.hidden; row.hidden = !open; b.setAttribute('aria-expanded', String(open)); });
+  if ($('#mmCsv')) $('#mmCsv').onclick = () => csvSave(`missed-todos-${r.month}.csv`, ['Recruiter', 'Missed', 'Still open', 'Closed late', 'Avg days late', 'Chased', 'Most missed', 'Change vs ' + P],
+    r.rows.map(x => [x.recruiter, x.missed, x.open, x.late, x.avgLate, x.chased, x.kinds.map(k => k.title + ' x' + k.n).join('; '), x.change]));
+  if ($('#mmCsv2')) $('#mmCsv2').onclick = () => csvSave(`missed-todos-details-${r.month}.csv`, ['Recruiter', 'Kind', 'To-do', 'Became critical', 'Closed', 'Days late', 'Chased'],
+    [].concat(...r.rows.map(x => (r.items[x.recruiter] || []).map(i => [x.recruiter, i.kind, i.context, i.critOn, i.open ? 'still open' : i.closedOn, i.daysLate, i.chases]))));
+}
 async function viewDailyReview(v) {
   const f = S.review = S.review || { date: daysAgo(1), rec: '' };
+  if (f.mode === 'month') return viewMonthMissed(v);
   const data = await api('apiDaySummary', f.date);
   const list = data.recruiters.filter(r => !f.rec || r.recruiter === f.rec);
   const chip = (n, l) => `<span class="rchip"><b>${n}</b> ${l}</span>`;
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily review</h1><p>What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app.</p></div>
       <div class="filters" style="margin:0">
+        <div class="chips" role="group" aria-label="View" style="margin:0"><button class="chip" id="drDay" aria-pressed="true">Day</button><button class="chip" id="drMon" aria-pressed="false">Month</button></div>
         <div class="field"><label for="drDate">Day</label><input id="drDate" type="date" value="${esc(f.date)}" max="${today()}"></div>
         <div class="field"><label for="drRec">Recruiter</label><select id="drRec">${opts(data.recruiters.map(r => r.recruiter), f.rec)}</select></div>
         <button class="btn" id="drPrev" aria-label="Previous day">\u2039</button><button class="btn" id="drNext" aria-label="Next day" ${f.date >= today() ? 'disabled' : ''}>\u203a</button></div></div>
@@ -4055,6 +4096,7 @@ async function viewDailyReview(v) {
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
   bindFunnelPeople($('#rvFunnel'), data.people, true);
+  $('#drMon').onclick = () => { f.mode = 'month'; go('review', false); };
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
   $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
   $('#drPrev').onclick = () => shift(-1);

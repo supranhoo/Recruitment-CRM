@@ -628,6 +628,79 @@ function missedTasks_(date, recruiter) {
   });
 }
 
+
+/* ---------------- Monthly summary of missed to-dos ---------------- */
+
+/**
+ * A to-do is missed in a month when its rule counts, it became critical in that month (IST) and it was not completed before it became
+ * critical; BGV start rules keep the daily rule (not missed when the start date entered on the position is on or before the day it became
+ * critical). tasks: [{key, rule, recruiter, line, context, firstMs, critMs, resMs, chases}]; missedRules: {ruleId: title};
+ * bgvStart: {bgv: {line: ymd}, bgv_join: {line: ymd}}; nowMs: the current time. Returns the per-recruiter figures for the month.
+ */
+function monthMissedCore_(month, tasks, missedRules, bgvStart, nowMs) {
+  const p = String(month).split('-'), y = Number(p[0]), m = Number(p[1]);
+  const start = Date.UTC(y, m - 1, 1) - IST_OFFSET_MS, fullEnd = Date.UTC(y, m, 1) - IST_OFFSET_MS, end = Math.min(fullEnd, nowMs);
+  const DAY = 86400000, by = {}, out = { rows: [], items: {}, carried: 0 };
+  const rec = function (name) { const k = String(name || '').trim() || 'Unassigned'; return by[k] = by[k] || { recruiter: k, missed: 0, open: 0, late: 0, lateDays: 0, chased: 0, kinds: {} }; };
+  tasks.forEach(function (t) {
+    if (!missedRules[t.rule] || !t.critMs) return;
+    if (t.resMs && t.resMs < t.critMs) return;                       // done before it became critical
+    const bs = bgvStart[t.rule] && bgvStart[t.rule][t.line];
+    if (bs && bs <= ymd_(new Date(t.critMs))) return;                // the start date entered is on time
+    if (t.critMs < start) { if (!t.resMs || t.resMs >= start) out.carried++; return; }
+    if (t.critMs >= fullEnd) return;
+    const r = rec(t.recruiter), open = !t.resMs || t.resMs >= fullEnd, to = !open ? t.resMs : end;
+    const days = Math.max(0, (to - t.critMs) / DAY);
+    r.missed++; if (open) r.open++; else r.late++;
+    r.lateDays += days; r.chased += Number(t.chases) || 0;
+    r.kinds[t.rule] = (r.kinds[t.rule] || 0) + 1;
+    (out.items[r.recruiter] = out.items[r.recruiter] || []).push({ key: t.key, rule: t.rule, kind: missedRules[t.rule], context: t.context, line: t.line,
+      critOn: ymd_(new Date(t.critMs)), closedOn: open ? '' : ymd_(new Date(t.resMs)), open: open, daysLate: Math.round(days * 10) / 10, chases: Number(t.chases) || 0 });
+  });
+  Object.keys(by).forEach(function (k) {
+    const r = by[k];
+    out.rows.push({ recruiter: r.recruiter, missed: r.missed, open: r.open, late: r.late, avgLate: r.missed ? Math.round(r.lateDays / r.missed * 10) / 10 : 0, chased: r.chased,
+      kinds: Object.keys(r.kinds).map(function (id) { return { rule: id, title: missedRules[id], n: r.kinds[id] }; }).sort(function (a, b) { return b.n - a.n; }) });
+  });
+  out.rows.sort(function (a, b) { return b.missed - a.missed || a.recruiter.localeCompare(b.recruiter); });
+  Object.keys(out.items).forEach(function (k) { out.items[k].sort(function (a, b) { return b.daysLate - a.daysLate; }); });
+  return out;
+}
+
+/**
+ * Missed to-dos of a month, recruiter by recruiter, with the change from the month before. A lead sees everyone (or one recruiter);
+ * anyone else only their own line. month = "YYYY-MM", not in the future, at most 24 months back.
+ */
+function apiMonthMissed(month, recruiter) {
+  const u = currentUser_(); ensureSchema_();
+  const mm = String(month || '').match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!mm) throw new Error('Pick a month.');
+  const nowYm = fmt_(new Date(), TZ, 'yyyy-MM'), ny = Number(nowYm.slice(0, 4)), nm = Number(nowYm.slice(5, 7)), idx = Number(mm[1]) * 12 + Number(mm[2]), nowIdx = ny * 12 + nm;
+  if (idx > nowIdx) throw new Error('That month has not started.');
+  if (nowIdx - idx > 24) throw new Error('Months more than 24 months back are not kept in this summary.');
+  const prevM = idx - 1, prev = Math.floor((prevM - 1) / 12) + '-' + String(((prevM - 1) % 12) + 1).padStart(2, '0');
+  const rules = {}; taskRules_().forEach(function (r) { if (r.missed) rules[r.id] = r.title; });
+  const tasks = readTable_(T.TASK.name).rows.map(function (s) {
+    return { key: String(s.Task_Key), rule: String(s.Rule), recruiter: String(s.Recruiter || ''), line: String(s.Line_ID || ''), context: String(s.Title || '') + (s.Context ? ' · ' + String(s.Context) : ''),
+      firstMs: ms_(s.First_Seen), critMs: ms_(s.Critical_At), resMs: ms_(s.Resolved_At), chases: Number(s.Chase_Count) || 0 };
+  });
+  const bgv = { bgv: {}, bgv_join: {} };
+  readTable_(T.MRF.name).rows.forEach(function (l) { if (l.BGV_Prev_Org_Date) bgv.bgv[l.Line_ID] = ymd_(l.BGV_Prev_Org_Date); if (l.BGV_Current_Org_Date) bgv.bgv_join[l.Line_ID] = ymd_(l.BGV_Current_Org_Date); });
+  const now = Date.now(), cur = monthMissedCore_(String(month), tasks, rules, bgv, now), was = monthMissedCore_(prev, tasks, rules, bgv, now);
+  const lead = isLead_(u), who = (lead ? String(recruiter || '') : u.recruiter).trim().toLowerCase();
+  const prevBy = {}; was.rows.forEach(function (r) { prevBy[r.recruiter.toLowerCase()] = r.missed; });
+  const keep = function (name) { return !who || String(name).toLowerCase() === who; };
+  const notes = taskNotes_(0), rows = cur.rows.filter(function (r) { return keep(r.recruiter); }).map(function (r) {
+    r.prev = prevBy[r.recruiter.toLowerCase()] || 0; r.change = r.missed - r.prev; return r;
+  });
+  const items = {};
+  rows.forEach(function (r) { items[r.recruiter] = (cur.items[r.recruiter] || []).slice(0, 100).map(function (i) { i.notes = notes[i.key] || []; return i; }); });
+  const all = readTable_('M_Recruiters').rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Recruiter); });
+  const none = lead && !who ? all.filter(function (n) { return !cur.rows.some(function (r) { return r.recruiter.toLowerCase() === n.toLowerCase(); }); }).length : 0;
+  return { month: String(month), prev: prev, rows: rows, items: items, carried: cur.carried, none: none, partial: idx === nowIdx,
+    total: { missed: rows.reduce(function (s, r) { return s + r.missed; }, 0), open: rows.reduce(function (s, r) { return s + r.open; }, 0), prev: rows.reduce(function (s, r) { return s + r.prev; }, 0) } };
+}
+
 /** Per-recruiter task activity for the Daily review. */
 function dayTasks_(date) {
   const start = parseYmd_(date).getTime(), end = start + 86400000;
