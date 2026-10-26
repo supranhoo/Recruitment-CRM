@@ -299,6 +299,33 @@ function apiSetEdoj(appId, date) {
   return apiPipeline(app.Line_ID);
 }
 
+/**
+ * Finds a candidate by name, candidate id or mobile digits (4 or more) among the pipeline cards the user may see: a lead sees every
+ * position, anyone else only the positions where they are the recruiter. For the Pipeline page's search box. Returns at most 15,
+ * active cards first and then the most recently moved; only the last 4 digits of the mobile leave the server.
+ */
+function apiPipelineFind(q) {
+  const u = currentUser_(); ensureSchema_();
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(String).slice(0, 5);
+  if (!words.length || words.join('').length < 2) return [];
+  const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
+  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
+  const lead = isLead_(u), me = String(u.recruiter || '').trim().toLowerCase(), out = [];
+  readTable_(T.APP.name).rows.forEach(function (a) {
+    const c = cands[a.Candidate_ID], l = lines[a.Line_ID];
+    if (!c || !l || positionStatus_(l) === 'Removed') return;
+    if (!lead && String(l.Recruiter || '').trim().toLowerCase() !== me) return;
+    const hay = (String(c.Name || '') + ' ' + String(c.Candidate_ID || '')).toLowerCase(), mob = String(c.Mobile || '').replace(/\D/g, '');
+    const ok = words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && mob.indexOf(d) >= 0); });
+    if (!ok) return;
+    out.push({ name: String(c.Name || ''), cand: String(c.Candidate_ID), last4: mob.slice(-4), stage: STAGE_NAMES[String(a.Stage)] || String(a.Stage), status: String(a.Status),
+      mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), recruiter: String(l.Recruiter || ''), line: String(l.Line_ID), app: String(a.App_ID),
+      at: a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0 });
+  });
+  out.sort(function (x, y) { return ((y.status === 'Active') - (x.status === 'Active')) || (y.at - x.at); });
+  return out.slice(0, 15).map(function (o) { delete o.at; return o; });
+}
+
 /** Name of the candidate who holds the live offer on a position (at offer, pre-joining, joined or onboarded), if any. */
 function liveOfferHolder_(lineId, exceptAppId) {
   const live = readTable_(T.APP.name).rows.filter(function (a) {

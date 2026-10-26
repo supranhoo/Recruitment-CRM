@@ -51,6 +51,7 @@ function e2eRun_(trash) {
   t('S6 fast-track Offer for a card added at a later stage with the paper', function () { const o = fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'HR', Dept_Confirm_File: 'https://example.com/f' }, { Grade: 'W2' }, 'Offer', {}); return /not recorded/.test(o.note || ''); });
   t('S7 one daily-log entry per position and day', function () { return typeof funnelDuplicates_ === 'function' && Array.isArray(funnelDuplicates_()) && typeof apiRemoveDuplicateEntries === 'function'; });
   t('S8 release number', function () { return /^\d+$/.test(String(BUILD_ID)) && String(apiBootstrap().build) === String(BUILD_ID); });
+  t('S9 pipeline candidate search', function () { return Array.isArray(apiPipelineFind('a')) && apiPipelineFind('a').length <= 15 && apiPipelineFind('').length === 0; });
   t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
   t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 

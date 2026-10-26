@@ -6123,22 +6123,100 @@ function ctcBlank(cfg) {
   return bad;
 }
 
+/** The positions that pass the Pipeline page's filters. f = {q, rec ('' all, '-' not assigned, or a recruiter), div, dept, status (Active, All, Open, Offered, Closed, Replaced, Other), band (M/W/T)}. */
+function pipeFilterLines(list, f, depts) {
+  const dv = {}; (depts || []).forEach(d => { dv[d.dept] = d.division || ''; });
+  const words = String(f.q || '').toLowerCase().split(/\s+/).filter(Boolean), st = f.status || 'Active';
+  return list.filter(p => {
+    const s = p.Position_Status;
+    if (s === 'Removed') return false;
+    if (st === 'Active') { if (s !== 'Open' && s !== 'Offered') return false; }
+    else if (st === 'Other') { if (['Open', 'Offered', 'Closed', 'Replaced'].includes(s)) return false; }
+    else if (st !== 'All' && s !== st) return false;
+    const rec = String(p.Recruiter || '').trim();
+    if (f.rec === '-') { if (rec) return false; } else if (f.rec && rec !== f.rec) return false;
+    if (f.div && (dv[p.Dept] || '') !== f.div) return false;
+    if (f.dept && p.Dept !== f.dept) return false;
+    if (f.band && String(p.Grade || '')[0] !== f.band) return false;
+    if (words.length) { const hay = [p.MRF_No, p.Position, p.Designation, p.Dept, dv[p.Dept], p.Recruiter, p.Grade, p.Line_ID, s].join(' ').toLowerCase(); if (!words.every(w => hay.includes(w))) return false; }
+    return true;
+  }).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
+}
+const PF_KEY_ = 'bfcl.pipeFilter';
 async function viewPipeline(v) {
   await loadPositions();
   const f = S.pipe = S.pipe || {};
   const mine = S.positions.filter(p => isLead() || p.Recruiter === S.boot.user.recruiter);
-  const active = mine.filter(p => ['Open', 'Offered'].includes(p.Position_Status)).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
+  if (!f.pfInit) { f.pfInit = true; try { Object.assign(f, JSON.parse(localStorage.getItem(PF_KEY_) || '{}')); } catch (e) { } }
+  if (!isLead()) f.rec = '';
+  f.status = f.status || 'Active'; f.q = f.q || '';
+  const depts = S.boot.depts, divs = [...new Set(mine.map(p => (depts.find(d => d.dept === p.Dept) || {}).division).filter(Boolean))].sort();
+  const deptList = () => [...new Set(mine.map(p => p.Dept).filter(d => d && (!f.div || ((depts.find(x => x.dept === d) || {}).division || '') === f.div)))].sort();
+  const recList = [...new Set(mine.map(p => String(p.Recruiter || '').trim()).filter(Boolean))].sort();
+  const shown = () => pipeFilterLines(mine, f, depts);
+  const active = shown();
   if (!f.line && active.length) f.line = active[0].Line_ID;
-  const others = mine.filter(p => !active.includes(p) && p.Position_Status !== 'Removed');
+  if (!f.line && mine.length) f.line = (pipeFilterLines(mine, { status: 'All' }, depts)[0] || {}).Line_ID;
   v.innerHTML = `
     <div class="page-head"><div><h1>Candidate pipeline</h1><p>Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up.</p></div>
       <div style="display:flex;gap:8px;align-items:end"><button class="btn" id="pRefresh">Refresh</button></div></div>
-    <div class="filters"><div class="field" style="flex:1;min-width:280px"><label for="pLine">Position</label><select id="pLine">
-      <optgroup label="Open and offered">${active.map(p => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Recruiter)}</option>`).join('')}</optgroup>
-      <optgroup label="Other positions">${others.slice(0, 400).map(p => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Position_Status)}</option>`).join('')}</optgroup></select></div>
-      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="pClosed" ${f.closed ? 'checked' : ''}> Show rejected and withdrawn</label></div>
+    <div class="pf" id="pfBox">
+      <div class="filters">
+        <div class="field" style="flex:2;min-width:260px"><label for="pfQ">Search</label><input id="pfQ" type="search" autocomplete="off" placeholder="MRF no, position, department, recruiter or a candidate\u2019s name" value="${esc(f.q)}"></div>
+        ${isLead() ? `<div class="field"><label for="pfRec">Recruiter</label><select id="pfRec"><option value="">All recruiters</option><option value="-">Not assigned</option>${recList.map(r => `<option value="${esc(r)}"${f.rec === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></div>` : ''}
+        <div class="field"><label for="pfDiv">Division</label><select id="pfDiv">${opts(divs, f.div || '')}</select></div>
+        <div class="field"><label for="pfDept">Department</label><select id="pfDept"></select></div>
+        <div class="field"><label for="pfSt">Status</label><select id="pfSt">${opts([['Active', 'Open and offered'], ['All', 'All statuses'], ['Open', 'Open'], ['Offered', 'Offered'], ['Closed', 'Closed (joined)'], ['Replaced', 'Replaced after a backout'], ['Other', 'On hold, not needed, no vacancy']], f.status, false)}</select></div>
+        <div class="field"><label for="pfBand">Grade band</label><select id="pfBand">${opts([['M', 'M levels'], ['W', 'W levels'], ['T', 'Trainees']], f.band || '')}</select></div>
+      </div>
+      <div id="pfMatches" aria-live="polite"></div>
+      <div class="filters"><div class="field" style="flex:1;min-width:280px"><label for="pLine">Position <span class="sub" id="pfCount" aria-live="polite"></span></label><select id="pLine"></select></div>
+        <button class="btn" id="pfPrev" title="Previous position in this list" aria-label="Previous position">\u2039 Previous</button><button class="btn" id="pfNext" title="Next position in this list" aria-label="Next position">Next \u203a</button>
+        <button class="btn" id="pfClear">Clear filters</button>
+        <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="pClosed" ${f.closed ? 'checked' : ''}> Show rejected and withdrawn</label></div>
+    </div>
     <div id="pBody">${skBoard(SK_STAGES)}</div>`;
+  /* The position list: only the positions that pass the filters, with the one that is open always present so the page does not jump. */
+  const savePf = () => { try { localStorage.setItem(PF_KEY_, JSON.stringify({ rec: f.rec || '', div: f.div || '', dept: f.dept || '', status: f.status, band: f.band || '' })); } catch (e) { } };
+  let order = [];
+  const drawPicker = () => {
+    const list = shown(), cur = mine.find(p => p.Line_ID === f.line), has = list.some(p => p.Line_ID === f.line);
+    const act = list.filter(p => ['Open', 'Offered'].includes(p.Position_Status)), rest = list.filter(p => !act.includes(p));
+    const opt = (p, tail) => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(tail)}</option>`;
+    $('#pLine').innerHTML = (cur && !has ? `<optgroup label="Open now (not in this list)">${opt(cur, cur.Recruiter || cur.Position_Status)}</optgroup>` : '')
+      + (act.length ? `<optgroup label="Open and offered">${act.map(p => opt(p, p.Recruiter || 'Not assigned')).join('')}</optgroup>` : '')
+      + (rest.length ? `<optgroup label="Other positions">${rest.slice(0, 400).map(p => opt(p, p.Position_Status)).join('')}</optgroup>` : '');
+    order = (cur && !has ? [cur] : []).concat(act, rest.slice(0, 400)).map(p => p.Line_ID);
+    const n = list.length; $('#pfCount').textContent = n === mine.filter(p => p.Position_Status !== 'Removed').length ? `\u00b7 ${n} positions` : `\u00b7 ${n} of ${mine.filter(p => p.Position_Status !== 'Removed').length}`;
+    if (!list.length) $('#pfCount').textContent += ' \u00b7 none match: widen the filters';
+    const ix = order.indexOf(f.line); $('#pfPrev').disabled = ix <= 0; $('#pfNext').disabled = ix < 0 || ix >= order.length - 1;
+  };
+  const drawDepts = () => { $('#pfDept').innerHTML = opts(deptList(), f.dept || ''); };
+  const refilter = () => { savePf(); drawDepts(); drawPicker(); };
+  drawDepts(); drawPicker();
   $('#pLine').onchange = e => { f.line = e.target.value; go('pipeline', false); };
+  const step = d => { const ix = order.indexOf(f.line), t = order[ix + d]; if (t) { f.line = t; go('pipeline', false); } };
+  $('#pfPrev').onclick = () => step(-1); $('#pfNext').onclick = () => step(1);
+  if ($('#pfRec')) $('#pfRec').onchange = e => { f.rec = e.target.value; refilter(); };
+  $('#pfDiv').onchange = e => { f.div = e.target.value; if (f.dept && f.div && ((depts.find(x => x.dept === f.dept) || {}).division || '') !== f.div) f.dept = ''; refilter(); };
+  $('#pfDept').onchange = e => { f.dept = e.target.value; if (f.dept) f.div = (depts.find(x => x.dept === f.dept) || {}).division || f.div || ''; $('#pfDiv').innerHTML = opts(divs, f.div || ''); refilter(); };
+  $('#pfSt').onchange = e => { f.status = e.target.value; refilter(); };
+  $('#pfBand').onchange = e => { f.band = e.target.value; refilter(); };
+  $('#pfClear').onclick = () => { f.q = ''; f.rec = ''; f.div = ''; f.dept = ''; f.status = 'Active'; f.band = ''; savePf(); $('#pfQ').value = ''; if ($('#pfRec')) $('#pfRec').value = ''; $('#pfDiv').innerHTML = opts(divs, ''); $('#pfSt').value = 'Active'; $('#pfBand').value = ''; $('#pfMatches').innerHTML = ''; drawDepts(); drawPicker(); };
+  /* The search box filters the positions as you type and, from 2 characters, lists candidates of that name; one click opens their position and card. */
+  let pfTimer = null, pfSeq = 0;
+  const showMatches = async () => {
+    const q = f.q.trim(), seq = ++pfSeq, box = $('#pfMatches'); if (!box) return;
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    let m = []; try { m = await api('apiPipelineFind', q); } catch (e) { return; }
+    if (seq !== pfSeq || !$('#pfMatches')) return;
+    box.innerHTML = m.length ? `<div class="pf-matches" role="list" aria-label="Candidates matching ${esc(q)}"><div class="sub">Candidates</div>${m.map((x, i) => `<button type="button" class="pf-match" role="listitem" data-i="${i}"><b>${esc(x.name)}</b> <span class="sub">${esc(x.cand)}${x.last4 ? ' \u00b7 ends ' + esc(x.last4) : ''}</span><span class="sub">${esc(x.mrf)} \u00b7 ${esc(x.position)} \u00b7 ${esc(x.dept)} \u00b7 ${esc(x.recruiter || 'Not assigned')} \u00b7 ${esc(x.stage)}${x.status !== 'Active' ? ' \u00b7 ' + esc(x.status) : ''}</span></button>`).join('')}</div>` : '';
+    $$('.pf-match', box).forEach(b => b.onclick = () => { const x = m[+b.dataset.i]; f.line = x.line; f.openApp = x.app; if (x.status !== 'Active') f.closed = true; go('pipeline', false); });
+  };
+  $('#pfQ').oninput = e => { f.q = e.target.value; drawPicker(); clearTimeout(pfTimer); pfTimer = setTimeout(showMatches, 300); };
+  $('#pfQ').onkeydown = e => { if (e.key === 'ArrowDown') { const b = $('.pf-match', $('#pfMatches')); if (b) { e.preventDefault(); b.focus(); } } };
+  $('#pfMatches').onkeydown = e => { const bs = $$('.pf-match', $('#pfMatches')), i = bs.indexOf(document.activeElement); if (e.key === 'ArrowDown' && i < bs.length - 1) { e.preventDefault(); bs[i + 1].focus(); } if (e.key === 'ArrowUp') { e.preventDefault(); (i > 0 ? bs[i - 1] : $('#pfQ')).focus(); } };
+  if (f.q) showMatches();
   $('#pClosed').onchange = e => { f.closed = e.target.checked; renderBoard(); };
   $('#pRefresh').onclick = () => go('pipeline', false);
   if (!f.line) { $('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
