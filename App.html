@@ -4109,7 +4109,7 @@ function alertsDialog(a, tab) {
   const lastTxt = x => x.last ? `${fmtDate(x.last.date)} · ${x.last.mode}${x.last.risk ? ' · ' + x.last.risk : ''}${x.last.response ? ' · ' + x.last.response : ''}${x.last.note ? ' · ' + x.last.note : ''}` : 'None recorded';
   const joinTxt = x => x.edoj ? `${fmtDate(x.edoj)} (${alertAge(-x.edojIn)})` : 'Not set';
   const cand = x => `<button class="linklike" data-open="${esc(x.app)}"><b>${esc(x.name)}</b></button><span class="sub">${esc(x.cand)}${x.mobile ? ' · ' + esc(x.mobile) : ''}</span>`;
-  const pos = x => `${esc(x.position)}<span class="sub">${esc(x.mrf)} · ${esc(x.grade)} · ${esc(x.dept)}</span>`;
+  const pos = x => `${esc(x.position)}<span class="sub">${esc(x.mrf)} · ${esc(x.grade)} · ${esc(x.dept)}${x.fast ? ' · <b>Fast-track</b>' : ''}</span>`;
   const stage = x => `${esc(x.stageName)}<span class="sub">since ${x.since ? fmtDate(x.since) + ' (' + alertAge(x.daysInStage) + ')' : '—'}</span>`;
   const last = x => `${esc(lastTxt(x))}${x.last && x.last.by ? `<span class="sub">by ${esc(x.last.by)} · ${x.fuCount} check-in${x.fuCount === 1 ? '' : 's'} in all</span>` : ''}`;
   const COLS = {

@@ -606,8 +606,9 @@ function pipelineAlerts_(onlyRecruiter) {
     if (brief.last) delete brief.last.at;
     if (st === 'Shared' && since && now - since > 24 * 3600000) {
       const h = hods[String(l.Dept || '').trim()] || {};
-      out.hodOverdue.push(Object.assign({}, brief, { hours: Math.round((now - since) / 3600000), hod: String(h.name || ''), hodEmail: String(h.email || ''),
-        pending: 'Department feedback on the shared CV' + (h.name ? ' from ' + h.name : '') }));
+      const fast = !!l.Line_ID && isFast_(l);   // fast-track: the department's written confirmation is what is awaited
+      out.hodOverdue.push(Object.assign({}, brief, { hours: Math.round((now - since) / 3600000), hod: String(h.name || ''), hodEmail: String(h.email || ''), fast: fast,
+        pending: (fast ? 'Department\u2019s written confirmation (fast-track)' : 'Department feedback on the shared CV') + (h.name ? ' from ' + h.name : '') }));
     }
     if (['Offer', 'Prejoin'].indexOf(st) < 0) return;
     if (!fu.n) out.unassessed++;

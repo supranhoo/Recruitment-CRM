@@ -620,7 +620,7 @@ Active · Rejected · On hold · Withdrawn · Removed (switch-over/"linked in er
 
 ### 9.5 Pre-joining fail-safe (`apiAddFollowup`)
 
-Check-ins record date, mode, response, **risk (Green / Amber / Red)** and the next check-in date. Alerts: HOD feedback overdue (card at *Shared* > 24 h), joiners at risk (Amber/Red), follow-ups due today (and Pre-joining cards with no next date). These show on the Overview, in the weekly email and as to-dos.
+Check-ins record date, mode, response, **risk (Green / Amber / Red)** and the next check-in date. Alerts: HOD feedback overdue (card at *Shared* > 24 h; fast-track cards are included and read "Department's written confirmation (fast-track)" with a Fast-track tag, since that paper is what the fast-track route waits for), joiners at risk (Amber/Red), follow-ups due today (and Pre-joining cards with no next date). These show on the Overview, in the weekly email and as to-dos.
 
 ### 9.6 Backout and replacement MRF — Policy 9.5 (ADR-015)
 
@@ -1125,6 +1125,9 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Pipeline alerts: fast-track cards in "Waiting for department"** (no schema change; v116; 26 Oct 2026)
+- Fast-track cards waiting at "Sent to department" for more than 24 h stay in the alert (the department's written confirmation is the gate before the hiring is confirmed, and the chase to-do for it is kept), but they now read "Department's written confirmation (fast-track)" instead of "feedback on the shared CV" and carry a Fast-track tag. Checked: before this change nothing in the alert told fast-track from standard cards.
 
 **To-dos: an (i) showing the notes entered** (no schema change; v115; 26 Oct 2026)
 - Notes entered when a to-do is chased, snoozed or done are now visible from an (i) on the to-do lists and on the Missed list of the Daily review. An optional note can be typed when chasing or completing. See §10.4.
