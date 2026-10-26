@@ -461,10 +461,11 @@ function allTasks_() {
 /** Background job (every 30 minutes, with the dashboard refresh): records new, critical and resolved tasks. */
 function reconcileTasks_() {
   ensureSchema_();
+  const computed = computeTasks_();   // the heavy part (about ten sheets) runs before the lock, so saves are not held up while it works
   return withLock_(function () {
     const now = new Date();
     const st = taskState_(), sh = st.table.sheet, headers = st.table.headers;
-    const current = {}; computeTasks_().forEach(function (t) { current[t.key] = t; });
+    const current = {}; computed.forEach(function (t) { current[t.key] = t; });
     const updates = [], appends = [];
     const row = function (o) { return headers.map(function (h) { return o[h] === undefined ? '' : o[h]; }); };
     Object.keys(current).forEach(function (k) {

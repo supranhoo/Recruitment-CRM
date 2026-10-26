@@ -1129,6 +1129,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Speed: the 30-minute to-do reconcile no longer holds the shared lock while it computes** (no schema change; v119; 26 Oct 2026)
+- `reconcileTasks_` worked out the to-do list (about ten sheets) inside the shared lock, so everybody's saves waited for it. It now computes first and takes the lock only to write the changes.
+
 **Speed, release A: database upgrade retries, speed check, Pipeline draws first** (no schema change; v118; 26 Oct 2026)
 - Finding: the Pipeline page was slow every time; the job log showed a failing step of the database upgrade ("schema"). Since v104 a failed step left the upgrade unfinished and every 10 minutes one request re-ran all ~35 steps inside the shared lock, which also blocked everyone's saves.
 - The upgrade now remembers the steps that succeeded (`SCHEMA_DONE_<version>`) and a retry runs only the failed ones, each under the lock on its own; the wait between automatic tries grows 10, 30, 60 minutes; a busy lock is not counted as a failure. Admin → Tools → **Speed and health check** shows the failing steps with their messages and has **Retry the database upgrade now**.
