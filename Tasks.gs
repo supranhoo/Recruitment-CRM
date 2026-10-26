@@ -430,16 +430,17 @@ function taskState_() {
 /** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
-  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users']);
+  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
      which used to mean it was never cached and was rebuilt from about ten sheets on every call. */
   try { const hit = cacheBigGet_(key); if (hit) return JSON.parse(hit); } catch (e) { }
   const now = Date.now(), t0 = now;
-  const state = taskState_().map;
+  const state = taskState_().map, notes = taskNotes_(0);
   const list = computeTasks_().map(function (t) {
     const s = state[t.key];
+    t.notes = notes[t.key] || [];
     const reopened = s && s.Resolved_At;
     const st = s && !reopened ? s : {};
     t.chases = Number(st.Chase_Count) || 0;
@@ -506,12 +507,28 @@ function setTaskState_(t, patch, u) {
   insert_(T.TACT, { Task_Key: t.key, Rule: t.rule, Recruiter: t.recruiter, Line_ID: t.line, Action: patch._action, Note: patch._note || '' }, u);
 }
 
+/**
+ * The notes entered on to-dos, for the (i) next to each one: the latest 5 actions per task key (chased, snoozed, done) from the last
+ * 60 days, newest first, each with who, when and the note. upToMs: only actions before that moment (the end of a reviewed day); 0 = all.
+ */
+function taskNotes_(upToMs) {
+  const names = {}; usersCached_().forEach(function (x) { names[String(x.Email).toLowerCase()] = String(x.Name); });
+  const by = {};
+  readTableFrom_(T.TACT.name, 'Created_At', addDays_(ymd_(new Date()), -60)).rows.forEach(function (a) {
+    const at = ms_(a.Created_At); if (!at || (upToMs && at >= upToMs)) return;
+    const k = String(a.Task_Key), em = String(a.Created_By || '').toLowerCase();
+    (by[k] = by[k] || []).push({ action: String(a.Action || ''), note: String(a.Note || ''), by: names[em] || em.split('@')[0], at: at });
+  });
+  Object.keys(by).forEach(function (k) { by[k].sort(function (x, y) { return y.at - x.at; }); by[k] = by[k].slice(0, 5); });
+  return by;
+}
+
 /* ---------------- APIs ---------------- */
 
 function taskClient_(t) {
   return { key: t.key, rule: t.rule, level: t.level, title: t.title, context: t.context, age: t.ageText, line: t.line, app: t.app,
     chase: !!t.chase, manual: !!t.manual, message: t.message || '', link: t.link || null, note: t.note || '', open: t.open || null,
-    chases: t.chases, snoozeReason: t.snoozeReason, why: t.why, policy: t.policy, recruiter: t.recruiter,
+    chases: t.chases, snoozeReason: t.snoozeReason, why: t.why, policy: t.policy, recruiter: t.recruiter, notes: t.notes || [],
     critAt: t.critAt || 0, dueAt: t.dueAt || 0 };
 }
 function sortTasks_(a, b) {
@@ -560,7 +577,7 @@ function apiTaskAction(key, action, data) {
   const now = new Date();
   if (action === 'chased') {
     if (!t.chase) throw new Error('This task closes on its own once the step is recorded.');
-    setTaskState_(t, { Chase_Count: (t.chases || 0) + 1, Last_Chased_At: now, _action: 'Chased', _note: String(data.note || '') }, u);
+    setTaskState_(t, { Chase_Count: (t.chases || 0) + 1, Last_Chased_At: now, _action: 'Chased', _note: String(data.note || '').trim().slice(0, 200) }, u);
   } else if (action === 'snooze') {
     const reason = String(data.reason || '').trim();
     if (!reason) throw new Error('Add a reason for snoozing.');
@@ -577,7 +594,7 @@ function apiTaskAction(key, action, data) {
       ob[t.checkin] = ymd_(now);
       update_(T.APP, t.app, { Onboard_JSON: JSON.stringify(ob) }, u);
     }
-    setTaskState_(t, { Done_At: now, Done_By: u.email, _action: 'Done', _note: String(data.note || '') }, u);
+    setTaskState_(t, { Done_At: now, Done_By: u.email, _action: 'Done', _note: String(data.note || '').trim().slice(0, 200) }, u);
   } else throw new Error('Unknown action.');
   return apiMyTasks(isLead_(u) && String(t.recruiter).toLowerCase() !== u.recruiter.toLowerCase() ? t.recruiter : '');
 }
@@ -590,6 +607,7 @@ function missedTasks_(date, recruiter) {
   readTableFrom_(T.TACT.name, 'Created_At', addDays_(date, -30)).rows.forEach(function (a) {
     if (String(a.Action) === 'Chased' && ms_(a.Created_At) < end) chases[a.Task_Key] = (chases[a.Task_Key] || 0) + 1;
   });
+  const notes = taskNotes_(end);
   const bgvDate = {}, bgvCurr = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { if (l.BGV_Prev_Org_Date) bgvDate[l.Line_ID] = ymd_(l.BGV_Prev_Org_Date); if (l.BGV_Current_Org_Date) bgvCurr[l.Line_ID] = ymd_(l.BGV_Current_Org_Date); });
   return readTable_(T.TASK.name).rows.filter(function (s) {
@@ -603,7 +621,7 @@ function missedTasks_(date, recruiter) {
     return crit && crit < end && first && first < end && (!res || res > end);
   }).map(function (s) {
     const snz = ms_(s.Snoozed_Until);
-    return { recruiter: String(s.Recruiter), title: String(s.Title), context: String(s.Context), rule: String(s.Rule),
+    return { key: String(s.Task_Key), notes: notes[String(s.Task_Key)] || [], recruiter: String(s.Recruiter), title: String(s.Title), context: String(s.Context), rule: String(s.Rule),
       chaseable: ['hod_feedback', 'offer_acceptance'].indexOf(String(s.Rule)) >= 0,
       late: hoursText_((end - ms_(s.Critical_At)) / HOUR_MS_), chases: chases[s.Task_Key] || 0,
       snoozed: snz && snz >= end - 86400000 ? String(s.Snooze_Reason) : '' };

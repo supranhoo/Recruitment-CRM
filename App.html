@@ -361,6 +361,14 @@ function copyText(txt) {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback); else fallback();
 }
 const LEVEL_TEXT = { critical: 'Critical', due: 'Due' };
+/** The (i) next to a to-do: hover, focus or tap shows the notes entered on it (chases, snoozes, done), newest first. */
+function taskInfo(notes) {
+  const when = ms => { try { return new Date(ms).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+  const rows = (notes || []).map(n => `<li><b>${esc(n.action)}</b> \u00b7 ${esc(n.by)} \u00b7 ${esc(when(n.at))}${n.note ? `<span class="ti-note">${esc(n.note)}</span>` : ''}</li>`).join('');
+  return `<span class="ti" tabindex="0" role="button" aria-label="Comments on this to-do" data-ti><span aria-hidden="true">i</span><span class="ti-pop" role="tooltip">${rows ? `<ul>${rows}</ul>` : '<span class="ti-none">No comments entered yet.</span>'}</span></span>`;
+}
+document.addEventListener('click', e => { const t = e.target.closest && e.target.closest('[data-ti]'); $$('.ti.open').forEach(x => { if (x !== t) x.classList.remove('open'); }); if (t) t.classList.toggle('open'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $$('.ti.open').forEach(x => x.classList.remove('open')); });
 function taskItemHtml(t, mode) {
   const link = taskLinkUrl(t.link);
   const meta = [t.context, ['tat_overdue', 'day_note'].includes(t.rule) ? '' : t.age, t.chases ? 'chased ' + t.chases + '\u00d7' : ''].filter(Boolean).join(' \u00b7 ');
@@ -373,10 +381,11 @@ function taskItemHtml(t, mode) {
        <button class="btn sm" data-act="snooze">Snooze</button>`;
   return `<li class="task t-${t.level}" data-key="${esc(t.key)}">
     <div class="task-main"><span class="tlevel l-${t.level}">${LEVEL_TEXT[t.level]}</span>
-      <div class="task-text"><b>${esc(t.title)}</b><span class="sub">${esc(meta)}</span>${t.note ? `<span class="hint">${esc(t.note)}</span>` : ''}</div></div>
+      <div class="task-text"><b>${esc(t.title)}</b>${taskInfo(t.notes)}<span class="sub">${esc(meta)}</span>${t.note ? `<span class="hint">${esc(t.note)}</span>` : ''}</div></div>
     <div class="task-acts">${acts}</div>
     ${mode === 'compact' ? '' : `<div class="task-snooze" hidden><select aria-label="Snooze for"><option value="2h">2 hours</option><option value="tomorrow" selected>Until tomorrow 9:30</option><option value="2d">2 days</option></select>
-      <input aria-label="Reason for snoozing" placeholder="Reason (required)"><button class="btn sm primary" data-act="snoozeSave">Snooze</button><button class="btn sm" data-act="snoozeCancel">Cancel</button></div>`}
+      <input aria-label="Reason for snoozing" placeholder="Reason (required)"><button class="btn sm primary" data-act="snoozeSave">Snooze</button><button class="btn sm" data-act="snoozeCancel">Cancel</button></div>
+      <div class="task-note" hidden><input aria-label="Note (optional)" maxlength="200" placeholder="Note (optional)"><button class="btn sm primary" data-act="noteSave">Save</button><button class="btn sm" data-act="noteCancel">Cancel</button></div>`}
   </li>`;
 }
 function taskOpen(o) {
@@ -402,7 +411,9 @@ function bindTaskList(root, tasks, after) {
       const act = b.dataset.act, sz = $('.task-snooze', li);
       if (act === 'copy') copyText(t.message);
       else if (act === 'open') taskOpen(t.open);
-      else if (act === 'chased' || act === 'done') run(b, act);
+      else if (act === 'chased' || act === 'done') { const nr = $('.task-note', li); if (!nr) return run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : 'Mark done'; $('input', nr).focus(); }
+      else if (act === 'noteCancel') $('.task-note', li).hidden = true;
+      else if (act === 'noteSave') { const nr = $('.task-note', li); run(b, nr.dataset.act, { note: $('input', nr).value }); }
       else if (act === 'snooze') { sz.hidden = false; $('input', sz).focus(); }
       else if (act === 'snoozeCancel') sz.hidden = true;
       else if (act === 'snoozeSave') run(b, 'snooze', { until: $('select', sz).value, reason: $('input', sz).value });
@@ -4012,7 +4023,7 @@ function todoReviewHtml(r) {
   const t = r.todo || { acts: { done: 0, chased: 0, snoozed: 0 }, missed: [] };
   const cl = (r.closures || []).map(c => `<li><b>${esc(c.mrf)}</b> ${esc(c.position)} \u00b7 ${esc(c.outcome === 'On Hold' ? 'put on hold' : c.outcome === 'Filled internally' ? 'filled internally' : c.outcome === 'Removed' ? 'removed (created in error)' : 'closed without a hire (' + c.outcome + ')')}: ${esc(c.reason)}${c.by ? ' \u00b7 requested by ' + esc(c.by) : ''}</li>`).join('');
   return `${cl ? `<h3>Positions closed or put on hold</h3><ul class="work">${cl}</ul>` : ''}<h3>To-do</h3><p class="todo-acts">${t.acts.done} done \u00b7 ${t.acts.chased} chased \u00b7 ${t.acts.snoozed} snoozed</p>
-    ${t.missed.length ? `<div class="missed"><b class="miss">Missed (${t.missed.length})</b><ul class="work">${t.missed.map(m => `<li><b>${esc(m.title)}</b> \u00b7 ${esc(m.context)} \u00b7 <span class="miss">${esc(m.late)} late</span> ${m.chaseable ? '\u00b7 ' + (m.chases ? 'chased ' + m.chases + '\u00d7' : 'not chased') : ''}${m.snoozed ? ` \u00b7 snoozed: ${esc(m.snoozed)}` : ''}</li>`).join('')}</ul></div>` : '<p class="hint">Nothing missed.</p>'}`;
+    ${t.missed.length ? `<div class="missed"><b class="miss">Missed (${t.missed.length})</b><ul class="work">${t.missed.map(m => `<li><b>${esc(m.title)}</b> \u00b7 ${esc(m.context)} \u00b7 <span class="miss">${esc(m.late)} late</span>${taskInfo(m.notes)} ${m.chaseable ? '\u00b7 ' + (m.chases ? 'chased ' + m.chases + '\u00d7' : 'not chased') : ''}${m.snoozed ? ` \u00b7 snoozed: ${esc(m.snoozed)}` : ''}</li>`).join('')}</ul></div>` : '<p class="hint">Nothing missed.</p>'}`;
 }
 async function viewDailyReview(v) {
   const f = S.review = S.review || { date: daysAgo(1), rec: '' };

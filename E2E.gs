@@ -52,6 +52,7 @@ function e2eRun_(trash) {
   t('S7 one daily-log entry per position and day', function () { return typeof funnelDuplicates_ === 'function' && Array.isArray(funnelDuplicates_()) && typeof apiRemoveDuplicateEntries === 'function'; });
   t('S8 release number', function () { return /^\d+$/.test(String(BUILD_ID)) && String(apiBootstrap().build) === String(BUILD_ID); });
   t('S9 pipeline candidate search', function () { return Array.isArray(apiPipelineFind('a')) && apiPipelineFind('a').length <= 15 && apiPipelineFind('').length === 0; });
+  t('S10 to-dos carry their notes', function () { const a = apiMyTasks().tasks || []; return a.every(function (x) { return Array.isArray(x.notes); }); });
   t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
   t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 
