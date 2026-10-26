@@ -13,12 +13,22 @@ const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / K
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
-  if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a moment ago: do not repeat it on every page load
-  withLock_(function () {
-    if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
-    const failed = [];
-    // Each step runs on its own: a failing one is recorded and does not take the rest (or the whole app) down with it.
-    const step_ = function (name, fn) { try { fn(); } catch (e) { failed.push(name); console.error('Schema step ' + name + ': ' + e); jobLog_('schema', name, e); } };
+  if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a while ago: wait before trying again
+  const t0 = Date.now(), doneKey = 'SCHEMA_DONE_' + SCHEMA_VERSION;
+  let done = []; try { done = JSON.parse(props.getProperty(doneKey) || '[]'); } catch (e) { done = []; }
+  const failed = {}; let n = 0, locked = false;
+  // Each step runs on its own and under the lock for that step only. A step that has succeeded is remembered and never run again for this
+  // version, so a retry repeats only the steps that failed (the whole upgrade is not re-run, and the lock is not held for it).
+  const step_ = function (name, fn) {
+    name += '#' + (++n);
+    if (locked || done.indexOf(name) >= 0) return;
+    try { withLock_(fn); done.push(name); props.setProperty(doneKey, JSON.stringify(done)); }
+    catch (e) {
+      const msg = String(e && e.message || e);
+      if (/Someone else is saving/.test(msg)) { locked = true; return; }   // somebody else is saving: not a failure of the step, try again on the next call
+      failed[name] = msg.slice(0, 300); console.error('Schema step ' + name + ': ' + msg); jobLog_('schema', name, e);
+    }
+  };
     step_('addColumns_ T.MRF.name', function () {
       addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
         'Tech_Panel', 'Final_Panel']);
@@ -35,7 +45,7 @@ function ensureSchema_() {
     step_('addColumns_ T.MRF.name', function () {
       addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
     });
-    try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); }
+    step_('jdMigrate_', function () { try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); } });
     step_('addColumns_ T.MRF.name', function () {
       addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
     });
@@ -108,7 +118,7 @@ function ensureSchema_() {
     step_('orgSchema_', function () {
       orgSchema_();
     });
-    try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); }
+    step_('bgvEnsureCases_', function () { try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); } });
     step_('dayStatusSchema_', function () {
       dayStatusSchema_();
     });
@@ -135,11 +145,18 @@ function ensureSchema_() {
           'First month scored for psychometric, BGV, observation and audit KPIs']);
       }
     });
-    if (failed.length) props.setProperty('SCHEMA_RETRY_AT', String(Date.now() + 10 * 60000));
-    else { props.setProperty('SCHEMA_V', SCHEMA_VERSION); props.deleteProperty('SCHEMA_RETRY_AT'); }
+    const bad = Object.keys(failed);
+    props.setProperty('SCHEMA_LAST_MS', String(Date.now() - t0));
+    if (!bad.length && !locked) {
+      props.setProperty('SCHEMA_V', SCHEMA_VERSION);
+      ['SCHEMA_RETRY_AT', 'SCHEMA_ERR', 'SCHEMA_FAILS', doneKey].forEach(function (k) { props.deleteProperty(k); });
+    } else if (bad.length) {
+      const fails = Number(props.getProperty('SCHEMA_FAILS') || 0) + 1, wait = [10, 30, 60][Math.min(fails - 1, 2)];
+      props.setProperty('SCHEMA_FAILS', String(fails)); props.setProperty('SCHEMA_ERR', JSON.stringify(failed));
+      props.setProperty('SCHEMA_RETRY_AT', String(Date.now() + wait * 60000));
+    }
     dropTableCache_();
     _tables = {};
-  });
 }
 
 function addColumns_(name, cols) {
