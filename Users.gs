@@ -51,7 +51,7 @@ function apiListUsers() {
   const users = readTable_('Users', true).rows.filter(function (r) { return String(r.Email || '').trim(); }).map(function (r) {
     const email = String(r.Email).trim().toLowerCase(), rec = String(r.Recruiter_Name || r.Name || '').trim();
     return { email: email, name: String(r.Name || ''), role: normRole_(r.Role), recruiter: rec, active: String(r.Active || 'Yes') !== 'No',
-      addedBy: String(r.Added_By || ''), addedOn: ymd_(r.Added_On), updatedBy: String(r.Updated_By || ''), updatedAt: r.Updated_At instanceof Date ? fmt_(r.Updated_At, TZ, 'd MMM yyyy, HH:mm') : '',
+      official: cleanMail_(r.Official_Email), addedBy: String(r.Added_By || ''), addedOn: ymd_(r.Added_On), updatedBy: String(r.Updated_By || ''), updatedAt: r.Updated_At instanceof Date ? fmt_(r.Updated_At, TZ, 'd MMM yyyy, HH:mm') : '',
       access: targets.length ? eds.every(function (s) { return !!s[email]; }) : null, openPositions: (open[rec.toLowerCase()] || []).length };
   });
   return { me: u.email, canEdit: can_(u, 'users_edit'), roles: ROLE_LIST, accessChecked: targets.length > 0, users: users,
@@ -72,6 +72,8 @@ function apiSaveUser(d) {
   const role = ROLE_LIST.indexOf(d.role) >= 0 ? d.role : '';
   if (!role) throw new Error('Pick a role.');
   const recruiter = clean_(String(d.recruiter || name)).trim(), active = d.active !== false;
+  const officialRaw = String(d.official == null ? '' : d.official).trim(), official = cleanMail_(officialRaw);
+  if (officialRaw && !official) throw new Error('The official email address is not valid. Leave it blank to use the sign-in account.');
   const res = withLock_(function () {
     const t = readTable_('Users', true);
     const rows = t.rows.filter(function (r) { return String(r.Email || '').trim(); });
@@ -99,7 +101,7 @@ function apiSaveUser(d) {
       if (open.length && String(d.reassignTo).toLowerCase() === oldRec.toLowerCase()) throw new Error('Pick a different recruiter to take over the positions.');
     }
     const now = new Date(), o = cur ? Object.assign({}, cur) : { Added_By: u.email, Added_On: now };
-    Object.assign(o, { Email: email, Name: name, Role: role, Recruiter_Name: recruiter, Active: active ? 'Yes' : 'No', Updated_By: u.email, Updated_At: now });
+    Object.assign(o, { Email: email, Name: name, Role: role, Recruiter_Name: recruiter, Active: active ? 'Yes' : 'No', Updated_By: u.email, Updated_At: now, Official_Email: official });
     const vals = [t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })];
     if (cur) t.sheet.getRange(cur._row, 1, 1, t.headers.length).setValues(vals);
     else t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues(vals);
