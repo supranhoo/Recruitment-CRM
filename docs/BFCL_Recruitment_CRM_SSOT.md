@@ -579,6 +579,10 @@ Server-side, paged search. Every typed word must match somewhere (name, mobile, 
 
 ## 9. Candidate pipeline
 
+### 9.0 Finding a position or a candidate on the Pipeline page (v114)
+- Above the board: a **Search** box, filters **Recruiter** (leads only; a recruiter sees only their own positions), **Division**, **Department** (limited to the chosen division; choosing a department also sets its division), **Status** (Open and offered by default, All, Open, Offered, Closed, Replaced, On hold / not needed / no vacancy) and **Grade band** (M / W / Trainees), a count ("23 of 241"), **Clear filters**, and **Previous / Next** buttons that step through the filtered positions. The position that is open always stays in the list. The filters (not the search text) are remembered in the browser. Division comes from the department list (`M_Departments`).
+- The search words (all must match) are looked for in MRF number, position, designation, department, division, recruiter, grade, Line id and status. From 2 characters the box also lists up to 15 **candidates** whose name, candidate id or mobile digits (4 or more) match (`apiPipelineFind`): name, id, last 4 digits of the mobile, MRF, position, department, recruiter, stage and status; one click opens that position with the candidate's card open. A lead searches every position, anyone else only the positions where they are the recruiter.
+
 ### 9.1 Model (ADR-015)
 
 One **candidate** (person) → one **application card per position** (`Applications`) → every move appended to **Stage_History**. The card is the only place a candidate's progress, offer and joining live; the position's offer/joining fields are derived from its live card; the daily scorecard, KPIs and to-dos read from the same moves.
@@ -1119,6 +1123,9 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Pipeline: search and filters for the position list** (no schema change; v114; 26 Oct 2026)
+- Search, Recruiter, Division, Department, Status and Grade-band filters, Previous / Next, remembered filters and a candidate-name search on the Candidate pipeline page. New `apiPipelineFind`. See §9.0.
 
 **Release number visible in the app** (no schema change; v113; 24 Oct 2026)
 - `BUILD_ID` is shown in the rail footer tooltip and on Admin → Tools (page and server), and a banner asks for a reload when the page was served from another release than the server it talks to.
