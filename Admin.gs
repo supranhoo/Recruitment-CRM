@@ -47,6 +47,50 @@ function apiAdminInfo() {
     errors: errors.slice(0, 10) };
 }
 
+/* ---------------- Speed and health check (Admin) ---------------- */
+
+function schemaState_() {
+  const props = PropertiesService.getScriptProperties();
+  let err = {}, done = []; try { err = JSON.parse(props.getProperty('SCHEMA_ERR') || '{}'); } catch (e) { err = {}; }
+  try { done = JSON.parse(props.getProperty('SCHEMA_DONE_' + SCHEMA_VERSION) || '[]'); } catch (e) { done = []; }
+  const retry = Number(props.getProperty('SCHEMA_RETRY_AT') || 0);
+  return { version: props.getProperty('SCHEMA_V') || '', target: SCHEMA_VERSION, complete: Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION), failures: Number(props.getProperty('SCHEMA_FAILS') || 0),
+    nextTry: retry > Date.now() ? new Date(retry).toISOString() : '', steps: done.length, errors: Object.keys(err).map(function (k) { return { step: k, message: String(err[k]) }; }),
+    lastMs: Number(props.getProperty('SCHEMA_LAST_MS') || 0) };
+}
+
+/** Times, on the server, the calls behind the slow pages, plus the schema state and whether the shared lock is free. Read-only. Admin only. */
+function apiSpeedCheck() {
+  requireAdmin_(currentUser_());
+  const rows = [];
+  const time = function (what, fn) {
+    const t0 = Date.now(); let note = '';
+    try { note = fn() || ''; } catch (e) { note = 'ERROR: ' + String(e && e.message || e).slice(0, 160); }
+    rows.push({ what: what, ms: Date.now() - t0, note: String(note) });
+  };
+  [T.MRF, T.APP, T.HIST, T.FU, T.SCR, T.PDOC, T.POST, T.INT, T.CAND, T.TACT, T.TASK].forEach(function (d) {
+    time('Read the sheet ' + d.name + ' (from the sheet, no cache)', function () { _tables = {}; const t = readTable_(d.name, true); return t.rows.length + ' rows, ' + t.headers.length + ' columns'; });
+  });
+  _tables = {};
+  time('Positions list (apiListPositions)', function () { return apiListPositions().length + ' positions'; });
+  _tables = {};
+  const first = readTable_(T.MRF.name).rows.filter(function (l) { return ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; })[0];
+  if (first) time('Pipeline board of ' + String(first.MRF_No || first.Line_ID) + ' (apiPipeline)', function () { _tables = {}; return apiPipeline(first.Line_ID).apps.length + ' cards'; });
+  _tables = {};
+  time('To-do list, first call (allTasks_)', function () { return allTasks_().length + ' to-dos'; });
+  time('To-do list, second call (should come from the cache)', function () { return allTasks_().length + ' to-dos'; });
+  let free = false; try { const lk = LockService.getScriptLock(); free = lk.tryLock(0); if (free) lk.releaseLock(); } catch (e) { }
+  return { at: new Date().toISOString(), build: BUILD_ID, rows: rows, schema: schemaState_(), lockFree: free };
+}
+
+/** Runs the schema upgrade again now (only the steps that have not succeeded) and returns its state. Admin only. */
+function apiSchemaRetry() {
+  requireAdmin_(currentUser_());
+  PropertiesService.getScriptProperties().deleteProperty('SCHEMA_RETRY_AT');
+  const t0 = Date.now(); ensureSchema_();
+  const s = schemaState_(); s.tookMs = Date.now() - t0; return s;
+}
+
 /* ---------------- Scheduled-job health ---------------- */
 
 /** Records a failed step of a scheduled job (last 20 kept) and e-mails the Admins once per job step per day. Never throws. */

@@ -927,6 +927,7 @@ Stored as Script Properties (not in the sheet): `DB_ID`, `SCHEMA_V` (schema vers
 7. **Propagation caution (v25 incident):** for a short time after a release Google may serve a page built against the previous version's function list. New server functions must be tolerated as missing by the page, or introduced a release before the page calls them.
 - **New refusal rules (gates):** before release, list the live records the rule would refuse (for example fast-track cards at Offer without a recorded department decision) and decide what happens to them; a rule that blocks existing live work is changed or comes with a way through it (lesson from the v105 fast-track gate).
 - **Release number:** set `BUILD_ID` in Config.gs to the version about to be deployed (the next number after the last `clasp deploy`) before `clasp push`. It is shown in the rail footer tooltip and on Admin → Tools, and the page compares its own copy with the server's: when they differ a banner asks the user to reload. Use it to answer "which version am I looking at?".
+- **After each release:** Admin → Tools → Run the speed check; compare with the last numbers (SSOT §4.4) and check that the database upgrade says Finished.
 
 ### 12.6 Test assets
 
@@ -1127,6 +1128,12 @@ Context: candidates sometimes confirm they will join after backing out; a backou
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Speed, release A: database upgrade retries, speed check, Pipeline draws first** (no schema change; v118; 26 Oct 2026)
+- Finding: the Pipeline page was slow every time; the job log showed a failing step of the database upgrade ("schema"). Since v104 a failed step left the upgrade unfinished and every 10 minutes one request re-ran all ~35 steps inside the shared lock, which also blocked everyone's saves.
+- The upgrade now remembers the steps that succeeded (`SCHEMA_DONE_<version>`) and a retry runs only the failed ones, each under the lock on its own; the wait between automatic tries grows 10, 30, 60 minutes; a busy lock is not counted as a failure. Admin → Tools → **Speed and health check** shows the failing steps with their messages and has **Retry the database upgrade now**.
+- Admin → Tools → **Run the speed check** times the sheet reads, the positions list, a pipeline board, the to-do list (first and cached), and says whether the shared lock is free (read-only, Admin only).
+- The Pipeline page asks for the board of the remembered position while the positions list is still loading, and draws the board without waiting for the to-do panel.
 
 **Monthly summary of missed to-dos, recruiter by recruiter** (no schema change; v117; 26 Oct 2026)
 - Daily review gets a Day | Month switch; the Month view and the recruiter's own My day panel are described in §10.4. New `apiMonthMissed`.

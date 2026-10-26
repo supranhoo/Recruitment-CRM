@@ -3612,9 +3612,27 @@ async function viewAdmin(v) {
         ${info.errors && info.errors.length ? '<details open><summary><b>Recent job failures (' + info.errors.length + ')</b></summary><ul class="work">' + info.errors.map(x => '<li>' + esc(istTime(x.at)) + ' \u00b7 ' + esc(x.job) + ' / ' + esc(x.step) + ': ' + esc(x.msg) + '</li>').join('') + '</ul></details>' : ''}
         ${admin ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="bkNow">Back up now</button><button class="btn" id="recalc">Recalculate TAT</button><button class="btn" id="archNow">Archive inactive candidates now</button></div><p class="hint" id="archStatus" style="margin-top:8px"></p><h3 style="margin-top:18px">CV parser accuracy (pilot)</h3><div id="parseAcc" class="hint">Loading\u2026</div><div style="margin-top:10px"><button class="btn" id="cvSelfTest">Test the CV reader</button> <span class="hint" id="cvSelfRes">Checks that the free PDF and Word readers load in this browser and that the parser works. Nothing is saved.</span></div><div style="margin-top:8px"><button class="btn" id="ocrSelfTest">Test OCR</button> <span class="hint" id="ocrSelfRes">Checks the scanned-CV reader (downloads about 7 MB the first time). Nothing is saved.</span></div>` : '<p class="hint">Only the admin can run these.</p>'}
       </section></div>
+      ${admin ? `<section class="panel" style="margin-top:20px"><h2>Speed and health check</h2>
+        <p style="color:var(--ink-2);max-width:75ch">Times the calls behind the slow pages (reading each sheet, the positions list, a pipeline board, the to-do list), shows whether the database upgrade has finished and whether the shared lock is free. Read-only. Takes about 10 to 30 seconds.</p>
+        <div class="btn-row"><button class="btn primary" id="spdRun">Run the speed check</button><button class="btn" id="spdSchema">Retry the database upgrade now</button></div><div id="spdOut" aria-live="polite"></div></section>` : ''}
       <section class="panel" style="margin-top:20px"><h2>Weekly email summary</h2>
         <p style="color:var(--ink-2);max-width:75ch">Every Monday at 9:00: headline numbers, positions past TAT, last week\u2019s joinings, offers and backouts, this month\u2019s KPI scores and open data-check issues. Sent to everyone in the Users sheet with the Admin, Head of HR or TA Lead role, plus any addresses in Settings \u2192 WEEKLY_SUMMARY_TO.</p>
         <div id="wkStatus"><p class="hint">Loading\u2026</p></div></section>`;
+    const spdSchema = s => `<h3>Database upgrade</h3><p>${s.complete ? '<b class="ok-t">Finished</b>' : '<b class="miss">Not finished</b>'} \u00b7 schema ${esc(s.version || '?')} of ${esc(s.target)} \u00b7 ${s.steps} steps done${s.failures ? ` \u00b7 ${s.failures} failed attempt${s.failures === 1 ? '' : 's'}` : ''}${s.nextTry ? ` \u00b7 next automatic try ${esc(new Date(s.nextTry).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }))}` : ''}${s.lastMs ? ` \u00b7 last attempt ${(s.lastMs / 1000).toFixed(1)} s` : ''}${s.tookMs !== undefined ? ` \u00b7 this run ${(s.tookMs / 1000).toFixed(1)} s` : ''}</p>${s.errors.length ? `<ul class="work">${s.errors.map(e => `<li><b>${esc(e.step)}</b>: ${esc(e.message)}</li>`).join('')}</ul>` : ''}`;
+    if ($('#spdRun')) $('#spdRun').onclick = async e => {
+      busy(e.target, true, 'Measuring\u2026');
+      try {
+        const r = await api('apiSpeedCheck');
+        $('#spdOut').innerHTML = `<div class="table-wrap"><table><thead><tr><th>What was timed</th><th class="num">Seconds</th><th>Result</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.what)}</td><td class="num ${x.ms >= 2000 ? 'miss' : ''}"><b>${(x.ms / 1000).toFixed(2)}</b></td><td>${esc(x.note)}</td></tr>`).join('')}</tbody></table></div>
+          <p>Shared lock: <b>${r.lockFree ? 'free' : 'held by someone right now'}</b> \u00b7 release ${esc(r.build)} \u00b7 ${esc(new Date(r.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }))}</p>${spdSchema(r.schema)}<p class="hint">Take a screenshot of this table and send it.</p>`;
+      } catch (err) { toast(err, true); }
+      busy(e.target, false, 'Run the speed check');
+    };
+    if ($('#spdSchema')) $('#spdSchema').onclick = async e => {
+      busy(e.target, true, 'Running\u2026');
+      try { const s = await api('apiSchemaRetry'); $('#spdOut').innerHTML = spdSchema(s); toast(s.complete ? 'The database upgrade is finished.' : 'The upgrade still has failing steps: see the list.', !s.complete); } catch (err) { toast(err, true); }
+      busy(e.target, false, 'Retry the database upgrade now');
+    };
     const wk = async s => {
       s = s || await api('apiWeeklyStatus');
       $('#wkStatus').innerHTML = `<p>Status: <b>${s.on ? 'On' : 'Off'}</b>${s.on && s.by ? ` \u00b7 scheduled by ${esc(s.by)}` : ''}</p>
@@ -6197,8 +6215,11 @@ function pipeFilterLines(list, f, depts) {
 }
 const PF_KEY_ = 'bfcl.pipeFilter';
 async function viewPipeline(v) {
-  await loadPositions();
   const f = S.pipe = S.pipe || {};
+  if (!f.line) { try { f.line = localStorage.getItem('bfcl.pipeLine') || ''; } catch (e) { } }
+  const earlyLine = f.line, early = earlyLine ? fresh('apiPipeline', earlyLine) : null;   // the board starts loading while the positions list loads
+  if (early) early.catch(() => { });
+  await loadPositions();
   const mine = S.positions.filter(p => isLead() || p.Recruiter === S.boot.user.recruiter);
   if (!f.pfInit) { f.pfInit = true; try { Object.assign(f, JSON.parse(localStorage.getItem(PF_KEY_) || '{}')); } catch (e) { } }
   if (!isLead()) f.rec = '';
@@ -6208,6 +6229,7 @@ async function viewPipeline(v) {
   const recList = [...new Set(mine.map(p => String(p.Recruiter || '').trim()).filter(Boolean))].sort();
   const shown = () => pipeFilterLines(mine, f, depts);
   const active = shown();
+  if (f.line && !mine.some(p => p.Line_ID === f.line)) f.line = '';   // a remembered position this user cannot see
   if (!f.line && active.length) f.line = active[0].Line_ID;
   if (!f.line && mine.length) f.line = (pipeFilterLines(mine, { status: 'All' }, depts)[0] || {}).Line_ID;
   v.innerHTML = `
@@ -6273,9 +6295,10 @@ async function viewPipeline(v) {
   $('#pClosed').onchange = e => { f.closed = e.target.checked; renderBoard(); };
   $('#pRefresh').onclick = () => go('pipeline', false);
   if (!f.line) { $('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
-  const tasksP = api('apiTasksForLine', f.line);
-  let P = await fresh('apiPipeline', f.line);
-  let firstTasks = await tasksP.catch(() => null);
+  try { localStorage.setItem('bfcl.pipeLine', f.line); } catch (e) { }
+  const tasksP = api('apiTasksForLine', f.line); tasksP.catch(() => { });
+  let P = await (early && f.line === earlyLine ? early : fresh('apiPipeline', f.line));
+  let firstTasks = tasksP;   // the to-do panel fills in when it arrives; it no longer holds up the board
   const replaced = P.line.Position_Status === 'Replaced';
   const closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
   const owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
