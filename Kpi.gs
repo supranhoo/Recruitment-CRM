@@ -137,6 +137,13 @@ function apiKpiRecon(month, recruiter) {
 function kpiClocks_() {
   return { grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, exCtx: { exempt: exemptIndex_() }, exToday: ymd_(new Date()), ruleCtx: tatContext_() };
 }
+/** A line that can be worked on for the Timely closure KPI: Open, Offered or Closed, not filled internally. */
+function kpiWorkable_(l, status) { return ['Open', 'Offered', 'Closed'].indexOf(status) >= 0 && String(l.Fill_Type || '') !== 'Internal'; }
+/** Worked on in the month: the clock started by the month end and the position had not ended (joined) before the month start. */
+function kpiWorkedIn_(clk, month) {
+  const start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
+  return !!clk.receipt && clk.receipt <= end && !(clk.doj && clk.doj < start);
+}
 /** The recruiter-clock numbers of one position line, as used by every KPI. */
 function kpiLineClock_(l, k) {
   const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
@@ -165,14 +172,14 @@ function computeKpis_(fy) {
   const months = fyMonths_(fy);
   const lines = readTable_(T.MRF.name).rows;
   const recruiters = {};
-  const cell = function () { return { num: 0, den: 0, items: [] }; };
+  const cell = function () { return { num: 0, den: 0, worked: 0, workedOk: 0, items: [] }; };
   const bucket = function (rec, kpi, month) {
     const r = recruiters[rec] = recruiters[rec] || {};
     const k = r[kpi] = r[kpi] || {};
     return k[month] = k[month] || cell();
   };
   const inFy = function (m) { return months.indexOf(m) >= 0; };
-  const clocks = kpiClocks_();
+  const clocks = kpiClocks_(), nowMonth = ymd_(new Date()).slice(0, 7);
 
   lines.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
@@ -192,6 +199,14 @@ function computeKpis_(fy) {
       const c = bucket(rec, kpi, d.month);
       c.den++; if (d.ok) c.num++;
       c.items.push(Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief));
+    });
+    // Positions worked on in each month (clock started by month end, not ended before month start), and how many joined on time in it.
+    if (kpiWorkable_(l, status)) months.forEach(function (m) {
+      if (m > nowMonth) return;
+      const d = kpiDue_(l, 'TIMELY_CLOSURE', targets, rec, clk, status);
+      if (!d || !kpiWorkedIn_(clk, m)) return;
+      const c = bucket(rec, 'TIMELY_CLOSURE', m);
+      c.worked++; if (clk.doj && clk.doj.slice(0, 7) === m && clk.doj && d.days <= d.allowed) c.workedOk++;
     });
 
     // 3. Offer backout rate — backouts in the month ÷ offers made in the month.
@@ -299,6 +314,7 @@ function computeKpis_(fy) {
       Object.keys(recruiters[rec][kpi]).forEach(function (m) {
         const src = recruiters[rec][kpi][m];
         const t = (team[kpi] = team[kpi] || {})[m] = team[kpi][m] || cell();
+        t.worked += src.worked || 0; t.workedOk += src.workedOk || 0;
         t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0);
         src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
       });
@@ -313,7 +329,8 @@ function computeKpis_(fy) {
         score: pending ? null : COUNT_SCORES[kpi](c.num), items: c.items };
     }
     const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
-    return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScore_(pct) : null, items: c.items };
+    return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScore_(pct) : null, items: c.items,
+      worked: kpi === 'TIMELY_CLOSURE' ? c.worked : undefined, workedOk: kpi === 'TIMELY_CLOSURE' ? c.workedOk : undefined };
   };
   const out = {};
   Object.keys(recruiters).forEach(function (rec) {
@@ -336,7 +353,7 @@ function apiKpi(fy, fresh) {
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
   const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0');
-  const key = 'kpi3_' + fy;
+  const key = 'kpi4_' + fy;
   const cache = CacheService.getScriptCache();
   if (!fresh) {
     const hit = cache.get(key);
