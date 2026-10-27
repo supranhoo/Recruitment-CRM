@@ -80,12 +80,13 @@ function kpiTargets_() {
 }
 
 const KPI_RECON_BUCKETS_ = [
-  ['counted', 'Counted in Timely closure', 'Joined in the month and timed against the target.'],
+  ['ontime', 'Counted, on time', 'Joined within the allowed days, in the month it joined (or fell due).'],
+  ['late', 'Counted, filled late', 'Joined after the allowed days; counted as a miss in the month it fell due.'],
+  ['overdue', 'Counted, overdue and not joined', 'Fell due in this month and nobody has joined yet; a miss.'],
+  ['other', 'Counted in another month', 'Not yet due, or it joined or falls due in a different month.'],
   ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
-  ['notarget', 'Joined but no KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
-  ['nooffer', 'Joining date set, offer not marked sent', 'The position still shows Open because Offer sent is not Yes, so it is not counted as filled.'],
+  ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
-  ['pending', 'Open or Offered, not joined by month end', 'Counted in the month they join.'],
   ['nohire', 'Closed without a hire', 'Not needed, no vacancy or on hold.'],
   ['replaced', 'Replaced after a backout, or removed', 'The replacement line carries the vacancy.']
 ];
@@ -93,29 +94,31 @@ const KPI_RECON_BUCKETS_ = [
 /**
  * Where every position "worked on" in a month goes in the Timely closure KPI, so the count can be reconciled by hand.
  * A position is worked on in the month if its clock started on or before the month end and it had not ended before the month
- * start (ended = joined, closed without a hire, replaced or filled internally). Status is as of today.
+ * start (ended = joined, closed without a hire, replaced or filled internally). Status is as of today. Uses the same placement
+ * (`kpiDue_`) as the scorecard, so the first three rows add up to the cell.
  */
 function kpiRecon_(month, recruiter) {
-  const targets = kpiTargets_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
+  const targets = kpiTargets_(), clocks = kpiClocks_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
   const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
   const out = {}; KPI_RECON_BUCKETS_.forEach(function (b) { out[b[0]] = []; });
   readTable_(T.MRF.name).rows.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
     if (want && rec.toLowerCase() !== want) return;
-    const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ), status = positionStatus_(l);
+    const status = positionStatus_(l), clk = kpiLineClock_(l, clocks), receipt = clk.receipt, doj = clk.doj;
     const closedOn = doj || ymd_(l.Internal_Effective_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Replaced_On);
     const joinedIn = !!doj && doj.slice(0, 7) === month;
     let bucket = '';
     if (joinedIn && !receipt) bucket = 'nostart';
     else if (!receipt || receipt > end || (closedOn && closedOn < start)) return;
-    else if (status === 'Closed' && joinedIn) {
-      const t = targetFor_(targets, rec, 'TIMELY_CLOSURE', month);
-      bucket = t && levelMatch_(t.levels, l.Grade) ? 'counted' : 'notarget';
-    } else if (joinedIn && status === 'Open') bucket = 'nooffer';
     else if (status === 'Replaced' || status === 'Removed') bucket = 'replaced';
     else if (['Not Needed', 'No Vacancy', 'On Hold'].indexOf(status) >= 0) bucket = 'nohire';
-    else if (String(l.Fill_Type || '') === 'Internal' && status === 'Closed') bucket = 'internal';
-    else bucket = 'pending';
+    else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
+    else {
+      const d = kpiDue_(l, 'TIMELY_CLOSURE', targets, rec, clk, status);
+      if (!d) bucket = 'notarget';
+      else if (d.month !== month) bucket = 'other';
+      else bucket = d.ok ? 'ontime' : doj ? 'late' : 'overdue';
+    }
     out[bucket].push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
       receipt: receipt, doj: doj });
   });
@@ -130,10 +133,34 @@ function apiKpiRecon(month, recruiter) {
   return kpiRecon_(month, recruiter);
 }
 
+/** The shared clocks every KPI line needs (built once per run). */
+function kpiClocks_() {
+  return { grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, exCtx: { exempt: exemptIndex_() }, exToday: ymd_(new Date()), ruleCtx: tatContext_() };
+}
+/** The recruiter-clock numbers of one position line, as used by every KPI. */
+function kpiLineClock_(l, k) {
+  const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
+  const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
+  const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
+  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused };
+}
+/**
+ * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
+ * line is not part of the KPI (no target, other level, internal fill, not Open / Offered / Closed).
+ */
+function kpiDue_(l, kpi, targets, rec, clk, status) {
+  if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
+  const t = targetFor_(targets, rec, kpi, clk.doj ? clk.doj.slice(0, 7) : clk.receipt.slice(0, 7));
+  if (!t || !levelMatch_(t.levels, l.Grade)) return null;
+  const allowed = t.days + (t.exempt ? clk.notice : 0) + clk.ex.days;
+  const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
+  const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
+  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed };
+}
+
 function computeKpis_(fy) {
   ensureKpiTargets_();
   ensureSchema_();
-  const grace = Number(settings_().NOTICE_GRACE_DAYS) || 30;
   const targets = kpiTargets_();
   const months = fyMonths_(fy);
   const lines = readTable_(T.MRF.name).rows;
@@ -145,7 +172,7 @@ function computeKpis_(fy) {
     return k[month] = k[month] || cell();
   };
   const inFy = function (m) { return months.indexOf(m) >= 0; };
-  const exCtx = { exempt: exemptIndex_() }, exToday = ymd_(new Date()), ruleCtx = tatContext_();
+  const clocks = kpiClocks_();
 
   lines.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
@@ -153,40 +180,19 @@ function computeKpis_(fy) {
     const status = positionStatus_(l);
     // Recruiter clock adjustments, as on the TAT screens: approved exemptions that apply to the recruiter, notice beyond
     // the grace (unless the Head of HR rejected it) and on-hold / paused days, which are not counted against the recruiter.
-    const ex = exemptFor_(exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(ruleCtx, l.Grade, receipt).grace : grace), hold = Number(l.Hold_Days) || 0;
-    const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || exToday) : 0;
+    const clk = kpiLineClock_(l, clocks), ex = clk.ex, hold = clk.hold, paused = clk.paused;
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
 
-    // 1. Timely closure — positions filled in the month, within the recruiter's TAT.
-    if (status === 'Closed' && receipt && doj && inFy(doj.slice(0, 7))) {
-      const m = doj.slice(0, 7), t = targetFor_(targets, rec, 'TIMELY_CLOSURE', m);
-      if (t && levelMatch_(t.levels, l.Grade)) {
-        const allowed = t.days + (t.exempt ? notice : 0) + ex.days;
-        const days = Math.max(0, daysBetween_(receipt, doj) - hold - paused), ok = days <= allowed;
-        const c = bucket(rec, 'TIMELY_CLOSURE', m);
-        c.den++; if (ok) c.num++;
-        c.items.push(Object.assign({ days: days, allowed: allowed, ok: ok }, brief));
-      }
-    }
-
-    // 2. M-level fulfilment — targeted = due this month (receipt + TAT) or filled this month.
-    if (receipt && ['Open', 'Offered', 'Closed'].indexOf(status) >= 0 && String(l.Fill_Type || '') !== 'Internal') {
-      const probe = doj ? doj.slice(0, 7) : receipt.slice(0, 7);
-      const t = targetFor_(targets, rec, 'M_FULFILMENT', probe);
-      if (t && levelMatch_(t.levels, l.Grade)) {
-        const allowed = t.days + (t.exempt ? notice : 0) + ex.days;
-        const due = addDays_(receipt, allowed + hold + paused), dueM = due.slice(0, 7);
-        const filledM = doj ? doj.slice(0, 7) : '';
-        const ok = !!doj && Math.max(0, daysBetween_(receipt, doj) - hold - paused) <= allowed;
-        const month = filledM && filledM <= dueM ? filledM : dueM;
-        if (inFy(month) && month <= ymd_(new Date()).slice(0, 7)) {
-          const c = bucket(rec, 'M_FULFILMENT', month);
-          c.den++; if (ok) c.num++;
-          c.items.push(Object.assign({ due: due, allowed: allowed, ok: ok, status: status }, brief));
-        }
-      }
-    }
+    // 1 + 2. Timely closure (all levels) and M-level fulfilment: a position counts in the month it joined if that is on or before the month
+    // it fell due, else in its due month (late and unfilled positions count against the month they fell due). On time = joined within the allowed days.
+    ['TIMELY_CLOSURE', 'M_FULFILMENT'].forEach(function (kpi) {
+      const d = kpiDue_(l, kpi, targets, rec, clk, status);
+      if (!d || !inFy(d.month) || d.month > ymd_(new Date()).slice(0, 7)) return;
+      const c = bucket(rec, kpi, d.month);
+      c.den++; if (d.ok) c.num++;
+      c.items.push(Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief));
+    });
 
     // 3. Offer backout rate — backouts in the month ÷ offers made in the month.
     const offerM = ymd_(l.Offer_Date).slice(0, 7), backM = ymd_(l.Backout_Date).slice(0, 7);
@@ -330,7 +336,7 @@ function apiKpi(fy, fresh) {
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
   const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0');
-  const key = 'kpi2_' + fy;
+  const key = 'kpi3_' + fy;
   const cache = CacheService.getScriptCache();
   if (!fresh) {
     const hit = cache.get(key);

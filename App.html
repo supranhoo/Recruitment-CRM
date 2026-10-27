@@ -3754,7 +3754,7 @@ async function viewKpi(v, fresh) {
       ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc(KPI_NOTES[kpi] || tgt(kpi))}</span></th>
         ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
     </tbody></table></div>
-    <p class="legend">Score: 5 for 100%, 4 for 95%+, 3 for 90%+, 2 for 85%+, 1 for 80%+, 0 below 80%. Timely closure counts positions filled in the month. M-level fulfilment counts positions due that month (MRF date + TAT) or filled that month. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Settings → KPI_CAPTURE_FROM); tracker accuracy shows only for months with an audit sample.</p>`;
+    <p class="legend">Score: 5 for 100%, 4 for 95%+, 3 for 90%+, 2 for 85%+, 1 for 80%+, 0 below 80%. Timely closure counts every position due in the month (MRF date + TAT), or filled early or on time in the month it joins; a late or unfilled position counts against the month it fell due. M-level fulfilment counts positions due that month (MRF date + TAT) or filled that month. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Settings → KPI_CAPTURE_FROM); tracker accuracy shows only for months with an audit sample.</p>`;
   $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
   $('#krec').onchange = e => { f.rec = e.target.value; go('kpi', false); };
   $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
@@ -3788,7 +3788,7 @@ function kpiDrill(k, f, kpi, m) {
     head = `<th>Event</th><th>Date</th><th>Position</th>${team ? '<th>Recruiter</th>' : ''}`;
     rows = c.items.sort((a, b) => a.date < b.date ? -1 : 1).map(i => `<tr><td>${i.event === 'Backout' ? '<b>Backout</b>' : 'Offer'}</td><td class="nw">${fmtDate(i.date)}</td><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}</tr>`);
   } else {
-    const due = kpi === 'M_FULFILMENT';
+    const due = kpi === 'M_FULFILMENT' || kpi === 'TIMELY_CLOSURE';
     head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>MRF date</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
     rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}
       <td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
@@ -3808,7 +3808,7 @@ async function kpiReconDialog(month, rec) {
   const csv = () => csvSave(`kpi-positions-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined'],
     r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
   const d = cpDlg(`<h2 id="cpTitle">All positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
-    <p class="hint">Positions whose clock started on or before the month end and which had not ended before it. Status is as of today. Only the first row is in the KPI.</p>
+    <p class="hint">Positions whose clock started on or before the month end and which had not ended before it. Status is as of today. The first three rows are the KPI\u2019s count.</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
     ${r.buckets.map(b => `<tr data-b="${esc(b.key)}"><td>${esc(b.title)}<span class="sub">${esc(b.note)}</span></td><td class="num">${b.items.length ? `<button type="button" class="linklike" data-open="${esc(b.key)}">${b.items.length}</button>` : 0}</td></tr>`).join('')}
     <tr style="font-weight:600"><td>Total</td><td class="num">${r.total}</td></tr></tbody></table></div>
