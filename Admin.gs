@@ -156,6 +156,7 @@ function dataChecks_() {
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
   const c8 = add('notice_proof', 'Notice beyond the grace without proof', 'Notice over 30 days extends the TAT automatically; attach the notice proof or ask the Head of HR to review it (Admin \u2192 TAT exemptions).', 'MRF');
   const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
+  const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it drops out of Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
   try {
     const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
     funnelDuplicates_().forEach(function (g) { g.extra.forEach(function (e) { const l = lm[e.Line_ID] || {}; c9.items.push({ id: e.Entry_ID, label: String(l.MRF_No || e.Line_ID) + ' \u00b7 ' + String(l.Position || '') + ' (' + String(e.Recruiter || '') + ') \u00b7 ' + ymd_(e.Entry_Date), detail: (funnelSame_(g.keep, e) ? 'Identical to ' : 'Different numbers from ') + g.keep.Entry_ID }); }); });
@@ -170,6 +171,8 @@ function dataChecks_() {
     const offer = ymd_(l.Offer_Date), doj = ymd_(l.Actual_DOJ), rec = ymd_(l.Receipt_Date);
     if (String(l.Offer_Sent).toUpperCase() === 'YES' && !offer) c2.items.push({ id: l.Line_ID, label: label, detail: 'Offer sent = Yes' });
     const asg = ymd_(l.Assigned_On);
+    if (doj && positionStatus_(l) === 'Open') c10.items.push({ id: l.Line_ID, label: label, detail: 'Joining date ' + doj + ' but Offer sent is not Yes' });
+    else if (doj && !tatStart_(l)) c10.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' but no start date' });
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
     if (String(l.Notice_Ext_Status || '') !== 'Rejected' && !l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
       const g = ruleFor_(nctx, l.Grade, tatStart_(l)).grace, n = Number(l.Notice_Period_Days) || 0;

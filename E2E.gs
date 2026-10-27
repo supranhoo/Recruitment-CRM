@@ -35,7 +35,7 @@ function e2eRun_(trash) {
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 15; });
+  t('A6 data checks', function () { return apiDataChecks().length === 16; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });

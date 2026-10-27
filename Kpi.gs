@@ -70,15 +70,71 @@ function addDays_(ymd, n) {
   return d.toISOString().slice(0, 10);
 }
 
-function computeKpis_(fy) {
-  ensureKpiTargets_();
-  ensureSchema_();
-  const grace = Number(settings_().NOTICE_GRACE_DAYS) || 30;
-  const targets = readTable_(KPI_TARGETS).rows.map(function (r) {
+/** The KPI target rows, normalised. */
+function kpiTargets_() {
+  return readTable_(KPI_TARGETS).rows.map(function (r) {
     const f = r.Effective_From instanceof Date ? fmt_(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '0000-00').slice(0, 7);
     return { recruiter: String(r.Recruiter).trim().toLowerCase(), kpi: String(r.KPI).trim().toUpperCase(), levels: r.Levels,
       days: Number(r.TAT_Days) || 0, exempt: String(r.Notice_Exemption).toUpperCase() !== 'NO', from: f };
   });
+}
+
+const KPI_RECON_BUCKETS_ = [
+  ['counted', 'Counted in Timely closure', 'Joined in the month and timed against the target.'],
+  ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
+  ['notarget', 'Joined but no KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
+  ['nooffer', 'Joining date set, offer not marked sent', 'The position still shows Open because Offer sent is not Yes, so it is not counted as filled.'],
+  ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
+  ['pending', 'Open or Offered, not joined by month end', 'Counted in the month they join.'],
+  ['nohire', 'Closed without a hire', 'Not needed, no vacancy or on hold.'],
+  ['replaced', 'Replaced after a backout, or removed', 'The replacement line carries the vacancy.']
+];
+
+/**
+ * Where every position "worked on" in a month goes in the Timely closure KPI, so the count can be reconciled by hand.
+ * A position is worked on in the month if its clock started on or before the month end and it had not ended before the month
+ * start (ended = joined, closed without a hire, replaced or filled internally). Status is as of today.
+ */
+function kpiRecon_(month, recruiter) {
+  const targets = kpiTargets_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
+  const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
+  const out = {}; KPI_RECON_BUCKETS_.forEach(function (b) { out[b[0]] = []; });
+  readTable_(T.MRF.name).rows.forEach(function (l) {
+    const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
+    if (want && rec.toLowerCase() !== want) return;
+    const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ), status = positionStatus_(l);
+    const closedOn = doj || ymd_(l.Internal_Effective_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Replaced_On);
+    const joinedIn = !!doj && doj.slice(0, 7) === month;
+    let bucket = '';
+    if (joinedIn && !receipt) bucket = 'nostart';
+    else if (!receipt || receipt > end || (closedOn && closedOn < start)) return;
+    else if (status === 'Closed' && joinedIn) {
+      const t = targetFor_(targets, rec, 'TIMELY_CLOSURE', month);
+      bucket = t && levelMatch_(t.levels, l.Grade) ? 'counted' : 'notarget';
+    } else if (joinedIn && status === 'Open') bucket = 'nooffer';
+    else if (status === 'Replaced' || status === 'Removed') bucket = 'replaced';
+    else if (['Not Needed', 'No Vacancy', 'On Hold'].indexOf(status) >= 0) bucket = 'nohire';
+    else if (String(l.Fill_Type || '') === 'Internal' && status === 'Closed') bucket = 'internal';
+    else bucket = 'pending';
+    out[bucket].push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
+      receipt: receipt, doj: doj });
+  });
+  const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
+  return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
+}
+
+function apiKpiRecon(month, recruiter) {
+  currentUser_();
+  month = String(month || '');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Pick a month.');
+  return kpiRecon_(month, recruiter);
+}
+
+function computeKpis_(fy) {
+  ensureKpiTargets_();
+  ensureSchema_();
+  const grace = Number(settings_().NOTICE_GRACE_DAYS) || 30;
+  const targets = kpiTargets_();
   const months = fyMonths_(fy);
   const lines = readTable_(T.MRF.name).rows;
   const recruiters = {};

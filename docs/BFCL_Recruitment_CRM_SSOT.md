@@ -1130,6 +1130,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**KPI reconciliation: where every position of a month sits** (no schema change; v122; 27 Oct 2026)
+- RCA (user report: Timely closure Sep 26 showed 32/35 while about 100 positions were worked on): the KPI population is **positions that joined in the month** (status Closed, start date, matching KPI target); positions still Open or Offered, closed without a hire, replaced or filled internally are not in it by design, but nothing on screen said so and the month list showed only the counted 35. 5-Why: narrower population than people count \u2192 unit only in a footnote \u2192 no list of what is outside \u2192 designed for scoring, not audit \u2192 no reconciliation requirement.
+- CAPA: the Timely closure month dialog has **\u201cWhere are all the positions of this month?\u201d** (`apiKpiRecon`, `kpiRecon_`): every position worked on in the month in one of counted / joined but no start date / joined but no KPI target / joining date set but offer not marked sent / filled internally / open or offered at month end / closed without a hire / replaced or removed, with counts, lists and CSV. New Data check \u201cJoined positions the KPI cannot count\u201d (16 checks). Scores are unchanged.
+
 **Official email separate from the sign-in account** (schema 41; v121; 26 Oct 2026)
 - `Users.Email` stays the Google sign-in and the only key for access, sharing and audit. A new optional `Users.Official_Email` (Admin → Users → "Official email") is where correspondence goes. `mailTo_(row)` returns the official address if it is valid, else the sign-in account; every sender uses it: the Monday weekly summary (each active TA Lead, Head of HR and Admin, plus any extras in `Settings.WEEKLY_SUMMARY_TO`, de-duplicated), the summary test (to the caller's official address) and job-failure alerts to Admins. An invalid official address is refused on save. `M_Recruiters.Email` still holds the sign-in account. Rule for any future mail: resolve the address with `mailTo_` / `mailOfLogin_`, never use `Users.Email` directly.
 

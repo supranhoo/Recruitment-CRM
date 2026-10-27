@@ -3794,10 +3794,33 @@ function kpiDrill(k, f, kpi, m) {
       <td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
       <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}${i.extra || i.hold || i.paused ? `<span class="sub" title="${esc(i.reasons || '')}">${[i.extra ? '+' + i.extra + ' d exemption' : '', i.hold ? i.hold + ' d on hold' : '', i.paused ? i.paused + ' d paused' : ''].filter(Boolean).join(' \u00b7 ')}</span>` : ''}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
   }
-  openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
+  const drawer = openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
+    ${kpi === 'TIMELY_CLOSURE' ? '<p style="margin:12px 0 0"><button class="btn" id="kpiRecon">Where are all the positions of this month?</button></p>' : ''}
     <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : c.pct + '%'}</b></div><div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / offers' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div><div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
     ${c.items.length ? '' : '<p class="empty">Nothing to count this month.</p>'}
     <div class="table-wrap" style="margin-top:14px"><table><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`);
+  if ($('#kpiRecon', drawer)) $('#kpiRecon', drawer).onclick = () => kpiReconDialog(m, f.rec);
+}
+
+/** Every position worked on in the month and where it sits in the Timely closure KPI, so the count can be reconciled by hand. */
+async function kpiReconDialog(month, rec) {
+  let r; try { r = await api('apiKpiRecon', month, rec); } catch (e) { toast(e, true); return; }
+  const csv = () => csvSave(`kpi-positions-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const d = cpDlg(`<h2 id="cpTitle">All positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
+    <p class="hint">Positions whose clock started on or before the month end and which had not ended before it. Status is as of today. Only the first row is in the KPI.</p>
+    <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
+    ${r.buckets.map(b => `<tr data-b="${esc(b.key)}"><td>${esc(b.title)}<span class="sub">${esc(b.note)}</span></td><td class="num">${b.items.length ? `<button type="button" class="linklike" data-open="${esc(b.key)}">${b.items.length}</button>` : 0}</td></tr>`).join('')}
+    <tr style="font-weight:600"><td>Total</td><td class="num">${r.total}</td></tr></tbody></table></div>
+    <div id="krList"></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" id="krCsv">Download CSV</button><button class="btn" data-close>Close</button></div>`);
+  const root = d || document;
+  $$('[data-open]', root).forEach(b => b.onclick = () => {
+    const bk = r.buckets.find(x => x.key === b.dataset.open);
+    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th></tr></thead><tbody>
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td></tr>`).join('')}</tbody></table></div>`;
+  });
+  const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
 }
 
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
