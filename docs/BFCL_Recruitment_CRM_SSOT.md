@@ -1130,6 +1130,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Task "Open" no longer reloads the page you are on** (no schema change; v125; 28 Oct 2026)
+- Report: on a position's Pipeline page, Open on \u201cChase the department: Screening questions v2 reply\u201d redirected to itself. RCA: JD / question to-dos (`dept_reply`, `revise_doc`, `share_jd`, `share_questions`) opened `{type: 'pipeline'}`, and the same task list is shown on that Pipeline page, so `go('pipeline')` rebuilt the same screen. 5-Why: reload of the current page \u2192 coarse target \u2192 chosen when to-dos lived only on My day/Overview \u2192 list reused on the position page without re-checking targets \u2192 no rule that an Open target must differ from the current screen.
+- Fix: those tasks now open `docflow` (JD & screening questions, where the department's reply and changes are recorded): in place when the Pipeline page of that position is showing, else navigate to it and open it. `taskTarget` decides in place vs navigate for docflow, pipeline and card targets; tasks cached before this release are mapped by rule. Rule for new to-dos: an Open target must open something other than the screen it is shown on.
+
 **Timely closure shows how many positions were worked on** (no schema change; v124; 27 Oct 2026)
 - User report after v123: September stayed 32/35 against about 100 positions worked on. The score keeps the due-month rule (an open position still inside its TAT is not a miss; scoring it as one would put every month under the 80% floor). Each Timely closure cell now carries a second line \u201cN of M worked on\u201d: M = positions worked on in the month (clock started by month end and not joined before month start; Open, Offered or Closed; not internal; with a target), N = those that joined in that month within the allowed days. Team cells sum the recruiters. KPI cache key `kpi4_`. The reconciliation dialog still accounts for every position. Option not taken: switching the score itself to the worked-on basis (would need new scoring bands, a Head of HR decision).
 

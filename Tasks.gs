@@ -143,7 +143,7 @@ function computeTasks_() {
     const start = tatStart_(l);
     if (!start || start < since30) return;
     const dd = docsBy[id] || { JD: [], SQ: [] }, jl = vlast(dd.JD), sl = vlast(dd.SQ);
-    const base = { recruiter: String(l.Recruiter), line: id, app: '', open: { type: 'pipeline', line: id } };
+    const base = { recruiter: String(l.Recruiter), line: id, app: '', open: { type: 'docflow', line: id } };
     const ctx = lineLabel(l) + ' \u00b7 ' + l.Dept;
     [jl, sl].forEach(function (d) {
       if (!d) return;
