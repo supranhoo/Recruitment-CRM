@@ -388,9 +388,25 @@ function taskItemHtml(t, mode) {
       <div class="task-note" hidden><input aria-label="Note (optional)" maxlength="200" placeholder="Note (optional)"><button class="btn sm primary" data-act="noteSave">Save</button><button class="btn sm" data-act="noteCancel">Cancel</button></div>`}
   </li>`;
 }
-function taskOpen(o) {
+const DOCFLOW_RULES_ = ['dept_reply', 'revise_doc', 'share_jd', 'share_questions'];
+/** What Open does, given where the user already is: 'flow' / 'card' / 'board' act in place, 'go' navigates. */
+function taskTarget(o, view, line, hasFlow, hasCard) {
+  if (!o) return 'none';
+  const here = view === 'pipeline' && line === o.line;
+  if (o.type === 'docflow') return here && hasFlow ? 'flow' : 'go';
+  if (o.type === 'app') return here && hasCard ? 'card' : 'go';
+  if (o.type === 'pipeline') return here ? 'board' : 'go';
+  return 'go';
+}
+function taskOpen(o, rule) {
   if (!o) return;
-  if (o.type === 'app') { S.pipe = Object.assign(S.pipe || {}, { line: o.line, openApp: o.app }); go('pipeline', true); }
+  if (rule && DOCFLOW_RULES_.includes(rule) && o.type === 'pipeline') o = { type: 'docflow', line: o.line };   // tasks cached before v125
+  const act = taskTarget(o, S.view, (S.pipe || {}).line, !!$('#pFlow'), o.type === 'app' && !!$(`.pcard[data-app="${o.app}"]`));
+  if (act === 'flow') { $('#pFlow').click(); return; }
+  if (act === 'card') { $(`.pcard[data-app="${o.app}"]`).click(); return; }
+  if (act === 'board') { const b = $('.board'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  if (o.type === 'docflow') { S.pipe = Object.assign(S.pipe || {}, { line: o.line, openFlow: true }); go('pipeline', true); }
+  else if (o.type === 'app') { S.pipe = Object.assign(S.pipe || {}, { line: o.line, openApp: o.app }); go('pipeline', true); }
   else if (o.type === 'line') loadPositions().then(() => { const p = lineById(o.line); if (p) positionDrawer(p); });
   else if (o.type === 'candidate') openCandidate(o.id);
   else if (o.type === 'bgv') { S.bgvOpenId = o.id; S.bgvF = Object.assign(S.bgvF || {}, { tab: 'mine' }); go('bgv', true); }
@@ -410,7 +426,7 @@ function bindTaskList(root, tasks, after) {
     $$('[data-act]', li).forEach(b => b.onclick = () => {
       const act = b.dataset.act, sz = $('.task-snooze', li);
       if (act === 'copy') copyText(t.message);
-      else if (act === 'open') taskOpen(t.open);
+      else if (act === 'open') taskOpen(t.open, t.rule);
       else if (act === 'chased' || act === 'done') { const nr = $('.task-note', li); if (!nr) return run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : 'Mark done'; $('input', nr).focus(); }
       else if (act === 'noteCancel') $('.task-note', li).hidden = true;
       else if (act === 'noteSave') { const nr = $('.task-note', li); run(b, nr.dataset.act, { note: $('input', nr).value }); }
@@ -6692,6 +6708,7 @@ async function viewPipeline(v) {
   };
   renderBoard();
   if (f.openApp) { const a = P.apps.find(x => x.App_ID === f.openApp); f.openApp = ''; if (a) openApp(a); }
+  if (f.openFlow) { f.openFlow = false; const b = $('#pFlow'); if (b) b.click(); }
 }
 function daysAhead(n) { const d = new Date(); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 
