@@ -60,4 +60,16 @@ This folder is configured for `clasp` through `.clasp.json`.
 2. In the Apps Script editor: **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The web-app link never changes.
 3. Add the release to the changelog in `docs/BFCL_Recruitment_CRM_SSOT.md`, then commit and tag it, for example `git tag v59` and `git push --tags`.
 
+### Standing rule: a confirmed push goes live
+
+When the owner confirms a push, it is not finished until the live web app is updated and checked. Do all of these, in order:
+
+1. `clasp push`, then `clasp pull` into a scratch folder and compare it with the repo. They must match.
+2. Create a new version: `clasp version "<build> <short description>"`.
+3. Update the **existing** web app deployment (never create a new one, because that changes the link): list it with `clasp deployments`, then `clasp deploy -i <deploymentId> -V <version> -d "<build>"`.
+4. Check the live build number (the rail footer, or `apiBootstrap().build`) equals `BUILD_ID` in `Config.gs`.
+5. Delete `~/.clasprc.json` when finished, and never commit it.
+
+Report the result in plain words every time: **"live"** only when step 4 passed, otherwise **"pushed to Apps Script, not live"** with the reason, for example no Google sign-in in a cloud session. Raise `BUILD_ID` before each release. Without the owner's confirmation, push to GitHub only.
+
 The first page load after a release that raises the schema version upgrades the database (up to a minute).
