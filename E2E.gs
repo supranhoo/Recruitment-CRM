@@ -198,22 +198,24 @@ function e2eRun_(trash) {
   t('E4 day note and tasks saved', function () { return !!apiSaveDaySummary({ date: today, overview: 'E2E day', tasks: [{ t: 'E2E task', d: true }, { t: 'Open task', d: false }], recruiter: String(L1.Recruiter) }).summaryId; });
   t('E5 daily review shows the day', function () {
     _tables = {}; const d = apiDaySummary(today); const r = d.recruiters.filter(function (x) { return x.recruiter === String(L1.Recruiter); })[0];
-    return r && r.overview === 'E2E day' && r.tasks.length === 2 && d.team.CV_Reviewed >= (typedMetrics_(today).indexOf('CV_Reviewed') >= 0 ? 4 : 1) && r.funnel.Joined >= 1 && Object.keys(r.moves).length > 5 ? Object.keys(r.moves).length + ' kinds of move' : false;
+    return r && r.overview === 'E2E day' && r.tasks.length === 2 && (d.team.Sourced || 0) >= 1 && r.funnel.Joined >= 1 && Object.keys(r.moves).length > 5 ? Object.keys(r.moves).length + ' kinds of move' : false;
   });
-  t('E5b scorecard credits every stage a card passes, once', function () {
+  t('E5b scorecard credits every Pipeline stage a card passes, once', function () {
     const ev = function (from, to, o, by) { return { From_Stage: from, To_Stage: to, Outcome: o || '', Changed_By: by || 'x@y', Note: '' }; };
-    const names = function (h) { return pipelineCredits_(h).map(function (c) { return c.metric; }).join(); };
-    return names(ev('', 'Sourced')) === 'CV_Sourced'
-      && names(ev('Sourced', 'Technical')) === 'CV_Reviewed,HR_1st_Round,CV_Shared_Dept,Shortlisted_Dept,Interviews_Done'
-      && names(ev('Technical', 'HR', 'Selected')).indexOf('Selected_Final') >= 0
-      && names(ev('Sourced', 'Sourced', 'Rejected')) === 'CV_Reviewed'
+    const names = function (h, fast) { return pipelineCredits_(h, fast).map(function (c) { return c.metric; }).join(); };
+    return names(ev('', 'Sourced')) === 'Sourced'
+      && names(ev('Sourced', 'Technical')) === 'Screened,Shared,Confirmed,Technical'
+      && names(ev('Technical', 'HR', 'Selected')) === 'HR'
+      && names(ev('Sourced', 'Sourced', 'Rejected')) === ''
+      && names(ev('Sourced', 'Offer'), true) === 'Shared,Confirmed,Offer'
       && names(ev('', 'Sourced', '', 'migration')) === ''
       && names(ev('Sourced', 'Offer', 'Reconciled')) === '' ? 'ok' : false;
   });
-  t('E5c funnel start date gates the typed CVs sourced / reviewed', function () {
+  t('E5c funnel start date and stage columns', function () {
     const cut = cutover_(), v2 = funnelV2_();
     return v2 >= cut && derivedMetrics_(addDays_(cut, -1)).length === 0 && typedMetrics_(addDays_(cut, -1)).length === FUNNEL_METRICS.length
-      && typedMetrics_(v2).length === 0 && derivedMetrics_(v2).indexOf('CV_Sourced') >= 0 ? 'ok' : false;
+      && dayStagesFor_(cut).join() === STAGES.join() && dayStagesFor_(addDays_(cut, -1)).length === LEGACY_DAY_STAGES.length
+      && typedMetrics_(v2).length === 0 && derivedMetrics_(v2).indexOf('Sourced') >= 0 && derivedMetrics_(v2).length === STAGES.length ? 'ok' : false;
   });
   t('E5d once per card holds when a single day is asked for', function () {
     const day = pipelineEvents_(today, today), seen = {}; let dup = 0;

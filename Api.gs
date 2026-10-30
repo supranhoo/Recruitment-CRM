@@ -242,8 +242,15 @@ function apiListFunnel(filter) {
  */
 function funnelWithPipeline_(u, filter, from, to, rows) {
   const cut = cutover_(), today = ymd_(new Date());
-  const pipedOn = function (day) { return derivedMetrics_(day).filter(function (m) { return FUNNEL_METRICS.indexOf(m) >= 0; }); };
-  rows.forEach(function (o) { pipedOn(String(o.Entry_Date)).forEach(function (m) { o[m] = 0; }); });
+  const pipedOn = function (day) { return derivedMetrics_(day); };
+  const staleTyped = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
+  // From the switch-over a row carries one number per Pipeline stage. CV received is the typed CVs sourced until the funnel start date.
+  rows.forEach(function (o) {
+    const day = String(o.Entry_Date); if (day < cut) return;
+    STAGES.forEach(function (k) { o[k] = 0; });
+    staleTyped.forEach(function (k) { o[k] = 0; });
+    if (pipedOn(day).indexOf('Sourced') < 0) o.Sourced = Number(o.CV_Sourced) || 0;
+  });
   const f0 = from && from > cut ? from : cut, upto = to > today ? today : to;
   if (upto < f0) return rows;
   const mineName = String(u.recruiter || '').trim().toLowerCase();
@@ -266,6 +273,7 @@ function funnelWithPipeline_(u, filter, from, to, rows) {
     if (!o) {
       o = { Entry_ID: '', Entry_Date: g.day, Line_ID: g.line, MRF_No: g.mrf, Recruiter: g.recruiter, Remarks: '', FB_From_Dept: '', derived: true, canEdit: false };
       FUNNEL_METRICS.forEach(function (m) { o[m] = 0; });
+      STAGES.forEach(function (k) { o[k] = 0; });
       rows.push(o);
     }
     Object.keys(g.counts).forEach(function (m) { o[m] = g.counts[m]; });
@@ -559,13 +567,13 @@ function computeDashboard_() {
     if (ymd_(l.Backout_Date) >= since180) k.backouts180++;
   });
 
-  const funnel = { CV_Sourced: 0, CV_Reviewed: 0, HR_1st_Round: 0, CV_Shared_Dept: 0, Shortlisted_Dept: 0, Interviews_Done: 0, Selected_Final: 0 };
+  const funnel = {}; STAGES.forEach(function (k) { funnel[k] = 0; });   // the Pipeline stages, from the switch-over
   const cut = cutover_(), todayYmd = ymd_(new Date());
   readTable_(T.FUNNEL.name).rows.forEach(function (f) {
     const day = ymd_(f.Entry_Date);
     if (day < since30) return;
     const typedM = typedMetrics_(day);
-    FUNNEL_METRICS.forEach(function (m) { if (typedM.indexOf(m) >= 0) funnel[m] += Number(f[m]) || 0; });
+    if (day >= cut && typedM.indexOf('CV_Sourced') >= 0) funnel.Sourced += Number(f.CV_Sourced) || 0;   // typed CVs sourced until the funnel start date
     const b = byRec[String(f.Recruiter)];
     if (b) {
       if (typedM.indexOf('CV_Sourced') >= 0) b.cv30 += Number(f.CV_Sourced) || 0;
@@ -578,9 +586,8 @@ function computeDashboard_() {
       if (derivedMetrics_(ev.day).indexOf(ev.metric) < 0) return;   // CVs sourced / reviewed stay typed before the funnel start date
       if (funnel[ev.metric] !== undefined) funnel[ev.metric]++;
       const b = byRec[ev.recruiter];
-      if (b && ev.metric === 'CV_Sourced') b.cv30++;
-      if (b && ev.metric === 'Interviews_Done') b.interviews30++;
-      if (b && ev.metric === 'Selected_Final') b.selected30++;
+      if (b && ev.metric === 'Sourced') b.cv30++;
+      if (b && (ev.metric === 'Technical' || ev.metric === 'HR')) b.interviews30++;
     });
   }
 

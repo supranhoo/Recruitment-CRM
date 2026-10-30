@@ -910,8 +910,8 @@ async function viewOverview(v, fresh) {
       </section>
       <div style="display:grid;gap:20px;grid-template-columns:minmax(0,1fr)">
         <section class="panel"><h2>Funnel, last 30 days</h2><div class="funnel">
-          ${METRICS.map(([key, label]) => `<div class="frow"><span>${label}</span><div class="fbar"><span style="width:${100 * (d.funnel[key] || 0) / maxF}%"></span></div><span class="num">${d.funnel[key] || 0}</span></div>`).join('')}
-        </div></section>
+          ${Object.keys(P_NAMES).map(key => [key, P_NAMES[key]]).map(([key, label]) => `<div class="frow"><span>${esc(label)}</span><div class="fbar"><span style="width:${100 * (d.funnel[key] || 0) / maxF}%"></span></div><span class="num">${d.funnel[key] || 0}</span></div>`).join('')}
+        </div><p class="hint">The Pipeline's own stages, counted from the candidates moved since ${fmtDate(S.boot.cutover || '2026-10-05')}. A candidate who passes several stages counts once in each.</p></section>
         <section class="panel"><h2>By recruiter</h2><div class="table-wrap"><table>
           <thead><tr><th>Recruiter</th><th class="num">Open</th><th class="num">Offered</th><th class="num">Past TAT</th><th class="num">Joined 30d</th><th class="num">CVs 30d</th></tr></thead><tbody>
           ${d.recruiters.map(r => `<tr data-rec="${esc(r.recruiter)}"><td>${esc(r.recruiter)}</td><td class="num">${r.open}</td><td class="num">${r.offered}</td><td class="num">${r.overdue}</td><td class="num">${r.joined30}</td><td class="num">${r.cv30}</td></tr>`).join('')}
@@ -1459,22 +1459,30 @@ function pipedKeys(day) {
 }
 function funnelTable(rows, withPosition) {
   if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
-  const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
-  const cut = S.boot.cutover || '2026-10-05', anyPiped = rows.some(r => String(r.Entry_Date) >= cut);
+  // From the switch-over each column is a Pipeline stage (the Pipeline board's names); earlier days keep the typed columns.
+  const cut = S.boot.cutover || '2026-10-05', v2 = S.boot.funnelV2 || FUNNEL_V2_FALLBACK;
+  const stageCols = Object.keys(P_NAMES).map(k => [k, P_NAMES[k], P_NAMES[k]]);
+  const now = rows.filter(r => String(r.Entry_Date) >= cut), old = rows.filter(r => String(r.Entry_Date) < cut);
+  return (now.length ? funnelTableCore(now, withPosition, stageCols, true)
+      + `<p class="hint">From ${fmtDate(cut)}, each column is a stage of the Pipeline, counted from the candidates moved (click a number to see who). CV received is typed until ${fmtDate(v2)}, then counted from the Pipeline too. A candidate who passes several stages counts once in each.</p>` : '')
+    + (old.length ? `<h3 style="margin:18px 0 8px;font-size:16px">Before ${fmtDate(cut)} (typed)</h3>` + funnelTableCore(old, withPosition, METRICS, false) : '');
+}
+function funnelTableCore(rows, withPosition, cols, staged) {
+  const tot = {}; cols.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
   window._fnPeople = window._fnPeople || {};
   const cell = (r, k, i) => {
     const n = Number(r[k]) || 0, ppl = r.People && r.People[k];
-    if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (METRICS.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
-    return `<td class="num${pipedKeys(r.Entry_Date).includes(k) ? ' pipe' : ''}">${n || ''}</td>`;
+    if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (cols.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
+    return `<td class="num${staged && pipedKeys(r.Entry_Date).length && k !== 'Sourced' ? ' pipe' : ''}">${n || ''}</td>`;
   };
   return `<div class="table-wrap"><table><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
-    ${METRICS.map(([, l, s]) => `<th class="num" title="${l}">${s}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
+    ${cols.map(([, l, s]) => `<th class="num" title="${esc(l)}">${esc(s)}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
     ${rows.map((r, i) => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
       ${withPosition ? `<td>${esc(p ? p.Position : r.Line_ID)}<span class="sub">${esc(r.MRF_No)}</span></td><td>${esc(r.Recruiter)}</td>` : ''}
-      ${METRICS.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
+      ${cols.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
       <td class="nw">${r.derived ? '<span class="locked" title="Counted from the candidates you moved in the Pipeline">Pipeline</span>' : r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
-    <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${METRICS.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
-    </tbody></table></div>${anyPiped ? `<p class="hint">From ${fmtDate(cut)}, the columns after \u201cReviewed\u201d are counted from the candidates moved in the Pipeline (click a number to see who). From ${fmtDate(S.boot.funnelV2 || FUNNEL_V2_FALLBACK)}, CVs sourced and reviewed are counted from the Pipeline too; only remarks and feedback are typed.</p>` : ''}`;
+    <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${cols.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
+    </tbody></table></div>`;
 }
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-pm]'); if (!b) return;
@@ -1562,7 +1570,7 @@ async function viewDaily(v) {
   const load = async () => {
     const rows = await fresh('apiListFunnel', f.line ? { lineId: f.line, from: f.from, to: f.to } : { recruiter: f.recruiter, from: f.from, to: f.to });
     const tot = funnelTotals(rows);
-    $('#dailyList').innerHTML = (f.line ? `<div class="readout" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join('')}</div>` : '') + funnelTable(rows, true);
+    $('#dailyList').innerHTML = (f.line ? `<div class="readout" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${(() => { const cut = S.boot.cutover || '2026-10-05', cur = rows.filter(r => String(r.Entry_Date) >= cut); return cur.length ? Object.keys(P_NAMES).map(k => `<div>${esc(P_NAMES[k])}<b>${cur.reduce((n, r) => n + (Number(r[k]) || 0), 0)}</b></div>`).join('') : METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join(''); })()}</div>` : '') + funnelTable(rows, true);
     bindEntryEdits($('#dailyList'), rows, load);
   };
   $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
@@ -3949,20 +3957,22 @@ async function renderAudit(el, f) {
 
 const DAY_LABELS = { CV_Sourced: 'Sourced', CV_Reviewed: 'CVs reviewed', HR_1st_Round: 'HR 1st round', CV_Shared_Dept: 'Shared with dept',
   Shortlisted_Dept: 'Shortlisted by dept', Interviews_Done: 'Interviews', Selected_Final: 'Selected', Offers: 'Offers released', Joined: 'Joined' };
+/** A funnel column's header: the Pipeline's own stage name, or the typed column's name for days before the switch-over. */
+function dayLabel(s) { return P_NAMES[s] || DAY_LABELS[s] || s; }
 function dayFunnelHtml(stages, f, people) {
   people = people || {};
   const max = Math.max(1, ...stages.map(s => f[s] || 0));
-  return `<div class="dfun">${stages.map(s => `<div class="dfun-step${(people[s] || []).length ? ' has-people' : ''}"${(people[s] || []).length ? ` role="button" tabindex="0" data-m="${s}" title="See the candidates"` : ''}><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${DAY_LABELS[s]}</span></div>`).join('')}</div>`;
+  return `<div class="dfun">${stages.map(s => `<div class="dfun-step${(people[s] || []).length ? ' has-people' : ''}"${(people[s] || []).length ? ` role="button" tabindex="0" data-m="${s}" title="See the candidates"` : ''}><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${esc(dayLabel(s))}</span></div>`).join('')}</div>`;
 }
 function scorecardNote(data) {
-  return data && data.derived ? `<p class="hint">From ${fmtDate(data.cutover)}, every number except Sourced and CVs reviewed is counted from candidate moves in the Pipeline${data.funnelV2 ? `; from ${fmtDate(data.funnelV2)} those two are too` : ''}. Each stage a candidate passes counts once. Click a number to see the candidates.</p>` : '';
+  return data && data.derived ? `<p class="hint">From ${fmtDate(data.cutover)}, each column is a stage of the Pipeline, counted from candidate moves, with the same names as the Pipeline board. ${data.funnelV2 && data.date < data.funnelV2 ? `CV received is typed until ${fmtDate(data.funnelV2)}, then counted too. ` : ''}A candidate who passes several stages counts once in each. Click a number to see the candidates.</p>` : '';
 }
 function bindFunnelPeople(root, people, withRecruiter) {
   people = people || {};
   $$('.dfun-step.has-people', root).forEach(el => {
     const open = () => {
       const m = el.dataset.m, list = people[m] || [];
-      const d = cpDlg(`<h2 id="cpTitle">${esc(DAY_LABELS[m] || m)} \u00b7 ${list.length}</h2>
+      const d = cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
         <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th>${withRecruiter ? '<th>Recruiter</th>' : ''}<th>Result</th><th>Time</th></tr></thead><tbody>
         ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td>${withRecruiter ? `<td>${esc(p.recruiter || '')}</td>` : ''}<td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}
         </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
@@ -3972,7 +3982,7 @@ function bindFunnelPeople(root, people, withRecruiter) {
 }
 function dayFunnelBars(stages, f) {
   const max = Math.max(1, ...stages.map(s => f[s] || 0));
-  return `<div class="funnel">${stages.map(s => `<div class="frow"><span>${DAY_LABELS[s]}</span><div class="fbar"><span style="width:${100 * (f[s] || 0) / max}%"></span></div><span class="num">${f[s] || 0}</span></div>`).join('')}</div>`;
+  return `<div class="funnel">${stages.map(s => `<div class="frow"><span>${esc(dayLabel(s))}</span><div class="fbar"><span style="width:${100 * (f[s] || 0) / max}%"></span></div><span class="num">${f[s] || 0}</span></div>`).join('')}</div>`;
 }
 function dsChip(day) {
   if (!day || !day.status) return '<span class="att-off">\u2014</span>';
@@ -3985,9 +3995,10 @@ function dayPositionsHtml(rows, ctx) {
   const toggle = all.some(g => g.noActivity) ? `<label class="ds-only"><input type="checkbox" data-dsonly${S.dsOnlyActive ? ' checked' : ''}> Only positions with activity</label>` : '';
   if (!rows.length) return toggle + '<p class="hint">No activity logged against positions.</p>';
   const can = isLead() || (ctx.rec && String(ctx.rec).toLowerCase() === String(S.boot.user.recruiter || '').toLowerCase());
-  const cols = [['CV_Sourced', 'Sourced'], ['CV_Reviewed', 'Reviewed'], ['HR_1st_Round', 'HR R1'], ['CV_Shared_Dept', 'Shared'], ['Shortlisted_Dept', 'Shortlisted'], ['Interviews_Done', 'Interviews'], ['Selected_Final', 'Selected'], ['Offers', 'Offers'], ['Joined', 'Joined']];
+  // The Pipeline stages from the switch-over (same names as the Pipeline board), the typed columns before it.
+  const cols = (ctx.stages || ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final', 'Offers', 'Joined']).map(k => [k, dayLabel(k)]);
   const pplOf = (g, m) => ((ctx.people || {})[m] || []).filter(p => p.line === g.line);
-  return toggle + `<div class="table-wrap"><table><thead><tr><th>Position / MRF</th><th>Department</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num">${c[1]}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
+  return toggle + `<div class="table-wrap"><table><thead><tr><th>Position / MRF</th><th>Department</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num" title="${esc(c[1])}">${esc(c[1])}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
     ${rows.map(g => `<tr style="cursor:default"${g.noActivity ? ' class="ds-noact"' : ''}><td>${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span></td><td>${esc(g.dept)}</td>
       <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
@@ -3997,7 +4008,7 @@ function bindDayPositions(host, rows, ctx, after) {
   const t = host.querySelector('[data-dsonly]'); if (t) t.onchange = () => { S.dsOnlyActive = t.checked; after(); };
   $$('[data-pp]', host).forEach(b => b.onclick = () => {
     const [line, m] = b.dataset.pp.split('|'), list = ((ctx.people || {})[m] || []).filter(p => p.line === line);
-    cpDlg(`<h2 id="cpTitle">${esc(DAY_LABELS[m] || m)} \u00b7 ${list.length}</h2>
+    cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
       <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
       ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
@@ -4053,7 +4064,7 @@ async function viewMyDay(v) {
       </section>
     </div>
     <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
-    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people })}</div>
+    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
@@ -4062,7 +4073,7 @@ async function viewMyDay(v) {
     const el = $('#mdMonthBody'); if (!el) return; const x = r.rows[0], P = mmLabel(r.prev);
     el.innerHTML = x ? `<p><b>${x.missed}</b> missed in ${esc(mmLabel(r.month))} so far (${x.open} still open) \u00b7 ${mmDelta(x.change)} compared with ${esc(P)} (${x.prev})</p>${mmDetail(r.items[x.recruiter] || [])}` : `<p class="hint">Nothing missed in ${esc(mmLabel(r.month))} so far.</p>`;
   }).catch(() => { const el = $('#mdMonthBody'); if (el) el.innerHTML = ''; });
-  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people }, () => go('myday', false));
+  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('myday', false));
   $$('[data-cand]', v).forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
   let timer, saving = Promise.resolve();
   const state = t => { const el = $('#mdState'); if (el) el.textContent = t; };
@@ -4159,14 +4170,14 @@ async function viewDailyReview(v) {
       return `<article class="panel rcard ${r.active ? '' : 'idle'}">
         <header class="rcard-head"><h2>${esc(r.recruiter)}</h2>
           <span class="badge ${r.overview ? 'ok-b' : 'warn-b'}">${r.overview ? 'Summary written' + (r.updatedAt ? ' \u00b7 ' + esc(r.updatedAt) : '') : 'No summary written'}</span></header>
-        <div class="rchips">${chip(r.funnel.CV_Reviewed, 'CVs reviewed')}${chip(r.funnel.CV_Sourced, 'sourced')}${chip(r.funnel.CV_Shared_Dept, 'shared with dept')}${chip(r.funnel.Interviews_Done, 'interviews')}${chip(r.funnel.Selected_Final, 'selected')}${chip(r.funnel.Offers, 'offers')}${chip(r.funnel.Joined, 'joined')}${chip(done + '/' + r.tasks.length, 'tasks done')}</div>
+        <div class="rchips">${data.stages.includes('Sourced') ? ['Sourced', 'Screened', 'Shared', 'Confirmed', 'Technical', 'HR', 'Offer', 'Joined'].map(k => chip(r.funnel[k], P_NAMES[k].toLowerCase())).join('') : `${chip(r.funnel.CV_Reviewed, 'CVs reviewed')}${chip(r.funnel.CV_Sourced, 'sourced')}${chip(r.funnel.CV_Shared_Dept, 'shared with dept')}${chip(r.funnel.Interviews_Done, 'interviews')}${chip(r.funnel.Selected_Final, 'selected')}${chip(r.funnel.Offers, 'offers')}${chip(r.funnel.Joined, 'joined')}`}${chip(done + '/' + r.tasks.length, 'tasks done')}</div>
         <div class="two" style="margin-top:14px">
           <div><h3>Overview</h3>${r.overview ? `<p class="day-text">${esc(r.overview)}</p>` : '<p class="hint">The recruiter has not written an overview for this day.</p>'}
             <h3>Tasks</h3>${r.tasks.length ? `<ul class="tasks ro">${r.tasks.map(t => `<li class="${t.d ? 'done' : ''}"><span class="tick">${t.d ? '\u2713' : '\u25cb'}</span> ${esc(t.t)}</li>`).join('')}</ul>` : '<p class="hint">No tasks listed.</p>'}</div>
           <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
         ${todoReviewHtml(r)}
-        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people })}</div>
+        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
       </article>`;
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
@@ -4175,7 +4186,7 @@ async function viewDailyReview(v) {
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
   $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
   $('#drPrev').onclick = () => shift(-1);
-  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people }, () => go('review', false)));
+  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('review', false)));
   $('#drNext').onclick = () => shift(1);
 }
 
