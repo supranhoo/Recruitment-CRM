@@ -353,7 +353,7 @@ function apiKpi(fy, fresh) {
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
   const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0');
-  const key = 'kpi4_' + fy;
+  const key = 'kpi_b' + BUILD_ID + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
   const cache = CacheService.getScriptCache();
   if (!fresh) {
     const hit = cache.get(key);

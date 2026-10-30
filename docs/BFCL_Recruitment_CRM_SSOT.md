@@ -191,7 +191,7 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 
 | Layer | Mechanism |
 |---|---|
-| Overview | Never computed on page load. Reads a **snapshot** (script cache `dash_v1`, then `Dash_Snapshot` sheet). Rebuilt by **Refresh** button, by the 30-minute trigger when `DASH_DIRTY_AT` is newer than the snapshot, and nightly. Saves only mark it dirty. |
+| Overview | Never computed on page load. Reads a **snapshot** (script cache `dash_b<BUILD_ID>`, then `Dash_Snapshot` sheet). A snapshot is used only if it carries this release's build number and every Pipeline stage in its funnel (`snapshotUsable_`); otherwise it is rebuilt on the first open (v128). Rebuilt by **Refresh** button, by the 30-minute trigger when `DASH_DIRTY_AT` is newer than the snapshot, and nightly. Saves only mark it dirty. |
 | Small tables | `CACHED_TABLES_` = Settings, M_Grades, M_Designations, TAT_Rules, M_Recruiters, M_Lists, M_Departments, KPI_Targets, M_Panel_Members, Users — script cache 10 minutes (`tbl3_<name>`), dropped on every app write to that table. Sheets under 1,000 rows are read in one trip. |
 | Growing tables | `readTableFrom_(name, dateField, from)` reads only the tail from the first row on/after a date (Daily_Funnel, Audit_Log, Stage_History, Candidates). |
 | Dates | `fmt_`/`ymd_` compute IST with a fixed +5:30 offset (≈400× faster than `Utilities.formatDate`, identical output); any other zone or pattern falls back to Google's formatter. |
@@ -1004,6 +1004,7 @@ Context: the Daily review mixed typed Daily_Funnel counts and pipeline moves, un
 - Interview results and the joining date cannot be typed on the candidate form for a candidate in a pipeline (recruiters), so every count has a move behind it.
 - One recruiter credit rule for the funnel and the moves list; every number opens the candidates behind it.
 Consequences: one funnel, one vocabulary, every number traceable to named candidates; counts rise where cards skip stages (intended); a CV rejected without a card is visible only if the recruiter uses "Not suitable".
+Lesson (v127 Overview blank): a result that is saved between page loads (Overview snapshot, KPI cache, Day review snapshot) must carry the release number and be checked for the shape the page reads; a release that changes the shape would otherwise show zeros until the next data change. Tested by E2E E5e and a stale-snapshot browser case.
 Open items: a lead's edits of the position's offer, joining and backout fields still do not write a card move; interview dates on the candidate form are still editable; Overview funnel ignores days before the switch-over; typed-vs-derived comparison for 5–30 Oct to run before the funnel start date.
 
 **ADR-016 — IDs are never reused** (26 Sep)

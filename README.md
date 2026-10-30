@@ -67,7 +67,8 @@ When the owner confirms a push, it is not finished until the live web app is upd
 1. `clasp push`, then `clasp pull` into a scratch folder and compare it with the repo. They must match.
 2. Create a new version: `clasp version "<build> <short description>"`.
 3. Update the **existing** web app deployment (never create a new one, because that changes the link): list it with `clasp deployments`, then `clasp deploy -i <deploymentId> -V <version> -d "<build>"`.
-4. Check the live build number (the rail footer, or `apiBootstrap().build`) equals `BUILD_ID` in `Config.gs`.
+4. Check the live build number (the rail footer, or `apiBootstrap().build`) equals `BUILD_ID` in `Config.gs`, then open **every screen the release touched**, including Overview, and confirm it shows data on a normal load without pressing Refresh.
+   If a release changes what a saved result contains (the Overview snapshot, the KPI cache, the Day review snapshot), the saved copy must carry the release number and be rebuilt when it does not match; add a test for that shape before deploying.
 5. Keep the saved Google login (`~/.clasprc.json`) so the owner is not asked to sign in again; the owner decided this. Never commit it, print it or copy it anywhere. If it is missing or expired (a new cloud session starts without it), ask for a fresh `clasp login --no-localhost`.
 
 Report the result in plain words every time: **"live"** only when step 4 passed, otherwise **"pushed to Apps Script, not live"** with the reason, for example no Google sign-in in a cloud session. Raise `BUILD_ID` before each release. Without the owner's confirmation, push to GitHub only.

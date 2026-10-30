@@ -5,7 +5,15 @@
  * data has changed, and by the nightly job.
  */
 const DASH_SHEET = 'Dash_Snapshot';
-const DASH_CACHE_KEY = 'dash_v1';
+/** The release number is part of the key, so a release never reads a snapshot saved by older code. */
+function dashCacheKey_() { return 'dash_b' + BUILD_ID; }
+/**
+ * A saved snapshot is used only if it was built by this release and carries the shape the page reads (every Pipeline
+ * stage in the funnel). Anything else is rebuilt on the next open, so a release that changes the snapshot never shows blanks.
+ */
+function snapshotUsable_(snap) {
+  return !!snap && String(snap.build) === String(BUILD_ID) && !!snap.funnel && STAGES.every(function (k) { return k in snap.funnel; });
+}
 
 function apiDashboard() {
   const u = currentUser_();
@@ -28,20 +36,23 @@ function decorate_(snap, u) {
 
 function readSnapshot_() {
   const cache = CacheService.getScriptCache();
-  const hit = cache.get(DASH_CACHE_KEY);
-  if (hit) return JSON.parse(hit);
+  const hit = cache.get(dashCacheKey_());
+  if (hit) { const c = JSON.parse(hit); if (snapshotUsable_(c)) return c; }
   const sh = ss_().getSheetByName(DASH_SHEET);
   if (!sh) return null;
   const json = sh.getRange(2, 3).getValue();
   if (!json) return null;
-  cache.put(DASH_CACHE_KEY, json, 21600);
-  return JSON.parse(json);
+  const snap = JSON.parse(json);
+  if (!snapshotUsable_(snap)) return null;   // saved by an older release: rebuilt by the caller
+  cache.put(dashCacheKey_(), json, 21600);
+  return snap;
 }
 
 function buildSnapshot_(by) {
   const started = Date.now();
   const data = computeDashboard_();
   const now = new Date();
+  data.build = BUILD_ID;
   data.builtAt = fmt_(now, TZ, 'd MMM yyyy, HH:mm');
   data.builtAtMs = now.getTime();
   data.builtBy = by || 'scheduled refresh';
@@ -53,7 +64,7 @@ function buildSnapshot_(by) {
     sh.getRange(1, 1, 1, 3).setValues([['Built_At', 'Built_By', 'Snapshot_JSON (do not edit)']]).setFontWeight('bold');
   }
   sh.getRange(2, 1, 1, 3).setValues([[now, data.builtBy, json]]);
-  CacheService.getScriptCache().put(DASH_CACHE_KEY, json, 21600);
+  CacheService.getScriptCache().put(dashCacheKey_(), json, 21600);
   return data;
 }
 

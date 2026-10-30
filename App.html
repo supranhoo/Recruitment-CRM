@@ -883,7 +883,9 @@ async function viewOverview(v, fresh) {
      of about their size for each, so nothing jumps when they arrive. */
   const sumP = api('apiTaskSummary'), alertsP = api('apiPipelineAlerts');
   sumP.catch(() => { }); alertsP.catch(() => { });
-  const d = await api(fresh ? 'apiRefreshDashboard' : 'apiDashboard');
+  let d = await api(fresh ? 'apiRefreshDashboard' : 'apiDashboard');
+  // A snapshot saved by an older release has the funnel under other keys: ask the server to rebuild it once instead of drawing zeros.
+  if (!fresh && !(d.funnel && 'Sourced' in d.funnel)) d = await api('apiRefreshDashboard');
   const k = d.kpi;
   const maxF = Math.max(1, ...Object.values(d.funnel).map(n => n || 0));
   v.innerHTML = `

@@ -12,7 +12,7 @@ function e2eTest() {
     copy.setTrashed(true);
     trash.forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { } });
     const fy = kpiCurrentFy_();
-    CacheService.getScriptCache().removeAll(['dash_v1', 'users_v1', 'kpi_' + fy, 'kpi_' + (fy - 1)]);
+    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1', 'kpi_b' + BUILD_ID + '_' + fy, 'kpi_b' + BUILD_ID + '_' + (fy - 1)]);
     PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));
   }
   Logger.log('RESULT pass ' + res.pass + ' fail ' + res.fail);
@@ -221,6 +221,14 @@ function e2eRun_(trash) {
     const day = pipelineEvents_(today, today), seen = {}; let dup = 0;
     day.forEach(function (e) { if (e.metric === 'Backouts') return; const k = e.app + '|' + e.metric; if (seen[k]) dup++; seen[k] = true; });
     return dup === 0 ? day.length + ' events' : false;
+  });
+  t('E5e Overview snapshot guard: the funnel is the Pipeline stages and an older snapshot is refused', function () {
+    const full = { build: BUILD_ID, funnel: {} }; STAGES.forEach(function (k) { full.funnel[k] = 0; });
+    const old = { build: String(Number(BUILD_ID) - 1), funnel: full.funnel };
+    const legacy = { build: BUILD_ID, funnel: { CV_Sourced: 3, HR_1st_Round: 2 } };
+    const live = computeDashboard_();
+    return snapshotUsable_(full) && !snapshotUsable_(old) && !snapshotUsable_(legacy) && !snapshotUsable_(null)
+      && STAGES.every(function (k) { return k in live.funnel; }) ? 'ok' : false;
   });
   err('E6 future day summary blocked', function () { apiSaveDaySummary({ date: '2099-01-01', overview: 'x' }); }, /future/);
 
