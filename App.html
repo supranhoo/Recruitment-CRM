@@ -1219,7 +1219,7 @@ function positionDrawer(p) {
   if (!data.BGV_Required) data.BGV_Required = 'Auto';
   const ro = !isNew && (!p._canEdit || p.Position_Status === 'Removed');
   const body = openDrawer(isNew ? 'Add MRF position' : `${p.Position}`, `
-    ${isNew ? '' : `<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="details">Details</button><button role="tab" data-t="cands">Candidates</button></div>`}
+    ${isNew ? '' : `<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="details">Details</button><button role="tab" data-t="cands">Candidates</button><button role="tab" data-t="funnel">Funnel</button></div>`}
     <div id="tab-details">
       ${ro ? `<div class="note">This position is assigned to ${esc(p.Recruiter)}. You can view it; only they, a TA Lead or the Head of HR can edit it.</div>` : ''}
       ${!isNew && p.Replaced_By ? `<div class="note warn-note">Closed after a backout on ${fmtDate(p.Replaced_On)}. Replaced by <b>${esc((lineById(p.Replaced_By) || {}).MRF_No || p.Replaced_By)}</b> (policy 9.5).</div>` : ''}
@@ -1237,7 +1237,8 @@ function positionDrawer(p) {
       <div id="posForm">${wrapForm(form(positionFields(isNew, data, p), data, ro))}</div>
       ${ro ? '' : `<div class="drawer-actions"><button class="btn" id="pCancel">Cancel</button><button class="btn primary" id="pSave">${isNew ? 'Add position' : 'Save changes'}</button></div>`}
     </div>
-    <div id="tab-cands" hidden></div>`);
+    <div id="tab-cands" hidden></div>
+    <div id="tab-funnel" hidden></div>`);
   const readout = () => {
     const t = previewTat(Object.assign({}, data, readForm($('#posForm'))));
     const ruleTag = v => v ? ` \u00b7 rule ${esc(v)}` : '';
@@ -1312,8 +1313,9 @@ function positionDrawer(p) {
   $('#posForm').addEventListener('change', readout);
   $$('.tabs button', body).forEach(b => b.addEventListener('click', () => {
     $$('.tabs button', body).forEach(x => x.setAttribute('aria-selected', x === b));
-    ['details','cands'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.t);
+    ['details','cands','funnel'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.t);
     if (b.dataset.t === 'cands') renderLineCands(p);
+    if (b.dataset.t === 'funnel') renderLineFunnel(p);
   }));
   if (ro) return;
   $('#pCancel').onclick = closeDrawer;
@@ -1366,6 +1368,31 @@ async function renderLineCands(p) {
     ${rows.map(c => `<tr data-id="${esc(c.Candidate_ID)}"><td>${esc(c.Name)}<span class="sub">${esc(c.Mobile)}</span></td><td>${esc(c.Tech_Result)}</td><td>${esc(c.HR_Result)}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No candidates are linked to this position yet. Link one from its candidate record, or add a new one.</div>'}`;
   $('#addCandLine').onclick = () => candidateDrawer(null, { Line_ID: p.Line_ID, Position: p.Position, Dept: p.Dept });
+  $$('tr[data-id]', el).forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
+}
+
+/** A position's funnel: CVs received, the candidates, and the stage each has reached (the Pipeline's own stage names). */
+async function renderLineFunnel(p) {
+  const el = $('#tab-funnel'); el.innerHTML = `<div style="margin-top:12px">${skRows(5, 3)}</div>`;
+  let r;
+  try { r = await api('apiPositionFunnel', p.Line_ID); } catch (e) { el.innerHTML = `<p class="hint">${esc(e)}</p>`; return; }
+  const name = k => P_NAMES[k] || k, max = Math.max(1, ...r.stages.map(s => s.reached));
+  const stat = (n, l, sub) => `<div>${l}<b>${n}</b>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`;
+  const moreCands = r.candidates > r.received.total;
+  const badge = st => `<span class="badge ${st === 'Active' ? 'ok-b' : 'warn-b'}">${esc(st)}</span>`;
+  el.innerHTML = `<div class="readout" style="grid-template-columns:repeat(4,1fr);margin:12px 0">
+      ${stat(r.received.total, 'CVs received', `Daily log ${r.received.typed} \u00b7 Pipeline ${r.received.pipeline}`)}
+      ${stat(r.candidates, 'Candidates in the pipeline')}
+      ${stat(r.active, 'Still active')}
+      ${stat(r.rejected + r.onHold + r.withdrawn, 'Not progressing', `Rejected ${r.rejected} \u00b7 On hold ${r.onHold} \u00b7 Withdrawn ${r.withdrawn}`)}</div>
+    ${moreCands ? `<p class="hint">More candidates are on the pipeline than CVs logged: some were added without a Daily-log entry for this position.</p>` : ''}
+    <p class="hint" style="margin:0 0 6px">${esc(r.line.route)} route. Each bar counts the candidates who reached that stage or went beyond it; \u201cn now\u201d beside a stage is how many are at that stage at present.</p>
+    <div class="funnel">${r.stages.map(s => `<div class="frow"><span>${esc(name(s.stage))}${s.at ? ` <span class="sub" style="display:inline;white-space:nowrap">\u00b7 ${s.at} now</span>` : ''}</span><div class="fbar"><span style="width:${100 * s.reached / max}%"></span></div><span class="num">${s.reached}</span></div>`).join('')}</div>
+    <h3 style="margin:18px 0 8px;font-size:16px">Candidates and the stage reached</h3>
+    ${r.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Stage reached</th><th>Status</th><th>In stage since</th><th>Added</th><th>Tech</th><th>HR</th></tr></thead><tbody>
+      ${r.rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.name)}<span class="sub">${esc(c.mobile)}</span></td><td>${esc(name(c.stage))}</td>
+        <td>${badge(c.status)}${c.reason && c.status !== 'Active' ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td><td class="nw">${esc(fmtDate(c.since))}</td><td class="nw">${esc(fmtDate(c.added))}</td><td>${esc(c.tech)}</td><td>${esc(c.hr)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No candidate is on this position\u2019s pipeline yet.</div>'}`;
   $$('tr[data-id]', el).forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
 }
 

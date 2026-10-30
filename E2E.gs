@@ -230,6 +230,13 @@ function e2eRun_(trash) {
     return snapshotUsable_(full) && !snapshotUsable_(old) && !snapshotUsable_(legacy) && !snapshotUsable_(null)
       && STAGES.every(function (k) { return k in live.funnel; }) ? 'ok' : false;
   });
+  t('E5f position funnel: candidates, CVs received and the stage each has reached', function () {
+    _tables = {}; const f = apiPositionFunnel(L2.Line_ID);
+    const sorted = f.rows.every(function (r, i) { return i === 0 || f.rows[i - 1].si >= r.si; });
+    return f.candidates === f.rows.length && f.rows.every(function (r) { return STAGES.indexOf(r.stage) >= 0; }) && sorted
+      && f.stages.length > 0 && f.stages[0].reached === f.rows.length && f.received.total === f.received.typed + f.received.pipeline
+      && f.active + f.rejected + f.onHold + f.withdrawn === f.rows.length ? f.candidates + ' candidates, ' + f.received.total + ' CVs received' : false;
+  });
   err('E6 future day summary blocked', function () { apiSaveDaySummary({ date: '2099-01-01', overview: 'x' }); }, /future/);
 
   t('F1 log observation', function () { return !!apiSaveObservation({ Obs_Date: today, Line_ID: L2.Line_ID, Recruiter: String(L2.Recruiter), Type: OBS_TYPES[0], Description: 'E2E', Status: 'Open' }).Obs_ID; });

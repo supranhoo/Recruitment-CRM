@@ -121,6 +121,46 @@ function apiPipeline(lineId) {
   return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: isFast_(line) ? FAST_DOC_SECTIONS_ : DOC_SECTIONS, route: routeOf_(line), fastStages: FAST_STAGES_, now: Date.now(), interviews: interviewsFor_(lineId) };
 }
 
+/**
+ * One position's funnel: the CVs received, the candidates on the position's pipeline, and the stage each has reached.
+ * A card keeps the stage it stood at when it was rejected, put on hold or withdrawn, so its stage is the furthest it got
+ * (a lead's correction moves it back and the stage follows). CVs received follows the Daily review's CV received column:
+ * the Daily-log CVs sourced typed before the funnel start date, plus the cards created from it.
+ */
+function apiPositionFunnel(lineId) {
+  const u = currentUser_(); ensureSchema_();
+  const line = lineOf_(lineId);
+  if (!line) throw new Error('Position ' + lineId + ' was not found.');
+  const fast = isFast_(line), route = fast ? FAST_STAGES_.slice() : STAGES.slice();
+  const apps = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === lineId && String(a.Status) !== 'Removed'; });
+  const cands = candNames_(apps.map(function (a) { return a.Candidate_ID; }));
+  const rows = apps.map(function (a) {
+    const c = cands[a.Candidate_ID] || {};
+    return { app: String(a.App_ID), id: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
+      stage: String(a.Stage), si: STAGES.indexOf(String(a.Stage)), status: String(a.Status || 'Active'), reason: String(a.Status_Reason || ''),
+      since: ymd_(a.Stage_Since), added: ymd_(a.Created_At), tech: String(c.Tech_Result || ''), hr: String(c.HR_Result || '') };
+  }).sort(function (a, b) { return (b.si - a.si) || a.name.localeCompare(b.name); });
+  const stages = route.map(function (st) {
+    const i = STAGES.indexOf(st);
+    return { stage: st, reached: rows.filter(function (r) { return r.si >= i; }).length,
+      at: rows.filter(function (r) { return r.stage === st && r.status === 'Active'; }).length };
+  });
+  const v2 = funnelV2_(), today = ymd_(new Date());
+  let typed = 0;
+  readTable_(T.FUNNEL.name).rows.forEach(function (f) {
+    if (f.Line_ID !== lineId) return;
+    const d = ymd_(f.Entry_Date);
+    if (d && d < v2) typed += Number(f.CV_Sourced) || 0;
+  });
+  let derived = 0;
+  if (today >= v2) pipelineEvents_(v2, today).forEach(function (ev) { if (ev.line === lineId && ev.metric === 'Sourced') derived++; });
+  const count = function (st) { return rows.filter(function (r) { return r.status === st; }).length; };
+  return { line: { id: lineId, mrf: String(line.MRF_No || ''), position: String(line.Position || ''), route: fast ? 'Fast-track' : 'Standard' },
+    received: { total: typed + derived, typed: typed, pipeline: derived, from: v2 },
+    candidates: rows.length, active: count('Active'), rejected: count('Rejected'), onHold: count('On hold'), withdrawn: count('Withdrawn'),
+    stages: stages, rows: rows };
+}
+
 function apiAddToPipeline(candidateId, lineId) {
   const u = currentUser_(); ensureSchema_();
   requireActiveLine_(requireLineEdit_(u, lineId));

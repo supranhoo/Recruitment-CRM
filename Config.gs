@@ -78,7 +78,7 @@ T.AUDIT = {
 const FUNNEL_METRICS = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
 const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER: 'Recruiter', ONBOARDING: 'Onboarding' };
 /** The release number, set before each deploy. Shown in the page (rail footer, Admin → Tools) and compared with the page's own copy, so a page served from an older release is noticed. */
-const BUILD_ID = '128';
+const BUILD_ID = '129';
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
