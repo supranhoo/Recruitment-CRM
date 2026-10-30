@@ -121,7 +121,7 @@ function computeTasks_() {
   const since30 = ymd_(new Date(now - 30 * 86400000));
   const sharedLines = {};
   allApps.forEach(function (a) { if (stageIdx(a.Stage) >= stageIdx('Shared')) sharedLines[a.Line_ID] = true; });
-  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0) sharedLines[f.Line_ID] = true; });
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0 && ymd_(f.Entry_Date) < cutover_()) sharedLines[f.Line_ID] = true; });   // after the switch-over the pipeline is the only signal
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Open' || sharedLines[id]) return;

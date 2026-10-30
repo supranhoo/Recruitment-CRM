@@ -7,54 +7,95 @@
 const DAY_STAGES = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final', 'Offers', 'Joined'];
 
 /*
- * Scorecard from candidate moves (from the switch-over date). CVs sourced and CVs reviewed stay typed in the
- * Daily log; every other column is counted from the stage history and lists the candidates behind the number.
+ * Scorecard from candidate moves (from the switch-over date). Every column is counted from the stage history and lists the
+ * candidates behind the number. From the funnel start date (Settings -> PIPELINE_FUNNEL_V2) CVs sourced and CVs reviewed are
+ * counted from the pipeline too, so the Daily log carries only remarks and department feedback. Days before that date keep
+ * the typed CVs sourced / reviewed; days before the switch-over keep every typed column.
  */
-const TYPED_METRICS_ = ['CV_Sourced', 'CV_Reviewed'];
-const PIPE_METRICS_ = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final', 'Offers', 'Joined'];
+const PIPE_ONLY_METRICS_ = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final', 'Offers', 'Joined'];
+const CV_METRICS_ = ['CV_Sourced', 'CV_Reviewed'];
 function scorecardDerived_(date) { return String(date) >= cutover_(); }
-function pipelineMetrics_(h) {
+/** First day on which CVs sourced / reviewed are counted from the pipeline (never before the switch-over). */
+function funnelV2_() {
+  const v = ymd_(settings_().PIPELINE_FUNNEL_V2) || String(settings_().PIPELINE_FUNNEL_V2 || '').slice(0, 10) || '2026-11-01';
+  const c = cutover_();
+  return v < c ? c : v;
+}
+/** The scorecard columns counted from the pipeline on a day. */
+function derivedMetrics_(day) {
+  const d = String(day);
+  if (d < cutover_()) return [];
+  return d >= funnelV2_() ? PIPE_ONLY_METRICS_.concat(CV_METRICS_) : PIPE_ONLY_METRICS_;
+}
+/** The Daily-log columns still typed by the recruiter on a day. */
+function typedMetrics_(day) {
+  const dm = derivedMetrics_(day);
+  return FUNNEL_METRICS.filter(function (m) { return dm.indexOf(m) < 0; });
+}
+/*
+ * What each stage a candidate reaches credits. Moving forward credits every stage passed (a card jumping from Sourced
+ * to Technical also counts as screened, shared and shortlisted), and a metric counts once per card.
+ * [stage, metrics]; Selected is credited by an HR "select" outcome, by a fast-track "Suitable" decision, or by reaching Docs or later.
+ */
+const STAGE_CREDITS_ = { Sourced: ['CV_Sourced'], Screened: ['CV_Reviewed', 'HR_1st_Round'], Shared: ['CV_Shared_Dept'], Confirmed: ['Shortlisted_Dept'],
+  Technical: ['Interviews_Done'], HR: ['Interviews_Done'], Docs: ['Interviews_Done', 'Selected_Final'], Offer: ['Offers'], Joined: ['Joined'] };
+/**
+ * Credits for one history row: [{metric, si}] where si is the stage index the credit belongs to (a later backward move
+ * past it cancels it). fi = index of the stage the card was at before (-1 for a new card).
+ */
+function pipelineCredits_(h) {
   const o = String(h.Outcome || ''), to = String(h.To_Stage || ''), from = String(h.From_Stage || '');
   if (String(h.Changed_By) === 'migration' || /^(Reconciled|Moved|Unlinked|Removed)$/.test(o)) return [];
-  if (o === 'Backout') return ['Backouts'];
-  if (from === to) return [];
-  const m = [];
-  if (to === 'Screened') m.push('HR_1st_Round');
-  if (to === 'Shared') m.push('CV_Shared_Dept');
-  if (to === 'Confirmed') { m.push('Shortlisted_Dept'); if (/^Suitable/i.test(o)) m.push('Interviews_Done', 'Selected_Final'); }   // fast-track: the department's written confirmation is the interview and the selection
-  if (to === 'Technical' || to === 'HR') m.push('Interviews_Done');
-  if (to === 'HR' && /select/i.test(o)) m.push('Selected_Final');
-  if (to === 'Offer') m.push('Offers');
-  if (to === 'Joined') m.push('Joined');
-  return m;
+  if (o === 'Backout') return [{ metric: 'Backouts', si: -1 }];
+  if (/switch-over check/i.test(String(h.Note || '')) && from === '') return [];   // a card added only to match the old records is not new activity
+  const fi = STAGES.indexOf(from), ti = STAGES.indexOf(to);
+  if (ti < 0) return [];
+  const out = [];
+  if (from === to) {   // a CV rejected or put on hold while still at Sourced was reviewed
+    if (to === 'Sourced' && /^(Rejected|On hold)$/.test(o)) out.push({ metric: 'CV_Reviewed', si: 1 });
+    return out;
+  }
+  for (let si = fi + 1; si <= ti; si++) {
+    (STAGE_CREDITS_[STAGES[si]] || []).forEach(function (m) { out.push({ metric: m, si: si }); });
+  }
+  if (to === 'Confirmed' && /^Suitable/i.test(o)) out.push({ metric: 'Interviews_Done', si: 3 }, { metric: 'Selected_Final', si: 3 });   // fast-track: the department's written confirmation is the interview and the selection
+  if (to === 'HR' && /select/i.test(o)) out.push({ metric: 'Selected_Final', si: 5 });
+  return out;
 }
 /**
- * Scorecard events between two dates (inclusive), credited to the position's recruiter.
- * Cards removed as linked in error (or at the switch-over clean-up) count for nothing. A backward move by the
- * head never counts, and it cancels the earlier forward moves it undid (even on earlier days).
+ * Scorecard events between two dates (inclusive), credited to the position's recruiter (the position's current
+ * recruiter, as in the Daily review and the moves list). Cards removed as linked in error (or at the switch-over clean-up) count
+ * for nothing. A backward move by the head never counts, and it cancels the earlier credits it undid (even on earlier days).
+ * History is read from the switch-over date so "once per card" holds even when the range is a single day.
  */
 function pipelineEvents_(from, to) {
+  const start = cutover_();
   const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
   const removed = {}; readTable_(T.APP.name).rows.forEach(function (a) { if (String(a.Status) === 'Removed') removed[a.App_ID] = true; });
-  const rows = readTableFrom_(T.HIST.name, 'Changed_At', from).rows.filter(function (h) { const d = ymd_(h.Changed_At); return d && d >= from && !removed[h.App_ID]; })
+  const rows = readTableFrom_(T.HIST.name, 'Changed_At', start).rows.filter(function (h) { const d = ymd_(h.Changed_At); return d && d >= start && !removed[h.App_ID]; })
     .sort(function (a, b) { return (a.Changed_At instanceof Date ? a.Changed_At.getTime() : 0) - (b.Changed_At instanceof Date ? b.Changed_At.getTime() : 0); });
-  const cands = candNames_(rows.map(function (h) { return h.Candidate_ID; }));
-  const out = [], byApp = {};
+  const all = [], byApp = {}, seen = {};
   rows.forEach(function (h) {
     const fi = STAGES.indexOf(String(h.From_Stage)), ti = STAGES.indexOf(String(h.To_Stage));
+    const app = String(h.App_ID), mine = byApp[app] = byApp[app] || [], got = seen[app] = seen[app] || {};
     if (fi >= 0 && ti >= 0 && ti < fi) {
-      (byApp[h.App_ID] || []).forEach(function (ev) { if (STAGES.indexOf(ev.stage) > ti) ev.void = true; });
+      mine.forEach(function (ev) { if (!ev.void && ev.si > ti) { ev.void = true; delete got[ev.metric]; } });
       return;
     }
-    pipelineMetrics_(h).forEach(function (m) {
-      const l = lines[h.Line_ID] || {}, c = cands[h.Candidate_ID] || {};
-      const ev = { day: ymd_(h.Changed_At), metric: m, stage: String(h.To_Stage), recruiter: String(l.Recruiter || h.Recruiter || ''), line: String(h.Line_ID), app: String(h.App_ID),
-        name: String(c.Name || h.Candidate_ID), position: String(l.Position || ''), mrf: String(l.MRF_No || ''), dept: String(l.Dept || ''),
+    pipelineCredits_(h).forEach(function (c) {
+      if (c.metric !== 'Backouts' && got[c.metric]) return;   // once per card
+      const l = lines[h.Line_ID] || {};
+      const ev = { day: ymd_(h.Changed_At), metric: c.metric, si: c.si, stage: String(h.To_Stage), recruiter: String(l.Recruiter || h.Recruiter || ''), line: String(h.Line_ID), app: app,
+        cand: String(h.Candidate_ID), position: String(l.Position || ''), mrf: String(l.MRF_No || ''), dept: String(l.Dept || ''),
         grade: String(l.Grade || ''), outcome: String(h.Outcome || ''), time: fmt_(h.Changed_At, TZ, 'HH:mm') };
-      out.push(ev); (byApp[h.App_ID] = byApp[h.App_ID] || []).push(ev);
+      if (c.metric !== 'Backouts') got[c.metric] = true;
+      all.push(ev); mine.push(ev);
     });
   });
-  return out.filter(function (ev) { return !ev.void && ev.day <= to; });
+  const live = all.filter(function (ev) { return !ev.void && ev.day >= from && ev.day <= to; });
+  const cands = candNames_(live.map(function (ev) { return ev.cand; }));
+  live.forEach(function (ev) { const c = cands[ev.cand] || {}; ev.name = String(c.Name || ev.cand); });
+  return live;
 }
 
 function recruiterByEmail_() {
@@ -83,14 +124,14 @@ function dayData_(date, onlyRecruiter) {
   };
   readTable_('M_Recruiters').rows.forEach(function (r) { if (String(r.Active) !== 'No') get(r.Recruiter); });
 
-  const derived = scorecardDerived_(date);
+  const derived = scorecardDerived_(date), typedM = typedMetrics_(date), dm = derivedMetrics_(date);
   readTableFrom_(T.FUNNEL.name, 'Entry_Date', date).rows.forEach(function (e) {
     if (ymd_(e.Entry_Date) !== date) return;
     const r = get(e.Recruiter); if (!r) return;
     const l = lineById[e.Line_ID] || {};
     const g = r.byPosition[e.Line_ID] = r.byPosition[e.Line_ID] || { line: e.Line_ID, mrf: String(e.MRF_No || l.MRF_No || ''),
       position: String(l.Position || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''), remarks: [] };
-    (derived ? TYPED_METRICS_ : FUNNEL_METRICS).forEach(function (m) {
+    typedM.forEach(function (m) {
       const n = Number(e[m]) || 0;
       g[m] = (g[m] || 0) + n; r.funnel[m] += n;
     });
@@ -100,6 +141,7 @@ function dayData_(date, onlyRecruiter) {
 
   if (derived) {
     pipelineEvents_(date, date).forEach(function (ev) {
+      if (ev.metric !== 'Backouts' && dm.indexOf(ev.metric) < 0) return;   // CVs sourced / reviewed stay typed until the funnel start date
       const r = get(ev.recruiter); if (!r) return;
       (r.people[ev.metric] = r.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, line: ev.line, app: ev.app, outcome: ev.outcome, time: ev.time });
       if (ev.metric === 'Backouts') { r.backouts++; return; }
@@ -183,7 +225,7 @@ function dayData_(date, onlyRecruiter) {
   const dsMap = dayStatusMap_(dsLines, date);
   Object.keys(recs).forEach(function (k) { Object.keys(recs[k].byPosition).forEach(function (id) {
     const g = recs[k].byPosition[id]; g.day = dsMap[id] || null;
-    if (g.noActivity && FUNNEL_METRICS.some(function (m) { return g[m]; })) g.noActivity = false;
+    if (g.noActivity && DAY_STAGES.some(function (m) { return g[m]; })) g.noActivity = false;
   }); });
   const out = Object.keys(recs).map(function (k) {
     const r = recs[k];
@@ -219,7 +261,7 @@ function dayData_(date, onlyRecruiter) {
   });
   const team = {}; DAY_STAGES.forEach(function (k) { team[k] = out.reduce(function (s, r) { return s + r.funnel[k]; }, 0); });
   const people = {}; out.forEach(function (r) { Object.keys(r.people || {}).forEach(function (m) { people[m] = (people[m] || []).concat(r.people[m].map(function (p) { return Object.assign({ recruiter: r.recruiter }, p); })); }); });
-  return { date: date, stages: DAY_STAGES, recruiters: out, team: team, people: people, derived: derived, cutover: cutover_(),
+  return { date: date, stages: DAY_STAGES, recruiters: out, team: team, people: people, derived: derived, cutover: cutover_(), funnelV2: funnelV2_(),
     missedTotal: out.reduce(function (s, r) { return s + r.todo.missed.length; }, 0) };
 }
 
@@ -240,7 +282,7 @@ function dayForRecruiter_(full, recruiter) {
   const recs = full.recruiters.filter(function (r) { return r.recruiter.toLowerCase() === want; });
   const team = {}; full.stages.forEach(function (k) { team[k] = recs.reduce(function (s, r) { return s + r.funnel[k]; }, 0); });
   const people = {}; recs.forEach(function (r) { Object.keys(r.people || {}).forEach(function (m) { people[m] = (people[m] || []).concat(r.people[m]); }); });
-  return { date: full.date, stages: full.stages, recruiters: recs, team: team, people: people, derived: full.derived, cutover: full.cutover,
+  return { date: full.date, stages: full.stages, recruiters: recs, team: team, people: people, derived: full.derived, cutover: full.cutover, funnelV2: full.funnelV2,
     missedTotal: recs.reduce(function (s, r) { return s + ((r.todo && r.todo.missed.length) || 0); }, 0) };
 }
 
@@ -256,9 +298,8 @@ function daySnapVer_() {
   if (!v) { v = String(Date.now()); c.put('daysnap_ver', v, 21600); }
   return v;
 }
-/** The code version is part of the key, so a release never serves days cached by older code. */
-const DAYSNAP_CODE_ = 'v58';
-function daySnapKey_(date) { return 'daysnap_' + DAYSNAP_CODE_ + '_' + daySnapVer_() + '_' + date; }
+/** The release number is part of the key, so a release never serves days cached by older code. */
+function daySnapKey_(date) { return 'daysnap_b' + BUILD_ID + '_' + daySnapVer_() + '_' + date; }
 function daySnapGet_(date) {
   try { const s = CacheService.getScriptCache().get(daySnapKey_(date)); return s ? JSON.parse(s) : null; } catch (e) { return null; }
 }

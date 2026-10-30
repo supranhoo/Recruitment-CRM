@@ -19,6 +19,7 @@ function apiBootstrap() {
     lists: lists,
     dbUrl: u.role === ROLES.ADMIN ? ss_().getUrl() : '',
     cutover: cutover_(),
+    funnelV2: funnelV2_(),
     archiveDays: archiveDays_()
   };
 }
@@ -143,6 +144,18 @@ function apiSavePosition(data) {
 /** Switch-over date (Settings \u2192 PIPELINE_CUTOVER): from then on offers, joinings and backouts are recorded only in the Pipeline. */
 function cutover_() { return ymd_(settings_().PIPELINE_CUTOVER) || String(settings_().PIPELINE_CUTOVER || '').slice(0, 10) || '2026-10-05'; }
 const PIPELINE_FIELDS_ = [['Offer_Sent', 'Offer sent'], ['Offer_Date', 'Offer letter date'], ['EDOJ', 'Expected joining date'], ['Actual_DOJ', 'Actual joining date'], ['Backout_Date', 'Backout date'], ['Candidate_ID', 'Selected candidate']];
+const CAND_PIPELINE_FIELDS_ = [['Tech_Result', 'Technical result'], ['HR_Result', 'HR result'], ['DOJ', 'Joining date']];
+/** After the switch-over, recruiters cannot type interview results or the joining date on the candidate form of a candidate linked to a position: the card's moves write them, and the Daily review counts those moves. */
+function guardCandidatePipelineFields_(patch, old, u) {
+  if (isLead_(u) || ymd_(new Date()) < cutover_()) return;
+  if (!String(patch.Line_ID || (old && old.Line_ID) || '')) return;   // a candidate in the talent pool is not in the pipeline
+  CAND_PIPELINE_FIELDS_.forEach(function (f) {
+    if (!(f[0] in patch)) return;
+    const was = old ? old[f[0]] : '', now = patch[f[0]];
+    if ((ymd_(was) || String(was || '')) === (ymd_(now) || String(now || ''))) return;
+    throw new Error(f[1] + ' is recorded from the candidate pipeline now. Move the candidate in the Pipeline instead, or ask a TA Lead or the Head of HR to correct it.');
+  });
+}
 /** After the switch-over, recruiters cannot type offer, joining or backout details on the position form; the head and admin can correct them. */
 function guardPipelineFields_(patch, old, u) {
   if (isLead_(u) || ymd_(new Date()) < cutover_()) return;
@@ -229,14 +242,14 @@ function apiListFunnel(filter) {
  */
 function funnelWithPipeline_(u, filter, from, to, rows) {
   const cut = cutover_(), today = ymd_(new Date());
-  const piped = PIPE_METRICS_.filter(function (m) { return TYPED_METRICS_.indexOf(m) < 0 && FUNNEL_METRICS.indexOf(m) >= 0; });
-  rows.forEach(function (o) { if (String(o.Entry_Date) >= cut) piped.forEach(function (m) { o[m] = 0; }); });
+  const pipedOn = function (day) { return derivedMetrics_(day).filter(function (m) { return FUNNEL_METRICS.indexOf(m) >= 0; }); };
+  rows.forEach(function (o) { pipedOn(String(o.Entry_Date)).forEach(function (m) { o[m] = 0; }); });
   const f0 = from && from > cut ? from : cut, upto = to > today ? today : to;
   if (upto < f0) return rows;
   const mineName = String(u.recruiter || '').trim().toLowerCase();
   const groups = {};
   pipelineEvents_(f0, upto).forEach(function (ev) {
-    if (piped.indexOf(ev.metric) < 0) return;
+    if (pipedOn(ev.day).indexOf(ev.metric) < 0) return;
     if (filter.lineId && ev.line !== filter.lineId) return;
     if (filter.recruiter && String(ev.recruiter) !== filter.recruiter) return;
     if (filter.mine && String(ev.recruiter).trim().toLowerCase() !== mineName) return;
@@ -275,8 +288,9 @@ function apiSaveFunnel(data) {
   });
   // From the switch-over date those columns are counted from the pipeline and cannot be typed: whatever the form sends
   // (a stale page, or the pipeline counts shown in the list) is dropped, not refused.
-  if (scorecardDerived_(ymd_(patch.Entry_Date))) FUNNEL_METRICS.forEach(function (m) { if (TYPED_METRICS_.indexOf(m) < 0) patch[m] = 0; });
-  if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error('Enter at least one count or a remark.');
+  const typedM = typedMetrics_(ymd_(patch.Entry_Date));
+  FUNNEL_METRICS.forEach(function (m) { if (typedM.indexOf(m) < 0) patch[m] = 0; });
+  if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error(typedM.length ? 'Enter at least one count or a remark.' : 'Enter a remark or the department feedback. The counts come from the pipeline.');
   patch.MRF_No = line.MRF_No;
   return withLock_(function () {
   let rec;
@@ -402,6 +416,7 @@ function apiSaveCandidate(data, force) {
     const was = data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null;
     if (!was || String(was.Line_ID || '') !== String(patch.Line_ID)) requireLineEdit_(u, patch.Line_ID);
   }
+  guardCandidatePipelineFields_(patch, data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null, u);
   const rec = data.Candidate_ID ? update_(T.CAND, data.Candidate_ID, patch, u) : insert_(T.CAND, Object.assign({ Sourced_By: u.recruiter }, patch), u);
   if (rec.Line_ID) ensureApp_(rec, u);
   if (data._parsed && typeof data._parsed === 'object') {
@@ -549,15 +564,21 @@ function computeDashboard_() {
   readTable_(T.FUNNEL.name).rows.forEach(function (f) {
     const day = ymd_(f.Entry_Date);
     if (day < since30) return;
-    const typedOnly = day >= cut;
-    FUNNEL_METRICS.forEach(function (m) { if (!typedOnly || TYPED_METRICS_.indexOf(m) >= 0) funnel[m] += Number(f[m]) || 0; });
+    const typedM = typedMetrics_(day);
+    FUNNEL_METRICS.forEach(function (m) { if (typedM.indexOf(m) >= 0) funnel[m] += Number(f[m]) || 0; });
     const b = byRec[String(f.Recruiter)];
-    if (b) { b.cv30 += Number(f.CV_Sourced) || 0; if (!typedOnly) { b.interviews30 += Number(f.Interviews_Done) || 0; b.selected30 += Number(f.Selected_Final) || 0; } }
+    if (b) {
+      if (typedM.indexOf('CV_Sourced') >= 0) b.cv30 += Number(f.CV_Sourced) || 0;
+      if (typedM.indexOf('Interviews_Done') >= 0) b.interviews30 += Number(f.Interviews_Done) || 0;
+      if (typedM.indexOf('Selected_Final') >= 0) b.selected30 += Number(f.Selected_Final) || 0;
+    }
   });
   if (todayYmd >= cut) {
     pipelineEvents_(since30 > cut ? since30 : cut, todayYmd).forEach(function (ev) {
+      if (derivedMetrics_(ev.day).indexOf(ev.metric) < 0) return;   // CVs sourced / reviewed stay typed before the funnel start date
       if (funnel[ev.metric] !== undefined) funnel[ev.metric]++;
       const b = byRec[ev.recruiter];
+      if (b && ev.metric === 'CV_Sourced') b.cv30++;
       if (b && ev.metric === 'Interviews_Done') b.interviews30++;
       if (b && ev.metric === 'Selected_Final') b.selected30++;
     });

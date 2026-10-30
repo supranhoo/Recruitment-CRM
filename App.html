@@ -491,7 +491,7 @@ async function findCandidatesDialog(lineId, after) {
     ${r.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Why suggested</th><th></th></tr></thead><tbody>${r.rows.map(c => `<tr style="cursor:default">
       <td><button class="linklike" data-open="${esc(c.id)}">${esc(c.name)}</button><span class="sub">${esc(c.designation || c.position || '')}${c.edu ? ' \u00b7 ' + esc(c.edu) : ''}${c.location ? ' \u00b7 ' + esc(c.location) : ''}${c.hasCv ? ' \u00b7 CV' : ''}</span></td>
       <td><ul class="work" style="margin:0">${c.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul></td>
-      <td class="nw"><button class="btn sm primary" data-add="${esc(c.id)}">Add to pipeline</button></td></tr>`).join('')}</tbody></table></div>`
+      <td class="nw"><button class="btn sm primary" data-add="${esc(c.id)}">Add to pipeline</button> <button class="btn sm" data-notsuit="${esc(c.id)}" title="Looked at this CV and it does not fit. It counts as sourced and reviewed, and is rejected.">Not suitable</button></td></tr>`).join('')}</tbody></table></div>`
       : '<div class="empty">No pool candidates match this position yet. Fill in the Profile section (function, skills, experience) on candidates to improve suggestions.</div>'}
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`;
   $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
@@ -500,6 +500,12 @@ async function findCandidatesDialog(lineId, after) {
     busy(b, true);
     try { await api('apiAddToPipeline', b.dataset.add, lineId); b.textContent = 'Added'; b.disabled = true; S.candStale = true; toast('Added to the pipeline'); after && after(); }
     catch (e) { toast(e, true); busy(b, false, 'Add to pipeline'); }
+  });
+  $$('[data-notsuit]', d).forEach(b => b.onclick = async () => {
+    const why = prompt('Why is this CV not suitable? (a short reason)'); if (why === null) return;
+    busy(b, true);
+    try { await api('apiRejectCv', b.dataset.notsuit, lineId, why); b.textContent = 'Rejected'; b.disabled = true; const a = b.parentElement.querySelector('[data-add]'); if (a) a.disabled = true; S.candStale = true; toast('Counted as sourced and reviewed, and rejected'); after && after(); }
+    catch (e) { toast(e, true); busy(b, false, 'Not suitable'); }
   });
 }
 const CDN_NPM = 'https:' + String.fromCharCode(47, 47) + 'cdn.jsdelivr.net/npm/';
@@ -1398,7 +1404,7 @@ function activeLineOptions(selected, rec) {
 function dailyFormHtml(fixedLine, data) {
   data = data || { Entry_Date: today() };
   // The list shows pipeline counts for these columns; the form must not carry them (they are counted, never typed).
-  if (String(data.Entry_Date) >= (S.boot.cutover || '2026-10-05')) { data = Object.assign({}, data); FUNNEL_PIPED_.forEach(k => { data[k] = ''; }); }
+  if (pipedKeys(data.Entry_Date).length) { data = Object.assign({}, data); pipedKeys(data.Entry_Date).forEach(k => { data[k] = ''; }); }
   return `<div class="dailyform" data-entry="${esc(data.Entry_ID || '')}">
     <div class="grid">
       ${fixedLine ? `<input type="hidden" name="Line_ID" value="${esc(fixedLine)}">` : (() => { const ln = data.Line_ID && S.positions.find(p => p.Line_ID === data.Line_ID), rec = ln ? dlRecOf(ln) : dlDefaultRec(); return `<div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
@@ -1406,8 +1412,8 @@ function dailyFormHtml(fixedLine, data) {
       <div class="field"><label for="dl_date">Date *</label><input id="dl_date" type="date" name="Entry_Date" value="${esc(data.Entry_Date)}" max="${today()}"></div>
       <div class="field"><label for="dl_fb">Feedback from dept</label><select id="dl_fb" name="FB_From_Dept">${opts(['Yes','No','Pending'], data.FB_From_Dept)}</select></div>
     </div>
-    <p class="hint dl-pipe-note" hidden>From ${fmtDate(S.boot.cutover || '2026-10-05')}, HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Log only CVs sourced and reviewed here.</p>
-    <div class="counts" style="margin-top:12px">${METRICS.map(([k, l]) => `<div class="field${['CV_Sourced', 'CV_Reviewed'].includes(k) ? '' : ' dl-pipe'}"><label for="dl_${k}">${l}</label><input id="dl_${k}" type="number" min="0" step="1" name="${k}" value="${esc(data[k] || '')}" placeholder="0"></div>`).join('')}</div>
+    <p class="hint dl-pipe-note" hidden></p>
+    <div class="counts" style="margin-top:12px">${METRICS.map(([k, l]) => `<div class="field dl-pipe" data-k="${k}"><label for="dl_${k}">${l}</label><input id="dl_${k}" type="number" min="0" step="1" name="${k}" value="${esc(data[k] || '')}" placeholder="0"></div>`).join('')}</div>
     <div class="field" style="margin-top:12px"><label for="dl_rm">Remarks</label><input id="dl_rm" name="Remarks" value="${esc(data.Remarks || '')}" placeholder="e.g. 2 candidates scheduled for F2F with HOD"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary dl-save">${data.Entry_ID ? 'Save changes' : 'Log activity'}</button></div>
   </div>`;
@@ -1415,9 +1421,10 @@ function dailyFormHtml(fixedLine, data) {
 function bindDailyForm(root, after) {
   const f = $('.dailyform', root);
   const syncPipe = () => {
-    const dt = ($('[name=Entry_Date]', f) || {}).value || today(), piped = dt >= (S.boot.cutover || '2026-10-05');
-    $$('.dl-pipe', f).forEach(x => { x.hidden = piped; if (piped) { const i = $('input', x); if (i) i.value = ''; } });
-    const n = $('.dl-pipe-note', f); if (n) n.hidden = !piped;
+    const dt = ($('[name=Entry_Date]', f) || {}).value || today(), pk = pipedKeys(dt);
+    $$('.dl-pipe', f).forEach(x => { const on = pk.includes(x.dataset.k); x.hidden = on; if (on) { const i = $('input', x); if (i) i.value = ''; } });
+    const n = $('.dl-pipe-note', f);
+    if (n) { n.hidden = !pk.length; n.textContent = pk.length === METRICS.length ? `From ${fmtDate(S.boot.funnelV2 || FUNNEL_V2_FALLBACK)}, every count is taken from the candidates moved in the Pipeline. Log only remarks and the department feedback here.` : `From ${fmtDate(S.boot.cutover || '2026-10-05')}, HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Log only CVs sourced and reviewed here.`; }
   };
   if ($('[name=Entry_Date]', f)) $('[name=Entry_Date]', f).addEventListener('change', syncPipe);
   syncPipe();
@@ -1429,7 +1436,7 @@ function bindDailyForm(root, after) {
   }
   $('.dl-save', f).onclick = async () => {
     const d = readForm(f); d.Entry_ID = f.dataset.entry;
-    if ((d.Entry_Date || today()) >= (S.boot.cutover || '2026-10-05')) FUNNEL_PIPED_.forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
+    pipedKeys(d.Entry_Date || today()).forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
     const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
     try { const saved = await api('apiSaveFunnel', d); if (saved && saved.Entry_ID) f.dataset.entry = saved.Entry_ID; toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
     catch (e) { toast(e, true); busy(btn, false, label); }
@@ -1443,7 +1450,13 @@ function bindEntryEdits(root, rows, after) {
     bindDailyForm(d, () => { closeDrawer(); after(); });
   });
 }
-const FUNNEL_PIPED_ = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
+const FUNNEL_V2_FALLBACK = '2026-11-01';
+/** The Daily-log columns counted from the Pipeline on a day: all of them from the funnel start date, all but CVs sourced / reviewed from the switch-over, none before. */
+function pipedKeys(day) {
+  const d = String(day || today()), cut = S.boot.cutover || '2026-10-05', v2 = S.boot.funnelV2 || FUNNEL_V2_FALLBACK;
+  if (d < cut) return [];
+  return METRICS.map(m => m[0]).filter(k => d >= v2 || !['CV_Sourced', 'CV_Reviewed'].includes(k));
+}
 function funnelTable(rows, withPosition) {
   if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
   const tot = {}; METRICS.forEach(([k]) => tot[k] = rows.reduce((s, r) => s + (Number(r[k]) || 0), 0));
@@ -1452,7 +1465,7 @@ function funnelTable(rows, withPosition) {
   const cell = (r, k, i) => {
     const n = Number(r[k]) || 0, ppl = r.People && r.People[k];
     if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (METRICS.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
-    return `<td class="num${FUNNEL_PIPED_.includes(k) && String(r.Entry_Date) >= cut ? ' pipe' : ''}">${n || ''}</td>`;
+    return `<td class="num${pipedKeys(r.Entry_Date).includes(k) ? ' pipe' : ''}">${n || ''}</td>`;
   };
   return `<div class="table-wrap"><table><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
     ${METRICS.map(([, l, s]) => `<th class="num" title="${l}">${s}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
@@ -1461,7 +1474,7 @@ function funnelTable(rows, withPosition) {
       ${METRICS.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
       <td class="nw">${r.derived ? '<span class="locked" title="Counted from the candidates you moved in the Pipeline">Pipeline</span>' : r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
     <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${METRICS.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
-    </tbody></table></div>${anyPiped ? `<p class="hint">From ${fmtDate(cut)}, the columns after \u201cReviewed\u201d are counted from the candidates moved in the Pipeline (click a number to see who). Only CVs and Reviewed are typed here.</p>` : ''}`;
+    </tbody></table></div>${anyPiped ? `<p class="hint">From ${fmtDate(cut)}, the columns after \u201cReviewed\u201d are counted from the candidates moved in the Pipeline (click a number to see who). From ${fmtDate(S.boot.funnelV2 || FUNNEL_V2_FALLBACK)}, CVs sourced and reviewed are counted from the Pipeline too; only remarks and feedback are typed.</p>` : ''}`;
 }
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-pm]'); if (!b) return;
@@ -1480,8 +1493,8 @@ async function dailyGrid(box, onRec, fixed) {
   const dirty = () => $$('tr.dg-dirty', box).length;
   const guard = () => !dirty() || confirm('You have unsaved numbers. Discard them?');
   const draw = async () => {
-    const rec = fixed ? fixed.rec : (S.dlRec = dlDefaultRec()), piped = st.date >= cut, day = st.date;
-    const cols = METRICS.filter(([k]) => !piped || ['CV_Sourced', 'CV_Reviewed'].includes(k));
+    const rec = fixed ? fixed.rec : (S.dlRec = dlDefaultRec()), pk = pipedKeys(st.date), piped = pk.length > 0, day = st.date;
+    const cols = METRICS.filter(([k]) => !pk.includes(k));
     const lines = dlLines().filter(p => rec === DL_ALL || dlRecOf(p) === rec).sort((a, b) => dlRecOf(a).localeCompare(dlRecOf(b)) || String(a.MRF_No).localeCompare(String(b.MRF_No)));
     box.innerHTML = `${fixed ? '' : `<h2>Log activity</h2><div class="grid" style="margin-bottom:8px">
         <div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
@@ -1495,12 +1508,12 @@ async function dailyGrid(box, onRec, fixed) {
     try { rows = await fresh('apiListFunnel', { recruiter: '', from: day, to: day }); } catch (e) { toast(e, true); }
     if (st.date !== day) return;
     const byLine = {}, pipe = {};
-    rows.forEach(r => { if (r.Entry_ID && !r.derived && !byLine[r.Line_ID]) byLine[r.Line_ID] = r; if (piped) FUNNEL_PIPED_.forEach(k => { if (Number(r[k])) { pipe[r.Line_ID] = pipe[r.Line_ID] || {}; pipe[r.Line_ID][k] = (pipe[r.Line_ID][k] || 0) + Number(r[k]); } }); });
-    const note = id => { const p = pipe[id]; return p ? `<span class="sub">Pipeline today: ${FUNNEL_PIPED_.filter(k => p[k]).map(k => `${(METRICS.find(m => m[0] === k) || [])[2]} ${p[k]}`).join(' · ')}</span>` : ''; };
+    rows.forEach(r => { if (r.Entry_ID && !r.derived && !byLine[r.Line_ID]) byLine[r.Line_ID] = r; if (piped) pk.forEach(k => { if (Number(r[k])) { pipe[r.Line_ID] = pipe[r.Line_ID] || {}; pipe[r.Line_ID][k] = (pipe[r.Line_ID][k] || 0) + Number(r[k]); } }); });
+    const note = id => { const p = pipe[id]; return p ? `<span class="sub">Pipeline today: ${pk.filter(k => p[k]).map(k => `${(METRICS.find(m => m[0] === k) || [])[2]} ${p[k]}`).join(' · ')}</span>` : ''; };
     const body = $('#dgBody', box);
     if (!lines.length) { body.innerHTML = '<div class="empty">No active positions for this recruiter.</div>'; return; }
     let lastRec = null;
-    body.innerHTML = `${piped ? `<p class="hint" style="margin:0 0 8px">Type CVs sourced and reviewed. HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Rows you change are saved with <b>Save</b> or <b>Save all changes</b>. An entry can be changed until midnight.</p>` : ''}
+    body.innerHTML = `${piped ? `<p class="hint" style="margin:0 0 8px">${cols.length ? 'Type CVs sourced and reviewed. HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline.' : 'Every count is taken from the candidates moved in the Pipeline. Type only remarks and the department feedback.'} Rows you change are saved with <b>Save</b> or <b>Save all changes</b>. An entry can be changed until midnight.</p>` : ''}
       <div class="table-wrap"><table class="dgrid"><thead><tr><th>Position</th>${cols.map(([, l, sh]) => `<th class="num" title="${esc(l)}">${esc(sh)}</th>`).join('')}<th>Feedback from dept</th><th>Remarks</th><th><span class="sr-only">Save</span></th></tr></thead><tbody>
       ${lines.map(p => { const e = byLine[p.Line_ID], lock = e && !e.canEdit, ro = lock ? ' disabled' : '';
         const grp = rec === DL_ALL && dlRecOf(p) !== lastRec ? `<tr class="dg-grp"><td colspan="${cols.length + 4}"><b>${esc(dlRecOf(p) === DL_NONE ? 'Not assigned' : dlRecOf(p))}</b></td></tr>` : ''; lastRec = dlRecOf(p);
@@ -1512,7 +1525,7 @@ async function dailyGrid(box, onRec, fixed) {
       </tbody></table></div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:12px"><span class="hint" id="dgCount"></span><button class="btn primary" id="dgAll" disabled>Save all changes</button></div>`;
     const sync = () => { const n = dirty(), b = $('#dgAll', box); if (b) { b.disabled = !n; $('#dgCount', box).textContent = n ? n + (n === 1 ? ' row' : ' rows') + ' changed' : ''; } };
-    const payload = tr => { const d = { Line_ID: tr.dataset.line, Entry_Date: day, Entry_ID: tr.dataset.entry }; $$('[data-k]', tr).forEach(i => { d[i.dataset.k] = i.value; }); if (piped) FUNNEL_PIPED_.forEach(k => { d[k] = 0; }); return d; };
+    const payload = tr => { const d = { Line_ID: tr.dataset.line, Entry_Date: day, Entry_ID: tr.dataset.entry }; $$('[data-k]', tr).forEach(i => { d[i.dataset.k] = i.value; }); pk.forEach(k => { d[k] = 0; }); return d; };
     $$('tr[data-line]', body).forEach(tr => {
       const mark = () => { tr.classList.add('dg-dirty'); const b = $('.dg-save', tr); if (b) b.disabled = false; sync(); };
       $$('[data-k]', tr).forEach(i => { i.addEventListener('input', mark); i.addEventListener('change', mark); });
@@ -3942,7 +3955,7 @@ function dayFunnelHtml(stages, f, people) {
   return `<div class="dfun">${stages.map(s => `<div class="dfun-step${(people[s] || []).length ? ' has-people' : ''}"${(people[s] || []).length ? ` role="button" tabindex="0" data-m="${s}" title="See the candidates"` : ''}><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${DAY_LABELS[s]}</span></div>`).join('')}</div>`;
 }
 function scorecardNote(data) {
-  return data && data.derived ? `<p class="hint">From ${fmtDate(data.cutover)}, every number except Sourced and CVs reviewed is counted from candidate moves in the Pipeline. Click a number to see the candidates.</p>` : '';
+  return data && data.derived ? `<p class="hint">From ${fmtDate(data.cutover)}, every number except Sourced and CVs reviewed is counted from candidate moves in the Pipeline${data.funnelV2 ? `; from ${fmtDate(data.funnelV2)} those two are too` : ''}. Each stage a candidate passes counts once. Click a number to see the candidates.</p>` : '';
 }
 function bindFunnelPeople(root, people, withRecruiter) {
   people = people || {};
@@ -3972,15 +3985,23 @@ function dayPositionsHtml(rows, ctx) {
   const toggle = all.some(g => g.noActivity) ? `<label class="ds-only"><input type="checkbox" data-dsonly${S.dsOnlyActive ? ' checked' : ''}> Only positions with activity</label>` : '';
   if (!rows.length) return toggle + '<p class="hint">No activity logged against positions.</p>';
   const can = isLead() || (ctx.rec && String(ctx.rec).toLowerCase() === String(S.boot.user.recruiter || '').toLowerCase());
-  const cols = [['CV_Sourced', 'Sourced'], ['CV_Reviewed', 'Reviewed'], ['HR_1st_Round', 'HR R1'], ['CV_Shared_Dept', 'Shared'], ['Shortlisted_Dept', 'Shortlisted'], ['Interviews_Done', 'Interviews'], ['Selected_Final', 'Selected']];
+  const cols = [['CV_Sourced', 'Sourced'], ['CV_Reviewed', 'Reviewed'], ['HR_1st_Round', 'HR R1'], ['CV_Shared_Dept', 'Shared'], ['Shortlisted_Dept', 'Shortlisted'], ['Interviews_Done', 'Interviews'], ['Selected_Final', 'Selected'], ['Offers', 'Offers'], ['Joined', 'Joined']];
+  const pplOf = (g, m) => ((ctx.people || {})[m] || []).filter(p => p.line === g.line);
   return toggle + `<div class="table-wrap"><table><thead><tr><th>Position / MRF</th><th>Department</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num">${c[1]}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
     ${rows.map(g => `<tr style="cursor:default"${g.noActivity ? ' class="ds-noact"' : ''}><td>${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span></td><td>${esc(g.dept)}</td>
-      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num">${g[c[0]] || ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
+      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function bindDayPositions(host, rows, ctx, after) {
   if (!host) return;
   const t = host.querySelector('[data-dsonly]'); if (t) t.onchange = () => { S.dsOnlyActive = t.checked; after(); };
+  $$('[data-pp]', host).forEach(b => b.onclick = () => {
+    const [line, m] = b.dataset.pp.split('|'), list = ((ctx.people || {})[m] || []).filter(p => p.line === line);
+    cpDlg(`<h2 id="cpTitle">${esc(DAY_LABELS[m] || m)} \u00b7 ${list.length}</h2>
+      <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
+      ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+  });
   $$('[data-ds]', host).forEach(b => b.onclick = () => { const g = (rows || []).find(x => x.line === b.dataset.ds); if (g) dayStatusDialog(g, ctx, after); });
 }
 function dayStatusDialog(g, ctx, after) {
@@ -4032,7 +4053,7 @@ async function viewMyDay(v) {
       </section>
     </div>
     <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
-    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList })}</div>
+    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
@@ -4041,7 +4062,7 @@ async function viewMyDay(v) {
     const el = $('#mdMonthBody'); if (!el) return; const x = r.rows[0], P = mmLabel(r.prev);
     el.innerHTML = x ? `<p><b>${x.missed}</b> missed in ${esc(mmLabel(r.month))} so far (${x.open} still open) \u00b7 ${mmDelta(x.change)} compared with ${esc(P)} (${x.prev})</p>${mmDetail(r.items[x.recruiter] || [])}` : `<p class="hint">Nothing missed in ${esc(mmLabel(r.month))} so far.</p>`;
   }).catch(() => { const el = $('#mdMonthBody'); if (el) el.innerHTML = ''; });
-  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList }, () => go('myday', false));
+  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people }, () => go('myday', false));
   $$('[data-cand]', v).forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
   let timer, saving = Promise.resolve();
   const state = t => { const el = $('#mdState'); if (el) el.textContent = t; };
@@ -4145,7 +4166,7 @@ async function viewDailyReview(v) {
           <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
         ${todoReviewHtml(r)}
-        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList })}</div>
+        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people })}</div>
       </article>`;
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
@@ -4154,7 +4175,7 @@ async function viewDailyReview(v) {
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
   $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
   $('#drPrev').onclick = () => shift(-1);
-  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList }, () => go('review', false)));
+  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people }, () => go('review', false)));
   $('#drNext').onclick = () => shift(1);
 }
 
