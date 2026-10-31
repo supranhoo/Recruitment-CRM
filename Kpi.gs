@@ -1,5 +1,5 @@
 /**
- * Monthly KPI scorecard (stage 4, part 1): Timely closure, M-level fulfilment, Offer backout.
+ * Monthly KPI scorecard (stage 4, part 1): Timely closure, M-level and W-level fulfilment, Offer backout.
  * Targets live in the KPI_Targets sheet. A row with Recruiter "*" is the team default;
  * a row for a named recruiter overrides it from its Effective_From month onward.
  */
@@ -7,12 +7,25 @@ const KPI_TARGETS = 'KPI_Targets';
 const KPI_DEFS = {
   TIMELY_CLOSURE: { name: 'Timely closure of vacant positions', scored: true },
   M_FULFILMENT: { name: 'Fulfilment of M-level positions within TAT', scored: true },
+  W_FULFILMENT: { name: 'Fulfilment of W-level positions within TAT', scored: true },
   OFFER_BACKOUT: { name: 'Offer backout rate', scored: false },
   PSYCHOMETRIC: { name: 'Mettl psychometric test (Manager & above)', scored: true, count: true, unit: 'missed' },
   MRF_ADHERENCE: { name: 'MRF & assessment process adherence', scored: true, count: true, unit: 'logged' },
   BGV: { name: 'Background verification compliance', scored: true, count: true, unit: 'missed' },
   TRACKER_ACCURACY: { name: 'Recruitment & CV tracker accuracy', scored: true, count: true, unit: 'errors' }
 };
+/** The KPIs placed by kpiDue_ (target days, level and notice exemption from KPI_Targets); each has "worked on", a reconciliation and a drill-down. */
+const KPI_TAT_ = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
+/** The team default of every TAT KPI. Seeded with the sheet, and appended to an existing sheet when its KPI has no row at all (never edits a row). */
+const KPI_DEFAULT_TARGETS_ = [
+  ['*', 'TIMELY_CLOSURE', 'All', 60, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
+  ['*', 'M_FULFILMENT', 'M', 50, 'Yes', '2025-04', 'Team default. Levels: All, M, W or T.'],
+  ['*', 'W_FULFILMENT', 'W', 20, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.']
+];
+/** The default rows whose KPI has no row in the sheet. `have` is a set of KPI keys. */
+function kpiMissingDefaults_(have) {
+  return KPI_DEFAULT_TARGETS_.filter(function (r) { return !have[String(r[1]).toUpperCase()]; });
+}
 const COUNT_SCORES = {
   PSYCHOMETRIC: function (n) { return n === 0 ? 5 : n === 1 ? 3 : 0; },
   MRF_ADHERENCE: function (n) { return n > 4 ? 0 : 5 - n; },
@@ -24,16 +37,25 @@ function ensureKpiTargets_() {
   let sh = ss_().getSheetByName(KPI_TARGETS);
   if (!sh) {
     sh = ss_().insertSheet(KPI_TARGETS);
-    sh.getRange(1, 1, 3, 7).setValues([
-      ['Recruiter', 'KPI', 'Levels', 'TAT_Days', 'Notice_Exemption', 'Effective_From', 'Note'],
-      ['*', 'TIMELY_CLOSURE', 'All', 60, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
-      ['*', 'M_FULFILMENT', 'M', 50, 'Yes', '2025-04', 'Team default. Levels: All, M, W or T.']
-    ]);
-    sh.getRange(2, 6, 2, 1).setNumberFormat('@');
+    sh.getRange(1, 1, 1 + KPI_DEFAULT_TARGETS_.length, 7).setValues([['Recruiter', 'KPI', 'Levels', 'TAT_Days', 'Notice_Exemption', 'Effective_From', 'Note']].concat(KPI_DEFAULT_TARGETS_));
+    sh.getRange(2, 6, KPI_DEFAULT_TARGETS_.length, 1).setNumberFormat('@');
     sh.getRange(1, 1, 1, 7).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1F3A5F');
     sh.setFrozenRows(1);
     dropStale_(KPI_TARGETS);
+    return;
   }
+  // An existing sheet gets the default row of any TAT KPI it has no row for (a new KPI), once; nothing already there is changed.
+  const have = function () { const h = {}; kpiTargets_().forEach(function (t) { h[t.kpi] = true; }); return h; };
+  if (!kpiMissingDefaults_(have()).length) return;
+  withLock_(function () {
+    _tables = {};
+    const add = kpiMissingDefaults_(have());
+    if (!add.length) return;
+    const at = sh.getLastRow() + 1;
+    sh.getRange(at, 1, add.length, 7).setValues(add);
+    sh.getRange(at, 6, add.length, 1).setNumberFormat('@');
+    dropStale_(KPI_TARGETS);
+  });
 }
 
 function targetFor_(targets, recruiter, kpi, month) {
@@ -92,18 +114,21 @@ const KPI_RECON_BUCKETS_ = [
 ];
 
 /**
- * Where every position "worked on" in a month goes in the Timely closure KPI, so the count can be reconciled by hand.
+ * Where every position "worked on" in a month goes in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand.
  * A position is worked on in the month if its clock started on or before the month end and it had not ended before the month
  * start (ended = joined, closed without a hire, replaced or filled internally). Status is as of today. Uses the same placement
  * (`kpiDue_`) as the scorecard, so the first three rows add up to the cell.
  */
-function kpiRecon_(month, recruiter) {
+function kpiRecon_(month, recruiter, kpi) {
+  kpi = kpi || 'TIMELY_CLOSURE';
   const targets = kpiTargets_(), clocks = kpiClocks_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
   const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
   const out = {}; KPI_RECON_BUCKETS_.forEach(function (b) { out[b[0]] = []; });
   readTable_(T.MRF.name).rows.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
     if (want && rec.toLowerCase() !== want) return;
+    const lvl = targetFor_(targets, rec, kpi, month);
+    if (lvl && !levelMatch_(lvl.levels, l.Grade)) return;   // a position of another level is not part of this KPI
     const status = positionStatus_(l), clk = kpiLineClock_(l, clocks), receipt = clk.receipt, doj = clk.doj;
     const closedOn = doj || ymd_(l.Internal_Effective_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Replaced_On);
     const joinedIn = !!doj && doj.slice(0, 7) === month;
@@ -114,7 +139,7 @@ function kpiRecon_(month, recruiter) {
     else if (['Not Needed', 'No Vacancy', 'On Hold'].indexOf(status) >= 0) bucket = 'nohire';
     else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
     else {
-      const d = kpiDue_(l, 'TIMELY_CLOSURE', targets, rec, clk, status);
+      const d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d) bucket = 'notarget';
       else if (d.month !== month) bucket = 'other';
       else bucket = d.ok ? 'ontime' : doj ? 'late' : 'overdue';
@@ -126,11 +151,14 @@ function kpiRecon_(month, recruiter) {
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
 }
 
-function apiKpiRecon(month, recruiter) {
+function apiKpiRecon(month, recruiter, kpi) {
   currentUser_();
   month = String(month || '');
+  kpi = String(kpi || 'TIMELY_CLOSURE');
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Pick a month.');
-  return kpiRecon_(month, recruiter);
+  if (KPI_TAT_.indexOf(kpi) < 0) throw new Error('That KPI has no reconciliation.');
+  const r = kpiRecon_(month, recruiter, kpi); r.kpi = kpi; r.name = KPI_DEFS[kpi].name;
+  return r;
 }
 
 /** The shared clocks every KPI line needs (built once per run). */
@@ -155,9 +183,12 @@ function kpiLineClock_(l, k) {
  * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
  * line is not part of the KPI (no target, other level, internal fill, not Open / Offered / Closed).
  */
+function kpiTargetFor_(l, kpi, targets, rec, clk) {
+  return clk.receipt ? targetFor_(targets, rec, kpi, clk.doj ? clk.doj.slice(0, 7) : clk.receipt.slice(0, 7)) : null;
+}
 function kpiDue_(l, kpi, targets, rec, clk, status) {
   if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
-  const t = targetFor_(targets, rec, kpi, clk.doj ? clk.doj.slice(0, 7) : clk.receipt.slice(0, 7));
+  const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
   const allowed = t.days + (t.exempt ? clk.notice : 0) + clk.ex.days;
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
@@ -191,9 +222,9 @@ function computeKpis_(fy) {
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
 
-    // 1 + 2. Timely closure (all levels) and M-level fulfilment: a position counts in the month it joined if that is on or before the month
+    // 1 + 2 + 3. Timely closure (all levels), M-level and W-level fulfilment: a position counts in the month it joined if that is on or before the month
     // it fell due, else in its due month (late and unfilled positions count against the month they fell due). On time = joined within the allowed days.
-    ['TIMELY_CLOSURE', 'M_FULFILMENT'].forEach(function (kpi) {
+    KPI_TAT_.forEach(function (kpi) {
       const d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d || !inFy(d.month) || d.month > ymd_(new Date()).slice(0, 7)) return;
       const c = bucket(rec, kpi, d.month);
@@ -201,12 +232,15 @@ function computeKpis_(fy) {
       c.items.push(Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief));
     });
     // Positions worked on in each month (clock started by month end, not ended before month start), and how many joined on time in it.
-    if (kpiWorkable_(l, status)) months.forEach(function (m) {
-      if (m > nowMonth) return;
-      const d = kpiDue_(l, 'TIMELY_CLOSURE', targets, rec, clk, status);
-      if (!d || !kpiWorkedIn_(clk, m)) return;
-      const c = bucket(rec, 'TIMELY_CLOSURE', m);
-      c.worked++; if (clk.doj && clk.doj.slice(0, 7) === m && clk.doj && d.days <= d.allowed) c.workedOk++;
+    // Each KPI counts only the positions of its own level (kpiDue_ gives null for the others).
+    if (kpiWorkable_(l, status)) KPI_TAT_.forEach(function (kpi) {
+      const d = kpiDue_(l, kpi, targets, rec, clk, status);
+      if (!d) return;
+      months.forEach(function (m) {
+        if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
+        const c = bucket(rec, kpi, m);
+        c.worked++; if (clk.doj && clk.doj.slice(0, 7) === m && d.days <= d.allowed) c.workedOk++;
+      });
     });
 
     // 3. Offer backout rate — backouts in the month ÷ offers made in the month.
@@ -330,7 +364,7 @@ function computeKpis_(fy) {
     }
     const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
     return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScore_(pct) : null, items: c.items,
-      worked: kpi === 'TIMELY_CLOSURE' ? c.worked : undefined, workedOk: kpi === 'TIMELY_CLOSURE' ? c.workedOk : undefined };
+      worked: KPI_TAT_.indexOf(kpi) >= 0 ? c.worked : undefined, workedOk: KPI_TAT_.indexOf(kpi) >= 0 ? c.workedOk : undefined };
   };
   const out = {};
   Object.keys(recruiters).forEach(function (rec) {

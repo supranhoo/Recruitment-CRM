@@ -313,7 +313,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Org_Grade_Notes** | Note_ID (`ONT-`), Org_Dept, From_Grade, To_Grade, Seats, Reason, Approved_By, Review_On, Status, Created/Updated By/At | Schema 37. One active note per department, approved grade and grade it is filled at. Upgrades keep a reason, approver and review date; downgrades need none |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
-| **KPI_Targets** | Recruiter, KPI, Levels, TAT_Days, Notice_Exemption, Effective_From, Note | Recruiter `*` = team default (Timely closure 60 days all levels; M fulfilment 50 days M) |
+| **KPI_Targets** | Recruiter, KPI, Levels, TAT_Days, Notice_Exemption, Effective_From, Note | Recruiter `*` = team default (Timely closure 60 days all levels; M fulfilment 50 days M; W fulfilment 20 days W) |
 | **Settings** | Key, Value, Note | §12.2 |
 | **Dash_Snapshot** | — | Serialised Overview snapshot |
 | **Import_Report / Import_Exceptions** | — | One-time migration record (13 checks; 71 exceptions) |
@@ -740,15 +740,16 @@ Financial-year grid (April–March), team or per recruiter, value + score (0–5
 
 | KPI | Definition | Score |
 |---|---|---|
-| **Timely closure of vacant positions** | Positions **filled in the month** (Closed, DOJ in month) within the recruiter's target days (KPI_Targets; default 60, all levels) + notice exemption (days above `NOTICE_GRACE_DAYS`, unless rejected) + approved recruiter exemptions, with on-hold and approved paused days not counted (schema 28) ÷ positions filled in the month; measured on the **recruiter clock** | 5 ≥100 %, 4 ≥95, 3 ≥90, 2 ≥85, 1 ≥80, else 0 |
-| **Fulfilment of M-level positions within TAT** | M-level positions **targeted** in the month (due = start + target days (default 50) + exemption, or filled that month) that were filled within TAT ÷ targeted; months up to the current one | same bands |
+| **Timely closure of vacant positions** | Every position of any level (not filled internally; Open, Offered or Closed) **due in the month** (recruiter-clock start + target days (KPI_Targets; default 60, all levels) + notice exemption (days above the TAT rule's grace, 30 by default, unless the Head of HR rejected it) + approved recruiter exemptions + hold / approved paused days), or **filled in the month if that is on or before the month it fell due**. On time = joined within the allowed days. A late or unfilled position counts as a miss in the month it fell due. Shows "N of M worked on" (positions worked on in the month) and a reconciliation of every position (v123, v124) | 5 ≥100 %, 4 ≥95 %, 3 ≥90 %, 2 ≥85 %, 1 ≥80 %, else 0 |
+| **Fulfilment of M-level positions within TAT** | The same placement and the same adjustments as Timely closure, for **M-level positions only** (grades M1–M7) against their own target (default 50 days, notice beyond 30 days exempt). "N of M worked on" and the reconciliation as Timely closure (v130) | same bands |
+| **Fulfilment of W-level positions within TAT** (v130) | The same for **W-level positions only** (grades W1–W5), target 20 days (policy 20.1), notice beyond 30 days exempt, counted from Apr 2025 | same bands |
 | **Offer backout rate** | Backouts in the month ÷ offers made in the month | % only (scoring bands not yet given) |
 | **Mettl psychometric test** | Shortlisted **Manager+** candidates in the month without a completed or waived test | 0 → 5, 1 → 3, >1 → 0 |
 | **MRF & assessment process adherence** | Observations logged against the recruiter in the month | 0→5, 1→4, 2→3, 3→2, 4→1, >4→0 |
 | **Background verification compliance** | New hires (Closed, DOJ in month) where BGV is required (BGV_Required = Yes, or Auto and Manager+) **missing** previous-employer BGV **initiated within 3 days after the offer** (Policy 9.1.1), or current-employer BGV **started within 2 days of joining** (pending until the deadline passes) | 0 → 5, 1 → 2, >1 → 0 |
 | **Recruitment & CV tracker accuracy** | Errors in the month's 20 % audit sample | 0 → 5, else 0 |
 
-- **Targets:** `KPI_Targets` rows with Recruiter `*` are team defaults; a named recruiter's row overrides from its Effective_From month; Levels = All, M, W or T.
+- **Targets:** `KPI_Targets` rows with Recruiter `*` are team defaults; a named recruiter's row overrides from its Effective_From month; Levels = All, M, W or T (a grade prefix). One list (`KPI_TAT_`) drives the three TAT KPIs, so they score, show "worked on" and reconcile the same way. A position is placed by each KPI's own target, so an M-level or W-level position counts in Timely closure (60 days) **and** in its level KPI, and can be on time in one and late in the other. When a release adds a TAT KPI, its default row is appended once to an existing `KPI_Targets` sheet (never edits a row), at the first scorecard open.
 - **Manager & above** = grades M1–M4; without a grade, judged from designation (Manager, AGM, DGM, GM, VP, President, Head, Director; excluding Assistant/Deputy/Junior Manager).
 - The four **compliance KPIs** are scored only from **`KPI_CAPTURE_FROM`** (currently 2026-10). Every tracked month gets a cell for every active recruiter, so "0 misses" shows as a full score. Team rows sum numerators and denominators.
 
@@ -1139,11 +1140,18 @@ Decision: every patch is checksum-verified before and after; unchanged files are
 **ADR-051 — A backout can be reversed by the Head of HR or Admin while the replacement MRF has no offer** (16 Oct)
 Context: candidates sometimes confirm they will join after backing out; a backout closes the MRF as Replaced and raises a replacement, so the card could not be restored. Decision: a reinstatement on the same MRF, allowed only when the replacement holds no offer or joining; the replacement is removed and its cards move back; the history keeps both events and the KPI no longer counts the reversed backout. Consequence: if the replacement already has an offer, the Head of HR must resolve that first.
 
+**ADR-052 — W-level fulfilment KPI; "worked on" and reconciliation for every TAT KPI** (31 Oct)
+Context: Timely closure alone showed \"N of M worked on\" and the position reconciliation; the M-level KPI scored the same way but had neither, and there was no W-level KPI although policy 20.1 gives W levels 20 days. The user asked for the same functionality on M-level and a W-level fulfilment KPI. Decisions (owner answers): W-level 20 days with notice beyond 30 days exempt; same 0–5 bands; counted from Apr 2025; worked on and reconciliation for all three. Mechanism: one list of TAT KPIs drives placement, worked on, totals and reconciliation; the W-level target is a `KPI_Targets` default row appended once to an existing sheet. Consequences: M and W positions count in Timely closure and in their level KPI by design; M-level cells with positions worked on but none due now show a dash with the worked-on line.
+
 ## 14. Changelog
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**W-level fulfilment KPI, and worked on + reconciliation for the M-level KPI** (no schema change; v130; 31 Oct 2026)
+- New KPI \"Fulfilment of W-level positions within TAT\" (20 days, W1–W5, notice beyond 30 days exempt, from Apr 2025, same bands). The M-level and W-level cells show \"N of M worked on\"; clicking any of the three KPIs offers \"Where are all the positions of this month?\" (a reconciliation per KPI that adds up to the cell; positions of other levels are left out of M and W). The legend says a W or M position also counts in Timely closure. The weekly email shows a dash, not \"null%\", for a cell with nothing due.
+- The W-level default row is appended to the live `KPI_Targets` sheet at the first scorecard open (additive; delete the row to undo). Timely closure and M-level numbers are unchanged (checked against the old code on 700 generated positions). Tests: 37 unit and 14 comparison cases in Node, 12 browser cases, E2E A5 (8 KPIs) and K21–K26.
 
 **Task "Open" no longer reloads the page you are on** (no schema change; v125; 28 Oct 2026)
 - Report: on a position's Pipeline page, Open on \u201cChase the department: Screening questions v2 reply\u201d redirected to itself. RCA: JD / question to-dos (`dept_reply`, `revise_doc`, `share_jd`, `share_questions`) opened `{type: 'pipeline'}`, and the same task list is shown on that Pipeline page, so `go('pipeline')` rebuilt the same screen. 5-Why: reload of the current page \u2192 coarse target \u2192 chosen when to-dos lived only on My day/Overview \u2192 list reused on the position page without re-checking targets \u2192 no rule that an Open target must differ from the current screen.

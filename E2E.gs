@@ -34,7 +34,7 @@ function e2eRun_(trash) {
   const lines = t('A2 list positions', function () { const l = apiListPositions(); return l.length >= 300 && l[0].Position_Status ? l : false; }) || [];
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
-  t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
+  t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 8 && !!k.defs.W_FULFILMENT ? 'fy ' + fy : false; });
   t('A6 data checks', function () { return apiDataChecks().length === 16; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
@@ -338,6 +338,41 @@ function e2eRun_(trash) {
     t('K18 BGV governance shows the Drive status and the retention list', function () { const g = apiBgvGovern(); return g.retention && Array.isArray(g.retention.due) && g.drive ? g.retention.due.length + ' due' : false; });
     t('K19 the BGV audit export works for the admin and is logged', function () { const r = apiBgvAudit({}); return Array.isArray(r.rows) && r.from <= r.to ? r.total + ' rows' : false; });
     t('M1 the Daily log list carries the pipeline counts from the switch-over', function () { const r = apiListFunnel({ from: cutover_(), to: ymd_(new Date()) }); return Array.isArray(r) && r.every(function (x) { return x.Entry_Date >= cutover_() ? typeof x.HR_1st_Round === 'number' : true; }) ? r.length + ' rows' : false; });
+    t('K21 the W-level KPI has its team default row (20 days, level W, notice exempt), seeded once', function () {
+      ensureKpiTargets_(); ensureKpiTargets_(); _tables = {};
+      const w = kpiTargets_().filter(function (x) { return x.kpi === 'W_FULFILMENT'; });
+      return w.length === 1 && w[0].days === 20 && String(w[0].levels) === 'W' && w[0].exempt && w[0].recruiter === '*' && w[0].from === '2025-04' ? 'ok' : false;
+    });
+    t('K22 W-level placement: 20 days, notice exempt, own level only, differs from Timely closure', function () {
+      const tg = [{ recruiter: '*', kpi: 'TIMELY_CLOSURE', levels: 'All', days: 60, exempt: true, from: '2025-04' }, { recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: true, from: '2025-04' },
+        { recruiter: '*', kpi: 'W_FULFILMENT', levels: 'W', days: 20, exempt: true, from: '2025-04' }];
+      const clk = function (r, d, notice) { return { receipt: r, doj: d, ex: { days: 0 }, notice: notice || 0, hold: 0, paused: 0 }; };
+      const W = { Grade: 'W2', Fill_Type: '' }, M = { Grade: 'M3', Fill_Type: '' };
+      const due = function (l, kpi, c) { return kpiDue_(l, kpi, tg, 'Asha', c, 'Closed'); };
+      const a = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-08-21')), b = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-08-22'));
+      const x = due(W, 'W_FULFILMENT', clk('2026-08-25', '2026-10-05')), n = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-09-04', 15));
+      const late = clk('2026-08-01', '2026-09-04');   // 34 days
+      return a.ok && a.allowed === 20 && a.month === '2026-08' && !b.ok && x.month === '2026-09' && !x.ok && n.allowed === 35 && n.ok
+        && due(M, 'W_FULFILMENT', late) === null && due(W, 'M_FULFILMENT', late) === null
+        && due(W, 'TIMELY_CLOSURE', late).ok === true && due(W, 'W_FULFILMENT', late).ok === false ? 'ok' : false;
+    });
+    t('K23 every TAT KPI cell carries its worked-on counts', function () {
+      const d = apiKpi(fy, true).data.TEAM_TOTAL; let cells = 0;
+      const ok = KPI_TAT_.every(function (kpi) { return Object.keys(d[kpi] || {}).every(function (m) { cells++; const c = d[kpi][m]; return typeof c.worked === 'number' && typeof c.workedOk === 'number' && c.workedOk <= c.worked; }); });
+      return ok ? cells + ' cells' : false;
+    });
+    t('K24 the reconciliation adds up to the cell for each TAT KPI', function () {
+      const k = apiKpi(fy, true), month = ymd_(new Date()).slice(0, 7), out = [];
+      const ok = KPI_TAT_.every(function (kpi) {
+        const c = (k.data.TEAM_TOTAL[kpi] || {})[month] || { num: 0, den: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
+        const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
+        out.push(kpi + ' ' + c.num + '/' + c.den);
+        return r.kpi === kpi && n('ontime') === c.num && n('ontime') + n('late') + n('overdue') === c.den;
+      });
+      return ok ? out.join(', ') : false;
+    });
+    err('K25 an unknown KPI has no reconciliation', function () { apiKpiRecon(ymd_(new Date()).slice(0, 7), 'TEAM_TOTAL', 'BGV'); }, /no reconciliation/);
+    t('K26 the KPI result stays under the cache limit', function () { const n = JSON.stringify(apiKpi(fy, true)).length; return n < 95000 ? n + ' chars' : false; });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
