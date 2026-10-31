@@ -18,7 +18,16 @@ const TEXR_SEED_ = [
   ['Department / HOD delay', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'Department feedback, JD or questions validation or interview slots took longer than the policy norms'],
   ['Candidate notice buy-out / DOJ shift by company', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The company moved the joining date or the notice buy-out was not approved'],
   ['Niche / scarce skill, re-advertised', 'Days', 'No', 'Yes', 'No', '', 'Yes', 'Extends the position TAT only; the recruiter KPI is unchanged'],
-  ['Budget, grade or MRF change mid-way', 'Pause', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The clock is paused while the MRF was being changed']];
+  ['Budget, grade or MRF change mid-way', 'Pause', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The clock is paused while the MRF was being changed'],
+  ['Delay in MRF Evidence', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The MRF approval or its supporting evidence reached the recruiter late; attach the mail or note that shows the date'],
+  ['Other, if any', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'A reason not in the list. Proof and a clear remark are required; the Head of HR decides each request']];
+/** Reasons added after the first release. An existing sheet gets them once, by name (never edited, reordered or re-added if an admin changed or deactivated them). */
+const TEXR_ADDED_ = ['Delay in MRF Evidence', 'Other, if any'];
+/** The seed rows of TEXR_ADDED_ whose reason is not in the sheet yet (name compared trimmed, any case). `have` is a list of the reasons in the sheet. */
+function exemptReasonsMissing_(have) {
+  const names = {}; have.forEach(function (n) { names[String(n).replace(/\s+/g, ' ').trim().toLowerCase()] = true; });
+  return TEXR_SEED_.filter(function (r) { return TEXR_ADDED_.indexOf(r[0]) >= 0 && !names[String(r[0]).replace(/\s+/g, ' ').trim().toLowerCase()]; });
+}
 const TEX_LOCK_DAYS_ = 5;
 const TEX_OPEN_ = ['Open', 'Offered', 'On Hold'];
 
@@ -27,6 +36,10 @@ function exemptSchema_() {
   const fresh = !ss_().getSheetByName(TEXR_SHEET_);
   addSheet_(TEXR_SHEET_, TEXR_COLS_);
   if (fresh || readTable_(TEXR_SHEET_, true).rows.length === 0) sheet_(TEXR_SHEET_).getRange(2, 1, TEXR_SEED_.length, TEXR_COLS_.length).setValues(TEXR_SEED_);
+  else {   // an existing list gets the reasons added since its first release, once
+    const t = readTable_(TEXR_SHEET_, true), add = exemptReasonsMissing_(t.rows.map(function (r) { return r.Reason; }));
+    if (add.length) t.sheet.getRange(t.sheet.getLastRow() + 1, 1, add.length, TEXR_COLS_.length).setValues(add);
+  }
   addColumns_(T.MRF.name, ['Notice_Proof_File', 'Notice_Ext_Status', 'Notice_Ext_Note', 'Notice_Ext_By', 'Notice_Ext_On']);
   dropStale_(T.TEX.name); dropStale_(TEXR_SHEET_);
 }

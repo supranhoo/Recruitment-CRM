@@ -94,6 +94,26 @@ function e2eRun_(trash) {
   t('X4 revoke restores the TAT', function () { apiExemptionRevoke(x1, 'E2E revoke'); return posTat().Pos_Final_TAT === base0.Pos_Final_TAT; });
   err('X5 notice over 30 days needs proof', function () { apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); }, /proof/);
   t('X6 exemption register lists the requests', function () { const r = apiExemptionRegister({}); return r.rows.filter(function (x) { return x.line === L1.Line_ID; }).length >= 2 && r.reasons.length >= 4; });
+  t('X7 the exemption reasons include "Delay in MRF Evidence" and "Other, if any" (Days, both clocks, proof), seeded once', function () {
+    exemptSchema_(); exemptSchema_(); _tables = {};
+    const rs = exemptReasons_(false), rows = readTable_(TEXR_SHEET_, true).rows;
+    return ['Delay in MRF Evidence', 'Other, if any'].every(function (n) {
+      const r = rs.filter(function (x) { return x.reason === n; })[0];
+      return r && r.type === 'Days' && r.r && r.p && r.proof && !r.max && rows.filter(function (x) { return String(x.Reason) === n; }).length === 1;
+    }) ? rs.length + ' reasons' : false;
+  });
+  const x8 = ['Delay in MRF Evidence', 'Other, if any'].map(function (reason) {
+    return t('X8 a request with "' + reason + '" is pending and changes nothing', function () {
+      const r = apiExemptionRequest(L1.Line_ID, { reason: reason, type: 'Days', days: 4, remark: 'E2E ' + reason });
+      const item = r.line.items.filter(function (i) { return i.id === r.id; })[0], p = posTat();
+      return item && item.status === 'Pending' && item.reason === reason && p.Final_TAT === base0.Final_TAT && p.Pos_Final_TAT === base0.Pos_Final_TAT ? r.id : false;
+    });
+  });
+  err('X9 approving "Delay in MRF Evidence" needs proof', function () { apiExemptionDecide(x8[0], 'Approve', ''); }, /proof/);
+  err('X9b approving "Other, if any" needs proof', function () { apiExemptionDecide(x8[1], 'Approve', ''); }, /proof/);
+  err('X10 a reason that is not in the list is refused', function () { apiExemptionRequest(L1.Line_ID, { reason: 'Something else', type: 'Days', days: 2, remark: 'E2E unknown reason' }); }, /Pick a reason/);
+  err('X10b a request needs a remark', function () { apiExemptionRequest(L1.Line_ID, { reason: 'Other, if any', type: 'Days', days: 2, remark: 'x' }); }, /remark/);
+  t('X11 the two test requests are rejected so no pending request is left', function () { return x8.every(function (id) { return !!id && apiExemptionDecide(id, 'Reject', 'E2E cleanup'); }) ? 'ok' : false; });
   t('B7 JD file view', function () { return apiGetDoc('MRF', L1.Line_ID, 'JD_File').b64.length > 10; });
   const jd1 = t('J1 uploaded JD lands in the JD folder', function () {
     const r = apiListJds(); const f = r.files.filter(function (x) { return x.usedBy.some(function (u) { return u.line === L1.Line_ID; }); })[0];

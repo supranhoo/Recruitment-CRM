@@ -4,7 +4,7 @@
 |---|---|
 | **Document version** | 1.19 (brought up to date with deployment version 99, 12 Oct 2026) |
 | **Describes app version** | **v99** (Apps Script deployment version 99, 12 Oct 2026) |
-| **Database schema version** | **40** (Script Property `SCHEMA_V`) |
+| **Database schema version** | **42** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -293,7 +293,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **M_Recruiters** | Recruiter, Email, Active | Recruiter dropdown, kept in sync by Users |
 | **M_Grades** | Grade, Designations, Band, Standard_TAT_Days, Active | 17 levels; Standard_TAT_Days mirrors the TAT rule in force **today** (kept in sync; no longer the source of truth). From schema 27, **Designations is a read-only summary** of the grade's active rows in M_Designations; Band and Active are edited in Admin → Grades & designations (ADR-038) |
 | **TAT_Exemptions** | Exemption_ID (TEX-), Line_ID, MRF_No, Type (Days / Pause), Days, From_Date, To_Date, Reason, Remark, Proof_File, Applies_Recruiter, Applies_Position, Status (Pending / Approved / Rejected / Withdrawn / Revoked), Requested_By/On, Decided_By/On, Decision_Note | Schema 28 (ADR-039). Applies_* are copied from the reason when decided |
-| **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
+| **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause); from schema 42 also Delay in MRF Evidence and Other, if any (both Days, extend the recruiter TAT and KPI and the position TAT, proof required). A reason added in a release is appended once to an existing sheet by name; an existing row (edited, deactivated or added by hand) is never changed |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired / Discarded), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Updated_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
 | **CTC_Calcs** | Calc_ID (CTC-00001…), Candidate_ID, Line_ID (schema 32, optional links), Status (Draft / Pending approval / Issued / Superseded / Discarded), Submitted_By/At, Decided_By/At, Decision_Note (schema 31), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 30. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
@@ -1148,6 +1148,10 @@ Context: Timely closure alone showed \"N of M worked on\" and the position recon
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**Two more TAT exemption reasons** (schema 42; v131; 31 Oct 2026)
+- Report: the request dropdown showed four reasons; \"Delay in MRF Evidence\" and \"Other, if any\" were wanted. RCA: the list is read from the `M_Exemption_Reasons` sheet, which is seeded only when empty, and the two reasons were never in the code or the live sheet (no earlier change of ours added them).
+- Both reasons: extra days, recruiter TAT and KPI and position TAT, proof required, no cap; the Head of HR still decides each request. The schema step appends them once to the live sheet by name and never edits a row, so one an admin already added or deactivated is left alone. Tests: 11 migration cases in Node, 8 browser checks, E2E X7 to X11.
 
 **W-level fulfilment KPI, and worked on + reconciliation for the M-level KPI** (no schema change; v130; 31 Oct 2026)
 - New KPI \"Fulfilment of W-level positions within TAT\" (20 days, W1–W5, notice beyond 30 days exempt, from Apr 2025, same bands). The M-level and W-level cells show \"N of M worked on\"; clicking any of the three KPIs offers \"Where are all the positions of this month?\" (a reconciliation per KPI that adds up to the cell; positions of other levels are left out of M and W). The legend says a W or M position also counts in Timely closure. The weekly email shows a dash, not \"null%\", for a cell with nothing due.
