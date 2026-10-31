@@ -157,7 +157,16 @@ function e2eRun_(trash) {
   t('D9 interview written to candidate', function () { _tables = {}; return apiGetCandidate(c1.Candidate_ID).Tech_Result === 'Selected'; });
   mv('D10 HR interview', 'HR', { date: today, by: 'Randhir Singh', result: 'Selected' });
   err('D11 documents gate', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' } }); }, /not verified/);
-  mv('D12 documents verified', 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' } });
+  err('D11b an exception needs remarks', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' }, exception: 'Form 16 awaited' }); }, /remarks/);
+  mv('D12 documents verified', 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' }, note: 'E2E docs remarks' });
+  t('D12b the documents remarks show in the Daily review and the Daily log', function () {
+    _tables = {}; const d = apiDaySummary(today), r = d.recruiters.filter(function (x) { return x.recruiter === String(L1.Recruiter); })[0];
+    const g = r && r.byPosition.filter(function (x) { return x.line === L1.Line_ID; })[0];
+    const rows = apiListFunnel({ from: today, to: today });
+    const people = ((r && r.people) || {}).Docs || [];
+    return g && g.remarks.some(function (x) { return /E2E docs remarks/.test(x); }) && people.some(function (p) { return p.remark === 'E2E docs remarks'; })
+      && rows.some(function (x) { return x.Line_ID === L1.Line_ID && (x.DocRemarks || []).some(function (y) { return y.remark === 'E2E docs remarks'; }); }) ? 'ok' : false;
+  });
   t('D13 joining documents upload', function () { const r = apiUploadDoc('APP', A, 'Docs_File', 'docs.pdf', 'application/pdf', pdf); trash.push(fid(r.url || r)); return !!fid(r.url || r); });
   mv('D14 offer released', 'Offer', { offerDate: today, edoj: today, ctc: '7.5 LPA' });
   t('D15 position shows Offered', function () { _tables = {}; const l = apiListPositions().filter(function (x) { return x.Line_ID === L1.Line_ID; })[0]; return l.Position_Status === 'Offered' && l.Candidate_ID === c1.Candidate_ID; });

@@ -1149,6 +1149,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Remarks at Documents verified, shown in the Daily review and the Daily log** (no schema change; v133; 31 Oct 2026)
+- Request: a remarks column after Documents verified that also reflects in the daily log. The Documents verified step now has a **Remarks** box (what is pending, the exception, follow-ups): optional when every section is verified, **required (5+ characters) when a section is not verified** (conditional approval, Policy 9.3). It is saved on the card's history note.
+- It shows in the Daily review (the position row's Remarks as \"Documents verified, <candidate>: <remarks>\", and in the list behind the Documents verified number next to the outcome) and in the Daily log list (the Remarks column of the day's row, and the same candidate list). Only a move made at the Documents verified step carries it; a card that jumps past that stage does not borrow another step's note, and after a lead's correction only the new remarks count. Tests: 7 Node cases, 4 browser checks, E2E D11b, D12b.
+
 **BGV started before the offer is flagged** (no schema change; v132; 31 Oct 2026)
 - Report: a previous-employer check (BGV-00053) had started on 15 Sep, before the offer on 31 Oct, while Policy 9.1.1 starts it within 3 days after the offer. Owner decision: flag it as a deviation; leave the BGV KPI as it is.
 - The tracker shows Amber \"Started n days before the offer\" (a Red such as the vendor turnaround still takes precedence and keeps its text), \"n d before the offer\" under Started in the list and the case, a note in the case, and a CSV column. Previous-employer cases only; cancelled cases are not flagged. Tests: 17 Node cases, 11 browser checks, E2E K28.

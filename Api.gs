@@ -261,9 +261,10 @@ function funnelWithPipeline_(u, filter, from, to, rows) {
     if (filter.recruiter && String(ev.recruiter) !== filter.recruiter) return;
     if (filter.mine && String(ev.recruiter).trim().toLowerCase() !== mineName) return;
     const k = ev.day + '|' + ev.line + '|' + ev.recruiter;
-    const g = groups[k] = groups[k] || { day: ev.day, line: ev.line, recruiter: ev.recruiter, mrf: ev.mrf, counts: {}, people: {} };
+    const g = groups[k] = groups[k] || { day: ev.day, line: ev.line, recruiter: ev.recruiter, mrf: ev.mrf, counts: {}, people: {}, docs: [] };
     g.counts[ev.metric] = (g.counts[ev.metric] || 0) + 1;
-    (g.people[ev.metric] = g.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, outcome: ev.outcome, time: ev.time });
+    (g.people[ev.metric] = g.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, outcome: ev.outcome, time: ev.time, remark: ev.remark || '' });
+    if (ev.remark) g.docs.push({ name: ev.name, remark: ev.remark });
   });
   const firstOf = {};
   rows.forEach(function (o) { const k = String(o.Entry_Date) + '|' + o.Line_ID + '|' + o.Recruiter; if (!firstOf[k]) firstOf[k] = o; });
@@ -278,6 +279,7 @@ function funnelWithPipeline_(u, filter, from, to, rows) {
     }
     Object.keys(g.counts).forEach(function (m) { o[m] = g.counts[m]; });
     o.People = g.people;
+    if (g.docs.length) o.DocRemarks = g.docs;   // the remarks typed when the documents were verified, shown in the Remarks column
   });
   return rows.sort(function (a, b) { return a.Entry_Date < b.Entry_Date ? 1 : a.Entry_Date > b.Entry_Date ? -1 : (a.derived ? 1 : 0) - (b.derived ? 1 : 0); });
 }

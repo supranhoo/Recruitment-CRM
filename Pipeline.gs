@@ -229,6 +229,7 @@ function apiMoveStage(appId, toStage, data) {
     const docs = data.docs || {};
     const open = DOC_SECTIONS.filter(function (s) { return ['Verified', 'NA'].indexOf(docs[s[0]]) < 0; });
     if (open.length && !String(data.exception || '').trim()) throw new Error('Sections ' + open.map(function (s) { return s[0]; }).join(', ') + ' are not verified. Verify them or record the approved exception (Policy 9.3).');
+    if (open.length && String(data.note || '').trim().length < 5) throw new Error('Write the remarks: what is pending and who approved the exception. They show in the Daily review and the Daily log.');
     patch.Docs_JSON = JSON.stringify(docs);
     if (open.length) outcome = 'Conditional: ' + String(data.exception).slice(0, 200);
   }

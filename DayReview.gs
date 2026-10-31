@@ -78,7 +78,8 @@ function pipelineEvents_(from, to) {
       const l = lines[h.Line_ID] || {};
       const ev = { day: ymd_(h.Changed_At), metric: c.metric, si: c.si, stage: String(h.To_Stage), recruiter: String(l.Recruiter || h.Recruiter || ''), line: String(h.Line_ID), app: app,
         cand: String(h.Candidate_ID), position: String(l.Position || ''), mrf: String(l.MRF_No || ''), dept: String(l.Dept || ''),
-        grade: String(l.Grade || ''), outcome: String(h.Outcome || ''), time: fmt_(h.Changed_At, TZ, 'HH:mm') };
+        grade: String(l.Grade || ''), outcome: String(h.Outcome || ''), time: fmt_(h.Changed_At, TZ, 'HH:mm'),
+        remark: c.metric === 'Docs' && String(h.To_Stage) === 'Docs' ? String(h.Note || '').trim() : '' };   // the remarks typed when the documents were verified
       if (c.metric !== 'Backouts') got[c.metric] = true;
       all.push(ev); mine.push(ev);
     });
@@ -137,11 +138,12 @@ function dayData_(date, onlyRecruiter) {
     pipelineEvents_(date, date).forEach(function (ev) {
       if (ev.metric !== 'Backouts' && dm.indexOf(ev.metric) < 0) return;   // CV received stays typed until the funnel start date
       const r = get(ev.recruiter); if (!r) return;
-      (r.people[ev.metric] = r.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, line: ev.line, app: ev.app, outcome: ev.outcome, time: ev.time });
+      (r.people[ev.metric] = r.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, line: ev.line, app: ev.app, outcome: ev.outcome, time: ev.time, remark: ev.remark || '' });
       if (ev.metric === 'Backouts') { r.backouts++; return; }
       r.funnel[ev.metric]++;
       const g = r.byPosition[ev.line] = r.byPosition[ev.line] || { line: ev.line, mrf: ev.mrf, position: ev.position, dept: ev.dept, grade: ev.grade, remarks: [] };
       g[ev.metric] = (g[ev.metric] || 0) + 1;
+      if (ev.remark) g.remarks.push('Documents verified, ' + ev.name + ': ' + ev.remark);
       const brief = { line: ev.line, mrf: ev.mrf, position: ev.position, dept: ev.dept, name: ev.name };
       if (ev.metric === 'Offer') r.offers.push(brief);
       if (ev.metric === 'Joined') r.joined.push(brief);

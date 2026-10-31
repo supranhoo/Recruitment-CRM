@@ -1508,7 +1508,7 @@ function funnelTableCore(rows, withPosition, cols, staged) {
     ${cols.map(([, l, s]) => `<th class="num" title="${esc(l)}">${esc(s)}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
     ${rows.map((r, i) => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
       ${withPosition ? `<td>${esc(p ? p.Position : r.Line_ID)}<span class="sub">${esc(r.MRF_No)}</span></td><td>${esc(r.Recruiter)}</td>` : ''}
-      ${cols.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
+      ${cols.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${(r.DocRemarks || []).map(x => `<span class="sub">Documents verified, ${esc(x.name)}: ${esc(x.remark)}</span>`).join('')}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
       <td class="nw">${r.derived ? '<span class="locked" title="Counted from the candidates you moved in the Pipeline">Pipeline</span>' : r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
     <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${cols.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
     </tbody></table></div>`;
@@ -1518,7 +1518,7 @@ document.addEventListener('click', e => {
   const x = (window._fnPeople || {})[b.dataset.pm]; if (!x) return;
   cpDlg(`<h2 id="cpTitle">${esc(x.label)} \u00b7 ${x.list.length} \u00b7 ${fmtDate(x.day)}</h2>
     <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
-    ${x.list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
+    ${x.list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
 });
 
@@ -3990,6 +3990,8 @@ const DAY_LABELS = { CV_Sourced: 'Sourced', CV_Reviewed: 'CVs reviewed', HR_1st_
   Shortlisted_Dept: 'Shortlisted by dept', Interviews_Done: 'Interviews', Selected_Final: 'Selected', Offers: 'Offers released', Joined: 'Joined' };
 /** A funnel column's header: the Pipeline's own stage name, or the typed column's name for days before the switch-over. */
 function dayLabel(s) { return P_NAMES[s] || DAY_LABELS[s] || s; }
+/** The Result cell of a candidate in a funnel list: the outcome, and the remarks typed when the documents were verified. */
+function peopleResult(p) { return esc(p.outcome || '') + (p.remark ? `<span class="sub">${esc(p.remark)}</span>` : ''); }
 function dayFunnelHtml(stages, f, people) {
   people = people || {};
   const max = Math.max(1, ...stages.map(s => f[s] || 0));
@@ -4005,7 +4007,7 @@ function bindFunnelPeople(root, people, withRecruiter) {
       const m = el.dataset.m, list = people[m] || [];
       const d = cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
         <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th>${withRecruiter ? '<th>Recruiter</th>' : ''}<th>Result</th><th>Time</th></tr></thead><tbody>
-        ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td>${withRecruiter ? `<td>${esc(p.recruiter || '')}</td>` : ''}<td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}
+        ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td>${withRecruiter ? `<td>${esc(p.recruiter || '')}</td>` : ''}<td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}
         </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
     };
     el.onclick = open; el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
@@ -4041,7 +4043,7 @@ function bindDayPositions(host, rows, ctx, after) {
     const [line, m] = b.dataset.pp.split('|'), list = ((ctx.people || {})[m] || []).filter(p => p.line === line);
     cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
       <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
-      ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.outcome || '')}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
+      ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
   });
   $$('[data-ds]', host).forEach(b => b.onclick = () => { const g = (rows || []).find(x => x.line === b.dataset.ds); if (g) dayStatusDialog(g, ctx, after); });
@@ -6722,7 +6724,8 @@ async function viewPipeline(v) {
       { k: 'by', l: s === 'HR' ? 'HR / final interview by' : 'Technical interview by', t: 'multi', pref: s === 'HR' ? P.line.Final_Panel : P.line.Tech_Panel }, note];
     if (s === 'Docs') return P.docSections.map(([k, n]) => ({ k: 'doc_' + k, l: `${k}. ${n}`, t: 'select', opts: DOC_STATES, noBlank: true }))
       .concat([{ k: 'exception', l: 'Approved exception (if any section is not verified)', wide: true, hint: 'Conditional joining needs Head HR / Plant Head approval (Policy 9.3).' },
-        { k: 'Docs_File', l: 'Documents (combined file)', t: 'file', wide: true }, note]);
+        { k: 'Docs_File', l: 'Documents (combined file)', t: 'file', wide: true },
+        { k: 'note', l: 'Remarks (what is pending, the exception, follow-ups)', wide: true, hint: 'Shown in the Daily review and the Daily log. Required when any section is not verified.' }]);
     if (s === 'Offer') return [{ k: 'offerDate', l: 'Offer letter date', t: 'date', req: true }, { k: 'edoj', l: 'Expected joining date', t: 'date', hint: 'Joining days are Monday and Thursday.' },
       { k: 'ctc', l: 'Offered CTC' }, { k: 'Offer_Letter_File', l: 'Offer letter', t: 'file', wide: true }, note];
     if (s === 'Prejoin') return [{ k: 'acceptedOn', l: 'Offer accepted on', t: 'date', req: true }, note];
