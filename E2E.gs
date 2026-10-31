@@ -394,6 +394,14 @@ function e2eRun_(trash) {
     err('K25 an unknown KPI has no reconciliation', function () { apiKpiRecon(ymd_(new Date()).slice(0, 7), 'TEAM_TOTAL', 'BGV'); }, /no reconciliation/);
     t('K26 the KPI result stays under the cache limit', function () { const n = JSON.stringify(apiKpi(fy, true)).length; return n < 95000 ? n + ' chars' : false; });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('K28 BGV: a previous-employer check started before the offer is flagged as a deviation', function () {
+      const cfg = bgvRules_().cfg, mk = function (o) { return Object.assign({ Type: 'Previous employer', Status: 'Initiated', Trigger_Date: '2026-10-31', Initiated_On: '2026-10-29' }, o); };
+      const rag = bgvRag_(mk({}), cfg, '2026-10-30');
+      const list = apiBgvList();
+      return bgvEarly_(mk({})) === 2 && rag.rag === 'Amber' && /before the offer/.test(rag.why) && bgvEarly_(mk({ Initiated_On: '2026-11-02' })) === 0
+        && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
+        && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
+    });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
       const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';

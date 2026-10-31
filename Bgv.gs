@@ -239,6 +239,15 @@ function bgvIsOwner_(u, c) { return String(c.Recruiter || '').trim().toLowerCase
 function bgvCanWork_(u, c) { return isLead_(u) || bgvIsOwner_(u, c); }
 function bgvRequireWork_(u, c) { if (!bgvCanWork_(u, c)) throw new Error('Only ' + c.Recruiter + ', a TA Lead or the Head of HR can work on this BGV case.'); }
 
+/**
+ * Days a previous-employer check was started before the offer (0 when not). Policy 9.1.1 starts it within a few days AFTER the offer,
+ * so an earlier start is flagged as a deviation (the BGV KPI keeps judging "started on or before offer + 3 days").
+ */
+function bgvEarly_(c) {
+  if (String(c.Type) !== BGV_TYPES_[0] || String(c.Status) === 'Cancelled') return 0;
+  const init = ymd_(c.Initiated_On), offer = ymd_(c.Trigger_Date);
+  return init && offer && init < offer ? daysBetween_(init, offer) : 0;
+}
 /** Red / Amber / Green for an open case, and why. */
 function bgvRag_(c, cfg, today) {
   const st = String(c.Status);
@@ -246,6 +255,8 @@ function bgvRag_(c, cfg, today) {
   const amber = (cfg.amberPct || 80) / 100;
   const worst = [];
   const add = function (rag, why) { worst.push({ rag: rag, why: why }); };
+  const early = bgvEarly_(c);
+  if (early) add('Amber', 'Started ' + early + ' day' + (early === 1 ? '' : 's') + ' before the offer (Policy 9.1.1: start within ' + cfg.prevInitDays + ' days after the offer)');
   if (['Not started', 'Awaiting consent'].indexOf(st) >= 0) {
     const due = ymd_(c.Due_Date);
     if (due && today > due) add('Red', 'Should have started by ' + due + ' (' + daysBetween_(due, today) + ' day' + (daysBetween_(due, today) === 1 ? '' : 's') + ' late)');
@@ -279,7 +290,7 @@ function bgvOut_(c, u, cfg, today, full) {
   const rag = bgvRag_(c, cfg, today);
   const o = { id: String(c.Case_ID), type: String(c.Type), line: String(c.Line_ID), mrf: String(c.MRF_No || ''), app: String(c.App_ID || ''), candId: String(c.Candidate_ID || ''),
     candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), grade: String(c.Grade || ''), dept: String(c.Dept || ''), recruiter: String(c.Recruiter || ''),
-    trigger: d(c.Trigger_Date), due: d(c.Due_Date), resultDue: d(c.Result_Due), initiated: d(c.Initiated_On), status: String(c.Status), rag: rag.rag, why: rag.why, mine: bgvIsOwner_(u, c), canWork: worker,
+    trigger: d(c.Trigger_Date), due: d(c.Due_Date), resultDue: d(c.Result_Due), initiated: d(c.Initiated_On), early: bgvEarly_(c), status: String(c.Status), rag: rag.rag, why: rag.why, mine: bgvIsOwner_(u, c), canWork: worker,
     legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On), purged: ymd_(c.Purged_On) };
   if (worker) {
     o.outcome = String(c.Outcome || ''); o.decision = String(c.Decision || ''); o.report = d(c.Report_On); o.vendor = String(c.Vendor_ID || ''); o.vendorRef = String(c.Vendor_Ref || '');
