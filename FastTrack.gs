@@ -24,9 +24,12 @@ const FAST_DOC_SECTIONS_ = [['W1', 'Aadhaar card'], ['W2', 'PAN card'], ['W3', '
 /** To-dos that only make sense for the standard route (the JD and questions round trips, CV sharing, interview scheduling). */
 const FAST_SKIP_TASKS_ = ['share_jd', 'dept_reply', 'revise_doc', 'share_questions', 'share_cvs', 'schedule_interview', 'confirm_attendance', 'reschedule', 'record_result', 'psychometric', 'offer_acceptance'];
 
+let _ftSchemaDone_ = false;
 function fastTrackSchema_() {
+  if (_ftSchemaDone_) return;   // the columns are checked once per run (each check reads a header row)
   addColumns_(T.MRF.name, ['Hiring_Route']);
   addColumns_(T.APP.name, ['Dept_Confirm_On', 'Dept_Confirm_By', 'Dept_Confirm_File', 'Appointment_Date', 'Appointment_Letter_File']);
+  _ftSchemaDone_ = true;
 }
 
 function fastLevels_() {

@@ -58,21 +58,28 @@ function apiGetPosition(lineId) {
 const FETCHABLE_ = {
   apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
-  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments'], per: 'hour', packed: false }
+  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
+  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
-  const u = currentUser_();
+  const t0 = Date.now(), u = currentUser_();
   const spec = FETCHABLE_[fn];
   if (!spec) throw new Error('Unknown list.');
   args = args || [];
   const now = new Date();
   const period = spec.per === 'day' ? ymd_(now) : spec.per === 'hour' ? fmt_(now, TZ, 'yyyy-MM-dd HH') : '';
   const version = [SCHEMA_VERSION, u.email, u.role, fn, JSON.stringify(args), period].concat(tableStamps_(spec.tables)).join('|');
-  if (known && known === version) return { v: version, same: true };
+  if (known && known === version) return { v: version, same: true, ms: Date.now() - t0 };
   const all = { apiListPositions: apiListPositions, apiListCandidates: apiListCandidates, apiListFunnel: apiListFunnel, apiPipeline: apiPipeline };
   const data = spec.packed ? apiPacked(fn, args) : all[fn].apply(null, args);
-  return { v: version, data: data };
+  return { v: version, data: data, ms: Date.now() - t0 };   // ms: the server's own time, so the page can tell it from the network time
+}
+/** One position as the Positions list has it (so a screen can patch its list from a write's reply instead of asking again), or null. */
+function positionRow_(lineId) {
+  try {
+    const l = lineOf_(lineId);
+    return l ? listLine_(l, tatContext_(), currentUser_()) : null;
+  } catch (e) { return null; }
 }
 
 /**
@@ -432,7 +439,8 @@ function apiListCandidates() {
 
 function apiGetCandidate(id) {
   currentUser_();
-  const r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
+  let r = candRowFast_(id);
+  if (!r) r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
   if (!r) {
     const a = archivedById_(id);
     if (a) return { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, Position: a.position, Dept: a.dept, Relevant_Experience: a.exp,
@@ -440,6 +448,22 @@ function apiGetCandidate(id) {
     throw new Error('Candidate ' + id + ' was not found.');
   }
   const o = toClient_(r); delete o._row; return o;
+}
+
+/**
+ * One candidate's sheet row, read by its row number from the cached index instead of reading the whole sheet. The id in the row is
+ * checked, so a row that has moved since the index was made falls back to the full read (null here).
+ */
+function candRowFast_(id) {
+  if (_tables[T.CAND.name]) return null;   // the sheet is already in memory in this run
+  try {
+    const idx = candIndexCached_(); if (!idx) return null;
+    const e = idx.filter(function (x) { return x.id === id; })[0]; if (!e || !e.r) return null;
+    const sh = sheet_(T.CAND.name), lc = sh.getLastColumn();
+    const heads = sh.getRange(1, 1, 1, lc).getValues()[0].map(String), vals = sh.getRange(e.r, 1, 1, lc).getValues()[0];
+    const o = { _row: e.r }; heads.forEach(function (h, j) { o[h] = vals[j]; });
+    return String(o.Candidate_ID) === id ? o : null;
+  } catch (err) { return null; }
 }
 
 function normPhone_(p) {
@@ -621,7 +645,7 @@ function computeDashboard_() {
 
   const funnel = {}; STAGES.forEach(function (k) { funnel[k] = 0; });   // the Pipeline stages, from the switch-over
   const cut = cutover_(), todayYmd = ymd_(new Date());
-  readTable_(T.FUNNEL.name).rows.forEach(function (f) {
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) {   // only the last 30 days are read, not the whole log
     const day = ymd_(f.Entry_Date);
     if (day < since30) return;
     const typedM = typedMetrics_(day);

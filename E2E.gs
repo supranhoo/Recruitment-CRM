@@ -12,7 +12,7 @@ function e2eTest() {
     copy.setTrashed(true);
     trash.forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { } });
     const fy = kpiCurrentFy_();
-    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1', 'kpi_b' + BUILD_ID + '_' + fy, 'kpi_b' + BUILD_ID + '_' + (fy - 1)]);
+    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1']);   // KPI, candidate-index and live-map caches are keyed by the database file, so the copy's never reach the real one
     PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));
   }
   Logger.log('RESULT pass ' + res.pass + ' fail ' + res.fail);
@@ -243,6 +243,84 @@ function e2eRun_(trash) {
       && interviewRoundFor_('Technical', done) === '' && interviewRoundFor_('Docs', sch) === ''
       && offerTodoApplies_('Technical', 'Selected', []) && !offerTodoApplies_('Technical', 'Rejected', []) && !offerTodoApplies_('Technical', '', []) && !offerTodoApplies_('Technical', 'Selected', sch)
       && offerTodoApplies_('HR', '', []) && offerTodoApplies_('Docs', '', []) && !offerTodoApplies_('Confirmed', 'Selected', []) ? 'ok' : false;
+  });
+
+  // Speed (v137): a write hands back the position row so the page need not ask again; timings travel with the replies.
+  t('P1 the position row a write returns equals the one the Positions list gives', function () {
+    _tables = {}; const row = positionRow_(L2.Line_ID), list = apiGetPosition(L2.Line_ID);
+    return row && JSON.stringify(row) === JSON.stringify(list) ? row.Position_Status : false;
+  });
+  t('P2 the board returned after a write is the board plus that row', function () {
+    _tables = {}; const b = boardAfterWrite_(L2.Line_ID), plain = apiPipeline(L2.Line_ID);
+    return b.position && b.position.Line_ID === L2.Line_ID && b.apps.length === plain.apps.length && b.line.Line_ID === plain.line.Line_ID ? b.apps.length + ' cards' : false;
+  });
+  t('P3 apiFetch reports the server time, and the unchanged answer is tiny', function () {
+    const a = apiFetch('apiListPositions', [], ''), b = apiFetch('apiListPositions', [], a.v);
+    return typeof a.ms === 'number' && b.same === true && typeof b.ms === 'number' && b.data === undefined ? a.ms + ' ms / ' + b.ms + ' ms' : false;
+  });
+  t('P4 the speed check also times search, overview, KPI and the unchanged-answer path', function () {
+    const r = apiSpeedCheck(), w = r.rows.map(function (x) { return x.what; }).join('|');
+    const bad = r.rows.filter(function (x) { return /^ERROR/.test(x.note); }).map(function (x) { return x.what; });
+    return /apiSearchCandidates/.test(w) && /apiDashboard/.test(w) && /apiKpi/.test(w) && /apiTaskSummary/.test(w) && /apiPipelineAlerts/.test(w) && /apiFetch/.test(w) && !bad.length ? r.rows.length + ' rows' : 'missing or failing: ' + bad.join(', ');
+  });
+
+  // Speed phase 2 (v138): the candidate index, the history number and the KPI cache give the same answers as the full reads.
+  const refSearch = function (f) {   // the search as it was before the index: every row of the sheet, one at a time
+    const words = String(f.q || '').toLowerCase().split(/\s+/).filter(String), live = liveCands_(), profile = poolFiltering_(f), out = [];
+    readTable_(T.CAND.name, true).rows.forEach(function (c) {
+      if (f.line && c.Line_ID !== f.line) return;
+      if (profile && !poolMatch_(c, f, live)) return;
+      if (f.hr && c.HR_Result !== f.hr) return; if (f.src && c.Sourced_By !== f.src) return; if (f.dup && !c.Possible_Duplicate_Of) return; if (f.cv && !c.CV_File_URL) return;
+      const hay = [c.Name, c.Mobile, c.Email, c.Position, c.Candidate_ID, c.Current_Designation, c.Education, c.Dept, c.Key_Skills, c.Function_Area, c.Current_Location].join(' ').toLowerCase();
+      if (words.length && !words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && hay.replace(/\D/g, '').indexOf(d) >= 0); })) return;
+      out.push(c.Candidate_ID);
+    });
+    return out.sort(function (a, b) { return String(b).localeCompare(String(a)); });
+  };
+  t('C1 the indexed search returns the same candidates as a full scan, for several filters', function () {
+    _tables = {};
+    const cases = [{ q: '' }, { q: 'e2e' }, { q: 'candidate one' }, { q: '9111' }, { hr: 'Selected' }, { cv: true }, { pool: true }, { q: 'e2e', pool: true }, { loc: 'xyz' }];
+    const bad = cases.filter(function (f) {
+      const full = refSearch(f); _tables = {};
+      const r = apiSearchCandidates(Object.assign({ archived: 'no', page: 0, size: 200 }, f)), ids = r.rows.map(function (x) { return x.Candidate_ID; });
+      return r.total !== full.length || JSON.stringify(ids) !== JSON.stringify(full.slice(0, 200));
+    });
+    return bad.length ? 'differs for ' + JSON.stringify(bad[0]) : cases.length + ' searches match';
+  });
+  t('C2 a candidate saved with a new name is found by it at once, and not by the old one', function () {
+    _tables = {}; apiSearchCandidates({ q: 'e2e', archived: 'no' });   // builds the index
+    const c = apiSaveCandidate({ Name: 'E2E Zanzibar Original', Mobile: '9111122290', Position: 'E2E TEST POSITION', Dept: L1.Dept }, true).saved;
+    _tables = {}; const a = apiSearchCandidates({ q: 'zanzibar', archived: 'no' }).rows.map(function (x) { return x.Candidate_ID; });
+    apiSaveCandidate(Object.assign({}, c, { Name: 'E2E Quixotic Renamed' }), true);
+    _tables = {}; const b = apiSearchCandidates({ q: 'zanzibar', archived: 'no' }).total, d = apiSearchCandidates({ q: 'quixotic', archived: 'no' }).rows.map(function (x) { return x.Candidate_ID; });
+    return a.indexOf(c.Candidate_ID) >= 0 && b === 0 && d.indexOf(c.Candidate_ID) >= 0 ? 'found, renamed, found again' : false;
+  });
+  t('C3 opening one candidate by row number equals the full read', function () {
+    _tables = {}; const id = apiSearchCandidates({ q: '', archived: 'no', size: 1 }).rows[0].Candidate_ID;   // the index is cached now
+    _tables = {}; const fast = candRowFast_(id); _tables = {};
+    const slow = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
+    return fast && JSON.stringify(toClient_(fast)) === JSON.stringify(toClient_(slow)) ? id : false;
+  });
+  t('C4 the board names come from the index and equal the sheet', function () {
+    _tables = {}; apiSearchCandidates({ q: '', archived: 'no', size: 1 });
+    const ids = readTable_(T.APP.name).rows.slice(0, 8).map(function (a) { return a.Candidate_ID; });
+    const f = ['Name', 'Mobile', 'Email', 'Relevant_Experience', 'Current_CTC', 'Current_Designation', 'CV_File_URL', 'Tech_Result', 'HR_Result', 'Tech_Interview_By', 'HR_Interview_By'];
+    _tables = {}; const slim = candNamesSlim_(ids); _tables = {}; const full = candNames_(ids);
+    const bad = ids.filter(function (id) { return f.some(function (k) { return String(toClient_({ v: (slim[id] || {})[k] }).v) !== String(toClient_({ v: (full[id] || {})[k] }).v); }); });
+    return bad.length ? 'differs for ' + bad[0] : ids.length + ' candidates match';
+  });
+  t('H1 each stage-history row gets a new, higher number and the numbers stay unique', function () {
+    const before = readTable_(T.HIST.name, true).rows.length;
+    const cH = apiSaveCandidate({ Name: 'E2E History Probe', Mobile: '9111122291', Line_ID: L2.Line_ID, Position: L2.Position, Dept: L2.Dept }, true).saved;
+    _tables = {}; const aH = apiPipeline(L2.Line_ID).apps.filter(function (x) { return x.Candidate_ID === cH.Candidate_ID; })[0];
+    apiMoveStage(aH.App_ID, 'Screened', { _fromScreening: true, answers: {} });
+    const rows = readTable_(T.HIST.name, true).rows, ids = rows.map(function (r) { return String(r.Hist_ID); });
+    const nums = ids.map(function (i) { return +i.replace(/\D/g, ''); });
+    return rows.length >= before + 2 && new Set(ids).size === ids.length && nums[nums.length - 1] > nums[nums.length - 2] ? 'last ' + ids[ids.length - 1] : false;
+  });
+  t('K27 the KPI result is cached whatever its size, and the cached copy is the same', function () {
+    const a = apiKpi(fy, true), b = apiKpi(fy, false);
+    return a.builtAt === b.builtAt && JSON.stringify(a).length > 0 ? JSON.stringify(a).length + ' characters' + (JSON.stringify(a).length > 95000 ? ' (above the old 95,000 limit)' : '') : false;
   });
 
   t('E0 entries report whether they can be edited', function () { return apiListFunnel({ from: today, to: today }).every(function (r) { return typeof r.canEdit === 'boolean'; }); });

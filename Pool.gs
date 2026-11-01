@@ -43,15 +43,16 @@ function liveCands_() {
   return live;
 }
 /** Profile filters for the Candidates page: pool, function, experience range, location, notice, expected CTC. */
-function poolMatch_(c, f, live) {
+function poolMatch_(c, f, live) { return poolMatchCore_(c, expYears_(c), function () { return lpa_(c.Expected_CTC); }, f, live); }
+/** The pool filters on any record that carries the profile fields (a sheet row, or an entry of the candidate index): y = years of experience, lp() = expected CTC in lakh. */
+function poolMatchCore_(c, y, lp, f, live) {
   if (f.pool && live[c.Candidate_ID]) return false;
   if (f.func && String(c.Function_Area) !== f.func) return false;
-  const y = expYears_(c);
   if (f.expMin !== '' && f.expMin != null && !(y != null && y >= Number(f.expMin))) return false;
   if (f.expMax !== '' && f.expMax != null && !(y != null && y <= Number(f.expMax))) return false;
   if (f.loc && String(c.Current_Location || '').toLowerCase().indexOf(String(f.loc).toLowerCase()) < 0) return false;
   if (f.noticeMax !== '' && f.noticeMax != null) { const nd = Number(c.Notice_Days); if (c.Notice_Days === '' || isNaN(nd) || nd > Number(f.noticeMax)) return false; }
-  if (f.ctcMax !== '' && f.ctcMax != null) { const x = lpa_(c.Expected_CTC); if (x == null || x > Number(f.ctcMax)) return false; }
+  if (f.ctcMax !== '' && f.ctcMax != null) { const x = lp(); if (x == null || x > Number(f.ctcMax)) return false; }
   return true;
 }
 function poolFiltering_(f) {

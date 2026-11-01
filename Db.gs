@@ -7,6 +7,9 @@ function ss_() {
   return _ss;
 }
 
+/** A short tag of the database file in use, so a cached copy made from the test copy of the database is never served for the real one. */
+function dbTag_() { return ss_().getId().slice(-8); }
+
 function sheet_(name) {
   const sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('The database has no sheet named "' + name + '". Check the DB file.');
@@ -14,7 +17,7 @@ function sheet_(name) {
 }
 
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
-const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users'];
+const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users', 'BGV_Rules'];
 const TABLE_CACHE_SECONDS_ = 600;
 function tableCacheKey_(name) { return 'tbl3_' + name; }
 function dropTableCache_(name) {
@@ -262,6 +265,8 @@ function bumpStamp_(name) {
 /** Forgets in-memory and cached copies of a table after a write. */
 function dropStale_(name) {
   bumpStamp_(name);
+  if (name === T.CAND.name) _tables.__cidx = null;   // derived views of a table are dropped with it
+  if (name === T.APP.name) _tables.__live = null;
   Object.keys(_tables).forEach(function (k) { if (k === name || k.indexOf(name + '|') === 0) _tables[k] = null; });
   if (CACHED_TABLES_.indexOf(name) >= 0) dropTableCache_(name);
 }
@@ -321,7 +326,7 @@ function update_(def, id, patch, user, guard) {
     if (t.headers.indexOf('Updated_By') >= 0) { rec.Updated_By = user.email; rec.Updated_At = new Date(); }
     const row = jdmRow_(def.name, t.headers.map(function (h) { return rec[h] === undefined ? '' : plainCell_(rec[h]); }));
     t.sheet.getRange(rec._row, 1, 1, row.length).setValues([row]);
-    changes.forEach(function (c) { audit_(user, def.name, id, 'Update', c[0], c[1], c[2]); });
+    auditMany_(user, def.name, id, 'Update', changes);
     if (typeof daySnapTouch_ === 'function') daySnapTouch_(def.name, changes, null, rec);
     markDashDirty_(def.name);
     dropStale_(def.name);
@@ -333,6 +338,14 @@ function audit_(user, sheetName, id, action, field, oldV, newV) {
   const sh = sheet_('Audit_Log');
   sh.getRange(sh.getLastRow() + 1, 1, 1, 8)
     .setValues([[new Date(), user.email, sheetName, id, action, field, clean_(oldV), clean_(newV)]]);
+}
+
+/** Writes one audit row per changed field in a single call (audit_ once per field cost one sheet write each). */
+function auditMany_(user, sheetName, id, action, changes) {
+  if (!changes.length) return;
+  const sh = sheet_('Audit_Log'), now = new Date();
+  const rows = changes.map(function (c) { return [now, user.email, sheetName, id, action, c[0], clean_(c[1]), clean_(c[2])]; });
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
 }
 
 function settings_() {

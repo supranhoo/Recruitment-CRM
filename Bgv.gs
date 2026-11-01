@@ -71,7 +71,7 @@ const BGV_RULE_NUMS_ = [['prevInitDays', 'Previous employer: start within (days 
   ['retentionReportYears', 'Keep reports for (years)', 1, 15], ['retentionNonJoinerMonths', 'Keep data of candidates who do not join for (months)', 1, 60]];
 
 function bgvRulesRows_() {
-  return readTable_(BGV_RULES_, true).rows.map(function (r) {
+  return readTable_(BGV_RULES_).rows.map(function (r) {   // cached with the other small tables; saving rules drops it
     let cfg = {}; try { cfg = JSON.parse(String(r.Config_JSON || '{}')); } catch (e) { }
     return { id: String(r.Version_ID), no: Number(String(r.Version_ID).replace(/\D/g, '')) || 0, eff: ymd_(r.Effective_From), status: String(r.Status || ''), cfg: cfg,
       reason: String(r.Reason || ''), remark: String(r.Remark || ''), by: String(r.Created_By || ''), at: r.Created_At instanceof Date ? fmt_(r.Created_At, TZ, 'd MMM yyyy, HH:mm') : '' };
