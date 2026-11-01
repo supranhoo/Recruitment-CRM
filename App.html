@@ -121,9 +121,24 @@ function can(p) { return ((S.boot && S.boot.user && S.boot.user.perms) || []).in
 function isLead() { return can('lead'); }
 
 let toastTimer;
+/** The shared notice element; recreated if a dialog redraw removed it while it was parked inside. */
+function toastEl() {
+  let t = document.getElementById('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); document.body.appendChild(t); }
+  return t;
+}
+/**
+ * A modal <dialog> sits in the browser's top layer, above everything in the page whatever its z-index, so the notice is placed inside
+ * the open dialog while one is showing and back in the page when it hides. Errors stay while the pointer is over them.
+ */
 function toast(msg, err) {
-  const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = 'toast', err ? 6000 : 2800);
+  const t = toastEl(), dlgs = document.querySelectorAll('dialog[open]'), host = dlgs.length ? dlgs[dlgs.length - 1] : document.body;
+  if (t.parentNode !== host) host.appendChild(t);
+  t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+  const hide = () => { t.className = 'toast'; if (t.parentNode !== document.body) document.body.appendChild(t); };
+  const arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(hide, err ? 6000 : 2800); };
+  t.onmouseenter = () => clearTimeout(toastTimer); t.onmouseleave = arm;
+  arm();
 }
 function busy(btn, on, label) { if (!btn) return; btn.disabled = on; if (label) btn.textContent = label; }
 
