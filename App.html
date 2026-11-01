@@ -947,7 +947,7 @@ async function viewPositions(v) {
   const depts = [...new Set(S.positions.map(p => p.Dept).filter(Boolean))].sort();
   v.innerHTML = `
     <div class="page-head"><div><h1>Positions</h1><p>One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save.</p></div>
-      <button class="btn primary" id="newPos">Add MRF position</button></div>
+      <div style="display:flex;gap:8px;align-items:end">${isLead() ? '<button class="btn" id="apprCheck" title="Positions whose MRF approved date is the MRF received date: the TAT may be counting from the wrong day">Check MRF approved dates</button>' : ''}<button class="btn primary" id="newPos">Add MRF position</button></div></div>
     <div class="filters">
       <div class="field search"><label for="pq">Search</label><input id="pq" type="search" placeholder="MRF no, position, remark" value="${esc(f.q)}"></div>
       <div class="field"><label for="prec">Recruiter</label><select id="prec">${opts(S.boot.recruiters, f.recruiter)}</select></div>
@@ -1019,6 +1019,7 @@ async function viewPositions(v) {
     render();
   }));
   $('#newPos').addEventListener('click', () => positionDrawer(null));
+  if ($('#apprCheck')) $('#apprCheck').onclick = () => approvedDatesDialog();
   rcBannerInto($('#rcBanner'));
   apply();
 }
@@ -3834,6 +3835,8 @@ async function viewKpi(v, fresh) {
   });
 }
 
+/** Where a position's TAT start comes from (the KPI counts from the MRF approved date, not the date the MRF was received). */
+const TAT_START_NOTE = { approved: 'MRF approved', assigned: 'position assigned', received: 'MRF received (approved date missing)', carried: 'carried from the original MRF' };
 function kpiDrill(k, f, kpi, m) {
   const c = k.data[f.rec][kpi][m];
   const team = f.rec === 'TEAM_TOTAL';
@@ -3858,9 +3861,9 @@ function kpiDrill(k, f, kpi, m) {
     rows = c.items.sort((a, b) => a.date < b.date ? -1 : 1).map(i => `<tr><td>${i.event === 'Backout' ? '<b>Backout</b>' : 'Offer'}</td><td class="nw">${fmtDate(i.date)}</td><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}</tr>`);
   } else {
     const due = KPI_TAT.includes(kpi);
-    head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>MRF date</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
+    head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>TAT start</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
     rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}
-      <td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
+      <td class="nw">${fmtDate(i.receipt)}<span class="sub">${esc(TAT_START_NOTE[i.from || 'approved'] || '')}${i.from === 'assigned' && i.appr ? ' (MRF approved ' + fmtDate(i.appr) + ')' : ''}${i.recv ? ' \u00b7 MRF received ' + fmtDate(i.recv) : ''}</span></td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
       <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}${i.extra || i.hold || i.paused ? `<span class="sub" title="${esc(i.reasons || '')}">${[i.extra ? '+' + i.extra + ' d exemption' : '', i.hold ? i.hold + ' d on hold' : '', i.paused ? i.paused + ' d paused' : ''].filter(Boolean).join(' \u00b7 ')}</span>` : ''}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
   }
   const drawer = openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
@@ -4330,6 +4333,29 @@ function alertsDialog(a, tab) {
 }
 
 /* ---------------- Department delays (Reports) ---------------- */
+/** Approved positions whose approved date is still the MRF received date: a lead enters the real approved date (the TAT counts from it) or confirms it. */
+async function approvedDatesDialog(includeClosed) {
+  const st = approvedDatesDialog.st = approvedDatesDialog.st || { closed: false };
+  if (includeClosed !== undefined) st.closed = !!includeClosed;
+  let r; try { r = await api('apiApprovedDatesToCheck', st.closed); } catch (e) { toast(e, true); return; }
+  const d = cpDlg(`<h2 id="cpTitle">MRF approved dates to check \u00b7 ${r.rows.length}</h2>
+    <p class="hint">The TAT starts when the MRF is approved (it arrives with the JD), not when it was received. These approved positions have an approved date equal to the received date, which is what the system fills in when nobody types it. Enter the real approved date, or confirm it if the MRF really was approved the day it was received. The position's TAT, the KPIs and the dashboards follow the change.</p>
+    <label class="ds-only"><input type="checkbox" id="apCl"${r.includeClosed ? ' checked' : ''}> Include closed (joined) positions</label>
+    ${r.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>MRF received</th><th>JD final</th><th>MRF approved on</th><th></th></tr></thead><tbody>
+      ${r.rows.map(x => `<tr data-id="${esc(x.id)}" style="cursor:default"><td>${esc(x.position)}<span class="sub">${esc(x.mrf)} \u00b7 ${esc(x.grade)}</span></td><td>${esc(x.recruiter)}</td><td>${esc(x.status)}</td><td class="nw">${esc(fmtDate(x.received))}</td><td class="nw">${x.jdFinal ? esc(fmtDate(x.jdFinal)) : '<span class="sub">\u2014</span>'}</td>
+        <td><input type="date" class="ap-date" value="${esc(x.approved)}" min="${esc(x.received)}" max="${esc(r.today)}" aria-label="MRF approved date of ${esc(x.position)}"></td>
+        <td class="nw"><button class="btn sm primary" data-save="${esc(x.id)}">Save date</button> <button class="btn sm" data-ok="${esc(x.id)}" title="The MRF really was approved the day it was received">Date is correct</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No approved position needs checking.</div>'}
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+  const root = d || document;
+  $('#apCl', root).onchange = e => { if (root.close) root.close(); approvedDatesDialog(e.target.checked); };
+  const send = async (id, date, b) => {
+    busy(b, true);
+    try { await api('apiSetApprovedDate', id, date, st.closed); S.posStale = true; toast(date ? 'Approved date saved; the TAT is recalculated' : 'Date confirmed'); if (root.close) root.close(); approvedDatesDialog(); }
+    catch (e) { toast(e, true); busy(b, false); }
+  };
+  $$('[data-save]', root).forEach(b => b.onclick = () => { const tr = b.closest('tr'), v = $('.ap-date', tr).value; if (!v) return toast('Pick the approved date.', true); send(b.dataset.save, v, b); });
+  $$('[data-ok]', root).forEach(b => b.onclick = () => send(b.dataset.ok, '', b));
+}
 /** CV received: typed in the Daily log against the cards created, per day and recruiter (leads), to see what the switch to the pipeline changes. */
 async function cvCompareDialog(from, to) {
   const st = cvCompareDialog.st = cvCompareDialog.st || { from: S.boot.cutover || '2026-10-05', to: today() };

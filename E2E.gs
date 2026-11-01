@@ -306,6 +306,27 @@ function e2eRun_(trash) {
     const day = rep.days.filter(function (o) { return o.day === today; })[0];
     return (day ? day.cards : 0) === d.team.Sourced && (day ? day.typed : 0) === 0 ? 'cards ' + d.team.Sourced : false;
   });
+  const LD = t('AD0 a position received 10 days ago with no approved date typed', function () {
+    const r = apiAddPositionLines({ Position: 'E2E APPROVED DATE', Designation: m5[0] || '', Grade: 'M5', Dept: dept, Receipt_Date: addDays_(today, -10), Recruiter: String(rec), Approval_Status: 'Approved',
+      Offer_Sent: 'No', MRF_No: 'E2E-AD', Vacancy_Reason: 'Replacement', Budget_CTC: '6-8 LPA', JD_Text: 'Test JD' }, 1);
+    return r.length === 1 ? r[0] : false;
+  }) || {};
+  t('AD1 its approved date was filled in from the received date and it is listed for checking', function () {
+    _tables = {}; const l = lineOf_(LD.Line_ID), row = apiApprovedDatesToCheck(false).rows.filter(function (x) { return x.id === LD.Line_ID; })[0];
+    return l && String(l.Approved_Date_Check) === 'Default' && row && row.received === addDays_(today, -10) && row.approved === row.received && row.start === row.received ? 'listed' : false;
+  });
+  err('AD2 an approved date before the received date is refused', function () { apiSetApprovedDate(LD.Line_ID, addDays_(today, -11)); }, /before the MRF received date/);
+  err('AD2b an approved date in the future is refused', function () { apiSetApprovedDate(LD.Line_ID, addDays_(today, 1)); }, /future/);
+  t('AD3 the real approved date moves the TAT start and the assigned date, and confirms', function () {
+    apiSetApprovedDate(LD.Line_ID, addDays_(today, -4)); _tables = {};
+    const l = lineOf_(LD.Line_ID), p = apiGetPosition(LD.Line_ID), still = apiApprovedDatesToCheck(false).rows.some(function (x) { return x.id === LD.Line_ID; });
+    return ymd_(l.Approved_On) === addDays_(today, -4) && ymd_(l.Assigned_On) === addDays_(today, -4) && String(l.Approved_Date_Check) === 'Confirmed' && tatStart_(l) === addDays_(today, -4)
+      && Number(p.Days_Taken) === 4 && !still ? 'start ' + tatStart_(l) : false;
+  });
+  t('AD4 confirming a date that is right takes the position off the list, and is repeatable', function () {
+    apiSetApprovedDate(L2.Line_ID, ''); const again = apiSetApprovedDate(L2.Line_ID, ''); _tables = {};
+    return String(lineOf_(L2.Line_ID).Approved_Date_Check) === 'Confirmed' && !again.rows.some(function (x) { return x.id === L2.Line_ID; }) ? 'ok' : false;
+  });
   err('E6 future day summary blocked', function () { apiSaveDaySummary({ date: '2099-01-01', overview: 'x' }); }, /future/);
 
   t('F1 log observation', function () { return !!apiSaveObservation({ Obs_Date: today, Line_ID: L2.Line_ID, Recruiter: String(L2.Recruiter), Type: OBS_TYPES[0], Description: 'E2E', Status: 'Open' }).Obs_ID; });

@@ -181,7 +181,8 @@ function guardPipelineFields_(patch, old, u) {
 function assignDates_(patch, old, u) {
   const lead = isLead_(u), today = ymd_(new Date());
   const reassigned = !!(old && String(old.Recruiter || '').trim() && patch.Recruiter && String(old.Recruiter).trim() !== String(patch.Recruiter).trim());
-  if (!patch.Approved_On && patch.Approval_Status === 'Approved' && patch.Receipt_Date) patch.Approved_On = patch.Receipt_Date;
+  if (!patch.Approved_On && patch.Approval_Status === 'Approved' && patch.Receipt_Date) { patch.Approved_On = patch.Receipt_Date; patch.Approved_Date_Check = 'Default'; }   // filled in automatically: a lead checks it later
+  else if (ymd_(patch.Approved_On) && ymd_(patch.Approved_On) !== ymd_(patch.Receipt_Date)) patch.Approved_Date_Check = 'Confirmed';   // a real approval date was typed
   if (reassigned && (!lead || !patch.Assigned_On || ymd_(patch.Assigned_On) === ymd_(old.Assigned_On))) patch.Assigned_On = parseYmd_(today);
   if (!patch.Assigned_On && patch.Approved_On) patch.Assigned_On = patch.Approved_On;
   if (old && !lead) {
@@ -197,6 +198,55 @@ function assignDates_(patch, old, u) {
   if (s && s > today) throw new Error('The position assigned date cannot be in the future.');
   if (a && r && a < r) throw new Error('The MRF approved date cannot be before the MRF received date.');
   if (s && a && s < a) throw new Error('The position assigned date cannot be before the MRF approved date.');
+}
+
+/**
+ * The TAT starts when the MRF is approved (the approved MRF arrives with the JD), not when it was received. The approved date defaults to
+ * the received date when nobody types it, so an approved position whose two dates are equal and not yet confirmed may be counting from the
+ * wrong day. This is the list a lead checks. A replacement position carries the start of the original MRF, so its approved date does not matter.
+ */
+function approvedDateCheck_(l) {
+  if (String(l.Approval_Status || '').trim().toUpperCase() !== 'APPROVED' || ymd_(l.TAT_Start_From)) return false;
+  const a = ymd_(l.Approved_On);
+  return !!a && a === ymd_(l.Receipt_Date) && String(l.Approved_Date_Check || '') !== 'Confirmed';
+}
+/** The patch that corrects a position's approved date: the assigned date moves with it when it was the same day (or would be before it). */
+function approvedDatePatch_(l, date, today) {
+  const d = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Pick the date the MRF was approved.');
+  if (d > today) throw new Error('The MRF approved date cannot be in the future.');
+  const r = ymd_(l.Receipt_Date);
+  if (r && d < r) throw new Error('The MRF approved date cannot be before the MRF received date (' + r + ').');
+  const patch = { Approved_On: parseYmd_(d), Approved_Date_Check: 'Confirmed' }, was = ymd_(l.Approved_On), asg = ymd_(l.Assigned_On);
+  if (!asg || asg === was || asg < d) patch.Assigned_On = parseYmd_(d);
+  return patch;
+}
+function approvedDateRow_(l) {
+  return { id: String(l.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), grade: String(l.Grade || ''), dept: String(l.Dept || ''),
+    recruiter: String(l.Recruiter || ''), status: positionStatus_(l), received: ymd_(l.Receipt_Date), approved: ymd_(l.Approved_On), assigned: ymd_(l.Assigned_On),
+    jdFinal: ymd_(l.JD_Confirmed_Date), start: tatStart_(l), check: String(l.Approved_Date_Check || '') };
+}
+/** Approved positions to check (leads). Open and Offered ones; closed ones too when asked, because correcting them moves past TAT results. */
+function apiApprovedDatesToCheck(includeClosed) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can check the approved dates.');
+  const want = includeClosed ? ['Open', 'Offered', 'Closed'] : ['Open', 'Offered'];
+  const rows = readTable_(T.MRF.name).rows.filter(function (l) { return approvedDateCheck_(l) && want.indexOf(positionStatus_(l)) >= 0; })
+    .map(approvedDateRow_).sort(function (a, b) { return a.received < b.received ? 1 : a.received > b.received ? -1 : a.mrf.localeCompare(b.mrf); });
+  return { rows: rows, includeClosed: !!includeClosed, today: ymd_(new Date()) };
+}
+/** Sets the real MRF approved date of a position (leads), or confirms the date it has (date left blank). The TAT is recalculated. */
+function apiSetApprovedDate(lineId, date, includeClosed) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change the approved date.');
+  const l = lineOf_(lineId);
+  if (!l) throw new Error('Position ' + lineId + ' was not found.');
+  if (String(l.Approval_Status || '').trim().toUpperCase() !== 'APPROVED') throw new Error('This position is not approved.');
+  const patch = String(date || '').trim() ? approvedDatePatch_(l, date, ymd_(new Date())) : { Approved_Date_Check: 'Confirmed' };
+  update_(T.MRF, lineId, patch, u);
+  exemptRecalc_(lineId, u);   // stored TAT columns and the dashboards follow the new start
+  daySnapDropAll_();
+  return apiApprovedDatesToCheck(includeClosed);
 }
 
 /** Adds N identical lines for a multi-position MRF (the tracker keeps one row per resource). */

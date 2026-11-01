@@ -221,6 +221,11 @@ function computeKpis_(fy) {
     const clk = kpiLineClock_(l, clocks), ex = clk.ex, hold = clk.hold, paused = clk.paused;
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
+    // Where the TAT start comes from, so the drill-down can say which date it is (the MRF approved date, not the received date).
+    const startFrom = ymd_(l.TAT_Start_From) ? 'carried' : ymd_(l.Assigned_On) ? (ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : 'assigned') : ymd_(l.Approved_On) ? 'approved' : 'received';
+    if (startFrom !== 'approved') brief.from = startFrom;   // the usual case (counted from the MRF approved date) is left out to keep the result small
+    if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
+    if (ymd_(l.Receipt_Date) && ymd_(l.Receipt_Date) !== receipt) brief.recv = ymd_(l.Receipt_Date);
 
     // 1 + 2 + 3. Timely closure (all levels), M-level and W-level fulfilment: a position counts in the month it joined if that is on or before the month
     // it fell due, else in its due month (late and unfilled positions count against the month they fell due). On time = joined within the allowed days.
