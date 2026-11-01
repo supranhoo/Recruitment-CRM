@@ -1160,6 +1160,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Release 139 joins the two lines of work** (no schema change; 1 Nov 2026)
+- Speed phases 1 and 2 (built and deployed by hand as v137 and v138) and the notices-above-dialogs fix with the GitHub deploy workflow (built on `main` and also numbered v137, never live) are merged. Both used the number 137, so the merged release is 139; Phase 3 becomes 140. Nothing else changed in the merge.
+
 **Speed and smoothness, phase 2: fewer sheet reads on the server** (no schema change; v138; 1 Nov 2026)
 - Candidate search filters and sorts a cached slim index instead of reading the whole Candidates sheet, and builds only the 50 rows it returns; opening a candidate reads one row; the pipeline board takes names from the index when it is cached (ADR-054).
 - A pipeline move no longer reads the whole Stage_History sheet for the next number, and a record update writes its audit rows in one call. The KPI result is cached at any size. BGV rules are cached with the small tables; the Overview dashboard reads the last 30 days of the Daily log only; the funnel and board version stamps include every table they read.
@@ -1174,6 +1177,13 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - Measuring: Admin, Tools has \"Speed in this browser\" (count, median, slowest, first visit and repeat visit); `apiFetch` returns the server time; `apiSpeedCheck` also times the candidate search, Overview figures, to-do counts, alerts, KPI and the unchanged-answer path.
 - Not yet done: the Phase 2 server work (search index, move path, board build, alerts and KPI caches) and Phase 3 motion; patching a single BGV row after an action (the list is reloaded from the server instead).
 - Tests: Node data-layer harness (25 cases) plus all earlier harnesses; browser checks for repeat visits (content in under 40 ms against an 800 ms server delay), move without a position request, board-only switching, local filters, in-place saves, typing not overwritten; E2E P1 to P4.
+
+**Releases deploy from GitHub** (no code change; 1 Nov 2026)
+- v137 was merged but not live because the clasp login lived in a cloud session's container and a new session starts without it. Owner decision: the merge to `main` is the release. `.github/workflows/deploy.yml` runs a syntax gate, `clasp push -f`, `clasp deploy -i` on the existing deployment, and verifies (pull and compare, deployment shows `v<BUILD_ID>`). The Google login is the repository secret `CLASPRC_JSON`, the deployment ID the variable `APPS_SCRIPT_DEPLOYMENT_ID`; setup and re-run steps are in the README (Releasing). This replaces \u201ckeep the clasp login in the cloud session\u201d in the standing rule; the manual `clasp` commands remain as a fallback.
+
+**Notices (errors and confirmations) show above pop-up dialogs** (no schema change; built as v137 on `main`, ships in v139; 1 Nov 2026)
+- Report: every error or confirmation landed behind the page. RCA: `toast()` wrote to one `#toast` element in the page (z-index 30), but the app's modal `<dialog>`s (opened with `showModal()`) are in the browser's top layer, which no z-index can beat, so any notice raised while a dialog was open was drawn under it (drawers, z-index 20, were not affected). 5-Why: hidden behind the dialog \u2192 page element vs top layer \u2192 one shared element built before dialogs were used \u2192 dialogs added later without re-checking the notice \u2192 no rule or test that a notice is visible from every screen.
+- Fix: `toast()` parks the notice inside the top-most open dialog and returns it to the page when it hides; the element is recreated if a dialog redraw removed it. Errors stay while the pointer is over them. Rule: every notice goes through `toast()`, never a second element. Tests: 4 real-browser checks (no dialog, modal dialog, redraw of the dialog, after close) and a control showing the old behaviour is hidden; add the check to the release checklist.
 
 **TAT counts from the MRF approved date** (schema 43; v136; 1 Nov 2026)
 - Report: the KPI drill-down column "MRF date" showed the date the position's TAT starts from, which for several M-level positions was the MRF received date (J000135: 19 Sep, due 8 Nov). The start the system uses is the position assigned date, which defaults to the MRF approved date, which defaults to the received date when nobody types it. Owner decisions: the TAT counts from the MRF approved date (the approved MRF arrives with the JD); list the positions whose approved date was only defaulted so a lead can correct them.
