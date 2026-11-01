@@ -1149,6 +1149,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**CV received: typed vs pipeline report** (no schema change; v134; 1 Nov 2026)
+- From 1 Nov 2026 (`PIPELINE_FUNNEL_V2`) CV received counts the cards created (candidates added to a position) instead of the number typed, so the figure can drop where CVs were received but not added as candidates. A read-only report shows how much: Daily review (leads) \u2192 \"CV received: typed vs pipeline\" gives, for a date range of at most 92 days (default: from 5 Oct to today), the typed CVs, the cards created, their difference and the candidates added in the app, per day and per recruiter, with the candidates behind each day's pipeline number and a CSV. Nothing is written; typing is shown as closed from the start date.
+- Rollback of the switch itself needs no release: set `PIPELINE_FUNNEL_V2` in Settings to a far-future date. Tests: 14 Node cases, 9 browser checks, E2E E5g to E5j.
+
 **Remarks at Documents verified, shown in the Daily review and the Daily log** (no schema change; v133; 31 Oct 2026)
 - Request: a remarks column after Documents verified that also reflects in the daily log. The Documents verified step now has a **Remarks** box (what is pending, the exception, follow-ups): optional when every section is verified, **required (5+ characters) when a section is not verified** (conditional approval, Policy 9.3). It is saved on the card's history note.
 - It shows in the Daily review (the position row's Remarks as \"Documents verified, <candidate>: <remarks>\", and in the list behind the Documents verified number next to the outcome) and in the Daily log list (the Remarks column of the day's row, and the same candidate list). Only a move made at the Documents verified step carries it; a card that jumps past that stage does not borrow another step's note, and after a lead's correction only the new remarks count. Tests: 7 Node cases, 4 browser checks, E2E D11b, D12b.

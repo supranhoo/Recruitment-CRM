@@ -326,6 +326,50 @@ function daySnapTouch_(table, changes, created, rec) {
   } catch (e) { }
 }
 
+/**
+ * CV received, typed in the Daily log versus the cards created, per day and per recruiter, so the owner can see what the switch of CV
+ * received to the pipeline (PIPELINE_FUNNEL_V2) changes. Read only. A typed number above the cards means CVs were received that were
+ * not added as candidates; from the start date nothing is typed any more.
+ */
+function cvCompare_(from, to) {
+  const v2 = funnelV2_(), byEmail = recruiterByEmail_(), days = {}, recs = {};
+  const day = function (d) { return days[d] = days[d] || { day: d, typed: 0, cards: 0, added: 0, people: [] }; };
+  const rec = function (r) { r = String(r || 'Unassigned').trim() || 'Unassigned'; return recs[r] = recs[r] || { recruiter: r, typed: 0, cards: 0, added: 0 }; };
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', from).rows.forEach(function (e) {
+    const d = ymd_(e.Entry_Date), n = Number(e.CV_Sourced) || 0;
+    if (!d || d < from || d > to || !n) return;
+    day(d).typed += n; rec(e.Recruiter).typed += n;
+  });
+  pipelineEvents_(from, to).forEach(function (ev) {
+    if (ev.metric !== 'Sourced') return;
+    const o = day(ev.day); o.cards++; rec(ev.recruiter).cards++;
+    o.people.push({ name: ev.name, position: ev.position, mrf: ev.mrf, recruiter: String(ev.recruiter || ''), time: ev.time });
+  });
+  readTableFrom_(T.CAND.name, 'Created_At', from).rows.forEach(function (c) {
+    const d = ymd_(c.Created_At);
+    if (!d || d < from || d > to || String(c.Created_By) === 'migration') return;
+    day(d).added++; rec(byEmail[String(c.Created_By).toLowerCase()] || c.Sourced_By).added++;
+  });
+  const rows = Object.keys(days).sort().map(function (d) { const o = days[d]; o.diff = o.typed - o.cards; o.typingOpen = d < v2; return o; });
+  const tot = function (list) { return list.reduce(function (s, o) { return { typed: s.typed + o.typed, cards: s.cards + o.cards, added: s.added + o.added }; }, { typed: 0, cards: 0, added: 0 }); };
+  const t = tot(rows); t.diff = t.typed - t.cards;
+  const recRows = Object.keys(recs).map(function (r) { const o = recs[r]; o.diff = o.typed - o.cards; return o; })
+    .filter(function (o) { return o.typed || o.cards || o.added; }).sort(function (a, b) { return a.recruiter.localeCompare(b.recruiter); });
+  return { from: from, to: to, funnelV2: v2, days: rows, recruiters: recRows, totals: t };
+}
+/** The CV received comparison for a range (default: the switch-over date to today, at most 92 days). Leads only. */
+function apiCvReceivedCompare(from, to) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can open this report.');
+  const today = ymd_(new Date());
+  from = String(from || cutover_()); to = String(to || today);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('Pick the dates.');
+  if (to > today) to = today;
+  if (from > to) throw new Error('The start date is after the end date.');
+  if (daysBetween_(from, to) > 91) throw new Error('Pick at most 92 days.');
+  return cvCompare_(from, to);
+}
+
 /** Saves a recruiter's day note and task list. Recruiters can update today and yesterday. */
 function apiSaveDaySummary(data) {
   const u = currentUser_(); ensureSchema_();

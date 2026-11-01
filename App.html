@@ -4195,7 +4195,8 @@ async function viewDailyReview(v) {
         <div class="chips" role="group" aria-label="View" style="margin:0"><button class="chip" id="drDay" aria-pressed="true">Day</button><button class="chip" id="drMon" aria-pressed="false">Month</button></div>
         <div class="field"><label for="drDate">Day</label><input id="drDate" type="date" value="${esc(f.date)}" max="${today()}"></div>
         <div class="field"><label for="drRec">Recruiter</label><select id="drRec">${opts(data.recruiters.map(r => r.recruiter), f.rec)}</select></div>
-        <button class="btn" id="drPrev" aria-label="Previous day">\u2039</button><button class="btn" id="drNext" aria-label="Next day" ${f.date >= today() ? 'disabled' : ''}>\u203a</button></div></div>
+        <button class="btn" id="drPrev" aria-label="Previous day">\u2039</button><button class="btn" id="drNext" aria-label="Next day" ${f.date >= today() ? 'disabled' : ''}>\u203a</button>
+        <button class="btn" id="drCv" title="CV received: what was typed in the Daily log against the candidates added to positions">CV received: typed vs pipeline</button></div></div>
     ${data.missedTotal ? `<div class="todo-strip miss-strip"><b>${data.missedTotal} critical task${data.missedTotal === 1 ? '' : 's'} missed</b> on ${fmtDate(f.date)}. See each recruiter below.</div>` : ''}
     <section class="panel" id="rvFunnel"><h2>Team funnel \u00b7 ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, data.team, data.people)}${scorecardNote(data)}</section>
     ${list.map(r => {
@@ -4216,6 +4217,7 @@ async function viewDailyReview(v) {
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
   bindFunnelPeople($('#rvFunnel'), data.people, true);
   $('#drMon').onclick = () => { f.mode = 'month'; go('review', false); };
+  $('#drCv').onclick = () => cvCompareDialog();
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
   $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
   $('#drPrev').onclick = () => shift(-1);
@@ -4328,6 +4330,35 @@ function alertsDialog(a, tab) {
 }
 
 /* ---------------- Department delays (Reports) ---------------- */
+/** CV received: typed in the Daily log against the cards created, per day and recruiter (leads), to see what the switch to the pipeline changes. */
+async function cvCompareDialog(from, to) {
+  const st = cvCompareDialog.st = cvCompareDialog.st || { from: S.boot.cutover || '2026-10-05', to: today() };
+  if (from) st.from = from; if (to) st.to = to;
+  let r; try { r = await api('apiCvReceivedCompare', st.from, st.to); } catch (e) { toast(e, true); return; }
+  const n = x => Number(x || 0);
+  const d = cpDlg(`<h2 id="cpTitle">CV received: typed vs pipeline</h2>
+    <p class="hint">Typed = CVs sourced entered in the Daily log. Pipeline = candidates added to positions (a card created). Before ${fmtDate(r.funnelV2)} both exist; from that day only the pipeline counts, because nothing is typed. A typed number above the pipeline one means CVs were received that were not added as candidates.</p>
+    <div class="filters"><div class="field"><label for="cvFrom">From</label><input id="cvFrom" type="date" value="${esc(r.from)}" max="${today()}"></div><div class="field"><label for="cvTo">To</label><input id="cvTo" type="date" value="${esc(r.to)}" max="${today()}"></div>
+      <div class="field" style="justify-content:flex-end"><button class="btn" id="cvGo">Show</button></div><div class="field" style="justify-content:flex-end"><button class="btn" id="cvCsv">Download CSV</button></div></div>
+    <h3 style="margin:12px 0 6px;font-size:15px">By day</h3>
+    <div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Typed</th><th class="num">Pipeline (cards created)</th><th class="num">Typed minus pipeline</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
+      ${r.days.map(o => `<tr style="cursor:default"><td class="nw">${esc(fmtDate(o.day))}${o.typingOpen ? '' : '<span class="sub">typing closed</span>'}</td><td class="num">${o.typed}</td><td class="num">${o.cards ? `<button type="button" class="linklike" data-day="${esc(o.day)}">${o.cards}</button>` : 0}</td><td class="num ${o.diff > 0 ? 'miss' : ''}">${o.typingOpen ? o.diff : '\u2013'}</td><td class="num">${o.added}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing in this range.</td></tr>'}
+      <tr style="font-weight:600"><td>Total</td><td class="num">${n(r.totals.typed)}</td><td class="num">${n(r.totals.cards)}</td><td class="num">${n(r.totals.diff)}</td><td class="num">${n(r.totals.added)}</td></tr></tbody></table></div>
+    <h3 style="margin:14px 0 6px;font-size:15px">By recruiter</h3>
+    <div class="table-wrap"><table><thead><tr><th>Recruiter</th><th class="num">Typed</th><th class="num">Pipeline</th><th class="num">Typed minus pipeline</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
+      ${r.recruiters.map(o => `<tr style="cursor:default"><td>${esc(o.recruiter)}</td><td class="num">${o.typed}</td><td class="num">${o.cards}</td><td class="num">${o.diff}</td><td class="num">${o.added}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing in this range.</td></tr>'}</tbody></table></div>
+    <div id="cvList"></div>
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+  const root = d || document;
+  $('#cvGo', root).onclick = () => { st.from = $('#cvFrom', root).value; st.to = $('#cvTo', root).value; if (root.close) root.close(); cvCompareDialog(); };
+  $('#cvCsv', root).onclick = () => csvSave(`cv-received-${r.from}-to-${r.to}.csv`, ['Day', 'Typed', 'Pipeline (cards created)', 'Typed minus pipeline', 'Candidates added in the app', 'Typing open'],
+    r.days.map(o => [o.day, o.typed, o.cards, o.typingOpen ? o.diff : '', o.added, o.typingOpen ? 'Yes' : 'No']));
+  $$('[data-day]', root).forEach(b => b.onclick = () => {
+    const o = r.days.find(x => x.day === b.dataset.day);
+    $('#cvList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">Candidates added on ${esc(fmtDate(o.day))}</h3><div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Recruiter</th><th>Time</th></tr></thead><tbody>
+      ${o.people.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${esc(p.recruiter)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>`;
+  });
+}
 function csvSave(name, head, rows) {
   const cell = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
   saveBlob(new Blob(['﻿' + [head].concat(rows).map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);

@@ -266,6 +266,20 @@ function e2eRun_(trash) {
       && f.stages.length > 0 && f.stages[0].reached === f.rows.length && f.received.total === f.received.typed + f.received.pipeline
       && f.active + f.rejected + f.onHold + f.withdrawn === f.rows.length ? f.candidates + ' candidates, ' + f.received.total + ' CVs received' : false;
   });
+  t('E5g CV received: typed vs pipeline report adds up', function () {
+    const r = apiCvReceivedCompare('', ''), sum = function (k) { return r.days.reduce(function (s, o) { return s + o[k]; }, 0); };
+    const recSum = function (k) { return r.recruiters.reduce(function (s, o) { return s + o[k]; }, 0); };
+    return r.totals.typed === sum('typed') && r.totals.cards === sum('cards') && r.totals.added === sum('added') && r.totals.diff === r.totals.typed - r.totals.cards
+      && recSum('typed') === r.totals.typed && recSum('cards') === r.totals.cards && r.days.every(function (o) { return o.diff === o.typed - o.cards && o.people.length === o.cards; }) ? r.totals.typed + ' typed, ' + r.totals.cards + ' cards' : false;
+  });
+  err('E5h the CV received report refuses a range over 92 days', function () { apiCvReceivedCompare('2026-01-01', ymd_(new Date())); }, /92 days/);
+  err('E5i the CV received report refuses a reversed range', function () { apiCvReceivedCompare(today, '2026-10-05'); }, /after the end date/);
+  t('E5j from the start date the report agrees with the Daily review', function () {
+    if (today < funnelV2_()) return 'before the start date';
+    _tables = {}; const rep = apiCvReceivedCompare(today, today), d = apiDaySummary(today);
+    const day = rep.days.filter(function (o) { return o.day === today; })[0];
+    return (day ? day.cards : 0) === d.team.Sourced && (day ? day.typed : 0) === 0 ? 'cards ' + d.team.Sourced : false;
+  });
   err('E6 future day summary blocked', function () { apiSaveDaySummary({ date: '2099-01-01', overview: 'x' }); }, /future/);
 
   t('F1 log observation', function () { return !!apiSaveObservation({ Obs_Date: today, Line_ID: L2.Line_ID, Recruiter: String(L2.Recruiter), Type: OBS_TYPES[0], Description: 'E2E', Status: 'Open' }).Obs_ID; });
