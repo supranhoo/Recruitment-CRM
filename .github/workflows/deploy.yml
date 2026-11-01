@@ -1,0 +1,105 @@
+# Releases the Apps Script web app when code is merged to main.
+# Needs (Settings -> Secrets and variables -> Actions):
+#   secret   CLASPRC_JSON                 the whole contents of ~/.clasprc.json after `clasp login`
+#   variable APPS_SCRIPT_DEPLOYMENT_ID    the existing web-app deployment to update (its URL never changes)
+# Optional approval gate: create a GitHub Environment named "production" with a required reviewer and add
+#   environment: production
+# under `jobs.deploy`.
+name: Deploy to Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths: ['*.gs', '*.html', 'appsscript.json', '.github/workflows/deploy.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOYMENT_ID: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check the settings are present
+        run: |
+          missing=0
+          if [ -z "$CLASPRC_JSON" ]; then echo "::error::Repository secret CLASPRC_JSON is not set (see README, Releasing)."; missing=1; fi
+          if [ -z "$DEPLOYMENT_ID" ]; then echo "::error::Repository variable APPS_SCRIPT_DEPLOYMENT_ID is not set (see README, Releasing)."; missing=1; fi
+          if [ "$missing" = 1 ]; then echo "Result: pushed to GitHub, NOT live (deploy settings missing)."; exit 1; fi
+
+      - name: Syntax gate (never push a broken file)
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/chk"
+          for f in *.gs; do cp "$f" "$RUNNER_TEMP/chk/${f%.gs}.js"; node --check "$RUNNER_TEMP/chk/${f%.gs}.js"; done
+          node -e '
+            const fs = require("fs");
+            const s = fs.readFileSync("App.html", "utf8");
+            const m = [...s.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]).sort((a, b) => b.length - a.length)[0];
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/chk/app.js", m || "");
+          '
+          node --check "$RUNNER_TEMP/chk/app.js"
+          echo "Syntax OK"
+
+      - name: Read the build number
+        id: build
+        run: |
+          b=$(sed -n "s/^const BUILD_ID = '\([0-9]*\)';.*/\1/p" Config.gs | head -1)
+          if [ -z "$b" ]; then echo "::error::BUILD_ID not found in Config.gs"; exit 1; fi
+          echo "id=$b" >> "$GITHUB_OUTPUT"
+          echo "Build $b"
+
+      - name: Install clasp and sign in
+        run: |
+          npm install -g @google/clasp@3
+          mkdir -p "$HOME/.clasp-auth"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasp-auth/.clasprc.json"
+          echo "clasp_config_auth=$HOME/.clasp-auth" >> "$GITHUB_ENV"
+
+      - name: Push the code
+        run: clasp push -f
+
+      - name: Update the live deployment
+        env:
+          BUILD: ${{ steps.build.outputs.id }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          subject=$(printf '%s' "${SUBJECT:-manual run}" | head -1 | cut -c1-80)
+          clasp deploy -i "$DEPLOYMENT_ID" -d "v${BUILD} ${subject}"
+
+      - name: Verify what is live
+        env:
+          BUILD: ${{ steps.build.outputs.id }}
+        run: |
+          set -e
+          mkdir "$RUNNER_TEMP/live"
+          cp .clasp.json "$RUNNER_TEMP/live/"
+          (cd "$RUNNER_TEMP/live" && clasp pull)
+          bad=0
+          for f in *.gs *.html appsscript.json; do
+            if ! cmp -s "$f" "$RUNNER_TEMP/live/$f"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
+          done
+          [ "$bad" = 0 ] || { echo "Result: pushed to Apps Script, NOT confirmed live (files differ)."; exit 1; }
+          line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
+          echo "$line"
+          case "$line" in *"v${BUILD}"*) ;; *) echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1;; esac
+          echo "Result: live. Build v${BUILD} is deployed; the page footer should read version ${BUILD} after a hard reload."
+
+      - name: Remove the login from the runner
+        if: always()
+        run: rm -rf "$HOME/.clasp-auth" "$HOME/.clasprc.json"

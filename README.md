@@ -60,17 +60,27 @@ This folder is configured for `clasp` through `.clasp.json`.
 2. In the Apps Script editor: **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The web-app link never changes.
 3. Add the release to the changelog in `docs/BFCL_Recruitment_CRM_SSOT.md`, then commit and tag it, for example `git tag v59` and `git push --tags`.
 
-### Standing rule: a confirmed push goes live
+### Releasing (automatic from GitHub)
 
-When the owner confirms a push, it is not finished until the live web app is updated and checked. Do all of these, in order:
+**Merging to `main` is the release.** The workflow `.github/workflows/deploy.yml` runs on every merge that changes `*.gs`, `*.html` or `appsscript.json`:
 
-1. `clasp push`, then `clasp pull` into a scratch folder and compare it with the repo. They must match.
-2. Create a new version: `clasp version "<build> <short description>"`.
-3. Update the **existing** web app deployment (never create a new one, because that changes the link): list it with `clasp deployments`, then `clasp deploy -i <deploymentId> -V <version> -d "<build>"`.
-4. Check the live build number (the rail footer, or `apiBootstrap().build`) equals `BUILD_ID` in `Config.gs`, then open **every screen the release touched**, including Overview, and confirm it shows data on a normal load without pressing Refresh.
-   If a release changes what a saved result contains (the Overview snapshot, the KPI cache, the Day review snapshot), the saved copy must carry the release number and be rebuilt when it does not match; add a test for that shape before deploying.
-5. Keep the saved Google login (`~/.clasprc.json`) so the owner is not asked to sign in again; the owner decided this. Never commit it, print it or copy it anywhere. If it is missing or expired (a new cloud session starts without it), ask for a fresh `clasp login --no-localhost`.
+1. Syntax gate: `node --check` on every `.gs` file and on the page script in `App.html`. A broken file is never pushed.
+2. `clasp push -f`, then `clasp deploy -i <deployment> -d "v<BUILD_ID> <commit subject>"`. This updates the **existing** web-app deployment, so the link never changes.
+3. Verification: it pulls the project back and compares every file with the repository, and checks that the deployment shows `v<BUILD_ID>`. The log ends with **"Result: live"**, or with **"pushed to Apps Script, NOT confirmed live"** and a red run (GitHub e-mails the owner).
 
-Report the result in plain words every time: **"live"** only when step 4 passed, otherwise **"pushed to Apps Script, not live"** with the reason, for example no Google sign-in in a cloud session. Raise `BUILD_ID` before each release. Without the owner's confirmation, push to GitHub only.
+Before merging, set `BUILD_ID` in `Config.gs` to the next number. After the run, hard-reload (Ctrl+Shift+R) and check that the footer or Admin \u2192 Tools shows that number, and open every screen the release touched. To re-run without a new commit: GitHub \u2192 Actions \u2192 *Deploy to Apps Script* \u2192 *Run workflow*.
+
+**One-time setup (owner):**
+
+1. On your computer run `clasp login`, then copy the whole contents of `~/.clasprc.json`.
+2. GitHub \u2192 this repository \u2192 Settings \u2192 Secrets and variables \u2192 Actions:
+   - New repository **secret** `CLASPRC_JSON` = the file contents.
+   - New repository **variable** `APPS_SCRIPT_DEPLOYMENT_ID` = the existing web-app deployment ID (`clasp deployments` lists it).
+3. Make sure the Apps Script API is switched on for that Google account (script.google.com/home/usersettings).
+4. Optional approval step: create a GitHub Environment named `production` with a required reviewer and add `environment: production` to the job.
+
+If the login ever expires, repeat step 1 and replace the secret. Never commit `.clasprc.json`, never paste it into a chat or issue. The workflow writes it to a temporary file with owner-only permissions, never prints it, and deletes it at the end.
+
+Manual fallback (from your computer, on `main`): `clasp push -f`, then `clasp deploy -i <deploymentId> -d "v<BUILD_ID> <description>"`, and check the live build number.
 
 The first page load after a release that raises the schema version upgrades the database (up to a minute).
