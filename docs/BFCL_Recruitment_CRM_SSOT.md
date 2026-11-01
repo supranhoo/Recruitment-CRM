@@ -597,7 +597,7 @@ One **candidate** (person) → one **application card per position** (`Applicati
 | 6 | Share with department | `Shared` | Shared with department | — (starts the 24 h HOD-feedback clock) |
 | 7 | Post-confirmation | `Confirmed` | Dept confirmed for interview | — |
 | 7 | Technical interview | `Technical` | Technical interview | Interview date and result (panel optional). Result *Reject…* → card Rejected; *Hold…* → card On hold |
-| 8 | HR interview | `HR` | HR interview | Same as Technical |
+| 8 | HR interview (**optional**, v135) | `HR` | HR interview | Same as Technical, but held only when needed. The recruiter discusses with the candidate while the documents are verified, so a card at Technical normally goes straight to Documents verified; an HR interview is recorded with the smaller \"Record an HR interview (optional)\" button. A card that skips it is shown \"not held\" on the stage track and is not counted at HR in the funnel |
 | 9 | Document verification | `Docs` | Documents verified | Joining checklist sections A–H each *Verified* or *NA*, **or** an approved exception recorded (Policy 9.3; outcome logged "Conditional: …") |
 | 10 | Offer | `Offer` | Offer released | Offer letter date (CTC and expected joining optional). Writes Offer_Sent = Yes, Offer_Date, EDOJ, Candidate_ID to the position → status **Offered** |
 | 11 | Joining status check / fail-safe | `Prejoin` | Pre-joining follow-up | Offer acceptance date; risk set to Green |
@@ -699,7 +699,7 @@ Per position: **CVs received** (the Daily-log CVs sourced typed before the funne
 | confirm_attendance | Confirm interview attendance | 0 | — | | Day before the interview |
 | reschedule | Reschedule the interview | 0 | 0 | ✓ | Panel member unavailable |
 | record_result | Record the interview result | 0 | 48 | ✓ | App. A step 6: decision within 48 h |
-| psychometric | Psychometric (Mettl) test | 0 | — | ✓ | 8.7.1: Manager and above, before the final interview |
+| psychometric | Psychometric (Mettl) test | 0 | — | ✓ | 8.7.1: Manager and above, before documents are verified (the HR interview is optional, v135) |
 | release_offer | Release the offer | 24 | 72 | ✓ | App. A step 7: offer within 72 h of finalisation |
 | bgv | Start background verification | 0 | 72 | ✓ | 9.1.1: BGV within 3 days of the offer (Manager+) |
 | offer_acceptance | Chase offer acceptance | 72 | — | | 9.1.2: acceptance within 3 days |
@@ -1004,7 +1004,7 @@ Consequences: figures can't disagree and every number is traceable to named cand
 Context: the Daily review mixed typed Daily_Funnel counts and pipeline moves, under names that differed from the Pipeline board (Sourced / HR 1st round / Shortlisted by dept / Interviews / Selected). A card that skipped stages was counted only where it landed, and the funnel and the "Candidate moves" list credited different recruiters. The user: *"If the candidate is landing anywhere in the pipeline, that data should get reflected in the daily review"* and *"all the funnel headers should be similar to the Pipeline"*. Decisions:
 - From the switch-over the funnel columns are the 11 Pipeline stages with the Pipeline's names; every stage a card passes is credited once per card; fast-track cards count only their route's stages.
 - CV received is typed until `PIPELINE_FUNNEL_V2`, then counted from the pipeline. Earlier days are not rewritten; days before the switch-over keep the typed columns in their own table.
-- CVs reviewed and Selected are not Pipeline stages and are no longer columns (typed CVs reviewed stays in the sheet; selection is the HR interview result on the card).
+- CVs reviewed and Selected are not Pipeline stages and are no longer columns (typed CVs reviewed stays in the sheet; selection is the technical interview result, or the HR interview result when one is held).
 - Interview results and the joining date cannot be typed on the candidate form for a candidate in a pipeline (recruiters), so every count has a move behind it.
 - One recruiter credit rule for the funnel and the moves list; every number opens the candidates behind it.
 Consequences: one funnel, one vocabulary, every number traceable to named candidates; counts rise where cards skip stages (intended); a CV rejected without a card is visible only if the recruiter uses "Not suitable".
@@ -1148,6 +1148,10 @@ Context: Timely closure alone showed \"N of M worked on\" and the position recon
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-09-30
+
+**The HR interview is optional** (no schema change; v135; 1 Nov 2026)
+- Request: the HR interview after the technical interview is an extra step; the recruiter discusses with the candidate while verifying documents, so make it optional. Owner decisions: optional for every grade; \"Move to Documents verified\" is the main button at Technical with a smaller \"Record an HR interview (optional)\"; the Manager-and-above psychometric test is due before Documents verified (still a to-do, not a block).
+- A card at Technical goes to Documents verified without an HR move. The funnel counts HR only for the move into it, so skipped cards no longer add to the HR column, the Overview funnel or the interviews figure (past days are recomputed, so older jumps over HR also stop counting). A card at Technical no longer gets a \"schedule the HR / final interview\" to-do (it keeps its to-dos if an HR interview is scheduled) and gets \"Verify documents and release the offer (an HR interview is optional)\" once its technical result is Selected. The stage track shows HR \"not held\", the position Funnel tab counts \"reached HR\" only for candidates who had one, and the interview round is labelled optional. The policy panel matrix says \"Final (if required)\" for lower grades; nothing enforces it. Tests: 21 Node cases, 10 browser checks, E2E D10a to D10d and E5b.
 
 **CV received: typed vs pipeline report** (no schema change; v134; 1 Nov 2026)
 - From 1 Nov 2026 (`PIPELINE_FUNNEL_V2`) CV received counts the cards created (candidates added to a position) instead of the number typed, so the figure can drop where CVs were received but not added as candidates. A read-only report shows how much: Daily review (leads) \u2192 \"CV received: typed vs pipeline\" gives, for a date range of at most 92 days (default: from 5 Oct to today), the typed CVs, the cards created, their difference and the candidates added in the app, per day and per recruiter, with the candidates behind each day's pipeline number and a CSV. Nothing is written; typing is shown as closed from the start date.

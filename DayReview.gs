@@ -48,6 +48,7 @@ function pipelineCredits_(h, fast) {
   const out = [];
   for (let si = fi + 1; si <= ti; si++) {
     if (fast && FAST_STAGES_.indexOf(STAGES[si]) < 0) continue;
+    if (STAGES[si] === 'HR' && si !== ti) continue;   // the HR interview is optional: it counts only for the move that goes into it, never for a card that jumps over it
     out.push({ metric: STAGES[si], si: si });
   }
   return out;

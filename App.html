@@ -1095,7 +1095,7 @@ function positionFields(isNew, p, orig) {
     { k: 'JD_File', t: 'jdpick' },
     { section: 'Interview panel' },
     { k: 'Tech_Panel', l: 'Technical interview panel', t: 'multi', hint: 'Policy for this grade: ' + policyPanel(p && p.Grade) },
-    { k: 'Final_Panel', l: 'Final interview panel', t: 'multi' },
+    { k: 'Final_Panel', l: 'Final / HR interview panel (only if one is held)', t: 'multi' },
     { section: 'Approval' },
     { k: 'Approval_Status', l: 'Approval status', t: 'select', opts: list('Approval_Status'), req: true, hint: isNew ? '' : 'To cancel, withdraw or hold this position, use \u201cClose without hiring\u201d above.' },
     { k: 'No_Vacancy_Date', l: 'Marked No Vacancy on', t: 'date' },
@@ -1391,7 +1391,7 @@ async function renderLineFunnel(p) {
     <h3 style="margin:18px 0 8px;font-size:16px">Candidates and the stage reached</h3>
     ${r.rows.length ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Stage reached</th><th>Status</th><th>In stage since</th><th>Added</th><th>Tech</th><th>HR</th></tr></thead><tbody>
       ${r.rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.name)}<span class="sub">${esc(c.mobile)}</span></td><td>${esc(name(c.stage))}</td>
-        <td>${badge(c.status)}${c.reason && c.status !== 'Active' ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td><td class="nw">${esc(fmtDate(c.since))}</td><td class="nw">${esc(fmtDate(c.added))}</td><td>${esc(c.tech)}</td><td>${esc(c.hr)}</td></tr>`).join('')}
+        <td>${badge(c.status)}${c.reason && c.status !== 'Active' ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td><td class="nw">${esc(fmtDate(c.since))}</td><td class="nw">${esc(fmtDate(c.added))}</td><td>${esc(c.tech)}</td><td>${c.hr ? esc(c.hr) : c.si > P_STAGES.indexOf('HR') && r.line.route !== 'Fast-track' ? '<span class="sub">Not held</span>' : ''}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No candidate is on this position\u2019s pipeline yet.</div>'}`;
   $$('tr[data-id]', el).forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
 }
@@ -1706,8 +1706,8 @@ function candidateFields(data) {
     { k: 'Tech_Interview_Date', l: 'Technical interview date', t: 'date' },
     { k: 'Tech_Interview_By', l: 'Technical interview by', t: 'multi', pref: linePanel(data.Line_ID, 'Tech_Panel'), hint: 'Members of the linked position\u2019s panel are listed first.' },
     { k: 'Tech_Result', l: 'Technical result', t: 'select', opts: list('Interview_Result') },
-    { k: 'HR_Interview_Date', l: 'HR / final interview date', t: 'date' },
-    { k: 'HR_Interview_By', l: 'HR / final interview by', t: 'multi', pref: linePanel(data.Line_ID, 'Final_Panel') },
+    { k: 'HR_Interview_Date', l: 'HR / final interview date (optional)', t: 'date' },
+    { k: 'HR_Interview_By', l: 'HR / final interview by (optional)', t: 'multi', pref: linePanel(data.Line_ID, 'Final_Panel') },
     { k: 'HR_Result', l: 'HR result', t: 'select', opts: list('Interview_Result') },
     { k: 'Interview_Remarks', l: 'Interview remarks', t: 'textarea', wide: true },
     { section: 'Psychometric test (Mettl)' },
@@ -2136,8 +2136,8 @@ function splitNames(v) { return String(v || '').split(/[\/;,&]| and /i).map(s =>
 function linePanel(lineId, field) { const p = lineId && lineById(lineId); return p ? String(p[field] || '') : ''; }
 function policyPanel(grade) {
   const g = String(grade || '').toUpperCase();
-  if (/^M[12]$/.test(g)) return 'Technical: Head HR, Strategy Team \u00b7 Final: Strategy Team, Director';
-  if (g === 'M3') return 'Technical: HOD, BU Head \u00b7 Final: HOD, BU Head, Head HR';
+  if (/^M[12]$/.test(g)) return 'Technical: Head HR, Strategy Team \u00b7 Final (if required): Strategy Team, Director';
+  if (g === 'M3') return 'Technical: HOD, BU Head \u00b7 Final (if required): HOD, BU Head, Head HR';
   if (/^M[45]$/.test(g)) return 'Technical: HOD, BU Head, Lead TA \u00b7 Final (if required): HOD, BU Head, Lead TA';
   if (g) return 'Technical: HOD, TA Team \u00b7 Final (if required): HOD, TA Team';
   return 'pick a grade to see the policy panel';
@@ -6557,7 +6557,7 @@ async function viewPipeline(v) {
     $('#jpSave').onclick = async () => { try { const x = await api('apiSaveJobPost', Object.assign({ Line_ID: f.line }, readForm($('#jpForm')), $('#jpWhy') ? { Override_Reason: $('#jpWhy').value } : {})); P.posts.push(x); toast('Job post added'); renderBoard(); postsDialog(); } catch (e) { toast(e, true); } };
   };
   const ivRound = a => a.Stage === 'Confirmed' ? 'Technical' : a.Stage === 'Technical' ? 'HR' : '';
-  const ivLabel = r => r === 'HR' ? 'HR / final' : 'Technical';
+  const ivLabel = r => r === 'HR' ? 'HR / final (optional)' : 'Technical';
   const inviteUrl = (x, a) => {
     const to = (x.panelEmails || []).concat(a.cand.email ? [a.cand.email] : []);
     const m = { subject: `${ivLabel(x.Round)} interview: ${a.cand.name} for ${P.line.Position}`, start: x.startIso, minutes: Number(x.Duration_Min) || 60, to, location: x.Location,
@@ -6578,7 +6578,7 @@ async function viewPipeline(v) {
             ${String(x.Panel).split(';').map(n => n.trim()).filter(Boolean).map(n => `<label class="chk"><input type="checkbox" value="${esc(n)}"> ${esc(n)}</label>`).join('')}
             <input class="iv-reason" placeholder="Reason (required)" aria-label="Reason"><button class="btn sm primary" data-iv="unavailSave" data-id="${esc(x.Interview_ID)}">Save</button></div>` : ''}</li>`).join('')}</ul>` : ''}
       ${can && round ? `<div id="apIv"><p class="hint">${mine.some(x => x.Status === 'Scheduled' && x.Round === round) ? 'Scheduling again replaces the current booking.' : 'Save the booking, then open it in Teams or Outlook to send the invitation from your own account.'}</p>
-        ${wrapForm(form([{ k: 'iv_round', l: 'Round', t: 'select', opts: [['Technical', 'Technical'], ['HR', 'HR / final']], noBlank: true },
+        ${wrapForm(form([{ k: 'iv_round', l: 'Round', t: 'select', opts: [['Technical', 'Technical'], ['HR', 'HR / final (optional)']], noBlank: true },
           { k: 'iv_mode', l: 'Mode', t: 'select', opts: ['Teams', 'In person'], noBlank: true },
           { k: 'iv_date', l: 'Date', t: 'date', req: true }, { k: 'iv_time', l: 'Time', t: 'time', req: true },
           { k: 'iv_duration', l: 'Duration', t: 'select', opts: [['30', '30 minutes'], ['45', '45 minutes'], ['60', '1 hour'], ['90', '1.5 hours']], noBlank: true },
@@ -6618,20 +6618,24 @@ async function viewPipeline(v) {
       catch (e) { toast(e, true); busy(b, false); }
     });
   };
-  const openApp = a => {
-    const i = P_STAGES.indexOf(a.Stage), next = fastRoute() ? (P.fastStages.find(x => P_STAGES.indexOf(x) > i) || '') : P_STAGES[i + 1];
+  const openApp = (a, hr) => {
+    const i = P_STAGES.indexOf(a.Stage);
+    let next = fastRoute() ? (P.fastStages.find(x => P_STAGES.indexOf(x) > i) || '') : P_STAGES[i + 1];
+    /* The HR interview is optional: from Technical the main step is Documents verified; an HR interview is recorded with the smaller button. */
+    const hrOptional = !fastRoute() && a.Stage === 'Technical';
+    if (hrOptional && !hr) next = 'Docs';
     const reached = {}; a.history.forEach(h => { if (h.to && h.from !== h.to) reached[h.to] = h.at.split(',')[0]; });
     const nextFields = stageFields(next, a);
     const active = a.Status === 'Active';
     const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
-      <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); return `<li class="${k < i ? 'done' : k === i ? 'now' : ''}"><span>${PN(s)}</span><small>${esc(reached[s] || '')}</small></li>`; }).join('')}</ol>
+      <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); const skipped = s === 'HR' && !fastRoute() && k < i && !reached[s]; return `<li class="${skipped ? 'done skip' : k < i ? 'done' : k === i ? 'now' : ''}"><span>${PN(s)}</span><small>${esc(reached[s] || (skipped ? 'not held' : ''))}</small></li>`; }).join('')}</ol>
       <div class="app-grid3">
         <div>
           ${canEdit && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apScreen">${a.screen ? 'Continue screening' : 'Record screening'}</button></div></section>` : ''}
-          ${canNext(next) && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3>${fastRoute() ? `<p class="hint">${esc(FAST_HINTS[next] || '')}</p>` : ''}<div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
-            <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">${fastRoute() ? esc(FAST_BTN[next] || 'Move to ' + PN(next)) : 'Move to ' + PN(next)}</button></div></section>` : ''}
+          ${canNext(next) && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3>${fastRoute() ? `<p class="hint">${esc(FAST_HINTS[next] || '')}</p>` : ''}${hrOptional ? `<p class="hint">${hr ? 'Optional: record an HR interview only if one was held.' : 'The HR interview is optional: the recruiter can discuss with the candidate while verifying documents.'}</p>` : ''}<div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
+            <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">${fastRoute() ? esc(FAST_BTN[next] || 'Move to ' + PN(next)) : 'Move to ' + PN(next)}</button>${hrOptional ? (hr ? '<button class="btn sm" id="apHrBack" type="button">No HR interview: back to Documents verified</button>' : '<button class="btn sm" id="apHr" type="button">Record an HR interview (optional)</button>') : ''}</div></section>` : ''}
           ${fastRoute() && active && (canEdit || onboardOnly) ? `<section class="app-sec"><h3>Papers</h3><p class="hint">Attach or replace the papers at any time.</p><div id="apPapers">${wrapForm(form([{ k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation', t: 'file', wide: true }, { k: 'Offer_Letter_File', l: 'Offer letter (if any)', t: 'file', wide: true }, { k: 'Appointment_Letter_File', l: 'Appointment letter', t: 'file', wide: true }, { k: 'Docs_File', l: 'Joining documents', t: 'file', wide: true }], a))}</div>
             <div class="drawer-actions" style="position:static"><button class="btn" id="apPapersUp">Upload chosen files</button></div></section>` : ''}
           ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
@@ -6689,6 +6693,8 @@ async function viewPipeline(v) {
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });
     if ($('#apScrShare', d)) $('#apScrShare', d).onclick = () => { d.close(); openShareDept(a.App_ID, refreshBoard); };
     const after = np => { reload(np); const na = np.apps.find(x => x.App_ID === a.App_ID); if (na) openApp(na); };
+    if ($('#apHr')) $('#apHr').onclick = () => openApp(a, true);
+    if ($('#apHrBack')) $('#apHrBack').onclick = () => openApp(a, false);
     if ($('#apMove')) $('#apMove').onclick = async () => {
       const root = $('#apNext'); const bad = checkAttachments(root); if (bad) return toast(bad, true);
       if (fastRoute() && next === 'Confirmed' && !a.Dept_Confirm_File && !$$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0])) return toast('Attach the department\u2019s written confirmation (a photo, scan or PDF of the CV or form with its remarks).', true);

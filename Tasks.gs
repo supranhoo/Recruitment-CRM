@@ -81,6 +81,25 @@ function hoursText_(h) { h = Math.max(0, Math.floor(h)); return h >= 48 ? Math.f
 function istTime_(d) { return fmt_(d, TZ, 'd MMM, HH:mm'); }
 
 /** Computes every open task from the data. Pure read: no writes. */
+/** An HR / final interview that has been scheduled and not held yet (so it still needs its to-dos). */
+function hrInterviewOpen_(interviews) {
+  return (interviews || []).some(function (i) { return i.Round === 'HR' && (i.Status === 'Scheduled' || i.Status === 'Panel unavailable'); });
+}
+/**
+ * The interview round a card is waiting for: the technical interview from Confirmed. The HR / final interview is optional (v135),
+ * so a card at Technical has an HR round to-do only once an HR interview has been scheduled for it.
+ */
+function interviewRoundFor_(stage, interviews) {
+  if (stage === 'Confirmed') return 'Technical';
+  if (stage === 'Technical' && hrInterviewOpen_(interviews)) return 'HR';
+  return '';
+}
+/** Whether the "verify documents and release the offer" to-do applies: at HR or Documents, or at Technical once selected with no HR interview pending. */
+function offerTodoApplies_(stage, techResult, interviews) {
+  if (stage === 'HR' || stage === 'Docs') return true;
+  return stage === 'Technical' && /select|shortlist/i.test(String(techResult || '')) && !hrInterviewOpen_(interviews);
+}
+
 function computeTasks_() {
   const now = Date.now(), today = ymd_(new Date());
   const rules = {}; taskRules_().forEach(function (r) { rules[r.id] = r; });
@@ -193,7 +212,6 @@ function computeTasks_() {
   const intsByApp = {};
   ints.forEach(function (i) { (intsByApp[i.App_ID] = intsByApp[i.App_ID] || []).push(i); });
   Object.keys(intsByApp).forEach(function (k) { intsByApp[k].sort(function (x, y) { return ms_(y.Created_At) - ms_(x.Created_At); }); });
-  const roundFor = function (stage) { return stage === 'Confirmed' ? 'Technical' : stage === 'Technical' ? 'HR' : ''; };
 
   apps.forEach(function (a) {
     const l = lines[a.Line_ID]; if (!l) return;
@@ -202,7 +220,7 @@ function computeTasks_() {
     const mine = intsByApp[a.App_ID] || [];
 
     // 3-6. Interview rules.
-    const round = roundFor(st);
+    const round = interviewRoundFor_(st, mine);
     if (round && since) {
       const live = mine.filter(function (i) { return i.Round === round && i.Status === 'Scheduled'; })[0];
       const unavailable = mine.filter(function (i) { return i.Round === round && i.Status === 'Panel unavailable'; })[0];
@@ -236,18 +254,18 @@ function computeTasks_() {
       }
     }
 
-    // 7. Psychometric test before the final interview (Manager and above).
+    // 7. Psychometric test before Documents verified (Manager and above); the HR interview is optional, so it no longer marks the deadline.
     if ((st === 'Technical' || st === 'HR') && since && managerPlus_(l.Grade, l.Position)) {
       const done = /complet|done|yes/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date;
       if (!done) add('psychometric', { key: 'psychometric|' + a.App_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
-        title: st === 'HR' ? 'Psychometric test missing (final interview done)' : 'Arrange the psychometric (Mettl) test before the final interview',
+        title: st === 'HR' ? 'Psychometric test missing (HR interview done)' : 'Arrange the psychometric (Mettl) test before documents are verified',
         context: ctxt, startMs: since, forceCritical: st === 'HR', critAt: since, open: { type: 'candidate', id: a.Candidate_ID } });
     }
 
-    // 8. Offer after selection.
-    if ((st === 'HR' || st === 'Docs') && since) {
+    // 8. Offer after selection. A card at Technical with a Selected result goes straight to documents: the HR interview is optional.
+    if (offerTodoApplies_(st, c.Tech_Result, mine) && since) {
       add('release_offer', { key: 'release_offer|' + a.App_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
-        title: st === 'HR' ? 'Verify documents and release the offer' : 'Release the offer', context: ctxt, startMs: since,
+        title: st === 'Technical' ? 'Verify documents and release the offer (an HR interview is optional)' : st === 'HR' ? 'Verify documents and release the offer' : 'Release the offer', context: ctxt, startMs: since,
         open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
     }
 

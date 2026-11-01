@@ -219,6 +219,31 @@ function e2eRun_(trash) {
   err('D28 no duplicate in same pipeline', function () { apiAddToPipeline(legacy, L2.Line_ID); }, /already/);
   t('D29 reject with reason', function () { _tables = {}; const p = apiPipeline(L2.Line_ID); return apiSetAppStatus(p.apps[0].App_ID, 'Rejected', 'E2E not suitable').apps[0].Status === 'Rejected'; });
   err('D30 rejected cannot move', function () { _tables = {}; apiMoveStage(apiPipeline(L2.Line_ID).apps[0].App_ID, 'Screened', {}); }, /Reactivate/);
+  // The HR interview is optional (v135): a card goes from Technical to Documents verified without one.
+  const cD = apiSaveCandidate({ Name: 'E2E Candidate Four', Mobile: '9111122226', Line_ID: L2.Line_ID, Position: L2.Position, Dept: L2.Dept }, true).saved;
+  const appD = function () { _tables = {}; return apiPipeline(L2.Line_ID).apps.filter(function (x) { return x.Candidate_ID === cD.Candidate_ID; })[0]; };
+  const hrBefore = (function () { _tables = {}; return (apiDaySummary(today).team.HR || 0); })();
+  t('D10a a card goes to Technical', function () { const a = appD(); return apiMoveStage(a.App_ID, 'Technical', { date: today, by: 'E2E panel', result: 'Selected' }).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0].Stage === 'Technical'; });
+  t('D10b Technical goes straight to Documents verified, with no HR interview', function () {
+    const a = appD();
+    const r = apiMoveStage(a.App_ID, 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' }, note: 'E2E discussed with the candidate' }).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0];
+    const to = r.history.map(function (h) { return h.to; });
+    return r.Stage === 'Docs' && to.indexOf('Technical') >= 0 && to.indexOf('Docs') >= 0 && to.indexOf('HR') < 0 ? to.join('>') : false;
+  });
+  t('D10c the skipped HR interview is not counted in the Daily review or the position funnel', function () {
+    _tables = {}; const ev = pipelineEvents_(today, today).filter(function (e) { return e.app === appD().App_ID; }).map(function (e) { return e.metric; });
+    const hrAfter = apiDaySummary(today).team.HR || 0, f = apiPositionFunnel(L2.Line_ID);
+    const held = f.rows.filter(function (r) { return r.hr || r.stage === 'HR'; }).length, hrStage = f.stages.filter(function (s) { return s.stage === 'HR'; })[0];
+    const me = f.rows.filter(function (r) { return r.id === cD.Candidate_ID; })[0], docs = f.stages.filter(function (s) { return s.stage === 'Docs'; })[0];
+    return ev.indexOf('Docs') >= 0 && ev.indexOf('Technical') >= 0 && ev.indexOf('HR') < 0 && hrAfter === hrBefore && hrStage.reached === held && me && !me.hr && docs.reached >= 1 ? 'HR ' + hrAfter : false;
+  });
+  t('D10d the to-do rules: no required HR interview; the offer to-do applies once selected at Technical', function () {
+    const sch = [{ Round: 'HR', Status: 'Scheduled' }], un = [{ Round: 'HR', Status: 'Panel unavailable' }], done = [{ Round: 'HR', Status: 'Held' }];
+    return interviewRoundFor_('Confirmed', []) === 'Technical' && interviewRoundFor_('Technical', []) === '' && interviewRoundFor_('Technical', sch) === 'HR' && interviewRoundFor_('Technical', un) === 'HR'
+      && interviewRoundFor_('Technical', done) === '' && interviewRoundFor_('Docs', sch) === ''
+      && offerTodoApplies_('Technical', 'Selected', []) && !offerTodoApplies_('Technical', 'Rejected', []) && !offerTodoApplies_('Technical', '', []) && !offerTodoApplies_('Technical', 'Selected', sch)
+      && offerTodoApplies_('HR', '', []) && offerTodoApplies_('Docs', '', []) && !offerTodoApplies_('Confirmed', 'Selected', []) ? 'ok' : false;
+  });
 
   t('E0 entries report whether they can be edited', function () { return apiListFunnel({ from: today, to: today }).every(function (r) { return typeof r.canEdit === 'boolean'; }); });
   t('E1 daily log with CVs reviewed', function () { return !!apiSaveFunnel({ Line_ID: L2.Line_ID, Entry_Date: today, CV_Sourced: 5, CV_Reviewed: 4, Remarks: 'E2E' }).Entry_ID; });
@@ -235,6 +260,7 @@ function e2eRun_(trash) {
     return names(ev('', 'Sourced')) === 'Sourced'
       && names(ev('Sourced', 'Technical')) === 'Screened,Shared,Confirmed,Technical'
       && names(ev('Technical', 'HR', 'Selected')) === 'HR'
+      && names(ev('Technical', 'Docs')) === 'Docs' && names(ev('Technical', 'Offer')) === 'Docs,Offer' && names(ev('Sourced', 'Docs')) === 'Screened,Shared,Confirmed,Technical,Docs'
       && names(ev('Sourced', 'Sourced', 'Rejected')) === ''
       && names(ev('Sourced', 'Offer'), true) === 'Shared,Confirmed,Offer'
       && names(ev('', 'Sourced', '', 'migration')) === ''

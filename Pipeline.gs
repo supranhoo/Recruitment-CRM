@@ -142,7 +142,8 @@ function apiPositionFunnel(lineId) {
   }).sort(function (a, b) { return (b.si - a.si) || a.name.localeCompare(b.name); });
   const stages = route.map(function (st) {
     const i = STAGES.indexOf(st);
-    return { stage: st, reached: rows.filter(function (r) { return r.si >= i; }).length,
+    // The HR interview is optional: it is "reached" only by a candidate who had one (an HR result, or a card standing at HR).
+    return { stage: st, reached: rows.filter(function (r) { return r.si >= i && (st !== 'HR' || !!r.hr || r.stage === 'HR'); }).length,
       at: rows.filter(function (r) { return r.stage === st && r.status === 'Active'; }).length };
   });
   const v2 = funnelV2_(), today = ymd_(new Date());
