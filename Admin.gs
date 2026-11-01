@@ -76,6 +76,11 @@ function apiSpeedCheck() {
   _tables = {};
   const first = readTable_(T.MRF.name).rows.filter(function (l) { return ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; })[0];
   if (first) time('Pipeline board of ' + String(first.MRF_No || first.Line_ID) + ' (apiPipeline)', function () { _tables = {}; return apiPipeline(first.Line_ID).apps.length + ' cards'; });
+  _tables = {};
+  time('Candidate index: built from the sheet (no cache)', function () { const r = readTable_(T.CAND.name, true).rows.map(candIndexEntry_); return r.length + ' entries, ' + JSON.stringify(r).length + ' characters'; });
+  _tables = {};
+  time('Candidate index: read from the cache', function () { const i = candIndexCached_(); return i ? i.length + ' entries' : 'not in the cache yet (the next search builds it)'; });
+  _tables = {};
   /* The calls behind the screens people wait for most, timed alone so a release can be compared with the one before. */
   _tables = {};
   time('Candidates, first page of the search (apiSearchCandidates)', function () { const r = apiSearchCandidates({ q: '', page: 0, size: 50, archived: 'no' }); return r.total + ' candidates, ' + r.rows.length + ' returned'; });

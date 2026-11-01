@@ -392,17 +392,16 @@ function apiKpi(fy, fresh) {
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
   const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0');
-  const key = 'kpi_b' + BUILD_ID + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
-  const cache = CacheService.getScriptCache();
+  const key = 'kpi_b' + BUILD_ID + '_' + dbTag_() + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
   if (!fresh) {
-    const hit = cache.get(key);
-    if (hit) { const o = JSON.parse(hit); if (o.dirtyAt === dirtyAt) return o; }
+    /* The result is kept in pieces (cacheBigPut_), so it is cached however large it grows; a piece that is missing counts as no cache. */
+    const hit = cacheBigGet_(key);
+    if (hit) { try { const o = JSON.parse(hit); if (o.dirtyAt === dirtyAt) return o; } catch (e) { } }
   }
   const o = computeKpis_(fy);
   o.dirtyAt = dirtyAt;
   o.builtAt = fmt_(new Date(), TZ, 'd MMM yyyy, HH:mm');
-  const json = JSON.stringify(o);
-  if (json.length < 95000) cache.put(key, json, 21600);
+  cacheBigPut_(key, JSON.stringify(o), 21600);
   return o;
 }
 

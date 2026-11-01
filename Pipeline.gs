@@ -39,18 +39,28 @@ function stageFromCandidate_(c) {
 }
 
 function appendHistory_(app, from, to, outcome, note, u) {
-  withLock_(function () {   // the next number and the row are written together, so two moves in one second cannot share a row
-  const t = readTable_(T.HIST.name, true);
   let n = 0;
-  t.rows.forEach(function (r) { const m = String(r.Hist_ID).match(/(\d+)$/); if (m) n = Math.max(n, +m[1]); });
+  withLock_(function () {   // the next number and the row are written together, so two moves in one second cannot share a row
+  /* The history sheet only ever grows, so the next number needs no read of it: the highest number issued is remembered
+     (seeded from the sheet once) and the last row is checked in case another path added a higher one. */
+  const sh = sheet_(T.HIST.name), lc = sh.getLastColumn(), last = sh.getLastRow(), props = PropertiesService.getScriptProperties();
+  const headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(String);
+  n = histNextBase_(props.getProperty('IDMAX_Stage_History'), last > 1 && headers.indexOf('Hist_ID') >= 0 ? sh.getRange(last, headers.indexOf('Hist_ID') + 1).getValue() : '', function () {
+    let m = 0; readTable_(T.HIST.name, true).rows.forEach(function (r) { const k = String(r.Hist_ID).match(/(\d+)$/); if (k) m = Math.max(m, +k[1]); }); return m;
+  });
   const o = { Hist_ID: 'SH-' + String(n + 1).padStart(6, '0'), App_ID: app.App_ID, Candidate_ID: app.Candidate_ID, Line_ID: app.Line_ID,
     Recruiter: app.Recruiter, From_Stage: from, To_Stage: to, Outcome: outcome || '', Note: clean_(String(note || '').slice(0, 1000)),
     Changed_By: u.email, Changed_At: new Date() };
-  t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+  sh.getRange(last + 1, 1, 1, headers.length).setValues([headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
-  PropertiesService.getScriptProperties().setProperty('KPI_DIRTY_AT', String(Date.now()));
-  PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));   // a move changes the Overview counts
+  const now = String(Date.now());   // a move changes the Overview counts and the KPIs
+  props.setProperties({ KPI_DIRTY_AT: now, DASH_DIRTY_AT: now, IDMAX_Stage_History: String(n + 1) });
   });
+}
+/** The highest history number in use: the remembered one, or the last row's, whichever is higher; the full scan runs only when nothing is remembered. */
+function histNextBase_(remembered, lastRowId, scan) {
+  const kept = Number(remembered || 0), m = String(lastRowId || '').match(/(\d+)$/), lastN = m ? +m[1] : 0;
+  return kept ? Math.max(kept, lastN) : Math.max(lastN, scan());
 }
 
 /** Creates the application for a candidate linked to a position, if there is none yet. */
@@ -87,7 +97,7 @@ function apiPipeline(lineId) {
   if (!line) throw new Error('Pick a position.');
   const onLine = {}, lineCands = [];
   readTable_(T.APP.name).rows.forEach(function (a) { if (a.Line_ID === lineId) { onLine[a.App_ID] = true; lineCands.push(a.Candidate_ID); } });
-  const cands = candNames_(lineCands);
+  const cands = candNamesSlim_(lineCands);
   const hist = {};
   readTable_(T.HIST.name).rows.forEach(function (h) {
     if (!onLine[h.App_ID]) return;

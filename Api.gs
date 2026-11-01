@@ -58,8 +58,8 @@ function apiGetPosition(lineId) {
 const FETCHABLE_ = {
   apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
-  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments'], per: 'hour', packed: false }
+  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
+  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
   const t0 = Date.now(), u = currentUser_();
@@ -439,7 +439,8 @@ function apiListCandidates() {
 
 function apiGetCandidate(id) {
   currentUser_();
-  const r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
+  let r = candRowFast_(id);
+  if (!r) r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
   if (!r) {
     const a = archivedById_(id);
     if (a) return { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, Position: a.position, Dept: a.dept, Relevant_Experience: a.exp,
@@ -447,6 +448,22 @@ function apiGetCandidate(id) {
     throw new Error('Candidate ' + id + ' was not found.');
   }
   const o = toClient_(r); delete o._row; return o;
+}
+
+/**
+ * One candidate's sheet row, read by its row number from the cached index instead of reading the whole sheet. The id in the row is
+ * checked, so a row that has moved since the index was made falls back to the full read (null here).
+ */
+function candRowFast_(id) {
+  if (_tables[T.CAND.name]) return null;   // the sheet is already in memory in this run
+  try {
+    const idx = candIndexCached_(); if (!idx) return null;
+    const e = idx.filter(function (x) { return x.id === id; })[0]; if (!e || !e.r) return null;
+    const sh = sheet_(T.CAND.name), lc = sh.getLastColumn();
+    const heads = sh.getRange(1, 1, 1, lc).getValues()[0].map(String), vals = sh.getRange(e.r, 1, 1, lc).getValues()[0];
+    const o = { _row: e.r }; heads.forEach(function (h, j) { o[h] = vals[j]; });
+    return String(o.Candidate_ID) === id ? o : null;
+  } catch (err) { return null; }
 }
 
 function normPhone_(p) {
@@ -628,7 +645,7 @@ function computeDashboard_() {
 
   const funnel = {}; STAGES.forEach(function (k) { funnel[k] = 0; });   // the Pipeline stages, from the switch-over
   const cut = cutover_(), todayYmd = ymd_(new Date());
-  readTable_(T.FUNNEL.name).rows.forEach(function (f) {
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) {   // only the last 30 days are read, not the whole log
     const day = ymd_(f.Entry_Date);
     if (day < since30) return;
     const typedM = typedMetrics_(day);
