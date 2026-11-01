@@ -69,7 +69,7 @@ jobs:
           mkdir -p "$HOME/.clasp-auth"
           umask 077
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasp-auth/.clasprc.json"
-          echo "clasp_config_auth=$HOME/.clasp-auth" >> "$GITHUB_ENV"
+          echo "clasp_config_auth=$HOME/.clasp-auth/.clasprc.json" >> "$GITHUB_ENV"   # clasp 3 wants the path of the auth FILE, not its folder
 
       - name: Push the code
         run: clasp push -f
@@ -92,7 +92,8 @@ jobs:
           (cd "$RUNNER_TEMP/live" && clasp pull)
           bad=0
           for f in *.gs *.html appsscript.json; do
-            if ! cmp -s "$f" "$RUNNER_TEMP/live/$f"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
+            g="$f"; case "$f" in *.gs) g="${f%.gs}.js";; esac   # clasp 3 pulls the server files as .js
+            if ! cmp -s "$f" "$RUNNER_TEMP/live/$g"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
           done
           [ "$bad" = 0 ] || { echo "Result: pushed to Apps Script, NOT confirmed live (files differ)."; exit 1; }
           line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
