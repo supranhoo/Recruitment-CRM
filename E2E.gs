@@ -245,6 +245,25 @@ function e2eRun_(trash) {
       && offerTodoApplies_('HR', '', []) && offerTodoApplies_('Docs', '', []) && !offerTodoApplies_('Confirmed', 'Selected', []) ? 'ok' : false;
   });
 
+  // Speed (v137): a write hands back the position row so the page need not ask again; timings travel with the replies.
+  t('P1 the position row a write returns equals the one the Positions list gives', function () {
+    _tables = {}; const row = positionRow_(L2.Line_ID), list = apiGetPosition(L2.Line_ID);
+    return row && JSON.stringify(row) === JSON.stringify(list) ? row.Position_Status : false;
+  });
+  t('P2 the board returned after a write is the board plus that row', function () {
+    _tables = {}; const b = boardAfterWrite_(L2.Line_ID), plain = apiPipeline(L2.Line_ID);
+    return b.position && b.position.Line_ID === L2.Line_ID && b.apps.length === plain.apps.length && b.line.Line_ID === plain.line.Line_ID ? b.apps.length + ' cards' : false;
+  });
+  t('P3 apiFetch reports the server time, and the unchanged answer is tiny', function () {
+    const a = apiFetch('apiListPositions', [], ''), b = apiFetch('apiListPositions', [], a.v);
+    return typeof a.ms === 'number' && b.same === true && typeof b.ms === 'number' && b.data === undefined ? a.ms + ' ms / ' + b.ms + ' ms' : false;
+  });
+  t('P4 the speed check also times search, overview, KPI and the unchanged-answer path', function () {
+    const r = apiSpeedCheck(), w = r.rows.map(function (x) { return x.what; }).join('|');
+    const bad = r.rows.filter(function (x) { return /^ERROR/.test(x.note); }).map(function (x) { return x.what; });
+    return /apiSearchCandidates/.test(w) && /apiDashboard/.test(w) && /apiKpi/.test(w) && /apiTaskSummary/.test(w) && /apiPipelineAlerts/.test(w) && /apiFetch/.test(w) && !bad.length ? r.rows.length + ' rows' : 'missing or failing: ' + bad.join(', ');
+  });
+
   t('E0 entries report whether they can be edited', function () { return apiListFunnel({ from: today, to: today }).every(function (r) { return typeof r.canEdit === 'boolean'; }); });
   t('E1 daily log with CVs reviewed', function () { return !!apiSaveFunnel({ Line_ID: L2.Line_ID, Entry_Date: today, CV_Sourced: 5, CV_Reviewed: 4, Remarks: 'E2E' }).Entry_ID; });
   err('E2 future date blocked', function () { apiSaveFunnel({ Line_ID: L2.Line_ID, Entry_Date: '2099-01-01', CV_Sourced: 1 }); }, /future/);

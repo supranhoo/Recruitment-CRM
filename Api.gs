@@ -62,17 +62,24 @@ const FETCHABLE_ = {
   apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
-  const u = currentUser_();
+  const t0 = Date.now(), u = currentUser_();
   const spec = FETCHABLE_[fn];
   if (!spec) throw new Error('Unknown list.');
   args = args || [];
   const now = new Date();
   const period = spec.per === 'day' ? ymd_(now) : spec.per === 'hour' ? fmt_(now, TZ, 'yyyy-MM-dd HH') : '';
   const version = [SCHEMA_VERSION, u.email, u.role, fn, JSON.stringify(args), period].concat(tableStamps_(spec.tables)).join('|');
-  if (known && known === version) return { v: version, same: true };
+  if (known && known === version) return { v: version, same: true, ms: Date.now() - t0 };
   const all = { apiListPositions: apiListPositions, apiListCandidates: apiListCandidates, apiListFunnel: apiListFunnel, apiPipeline: apiPipeline };
   const data = spec.packed ? apiPacked(fn, args) : all[fn].apply(null, args);
-  return { v: version, data: data };
+  return { v: version, data: data, ms: Date.now() - t0 };   // ms: the server's own time, so the page can tell it from the network time
+}
+/** One position as the Positions list has it (so a screen can patch its list from a write's reply instead of asking again), or null. */
+function positionRow_(lineId) {
+  try {
+    const l = lineOf_(lineId);
+    return l ? listLine_(l, tatContext_(), currentUser_()) : null;
+  } catch (e) { return null; }
 }
 
 /**

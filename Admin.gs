@@ -76,6 +76,19 @@ function apiSpeedCheck() {
   _tables = {};
   const first = readTable_(T.MRF.name).rows.filter(function (l) { return ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; })[0];
   if (first) time('Pipeline board of ' + String(first.MRF_No || first.Line_ID) + ' (apiPipeline)', function () { _tables = {}; return apiPipeline(first.Line_ID).apps.length + ' cards'; });
+  /* The calls behind the screens people wait for most, timed alone so a release can be compared with the one before. */
+  _tables = {};
+  time('Candidates, first page of the search (apiSearchCandidates)', function () { const r = apiSearchCandidates({ q: '', page: 0, size: 50, archived: 'no' }); return r.total + ' candidates, ' + r.rows.length + ' returned'; });
+  time('Candidates, search for a name (apiSearchCandidates)', function () { const r = apiSearchCandidates({ q: 'a', page: 0, size: 50, archived: 'no' }); return r.total + ' matches'; });
+  _tables = {};
+  time('Overview figures (apiDashboard, from its snapshot when current)', function () { const d = apiDashboard(); return 'built ' + String(d.builtAt || ''); });
+  time('Overview to-do counts (apiTaskSummary)', function () { const x = apiTaskSummary(); return x.due + ' due'; });
+  time('Overview alerts (apiPipelineAlerts)', function () { const x = apiPipelineAlerts(); return (x.hod || []).length + ' waiting, ' + (x.risk || []).length + ' at risk, ' + (x.due || []).length + ' follow-ups'; });
+  time('KPI scorecard (apiKpi)', function () { const k = apiKpi(null, false); return JSON.stringify(k).length + ' characters in the result'; });
+  time('Version check with nothing changed (apiFetch, the {same:true} path)', function () {
+    const a = apiFetch('apiListPositions', [], ''); const b = apiFetch('apiListPositions', [], a.v);
+    return b.same ? 'unchanged answer in ' + b.ms + ' ms' : 'ERROR: the second call returned data';
+  });
   _tables = {};
   time('To-do list, first call (allTasks_)', function () { return allTasks_().length + ' to-dos'; });
   time('To-do list, second call (should come from the cache)', function () { return allTasks_().length + ' to-dos'; });

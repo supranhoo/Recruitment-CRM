@@ -179,6 +179,13 @@ function apiAddToPipeline(candidateId, lineId) {
  * Screened {answers}, Technical/HR {date, by, result}, Docs {docs, exception}, Offer {offerDate, edoj, ctc},
  * Prejoin {acceptedOn}, Joined {doj}, Onboarded {onboard}; every stage accepts {note}.
  */
+/** The board of a position after a write, with the position's own row (as the Positions list has it) so the page can update its list without a second request. */
+function boardAfterWrite_(lineId) {
+  const board = apiPipeline(lineId);
+  board.position = positionRow_(lineId);
+  return board;
+}
+
 function apiMoveStage(appId, toStage, data) {
   const u = currentUser_(); ensureSchema_();
   data = data || {};
@@ -272,7 +279,7 @@ function apiMoveStage(appId, toStage, data) {
   update_(T.APP, appId, patch, u);
   appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
   if (toStage === 'Offer' || toStage === 'Joined' || ti < fi) bgvTouchLine_(app.Line_ID);
-  return apiPipeline(app.Line_ID);
+  return boardAfterWrite_(app.Line_ID);
 }
 
 
@@ -317,7 +324,7 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
   if (!backout) {
     update_(T.APP, appId, patch, u);
     appendHistory_(app, stage, stage, status, reason, u);
-    return apiPipeline(app.Line_ID);
+    return boardAfterWrite_(app.Line_ID);
   }
   // One backout is one piece of work: under one lock, and a retry after an interruption finishes the replacement
   // without writing the withdrawal and its history a second time.
@@ -351,7 +358,7 @@ function apiSetEdoj(appId, date) {
   update_(T.MRF, line.Line_ID, { EDOJ: d }, u);
   update_(T.APP, appId, { EDOJ: d }, u);
   appendHistory_(app, String(app.Stage), String(app.Stage), 'Expected joining changed', (was ? was + ' to ' : 'set to ') + ymd_(d), u);
-  return apiPipeline(app.Line_ID);
+  return boardAfterWrite_(app.Line_ID);
 }
 
 /**

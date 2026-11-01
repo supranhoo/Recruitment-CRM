@@ -7,20 +7,111 @@ const ACTIVE = ['Open','Offered'];
 
 const PACKED = ['apiListPositions', 'apiListCandidates', 'apiListFunnel'];
 function unpack(p) { return p.rows.map(r => { const o = {}; p.cols.forEach((c, i) => { if (r[i] !== null) o[c] = r[i]; }); return o; }); }
-const FRESH = new Map();
+/* DATA LAYER BEGIN */
+const FRESH = new Map(), INFLIGHT = new Map();
+const cloneJson = d => JSON.parse(JSON.stringify(d));
+/** The version the server last gave for a fresh() request ('' when none): a different version after the next fresh() means the data changed. */
+function freshVersion(fn, ...args) { const h = FRESH.get(fn + JSON.stringify(args)); return h ? h.v : ''; }
+/** A copy of what fresh() remembered for this request, or null. Paint it at once, then call fresh() to check for changes. */
+function remembered(fn, ...args) { const h = FRESH.get(fn + JSON.stringify(args)); return h ? (PACKED.includes(fn) ? h.data : cloneJson(h.data)) : null; }
 function fresh(fn, ...args) {
   const key = fn + JSON.stringify(args), have = FRESH.get(key);
-  return api('apiFetch', fn, args, have ? have.v : '').then(r => {
-    if (r.same && have) return PACKED.includes(fn) ? have.data : JSON.parse(JSON.stringify(have.data));
+  /* The same request already running is shared, not sent twice. */
+  if (INFLIGHT.has(key)) return INFLIGHT.get(key).then(d => PACKED.includes(fn) ? d : cloneJson(d));
+  const p = api('apiFetch', fn, args, have ? have.v : '').then(r => {
+    if (PERF && r.ms != null) console.log(`[perf] ${fn} server ${r.ms} ms${r.same ? ' (same)' : ''}`);
+    if (r.same && have) return PACKED.includes(fn) ? have.data : cloneJson(have.data);
     const data = PACKED.includes(fn) ? unpack(r.data) : r.data;
-    FRESH.delete(key); FRESH.set(key, { v: r.v, data: PACKED.includes(fn) ? data : JSON.parse(JSON.stringify(data)) });
-    while (FRESH.size > 30) FRESH.delete(FRESH.keys().next().value);
+    FRESH.delete(key); FRESH.set(key, { v: r.v, data: PACKED.includes(fn) ? data : cloneJson(data) });
+    while (FRESH.size > 40) FRESH.delete(FRESH.keys().next().value);
     return data;
   }, e => {
     if (e === UPDATED_MSG) return api(fn, ...args);
     throw e;
-  });
+  }).finally(() => INFLIGHT.delete(key));
+  INFLIGHT.set(key, p);
+  return p;
 }
+/* Last results of reads that are not fetched with fresh(): a revisit paints the last result at once and refreshes it in the background. Kept in memory for the session only. */
+const RESULTS = new Map();
+/** Forgets remembered results whose key starts with `prefix` (after a write that makes them out of date). */
+function forget(prefix) { Array.from(RESULTS.keys()).forEach(k => { if (k.startsWith(prefix)) RESULTS.delete(k); }); }
+function remember(key, data) { RESULTS.delete(key); RESULTS.set(key, { at: Date.now(), json: JSON.stringify(data) }); while (RESULTS.size > 60) RESULTS.delete(RESULTS.keys().next().value); return data; }
+function recall(key) { const r = RESULTS.get(key); return r ? { at: r.at, data: JSON.parse(r.json) } : null; }
+/** Stale-while-revalidate: paints the last result of `key` at once ({cached:true}), calls `call()`, then paints the fresh result ({same:true} when nothing changed, so the screen only moves its "Updated" time). */
+async function swr(key, call, paint) {
+  const old = recall(key);
+  if (old) paint(old.data, { cached: true, at: old.at, same: false });
+  const data = await call();
+  const same = !!old && JSON.stringify(data) === JSON.stringify(old.data);
+  remember(key, data);
+  paint(data, { cached: false, at: Date.now(), same });
+  return data;
+}
+/* ---- Pages that show their last result at once ----
+   viewData() is the one call a page makes for its data. With a remembered result it returns it immediately (the page draws without waiting for
+   the server), then asks the server in the background and, only if the answer differs, runs the page again with the new data. A result under
+   REVAL_MS old is not asked for again, and a redraw caused by a local filter (S.keepData) asks for nothing. Nothing is saved in the browser. */
+const REVAL_MS = 3000;
+function editingIn(v) {
+  const a = document.activeElement;
+  return !!((a && v.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || v.querySelector('.dirty') || (v.querySelector('#mdState') && /Unsaved|Saving/.test(v.querySelector('#mdState').textContent)));
+}
+function noteTime(at) { try { return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+/** The small "Updated hh:mm" line under a page heading: when the figures on screen were read from the server. */
+function freshNote(v, at, state, again) {
+  const head = v.querySelector('.page-head'); if (!head) return;
+  let el = v.querySelector('.fresh-note');
+  if (!el) { el = document.createElement('div'); el.className = 'fresh-note'; el.setAttribute('role', 'status'); head.insertAdjacentElement('afterend', el); }
+  const t = noteTime(at);
+  if (state === 'checking') el.textContent = `Showing figures from ${t} · checking for changes…`;
+  else if (state === 'failed') el.textContent = `Showing figures from ${t} · could not check for changes`;
+  else if (state === 'newer') {
+    el.textContent = `Showing figures from ${t} · newer figures are available `;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'linklike'; b.textContent = 'Show them'; b.onclick = () => again && again(); el.appendChild(b);
+  } else el.textContent = `Updated ${t}`;
+}
+function viewData(v, key, call, again, label, opts) {
+  opts = opts || {};
+  const t = perfTimer(label), local = !!S.keepData, old = opts.force ? null : recall(key), seq = S.goSeq;
+  S.keepData = false;
+  const note = (at, state) => { if (opts.note !== false) setTimeout(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, at, state, again); }, 0); };
+  if (old && (local || Date.now() - old.at < REVAL_MS)) { note(old.at, ''); t.done('cached'); return Promise.resolve(old.data); }
+  if (old) {
+    note(old.at, 'checking'); t.done('cached');
+    call().then(data => {
+      const same = JSON.stringify(data) === JSON.stringify(old.data); remember(key, data);
+      if (seq !== S.goSeq || !v.isConnected) return;
+      if (same) { freshNote(v, Date.now(), '', again); return; }
+      if (editingIn(v)) { freshNote(v, old.at, 'newer', again); return; }   // never redraw under someone who is typing
+      again();
+    }).catch(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, old.at, 'failed', again); });
+    return Promise.resolve(old.data);
+  }
+  return call().then(data => { remember(key, data); t.done('cold'); note(Date.now(), ''); return data; });
+}
+/* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
+const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
+  'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiMonthMissed',
+  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare']);
+/* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
+const PERFSTAT = {};
+function perfNow() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
+function perfTimer(label) {
+  const t0 = perfNow();
+  return { done(kind) {
+    const ms = Math.round(perfNow() - t0), k = kind === 'cached' ? 'cached' : 'cold', a = PERFSTAT[label] = PERFSTAT[label] || { cold: [], cached: [] };
+    a[k].push(ms); if (a[k].length > 50) a[k].shift();
+    if (PERF) console.log(`[perf] ${label} ${k} ${ms} ms`);
+    return ms;
+  } };
+}
+/** The timings kept this session as table rows: for each action the count, median and slowest, for first visits (cold) and repeat visits (cached). */
+function perfRows() {
+  const st = a => { if (!a || !a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return { n: s.length, med: s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2), max: s[s.length - 1] }; };
+  return Object.keys(PERFSTAT).sort().map(k => ({ label: k, cold: st(PERFSTAT[k].cold), cached: st(PERFSTAT[k].cached) }));
+}
+/* DATA LAYER END */
 /* Anything that fails without being caught shows a message instead of failing silently (the same message is shown once per 5 seconds). */
 (function () {
   let lastMsg = '', lastAt = 0;
@@ -43,7 +134,8 @@ function apiCall(fn, args) {
   return new Promise((resolve, reject) => {
     /* Any other call may have changed positions on the server (a pipeline move sets the offer, a closure the status):
        the next screen that shows positions checks the server in the background instead of waiting 15 s. */
-    const ok = fn === 'apiFetch' || fn === 'apiPacked' ? resolve : r => { S.posCheckedAt = 0; resolve(r); };
+    /* A write also makes every remembered page result out of date (they are asked for again on the next visit). */
+    const ok = READ_ONLY.has(fn) ? resolve : r => { S.posCheckedAt = 0; RESULTS.clear(); resolve(r); };
     const run = google.script.run.withSuccessHandler(ok)
       .withFailureHandler(e => reject(e && e.message ? e.message.replace(new RegExp('^Error:\\s*'), '') : String(e)));
     if (typeof run[fn] !== 'function') return reject(UPDATED_MSG);
@@ -226,14 +318,19 @@ function go(view, push) {
   });
 }
 
-async function refreshLine(id) {
-  const l = await api('apiGetPosition', id);
-  if (S.positions) {
-    const next = S.positions.slice(), i = next.findIndex(x => x.Line_ID === id);
-    if (i >= 0) next[i] = l; else next.unshift(l);
-    S.positions = next;
-  }
+function putLine(l, id) {
+  if (!S.positions || !l) return l;
+  const next = S.positions.slice(), i = next.findIndex(x => x.Line_ID === id);
+  if (i >= 0) next[i] = l; else next.unshift(l);
+  S.positions = next;
   return l;
+}
+async function refreshLine(id) { return putLine(await api('apiGetPosition', id), id); }
+/* After a write the server hands back the board and the updated position row: patch the list from it, no second round trip.
+   A reply without the row (older reply, or the attachment path) falls back to one quiet refresh in the background. */
+function applyBoard(np, id) {
+  if (np && np.position) putLine(np.position, id);
+  else refreshLine(id).catch(() => {});
 }
 /**
  * Positions come from memory when the page already has them, so screens open at once; the server is asked in the
@@ -472,8 +569,8 @@ const LINE_TASKS = new Map();
 async function lineTasksInto(el, lineId, pre) {
   if (!el) return;
   const paint = list => {
-    if (!el.isConnected) return;
     LINE_TASKS.set(lineId, list);
+    if (!el.isConnected) return;
     el.innerHTML = list.length ? `<section class="panel line-tasks"><h3>Open tasks for this position</h3><ul class="tasklist">${list.map(t => taskItemHtml(t, 'compact')).join('')}</ul></section>` : '';
     bindTaskList(el, list, () => {});
   };
@@ -881,11 +978,14 @@ const OV_ALERTS = ['Waiting for department feedback (over 24h)', 'Joiners at ris
 async function viewOverview(v, fresh) {
   /* The to-do counts and pipeline alerts are asked for at the same time as the dashboard, and the page keeps a slot
      of about their size for each, so nothing jumps when they arrive. */
-  const sumP = api('apiTaskSummary'), alertsP = api('apiPipelineAlerts');
+  const recent = r => r && Date.now() - r.at < REVAL_MS, sumMem = recall('ov:sum'), alertMem = recall('ov:alerts');
+  const sumP = recent(sumMem) ? Promise.resolve(sumMem.data) : api('apiTaskSummary').then(x => remember('ov:sum', x));
+  const alertsP = recent(alertMem) ? Promise.resolve(alertMem.data) : api('apiPipelineAlerts').then(x => remember('ov:alerts', x));
   sumP.catch(() => { }); alertsP.catch(() => { });
-  let d = await api(fresh ? 'apiRefreshDashboard' : 'apiDashboard');
+  /* The snapshot keeps its own 30-minute rule on the server; the page shows the last one it has at once, with its "Updated" time. */
+  let d = await viewData(v, 'ov:dash', () => api(fresh ? 'apiRefreshDashboard' : 'apiDashboard'), () => viewOverview(v), 'Overview: figures shown', { force: !!fresh, note: false });
   // A snapshot saved by an older release has the funnel under other keys: ask the server to rebuild it once instead of drawing zeros.
-  if (!fresh && !(d.funnel && 'Sourced' in d.funnel)) d = await api('apiRefreshDashboard');
+  if (!fresh && !(d.funnel && 'Sourced' in d.funnel)) d = remember('ov:dash', await api('apiRefreshDashboard'));
   const k = d.kpi;
   const maxF = Math.max(1, ...Object.values(d.funnel).map(n => n || 0));
   v.innerHTML = `
@@ -920,15 +1020,18 @@ async function viewOverview(v, fresh) {
           </tbody></table></div></section>
       </div>
     </div>`;
+  if (alertMem && !recent(alertMem)) pipelineAlertsPanel($('#ovAlerts', v), Promise.resolve(alertMem.data));   // the last alerts at once, replaced when the server answers
   pipelineAlertsPanel($('#ovAlerts', v), alertsP);
-  sumP.then(s => {
+  const drawSum = s => {
     const host = $('#ovTodo', v); if (!host) return;
     host.innerHTML = `<div><b>${s.team ? 'Team to-do' : 'Your to-do'}:</b> ${s.critical ? `<span class="miss">${s.critical} critical</span> \u00b7 ` : ''}${s.due} due \u00b7 ${s.missedYesterday ? `<span class="miss">${s.missedYesterday} missed yesterday</span>` : 'nothing missed yesterday'}${s.exemptPending ? ` \u00b7 <button class="linklike miss" data-tex>${s.exemptPending} TAT exemption${s.exemptPending === 1 ? '' : 's'} to decide</button>` : ''}${s.bgvDecide ? ` \u00b7 <button class="linklike miss" data-bgv="decision">${s.bgvDecide} BGV result${s.bgvDecide === 1 ? '' : 's'} to decide</button>` : ''}${s.bgvLate ? ` \u00b7 <button class="linklike miss" data-bgv="red">${s.bgvLate} BGV case${s.bgvLate === 1 ? '' : 's'} past a limit</button>` : ''}</div>
       <div class="btn-row"><button class="btn sm" data-go="myday">My to-do</button>${s.team ? '<button class="btn sm" data-go="review">Daily review</button>' : ''}</div>`;
     $$('[data-go]', host).forEach(b => b.onclick = () => go(b.dataset.go, true));
     $$('[data-bgv]', host).forEach(b => b.onclick = () => { S.bgvF = { type: '', q: '', rec: '', status: b.dataset.bgv === 'decision' ? 'decision' : 'open', rag: b.dataset.bgv === 'red' ? 'Red' : '', tab: b.dataset.bgv === 'decision' ? 'all' : 'mine' }; go('bgv', true); });
     if ($('[data-tex]', host)) $('[data-tex]', host).onclick = () => { S.adminTab = Object.assign(S.adminTab || { q: '', sheet: '', from: daysAgo(30), to: today() }, { tab: 'tex' }); go('admin', true); };
-  }).catch(() => { const host = $('#ovTodo', v); if (host) host.remove(); });
+  };
+  if (sumMem && !recent(sumMem)) drawSum(sumMem.data);   // the last counts at once, replaced when the server answers
+  sumP.then(drawSum).catch(() => { const host = $('#ovTodo', v); if (host && !sumMem) host.remove(); });
   $('#dashRefresh').onclick = async () => {
     const b = $('#dashRefresh'); busy(b, true, 'Refreshing…');
     try { await viewOverview(v, true); toast('Dashboard updated'); } catch (e) { toast(e, true); busy(b, false, 'Refresh'); }
@@ -1348,7 +1451,9 @@ function positionDrawer(p) {
         S.positions = S.positions.map(x => x.Line_ID === saved.Line_ID ? saved : x);
         toast(hasFiles ? 'Changes and files saved' : 'Changes saved');
       }
-      closeDrawer(); if (S.view === 'positions' || S.view === 'overview') go(S.view, false);
+      closeDrawer();
+      /* The list was patched above: the table redraws in place. The Overview snapshot does not change on a save, so it is not read again. */
+      if (S.view === 'positions') document.dispatchEvent(new CustomEvent('positions-updated'));
     } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add position' : 'Save changes'); }
   };
 }
@@ -1619,7 +1724,7 @@ async function viewDaily(v) {
 }
 
 async function viewCandidates(v) {
-  await loadPositions();
+  loadPositions().catch(() => { });   // only the drawer's position picker needs the list: the search does not wait for it
   const f = S.candFilter = S.candFilter || { q: '', hr: '', src: '', dup: false, page: 0, arch: 'no', pool: false, func: '', expMin: '', expMax: '', loc: '', noticeMax: '', ctcMax: '' };
   f.arch = f.arch || 'no';
   const numIn = (id, label, val, ph) => `<div class="field" style="max-width:120px"><label for="${id}">${label}</label><input id="${id}" type="number" min="0" step="0.5" value="${esc(val == null ? '' : val)}" placeholder="${ph}"></div>`;
@@ -1644,26 +1749,45 @@ async function viewCandidates(v) {
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Position</th><th class="num">Mobile</th><th>Experience</th><th>Tech</th><th>HR</th><th>Sourced by</th><th>CV</th></tr></thead><tbody id="ctbody"></tbody></table></div>
     <div class="pager" id="cpager"></div>`;
   let seq = 0, timer = null;
-  const fetchPage = async () => {
-    const my = ++seq;
-    $('#ctbody').innerHTML = `<tr><td colspan="8">${skRows(6, 3)}</td></tr>`;
-    let res;
-    try { res = await api('apiSearchCandidates', { q: f.q, hr: f.hr, src: f.src, dup: f.dup, cv: f.cv, archived: f.arch, page: f.page, size: PAGE,
-      pool: f.pool, func: f.func, expMin: f.expMin, expMax: f.expMax, loc: f.loc, noticeMax: f.noticeMax, ctcMax: f.ctcMax }); }
-    catch (e) { if (my === seq && $('#ctbody')) $('#ctbody').innerHTML = `<tr><td colspan="8" class="empty">${esc(e)}</td></tr>`; return; }
-    if (my !== seq || !$('#ctbody')) return;
-    const rows = res.rows;
-    $('#ctbody').innerHTML = rows.length ? rows.map(c => `<tr data-id="${esc(c.Candidate_ID)}">
+  const rowsById = new Map();
+  const rowHtml = c => `<tr data-id="${esc(c.Candidate_ID)}">
       <td>${esc(c.Name)}${c._archived ? ' <span class="badge-arch">Archived</span>' : ''}<span class="sub">${esc(c.Email)}${c.Possible_Duplicate_Of ? ` \u00b7 may duplicate ${esc(c.Possible_Duplicate_Of)}` : ''}${c._archived && c.Last_Activity ? ` \u00b7 last active ${fmtDate(c.Last_Activity)}` : ''}</span></td>
       <td>${esc(c.Position || c.Function_Area || '')}${c._inPipeline ? ' <span class="badge-pipe">In pipeline</span>' : ''}<span class="sub">${esc(c.Dept || (c.Position ? c.Function_Area : '') || '')}${c.Key_Skills ? ' \u00b7 ' + esc(String(c.Key_Skills).slice(0, 60)) : ''}</span></td><td class="num">${esc(c.Mobile)}</td>
       <td>${c._exp != null ? esc(c._exp) + ' yrs' : esc(c.Relevant_Experience || '')}<span class="sub">${[c.Current_Location, c.Notice_Days !== '' && c.Notice_Days != null ? 'notice ' + c.Notice_Days + 'd' : '', c.Expected_CTC ? 'exp. ' + c.Expected_CTC : ''].filter(Boolean).map(esc).join(' \u00b7 ')}</span></td>
       <td>${esc(c.Tech_Result || '')}</td><td>${esc(c.HR_Result)}</td><td>${esc(c.Sourced_By)}</td>
-      <td>${c.CV_File_URL ? '<span class="cv-flag" title="CV on file">CV</span>' : ''}</td></tr>`).join('')
+      <td>${c.CV_File_URL ? '<span class="cv-flag" title="CV on file">CV</span>' : ''}</td></tr>`;
+  const bindRows = root => $$('tr[data-id]', root).forEach(tr => { tr.onclick = () => openCandidate(tr.dataset.id); });
+  const paintPage = res => {
+    if (!$('#ctbody')) return;
+    const rows = res.rows; rowsById.clear(); rows.forEach(c => rowsById.set(c.Candidate_ID, c));
+    $('#ctbody').innerHTML = rows.length ? rows.map(rowHtml).join('')
       : `<tr><td colspan="8" class="empty">No candidates match.${f.arch === 'no' ? ' Try \u201cInclude archived\u201d, check the spelling, or add them as a new candidate.' : ''}</td></tr>`;
-    $$('#ctbody tr[data-id]').forEach(tr => tr.addEventListener('click', () => openCandidate(tr.dataset.id)));
+    bindRows($('#ctbody'));
     const pages = Math.ceil(res.total / PAGE);
     $('#cpager').innerHTML = `${res.total} candidate${res.total === 1 ? '' : 's'} ${pages > 1 ? `\u00b7 page ${f.page + 1} of ${pages} <button class="btn" id="cprev" ${f.page ? '' : 'disabled'}>Previous</button><button class="btn" id="cnext" ${f.page < pages - 1 ? '' : 'disabled'}>Next</button>` : ''}`;
     if ($('#cprev')) { $('#cprev').onclick = () => { f.page--; fetchPage(); }; $('#cnext').onclick = () => { f.page++; fetchPage(); }; }
+  };
+  /* The last page seen for these filters is drawn at once and the search runs again in the background; the rows are redrawn only if the answer differs. */
+  const fetchPage = async () => {
+    const my = ++seq, t = perfTimer('Candidates: page of results');
+    const q = { q: f.q, hr: f.hr, src: f.src, dup: f.dup, cv: f.cv, archived: f.arch, page: f.page, size: PAGE,
+      pool: f.pool, func: f.func, expMin: f.expMin, expMax: f.expMax, loc: f.loc, noticeMax: f.noticeMax, ctcMax: f.ctcMax };
+    const key = 'candPage:' + JSON.stringify(q);
+    if (!recall(key)) $('#ctbody').innerHTML = `<tr><td colspan="8">${skRows(6, 3)}</td></tr>`;
+    try {
+      await swr(key, () => api('apiSearchCandidates', q), (res, info) => {
+        if (my !== seq || !$('#ctbody')) return;
+        if (!info.same) { paintPage(res); t.done(info.cached ? 'cached' : 'cold'); }
+      });
+    } catch (e) { if (my === seq && $('#ctbody') && !recall(key)) $('#ctbody').innerHTML = `<tr><td colspan="8" class="empty">${esc(e)}</td></tr>`; }
+  };
+  /* A save from the drawer updates the row in place (or refreshes the page quietly when the candidate is new), with no rebuild of the page. */
+  S.candPatch = c => {
+    forget('candPage:'); if (!$('#ctbody')) return;
+    const tr = $('#ctbody') && $$('#ctbody tr[data-id]').find(x => x.dataset.id === c.Candidate_ID);
+    if (!tr) { fetchPage(); return; }
+    const merged = Object.assign({}, rowsById.get(c.Candidate_ID) || {}, c); rowsById.set(c.Candidate_ID, merged);
+    tr.outerHTML = rowHtml(merged); bindRows($('#ctbody'));
   };
   const again = () => { f.page = 0; fetchPage(); };
   $('#cq').addEventListener('input', e => { f.q = e.target.value; clearTimeout(timer); timer = setTimeout(again, 350); });
@@ -1724,7 +1848,8 @@ function candidateFields(data) {
 
 async function openCandidate(id) {
   openDrawer('Loading…', `<div role="status" aria-busy="true" aria-label="Loading">${skFields(8)}</div>`);
-  try { await loadPositions(); candidateDrawer(await api('apiGetCandidate', id)); } catch (e) { toast(e, true); closeDrawer(); }
+  const t = perfTimer('Candidate drawer: data shown');
+  try { const [, c] = await Promise.all([loadPositions(), api('apiGetCandidate', id)]); candidateDrawer(c); t.done('cold'); } catch (e) { toast(e, true); closeDrawer(); }   // the position list and the candidate are asked together
 }
 
 /* ---- CV profile: history, education, skills with evidence, checks (rule-based; no AI) ---- */
@@ -1922,8 +2047,10 @@ function candidateDrawer(c, preset, parsedIn) {
       }
       S.candStale = true;
       toast((isNew ? `Candidate added as ${s.Candidate_ID}` : 'Changes saved') + (file || attFiles ? ', files uploaded' : ''));
-      if (S.view === 'pipeline' && s.Line_ID) { closeDrawer(); go('pipeline', false); return; }
-      if (isNew || file || attFiles) candidateDrawer(s); else { closeDrawer(); if (S.view === 'candidates') go('candidates', false); }
+      forget('candPage:');
+      if (S.view === 'pipeline' && s.Line_ID && S.pipeRefresh) { closeDrawer(); S.pipeRefresh(); return; }
+      if (S.view === 'candidates' && S.candPatch) S.candPatch(s);
+      if (isNew || file || attFiles) candidateDrawer(s); else closeDrawer();
     } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add candidate' : 'Save changes'); }
   };
   $('#cSave').onclick = () => save(false);
@@ -3677,7 +3804,10 @@ async function viewAdmin(v) {
       </section></div>
       ${admin ? `<section class="panel" style="margin-top:20px"><h2>Speed and health check</h2>
         <p style="color:var(--ink-2);max-width:75ch">Times the calls behind the slow pages (reading each sheet, the positions list, a pipeline board, the to-do list), shows whether the database upgrade has finished and whether the shared lock is free. Read-only. Takes about 10 to 30 seconds.</p>
-        <div class="btn-row"><button class="btn primary" id="spdRun">Run the speed check</button><button class="btn" id="spdSchema">Retry the database upgrade now</button></div><div id="spdOut" aria-live="polite"></div></section>` : ''}
+        <div class="btn-row"><button class="btn primary" id="spdRun">Run the speed check</button><button class="btn" id="spdSchema">Retry the database upgrade now</button></div><div id="spdOut" aria-live="polite"></div></section>
+      <section class="panel" style="margin-top:20px"><h2>Speed in this browser</h2>
+        <p style="color:var(--ink-2);max-width:75ch">How long it took, from the click until real figures or rows were on screen, for what you have opened since this page loaded (milliseconds). \u201cFirst visit\u201d waited for the server; \u201cRepeat visit\u201d was drawn from the page\u2019s memory while the server was asked again.</p>
+        <div id="perfOut"></div><div class="btn-row"><button class="btn" id="perfRefresh">Refresh this table</button></div></section>` : ''}
       <section class="panel" style="margin-top:20px"><h2>Weekly email summary</h2>
         <p style="color:var(--ink-2);max-width:75ch">Every Monday at 9:00: headline numbers, positions past TAT, last week\u2019s joinings, offers and backouts, this month\u2019s KPI scores and open data-check issues. Sent to everyone in the Users sheet with the Admin, Head of HR or TA Lead role, plus any addresses in Settings \u2192 WEEKLY_SUMMARY_TO.</p>
         <div id="wkStatus"><p class="hint">Loading\u2026</p></div></section>`;
@@ -3691,6 +3821,11 @@ async function viewAdmin(v) {
       } catch (err) { toast(err, true); }
       busy(e.target, false, 'Run the speed check');
     };
+    const drawPerf = () => {
+      const rows = perfRows(), cell = c => c ? `<td class="num">${c.n}</td><td class="num">${c.med}</td><td class="num ${c.max >= 2000 ? 'miss' : ''}">${c.max}</td>` : '<td class="num">\u2013</td><td class="num">\u2013</td><td class="num">\u2013</td>';
+      if ($('#perfOut')) $('#perfOut').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th rowspan="2">What</th><th colspan="3">First visit</th><th colspan="3">Repeat visit</th></tr><tr><th class="num">Times</th><th class="num">Median</th><th class="num">Slowest</th><th class="num">Times</th><th class="num">Median</th><th class="num">Slowest</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.label)}</td>${cell(r.cold)}${cell(r.cached)}</tr>`).join('')}</tbody></table></div>` : '<p class="hint">Nothing timed yet: open Overview, Pipeline, Candidates, KPI or My day, then refresh this table.</p>';
+    };
+    drawPerf(); if ($('#perfRefresh')) $('#perfRefresh').onclick = drawPerf;
     if ($('#spdSchema')) $('#spdSchema').onclick = async e => {
       busy(e.target, true, 'Running\u2026');
       try { const s = await api('apiSchemaRetry'); $('#spdOut').innerHTML = spdSchema(s); toast(s.complete ? 'The database upgrade is finished.' : 'The upgrade still has failing steps: see the list.', !s.complete); } catch (err) { toast(err, true); }
@@ -3793,7 +3928,7 @@ function scoreBadge(s) { return s == null ? '' : `<span class="score s${s}">${s}
 
 async function viewKpi(v, fresh) {
   const f = S.kpiFilter = S.kpiFilter || { fy: fyNow(), rec: isLead() ? 'TEAM_TOTAL' : S.boot.user.recruiter };
-  const k = await api('apiKpi', f.fy, !!fresh);
+  const k = await viewData(v, 'kpi:' + f.fy, () => api('apiKpi', f.fy, !!fresh), () => viewKpi(v), 'KPI: figures shown', { force: !!fresh });
   const recs = Object.keys(k.data).filter(r => r !== 'TEAM_TOTAL').sort();
   const d = k.data[f.rec] || {};
   const tgt = kpi => {
@@ -3826,7 +3961,7 @@ async function viewKpi(v, fresh) {
     </tbody></table></div>
     <p class="legend">Score: 5 for 100%, 4 for 95%+, 3 for 90%+, 2 for 85%+, 1 for 80%+, 0 below 80%. The small line \u201cof N worked on\u201d counts every position worked on in the month, due or not. Timely closure (60 days, all levels), M-level fulfilment (50 days) and W-level fulfilment (20 days) each count the positions due in the month (position start date + TAT, with notice beyond 30 days and approved exemptions added), or filled early or on time in the month they join; a late or unfilled position counts against the month it fell due. An M-level or W-level position is also part of Timely closure, which has its own 60 days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Settings → KPI_CAPTURE_FROM); tracker accuracy shows only for months with an audit sample.</p>`;
   $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
-  $('#krec').onchange = e => { f.rec = e.target.value; go('kpi', false); };
+  $('#krec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('kpi', false); };   // the data holds every recruiter: no server call
   $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
   $$('.kcell[data-k]', v).forEach(td => {
     const open = () => kpiDrill(k, f, td.dataset.k, td.dataset.m);
@@ -4077,7 +4212,7 @@ function dayWorkHtml(r) {
 
 async function viewMyDay(v) {
   const f = S.myDay = S.myDay || { date: today() };
-  const data = await api('apiDaySummary', f.date);
+  const data = await viewData(v, 'day:' + f.date, () => api('apiDaySummary', f.date), () => viewMyDay(v), 'My day: figures shown');
   const me = S.boot.user.recruiter;
   const r = data.recruiters.find(x => x.recruiter.toLowerCase() === me.toLowerCase()) || { recruiter: me, overview: '', tasks: [], funnel: {}, byPosition: [], work: [], candidates: [], offers: [], joined: [], backouts: 0 };
   const editable = isLead() || f.date >= daysAgo(1);
@@ -4189,7 +4324,7 @@ async function viewMonthMissed(v) {
 async function viewDailyReview(v) {
   const f = S.review = S.review || { date: daysAgo(1), rec: '' };
   if (f.mode === 'month') return viewMonthMissed(v);
-  const data = await api('apiDaySummary', f.date);
+  const data = await viewData(v, 'day:' + f.date, () => api('apiDaySummary', f.date), () => viewDailyReview(v), 'Daily review: figures shown');
   const list = data.recruiters.filter(r => !f.rec || r.recruiter === f.rec);
   const chip = (n, l) => `<span class="rchip"><b>${n}</b> ${l}</span>`;
   v.innerHTML = `
@@ -4222,7 +4357,7 @@ async function viewDailyReview(v) {
   $('#drMon').onclick = () => { f.mode = 'month'; go('review', false); };
   $('#drCv').onclick = () => cvCompareDialog();
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
-  $('#drRec').onchange = e => { f.rec = e.target.value; go('review', false); };
+  $('#drRec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('review', false); };   // the day holds every recruiter: no server call
   $('#drPrev').onclick = () => shift(-1);
   (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('review', false)));
   $('#drNext').onclick = () => shift(1);
@@ -4884,16 +5019,18 @@ const bgvCls = s => String(s || '').replace(/\W+/g, '');
 const bgvRag = r => r.rag ? `<span class="bgv-rag ${r.rag}" title="${esc(r.why || '')}">${r.rag}</span>` : '';
 const bgvStChip = s => `<span class="bgv-st ${bgvCls(s)}">${esc(s)}</span>`;
 const BGV_TYPE_NOTE = { 'Previous employer': 'Earlier employers · start within 3 days of the offer', 'Current employer': 'The employer being left · start within 2 days of joining' };
+/** After a change made in BGV: forget the remembered list so the page asks the server and draws what it says. */
+function bgvReload(v) { forget('bgv:'); return viewBgv(v); }
 async function viewBgv(v) {
   const f = S.bgvF = S.bgvF || { tab: 'mine', type: '', status: '', rag: '', q: '', rec: '' };
-  let B; try { B = S.bgv = await api('apiBgvList'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  let B; try { B = S.bgv = await viewData(v, 'bgv:list', () => api('apiBgvList'), () => viewBgv(v), 'BGV: list shown'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   if (!B.lead && ['vendors', 'rules', 'reports', 'govern'].includes(f.tab)) f.tab = 'mine';
   const tabs = [['mine', `My BGV${B.mine.open ? ' · ' + B.mine.open : ''}`], ['all', `All cases${B.all.toDecide && (B.decide || B.lead) ? ' · ' + B.all.toDecide + ' to decide' : ''}`]].concat(B.lead ? [['reports', 'Reports'], ['vendors', 'Vendors'], ['rules', 'Rules'], ['govern', 'Governance']] : []);
   v.innerHTML = `<div class="page-head"><div><h1>BGV tracker</h1><p>Background verification of new hires: the previous employers (start within 3 days of the offer) and the current employer (start within 2 days of joining). The recruiter of the position owns each case; TA Leads and the Head of HR oversee them.</p></div><div class="page-actions"><button class="btn" id="bgImport">Import vendor update</button></div></div>
     <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${f.tab === k}">${esc(l)}</button>`).join('')}</div><div id="bgBody" style="margin-top:16px"></div>`;
-  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewBgv(v); });
-  $('#bgImport').onclick = () => openBgvImport(() => viewBgv(v));
-  if (S.bgvOpenId) { const id = S.bgvOpenId; S.bgvOpenId = null; setTimeout(() => openBgvCase(id, () => viewBgv(v)), 0); }
+  $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; S.keepData = true; viewBgv(v); });   // a tab change uses the list already on the page
+  $('#bgImport').onclick = () => openBgvImport(() => bgvReload(v));
+  if (S.bgvOpenId) { const id = S.bgvOpenId; S.bgvOpenId = null; setTimeout(() => openBgvCase(id, () => bgvReload(v)), 0); }
   if (f.tab === 'reports') return bgvReports($('#bgBody'), B, v);
   if (f.tab === 'vendors') return bgvVendors($('#bgBody'), B, v);
   if (f.tab === 'rules') return bgvRulesTab($('#bgBody'), B, v);
@@ -4932,7 +5069,7 @@ function bgvCases(el, B, v) {
         <td>${bgvStChip(r.status)} ${bgvRag(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : r.needsDecision ? ' · <b class="miss">waiting for the Head of HR</b>' : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
         <td class="nw">${fmtDate(r.due)}</td><td class="nw">${r.initiated ? fmtDate(r.initiated) : '<span class="sub">—</span>'}${r.early ? `<span class="sub miss" title="Policy 9.1.1 starts the check within ${B.rules.cfg.prevInitDays} days after the offer">${r.early} d before the offer</span>` : ''}</td><td class="nw">${r.resultDue ? fmtDate(r.resultDue) : '<span class="sub">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${scope.length ? 'No case matches.' : own ? 'You have no BGV cases yet. A case opens automatically when a candidate for one of your Manager-and-above (or flagged) positions reaches the Offer stage, and a second one when they join.' : 'No BGV cases yet.'}</div>`;
-    $$('#bgList tr.click', el).forEach(tr => { tr.onclick = () => openBgvCase(tr.dataset.id, () => viewBgv(v)); tr.onkeydown = e => { if (e.key === 'Enter') openBgvCase(tr.dataset.id, () => viewBgv(v)); }; });
+    $$('#bgList tr.click', el).forEach(tr => { tr.onclick = () => openBgvCase(tr.dataset.id, () => bgvReload(v)); tr.onkeydown = e => { if (e.key === 'Enter') openBgvCase(tr.dataset.id, () => bgvReload(v)); }; });
     $('#bgCsv').onclick = () => csvSave(`bgv-cases-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'MRF', 'Department', 'Grade', 'Recruiter', 'Status', 'Warning', 'Why', 'Start by', 'Started', 'Days started before the offer', 'Report needed', 'Outcome', 'Decision'],
       rows.map(r => [r.id, r.type, r.candidate, r.position, r.mrf, r.dept, r.grade, r.recruiter, r.status, r.rag, r.why, r.due, r.initiated, r.early || '', r.resultDue, r.outcome || '', r.decision || '']));
   };
@@ -5441,7 +5578,7 @@ function bgvVendors(el, B, v) {
     $('#vnX', dlg).onclick = closeDrawer;
     $('#vnSave', dlg).onclick = async e => {
       busy(e.target, true, 'Saving…');
-      try { const r = readForm($('#vnForm', dlg)); await api('apiBgvVendorSave', Object.assign({ id: d.id || '' }, r, { active: r.active !== 'No' })); toast('Vendor saved.'); closeDrawer(); viewBgv(v); }
+      try { const r = readForm($('#vnForm', dlg)); await api('apiBgvVendorSave', Object.assign({ id: d.id || '' }, r, { active: r.active !== 'No' })); toast('Vendor saved.'); closeDrawer(); bgvReload(v); }
       catch (err) { toast(err, true); busy(e.target, false, 'Save vendor'); }
     };
   };
@@ -5468,7 +5605,7 @@ async function bgvRulesTab(el, B, v) {
     busy(e.target, true, 'Saving…');
     try { const values = {}; $$('input[data-k]', el).forEach(i => { values[i.dataset.k] = i.value; });
       await api('apiBgvRulesSave', { values, scope: { managerPlus: $('#brMgr').checked, flagged: $('#brFlag').checked }, company: $('#brCompany').value, joinWarning: $('#brJoin').checked, templates: Object.fromEntries($$('fieldset[data-tpl]', el).map(fs => [fs.dataset.tpl, { subject: $('.bt-s', fs).value, body: $('.bt-b', fs).value }])), eff: $('#brEff').value, reason: $('#brReason').value, remark: $('#brRemark').value.trim() });
-      toast('Rules saved.'); viewBgv(v); }
+      toast('Rules saved.'); bgvReload(v); }
     catch (err) { toast(err, true); busy(e.target, false, 'Save as a new version'); }
   };
 }
@@ -6372,6 +6509,10 @@ function pipeFilterLines(list, f, depts) {
   }).sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date)));
 }
 const PF_KEY_ = 'bfcl.pipeFilter';
+/* The last board seen for each position (this session, in memory): switching position paints it at once and the server is asked in the background. */
+const PIPE_BOARDS = new Map();
+function keepBoard(id, np) { PIPE_BOARDS.delete(id); PIPE_BOARDS.set(id, np); while (PIPE_BOARDS.size > 12) PIPE_BOARDS.delete(PIPE_BOARDS.keys().next().value); return np; }
+const boardSig = x => JSON.stringify(Object.assign({}, x, { now: 0 }));
 async function viewPipeline(v) {
   const f = S.pipe = S.pipe || {};
   if (!f.line) { try { f.line = localStorage.getItem('bfcl.pipeLine') || ''; } catch (e) { } }
@@ -6427,8 +6568,8 @@ async function viewPipeline(v) {
   const drawDepts = () => { $('#pfDept').innerHTML = opts(deptList(), f.dept || ''); };
   const refilter = () => { savePf(); drawDepts(); drawPicker(); };
   drawDepts(); drawPicker();
-  $('#pLine').onchange = e => { f.line = e.target.value; go('pipeline', false); };
-  const step = d => { const ix = order.indexOf(f.line), t = order[ix + d]; if (t) { f.line = t; go('pipeline', false); } };
+  $('#pLine').onchange = e => showLine(e.target.value);
+  const step = d => { const ix = order.indexOf(f.line), t = order[ix + d]; if (t) showLine(t); };
   $('#pfPrev').onclick = () => step(-1); $('#pfNext').onclick = () => step(1);
   if ($('#pfRec')) $('#pfRec').onchange = e => { f.rec = e.target.value; refilter(); };
   $('#pfDiv').onchange = e => { f.div = e.target.value; if (f.dept && f.div && ((depts.find(x => x.dept === f.dept) || {}).division || '') !== f.div) f.dept = ''; refilter(); };
@@ -6444,28 +6585,28 @@ async function viewPipeline(v) {
     let m = []; try { m = await api('apiPipelineFind', q); } catch (e) { return; }
     if (seq !== pfSeq || !$('#pfMatches')) return;
     box.innerHTML = m.length ? `<div class="pf-matches" role="list" aria-label="Candidates matching ${esc(q)}"><div class="sub">Candidates</div>${m.map((x, i) => `<button type="button" class="pf-match" role="listitem" data-i="${i}"><b>${esc(x.name)}</b> <span class="sub">${esc(x.cand)}${x.last4 ? ' \u00b7 ends ' + esc(x.last4) : ''}</span><span class="sub">${esc(x.mrf)} \u00b7 ${esc(x.position)} \u00b7 ${esc(x.dept)} \u00b7 ${esc(x.recruiter || 'Not assigned')} \u00b7 ${esc(x.stage)}${x.status !== 'Active' ? ' \u00b7 ' + esc(x.status) : ''}</span></button>`).join('')}</div>` : '';
-    $$('.pf-match', box).forEach(b => b.onclick = () => { const x = m[+b.dataset.i]; f.line = x.line; f.openApp = x.app; if (x.status !== 'Active') f.closed = true; go('pipeline', false); });
+    $$('.pf-match', box).forEach(b => b.onclick = () => { const x = m[+b.dataset.i]; f.openApp = x.app; if (x.status !== 'Active') f.closed = true; gotoLine(x.line); });
   };
   $('#pfQ').oninput = e => { f.q = e.target.value; drawPicker(); clearTimeout(pfTimer); pfTimer = setTimeout(showMatches, 300); };
   $('#pfQ').onkeydown = e => { if (e.key === 'ArrowDown') { const b = $('.pf-match', $('#pfMatches')); if (b) { e.preventDefault(); b.focus(); } } };
   $('#pfMatches').onkeydown = e => { const bs = $$('.pf-match', $('#pfMatches')), i = bs.indexOf(document.activeElement); if (e.key === 'ArrowDown' && i < bs.length - 1) { e.preventDefault(); bs[i + 1].focus(); } if (e.key === 'ArrowUp') { e.preventDefault(); (i > 0 ? bs[i - 1] : $('#pfQ')).focus(); } };
   if (f.q) showMatches();
-  $('#pClosed').onchange = e => { f.closed = e.target.checked; renderBoard(); };
-  $('#pRefresh').onclick = () => go('pipeline', false);
+  $('#pClosed').onchange = e => { f.closed = e.target.checked; if (P) renderBoard(); };
+  $('#pRefresh').onclick = () => { const b = $('#pRefresh'); busy(b, true, 'Refreshing\u2026'); showLine(f.line).finally(() => busy($('#pRefresh'), false, 'Refresh')); };
   if (!f.line) { $('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
   try { localStorage.setItem('bfcl.pipeLine', f.line); } catch (e) { }
-  const tasksP = api('apiTasksForLine', f.line); tasksP.catch(() => { });
-  let P = await (early && f.line === earlyLine ? early : fresh('apiPipeline', f.line));
-  let firstTasks = tasksP;   // the to-do panel fills in when it arrives; it no longer holds up the board
-  const replaced = P.line.Position_Status === 'Replaced';
-  const closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
-  const owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
-  const canEdit = !replaced && !closedSt && owns;
+  let P = null, replaced = false, closedSt = false, owns = false, canEdit = false, onboardOnly = false, firstTasks = null;
+  const derive = () => {
+    replaced = P.line.Position_Status === 'Replaced';
+    closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
+    owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
+    canEdit = !replaced && !closedSt && owns;
+    // The Onboarding team confirms the hiring, records the joining and completes the onboarding of fast-track positions of any recruiter.
+    onboardOnly = !replaced && !closedSt && !owns && can('onboard');
+  };
   const fastRoute = () => P.route === 'Fast-track';
   const PN = st => (fastRoute() && FAST_NAMES[st]) || P_NAMES[st];
   const stagesOf = () => fastRoute() ? P.fastStages : P_STAGES;
-  // The Onboarding team confirms the hiring, records the joining and completes the onboarding of fast-track positions of any recruiter.
-  const onboardOnly = !replaced && !closedSt && !owns && can('onboard');
   const canNext = nx => canEdit || (onboardOnly && fastRoute() && ['Offer', 'Joined', 'Onboarded'].includes(nx));
   const renderBoard = () => {
     if (!$('#pBody')) return;
@@ -6511,14 +6652,21 @@ async function viewPipeline(v) {
         if ($('#qEditGo', d)) $('#qEditGo', d).onclick = () => questionsDialog();
       }
     });
-    const reloadBoard = () => { S.posStale = true; go('pipeline', false); };
+    /* After closing, resuming or reinstating a position: the board and the one position row are read together and the page is updated in place. */
+    const reloadBoard = async () => {
+      try {
+        const [np, l] = await Promise.all([api('apiPipeline', f.line), api('apiGetPosition', f.line)]);
+        putLine(l, f.line); const i = mine.findIndex(x => x.Line_ID === f.line); if (i >= 0) mine[i] = l;
+        reload(np); drawPicker();
+      } catch (e) { toast(e, true); }
+    };
     if ($('#pFind')) $('#pFind').onclick = () => findCandidatesDialog(f.line, async () => { reload(await api('apiPipeline', f.line)); });
-    if ($('#pClosePos')) $('#pClosePos').onclick = () => loadPositions(true).then(() => closePositionDialog(lineById(f.line), reloadBoard));
-    if ($('#pResume')) $('#pResume').onclick = () => loadPositions(true).then(() => resumePositionDialog(lineById(f.line), reloadBoard));
-    lineTasksInto($('#pTasks'), f.line, firstTasks || undefined); firstTasks = null;
-    if ($('#pReinstate')) $('#pReinstate').onclick = () => reinstateDialog(P.apps.filter(a => a.Status === 'Withdrawn' && a.Backout_Date).sort((a, b) => String(b.Backout_Date).localeCompare(String(a.Backout_Date)))[0], () => { S.posStale = true; go('pipeline', false); });
-    if ($('#pGoRepl')) $('#pGoRepl').onclick = () => { f.line = P.line.Replaced_By; f.closed = false; go('pipeline', false); };
-    if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.line = P.line.Parent_Line_ID; f.closed = true; go('pipeline', false); };
+    if ($('#pClosePos')) $('#pClosePos').onclick = () => refreshLine(f.line).then(l => closePositionDialog(l, reloadBoard)).catch(e => toast(e, true));
+    if ($('#pResume')) $('#pResume').onclick = () => refreshLine(f.line).then(l => resumePositionDialog(l, reloadBoard)).catch(e => toast(e, true));
+    { const tk = firstTasks; firstTasks = null; lineTasksInto($('#pTasks'), f.line, tk || (LINE_TASKS.has(f.line) ? LINE_TASKS.get(f.line) : undefined)); }   // a redraw uses the to-dos already known; reload() asks the server in the background
+    if ($('#pReinstate')) $('#pReinstate').onclick = () => reinstateDialog(P.apps.filter(a => a.Status === 'Withdrawn' && a.Backout_Date).sort((a, b) => String(b.Backout_Date).localeCompare(String(a.Backout_Date)))[0], reloadBoard);
+    if ($('#pGoRepl')) $('#pGoRepl').onclick = () => { f.closed = false; $('#pClosed').checked = false; gotoLine(P.line.Replaced_By); };
+    if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.closed = true; $('#pClosed').checked = true; gotoLine(P.line.Parent_Line_ID); };
     if (!canEdit) return;
     $('#pAdd').onclick = addToPipelineDialog;
     $('#pQs').onclick = questionsDialog;
@@ -6528,7 +6676,38 @@ async function viewPipeline(v) {
     }, P.line.JD_File);
     $('#pPost').onclick = postsDialog;
   };
-  const reload = np => { P = np; renderBoard(); };
+  S.pipeRefresh = async () => { if (!$('#pBody')) return; try { reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); } };
+  const refreshTasks = () => { if ($('#pTasks')) lineTasksInto($('#pTasks'), f.line); };
+  /* A board the server just returned after a write (or a background check): keep it, redraw, and refresh the to-dos quietly. */
+  const reload = np => { P = keepBoard(f.line, np); derive(); renderBoard(); refreshTasks(); };
+  const idle = fn => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 2500 }) : setTimeout(fn, 800));
+  let boardSeq = 0;
+  /**
+   * Opens a position: only the board area changes. The last board seen for it is drawn at once, then the server is asked; if
+   * the answer differs the board is redrawn. The filters, the picker and the page stay where they are.
+   */
+  const showLine = async id => {
+    if (!id) return;
+    const seq = ++boardSeq, wantApp = f.openApp, t = perfTimer('Pipeline: position board');
+    f.line = id; try { localStorage.setItem('bfcl.pipeLine', id); } catch (e) { }
+    if ($('#pLine')) drawPicker();
+    const mem = wantApp ? null : (PIPE_BOARDS.get(id) || remembered('apiPipeline', id));
+    firstTasks = LINE_TASKS.has(id) ? LINE_TASKS.get(id) : api('apiTasksForLine', id); if (firstTasks.catch) firstTasks.catch(() => { });
+    const body = $('#pBody'); if (!body) return;
+    if (mem) { P = mem; derive(); renderBoard(); t.done('cached'); } else body.innerHTML = skBoard(SK_STAGES);
+    let np;
+    try { np = await fresh('apiPipeline', id); }
+    catch (e) { if (seq === boardSeq) { if (mem) toast(e, true); else if ($('#pBody')) $('#pBody').innerHTML = `<div class="empty">${esc(e)}</div>`; } return; }
+    if (seq !== boardSeq || !$('#pBody')) return;
+    if (!mem || boardSig(np) !== boardSig(P)) { P = keepBoard(id, np); derive(); renderBoard(); if (!mem) t.done('cold'); }
+    else keepBoard(id, P);
+    if (wantApp) { f.openApp = ''; const a = P.apps.find(x => x.App_ID === wantApp); if (a) openApp(a); }
+    if (f.openFlow) { f.openFlow = false; const b = $('#pFlow'); if (b) b.click(); }
+    /* When idle, the neighbouring positions are fetched so stepping with Previous / Next shows them at once. */
+    idle(() => { if (seq !== boardSeq || document.hidden) return; const ix = order.indexOf(id); [order[ix - 1], order[ix + 1]].forEach(n => { if (n && !PIPE_BOARDS.has(n)) fresh('apiPipeline', n).then(b => { if (!PIPE_BOARDS.has(n)) keepBoard(n, b); }).catch(() => { }); }); });
+  };
+  /** Opens a position in this list; one that is not in the list (a new replacement) needs the page rebuilt. */
+  const gotoLine = id => { if (mine.some(x => x.Line_ID === id)) showLine(id); else { f.line = id; S.posStale = true; go('pipeline', false); } };
   const dlg = (html, wide) => {
     let d = $('#pDialog');
     if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="pDialog" class="pm-dialog" aria-labelledby="pdTitle"></dialog>'); d = $('#pDialog'); }
@@ -6700,7 +6879,7 @@ async function viewPipeline(v) {
     bindInterviewSec(d, a);
     if ($('#apUnlink', d)) $('#apUnlink', d).onclick = async () => {
       const b = $('#apUnlink', d); busy(b, true);
-      try { const np = await api('apiUnlinkApp', a.App_ID, $('#apUnlinkWhy', d).value); S.posStale = true; toast('Card removed. The position is back in the switch-over check.'); d.close(); P = np; renderBoard(); }
+      try { const np = await api('apiUnlinkApp', a.App_ID, $('#apUnlinkWhy', d).value); S.posStale = true; toast('Card removed. The position is back in the switch-over check.'); d.close(); reload(np); }
       catch (e) { toast(e, true); busy(b, false); }
     };
     bindAttachmentViews('APP', a.App_ID, d);
@@ -6727,7 +6906,7 @@ async function viewPipeline(v) {
       const needPaper = fastRoute() && next === 'Offer' && !a.Dept_Confirm_File, paperChosen = $$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0]);
       if (needPaper && !paperChosen && !(isLead() && ($('[name=paperException]', root) || {}).value)) return toast('Attach the department\u2019s written confirmation in the field above, then confirm the hiring.', true);
       const payload = collectStage(next, root, a);
-      const b = $('#apMove'); busy(b, true, 'Saving\u2026');
+      const b = $('#apMove'); busy(b, true, 'Saving\u2026'); const tmv = perfTimer('Pipeline: move to visible change');
       try {
         let np, uploaded = false;
         if (needPaper && paperChosen) { await uploadAttachments('APP', a.App_ID, root); uploaded = true; delete payload.paperException; }   /* the paper must be on the card before the hiring can be confirmed */
@@ -6738,8 +6917,8 @@ async function viewPipeline(v) {
           payload.bgvAck = true; np = await api('apiMoveStage', a.App_ID, next, payload);
         }
         if (!uploaded && $$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
-        await refreshLine(a.Line_ID);
-        toast(`${a.cand.name} moved to ${PN(next)}`); after(np);
+        applyBoard(np, a.Line_ID);
+        toast(`${a.cand.name} moved to ${PN(next)}`); after(np); tmv.done('cold');
       } catch (e) { toast(e, true); busy(b, false, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
     };
     $$('[data-st]', d).forEach(b => b.onclick = async () => {
@@ -6750,7 +6929,7 @@ async function viewPipeline(v) {
           toast(`Backout recorded. ${r.fromMrf} is closed and replacement ${r.toMrf} is raised${r.moved ? `; ${r.moved} candidate${r.moved === 1 ? '' : 's'} moved to it` : ''}.`);
           f.line = r.to; S.posStale = true; go('pipeline', false); return;
         }
-        await refreshLine(a.Line_ID); toast('Status updated'); after(np);
+        applyBoard(np, a.Line_ID); toast('Status updated'); after(np);
       } catch (e) { toast(e, true); }
     });
     if ($('#apBack')) $('#apBack').onchange = async e => {
@@ -6758,7 +6937,7 @@ async function viewPipeline(v) {
       try { after(await api('apiMoveStage', a.App_ID, e.target.value, { note: 'Moved back by a lead (correction)' })); toast('Moved back'); } catch (err) { toast(err, true); }
     };
     if ($('#apEdojSave')) $('#apEdojSave').onclick = async () => {
-      try { const np = await api('apiSetEdoj', a.App_ID, $('#apEdoj').value); await refreshLine(a.Line_ID); toast('Expected joining date changed'); after(np); } catch (e) { toast(e, true); }
+      try { const np = await api('apiSetEdoj', a.App_ID, $('#apEdoj').value); applyBoard(np, a.Line_ID); toast('Expected joining date changed'); after(np); } catch (e) { toast(e, true); }
     };
     if ($('#apFuSave')) $('#apFuSave').onclick = async () => {
       try { after(await api('apiAddFollowup', a.App_ID, readForm($('#apFu')))); toast('Check-in logged'); } catch (e) { toast(e, true); }
@@ -6835,9 +7014,7 @@ async function viewPipeline(v) {
     if (s === 'Onboarded') out.onboard = { induction: raw.induction, buddy: raw.buddy, hrms: raw.hrms, m1: raw.m1, m2: raw.m2, m3: raw.m3 };
     return out;
   };
-  renderBoard();
-  if (f.openApp) { const a = P.apps.find(x => x.App_ID === f.openApp); f.openApp = ''; if (a) openApp(a); }
-  if (f.openFlow) { f.openFlow = false; const b = $('#pFlow'); if (b) b.click(); }
+  showLine(f.line);   // not awaited: the page (heading, filters) is ready now and the board fills in
 }
 function daysAhead(n) { const d = new Date(); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 
