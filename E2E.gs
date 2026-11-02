@@ -231,6 +231,19 @@ function e2eRun_(trash) {
     _tables = {}; const after = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
     return before && after && after.noteable && after.notes[0].note === 'E2E note' && after.notes[0].action === 'Note' ? 'note shown, to-do still open' : false;
   });
+  t('Z6 a card moves to another position of the same MRF and keeps its stage', function () {
+    _tables = {};
+    const l1 = apiSavePosition({ Position: 'E2E MOVE A', Grade: 'M5', Dept: L1.Dept, Receipt_Date: ymd_(new Date()), MRF_No: 'E2E-MOVE-1', Recruiter: L1.Recruiter, Approval_Status: 'Approved' });
+    const l2 = apiSavePosition({ Position: 'E2E MOVE B', Grade: 'M5', Dept: L1.Dept, Receipt_Date: ymd_(new Date()), MRF_No: 'E2E-MOVE-1', Recruiter: L1.Recruiter, Approval_Status: 'Approved' });
+    const c = apiSaveCandidate({ Name: 'E2E Mover', Mobile: '9111122292', Line_ID: l1.Line_ID, Position: l1.Position, Dept: L1.Dept }, true).saved;
+    _tables = {}; const a = apiPipeline(l1.Line_ID).apps.filter(function (x) { return x.Candidate_ID === c.Candidate_ID; })[0];
+    apiMoveStage(a.App_ID, 'Screened', { _fromScreening: true, answers: {} });
+    const out = apiMoveToLine(a.App_ID, l2.Line_ID, 'E2E: better fit');
+    _tables = {}; const b = apiPipeline(l2.Line_ID).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0], left = apiPipeline(l1.Line_ID).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0];
+    let again = ''; try { apiMoveToLine(a.App_ID, l2.Line_ID, 'E2E: again'); } catch (e) { again = e.message; }
+    const h = b ? b.history.map(function (x) { return x.outcome; }) : [];
+    return out.movedTo.line === l2.Line_ID && b && !left && b.Stage === 'Screened' && h.indexOf('Moved') >= 0 && !again ? 'moved at ' + b.Stage + ', history kept (' + b.history.length + ' rows)' : false;
+  });
   t('Z4 the audit sample is found again by its month and cannot be made twice', function () {
     const m = ymd_(new Date()).slice(0, 7); _tables = {};
     try { apiAuditGenerate(m); } catch (e) { if (!/already exists|No positions or candidates/.test(e.message)) throw e; }
