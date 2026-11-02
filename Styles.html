@@ -197,7 +197,7 @@ body.cv-open{--drawer-w:min(640px,100vw)}
 .drawer-head h2{margin:0;font-size:19px;font-weight:600}
 .drawer-body{overflow:auto;padding:4px 20px 0;flex:1}
 .drawer-actions{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:12px 0 16px;margin-top:18px;display:flex;gap:10px;justify-content:flex-end}
-.scrim{position:fixed;inset:0;background:rgba(24,34,47,.25);z-index:15}
+.scrim{position:fixed;inset:0;background:rgba(24,34,47,.25);z-index:15;opacity:0}.scrim.on{opacity:1}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 4px}
 .tabs button{border:0;background:none;padding:9px 12px;cursor:pointer;color:var(--ink-2);font-weight:500;border-bottom:2px solid transparent}
 .tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--navy)}
@@ -402,6 +402,17 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
   .readout{grid-template-columns:repeat(2,1fr)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* ---- Smooth finish (release 140): short, calm motion, and none of it for people who ask for reduced motion ---- */
+@keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes dlgIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes bdIn{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:no-preference){
+  .view-page.enter{animation:pageIn .15s ease-out both}
+  dialog[open]{animation:dlgIn .14s ease-out}
+  dialog[open]::backdrop{animation:bdIn .14s ease-out}
+  .scrim{transition:opacity .22s ease}
+  .fbar span{transition:width .4s ease}
+}
 
 /* Loading skeletons */
 #view,.skel-layer{grid-column:2;grid-row:1}

@@ -1,5 +1,6 @@
 function e2eTest() {
   requireEditorOrAdmin_();
+  ensureSchema_();   // bring the real database up to this release first; the schema marker is shared, so upgrading only the copy would leave the real one behind
   const src = DriveApp.getFileById(DB_SPREADSHEET_ID);
   const copy = src.makeCopy('E2E TEST COPY - safe to delete');
   const trash = [];
@@ -12,7 +13,7 @@ function e2eTest() {
     copy.setTrashed(true);
     trash.forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { } });
     const fy = kpiCurrentFy_();
-    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1']);   // KPI, candidate-index and live-map caches are keyed by the database file, so the copy's never reach the real one
+    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1']);   // these two are not keyed by database file; the small-table, KPI, candidate-index, live-map, archive-index and CTC-grant caches are, so the copy's never reach the real app
     PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));
   }
   Logger.log('RESULT pass ' + res.pass + ' fail ' + res.fail);
@@ -214,6 +215,28 @@ function e2eRun_(trash) {
   err('D24 onboarding needs induction and buddy', function () { apiMoveStage(B, 'Onboarded', { onboard: {} }); }, /induction/);
   t('D25 onboarded', function () { return B2('Onboarded', { onboard: { induction: today, buddy: 'Randhir Singh', hrms: 'Yes' } }).Stage === 'Onboarded'; });
   t('D26 stage history complete', function () { _tables = {}; const h = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0].history; return h.length >= 10 && h[h.length - 1].outcome === 'Backout' ? h.length + ' entries' : false; });
+  // Fixes of release 141 (to run in the editor on a database copy)
+  t('Z1 a refused move back leaves the position as it was', function () {
+    _tables = {}; const before = apiGetPosition(R.to).Actual_DOJ;
+    let msg = ''; try { apiMoveStage(B, 'Docs', {}); } catch (e) { msg = e.message; }
+    _tables = {}; const after = apiGetPosition(R.to).Actual_DOJ;
+    return /not verified/.test(msg) && !!after && String(before) === String(after) ? 'joining date kept: ' + after : false;
+  });
+  t('Z3 a waived psychometric test closes its to-do', function () { return psychoDone_({ Psychometric_Status: 'Waived' }) && !psychoDone_({ Psychometric_Status: 'Scheduled' }); });
+  t('Z5 a note added to a BGV to-do shows in its (i) and leaves the to-do open', function () {
+    _tables = {}; const bt = allTasks_().filter(function (x) { return /^bgv/.test(String(x.rule)); })[0];
+    if (!bt) return 'no BGV to-do on the copy: skipped';
+    const before = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    apiTaskAction(bt.key, 'note', { note: 'E2E note' });
+    _tables = {}; const after = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    return before && after && after.noteable && after.notes[0].note === 'E2E note' && after.notes[0].action === 'Note' ? 'note shown, to-do still open' : false;
+  });
+  t('Z4 the audit sample is found again by its month and cannot be made twice', function () {
+    const m = ymd_(new Date()).slice(0, 7); _tables = {};
+    try { apiAuditGenerate(m); } catch (e) { if (!/already exists|No positions or candidates/.test(e.message)) throw e; }
+    _tables = {}; const list = apiAuditList(m); let twice = ''; try { apiAuditGenerate(m); } catch (e) { twice = e.message; }
+    return list.length > 0 && /already exists/.test(twice) && auditMonth_(new Date(Date.UTC(2026, 9, 15))) === '2026-10' ? list.length + ' rows' : false;
+  });
   const legacy = (apiListCandidates().filter(function (c) { return !c.Line_ID && c.Name; })[0] || {}).Candidate_ID;
   t('D27 add existing candidate to pipeline', function () { return apiAddToPipeline(legacy, L2.Line_ID).Stage === 'Sourced'; });
   err('D28 no duplicate in same pipeline', function () { apiAddToPipeline(legacy, L2.Line_ID); }, /already/);

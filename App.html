@@ -28,23 +28,26 @@ function fresh(fn, ...args) {
   }, e => {
     if (e === UPDATED_MSG) return api(fn, ...args);
     throw e;
-  }).finally(() => INFLIGHT.delete(key));
+  }).finally(() => { if (INFLIGHT.get(key) === p) INFLIGHT.delete(key); });   // only the request that owns the entry removes it
   INFLIGHT.set(key, p);
   return p;
 }
+/** Like fresh(), but never joins a request that was already on its way: used after a write, when an answer read before it would be out of date. */
+function freshNew(fn, ...args) { INFLIGHT.delete(fn + JSON.stringify(args)); return fresh(fn, ...args); }
 /* Last results of reads that are not fetched with fresh(): a revisit paints the last result at once and refreshes it in the background. Kept in memory for the session only. */
 const RESULTS = new Map();
+let RESULTS_EPOCH = 0;   // goes up on every write, so a read that began before a write cannot remember its (older) answer afterwards
 /** Forgets remembered results whose key starts with `prefix` (after a write that makes them out of date). */
 function forget(prefix) { Array.from(RESULTS.keys()).forEach(k => { if (k.startsWith(prefix)) RESULTS.delete(k); }); }
 function remember(key, data) { RESULTS.delete(key); RESULTS.set(key, { at: Date.now(), json: JSON.stringify(data) }); while (RESULTS.size > 60) RESULTS.delete(RESULTS.keys().next().value); return data; }
 function recall(key) { const r = RESULTS.get(key); return r ? { at: r.at, data: JSON.parse(r.json) } : null; }
 /** Stale-while-revalidate: paints the last result of `key` at once ({cached:true}), calls `call()`, then paints the fresh result ({same:true} when nothing changed, so the screen only moves its "Updated" time). */
 async function swr(key, call, paint) {
-  const old = recall(key);
+  const old = recall(key), ep = RESULTS_EPOCH;
   if (old) paint(old.data, { cached: true, at: old.at, same: false });
   const data = await call();
   const same = !!old && JSON.stringify(data) === JSON.stringify(old.data);
-  remember(key, data);
+  if (ep === RESULTS_EPOCH) remember(key, data);
   paint(data, { cached: false, at: Date.now(), same });
   return data;
 }
@@ -55,7 +58,7 @@ async function swr(key, call, paint) {
 const REVAL_MS = 3000;
 function editingIn(v) {
   const a = document.activeElement;
-  return !!((a && v.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || v.querySelector('.dirty') || (v.querySelector('#mdState') && /Unsaved|Saving/.test(v.querySelector('#mdState').textContent)));
+  return !!((a && v.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || v.querySelector('.dirty, .dg-dirty') || (v.querySelector('#mdState') && /Unsaved|Saving/.test(v.querySelector('#mdState').textContent)));
 }
 function noteTime(at) { try { return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
 /** The small "Updated hh:mm" line under a page heading: when the figures on screen were read from the server. */
@@ -73,22 +76,23 @@ function freshNote(v, at, state, again) {
 }
 function viewData(v, key, call, again, label, opts) {
   opts = opts || {};
-  const t = perfTimer(label), local = !!S.keepData, old = opts.force ? null : recall(key), seq = S.goSeq;
+  const t = perfTimer(label), local = !!S.keepData, old = opts.force ? null : recall(key), seq = S.goSeq, ep = RESULTS_EPOCH;
   S.keepData = false;
-  const note = (at, state) => { if (opts.note !== false) setTimeout(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, at, state, again); }, 0); };
+  const redo = () => redrawKeeping(v, again);   // the page again, with the screen kept as it was
+  const note = (at, state) => { if (opts.note !== false) setTimeout(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, at, state, redo); }, 0); };
   if (old && (local || Date.now() - old.at < REVAL_MS)) { note(old.at, ''); t.done('cached'); return Promise.resolve(old.data); }
   if (old) {
     note(old.at, 'checking'); t.done('cached');
     call().then(data => {
-      const same = JSON.stringify(data) === JSON.stringify(old.data); remember(key, data);
+      const same = JSON.stringify(data) === JSON.stringify(old.data); if (ep === RESULTS_EPOCH) remember(key, data);
       if (seq !== S.goSeq || !v.isConnected) return;
-      if (same) { freshNote(v, Date.now(), '', again); return; }
-      if (editingIn(v)) { freshNote(v, old.at, 'newer', again); return; }   // never redraw under someone who is typing
-      again();
-    }).catch(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, old.at, 'failed', again); });
+      if (same) { freshNote(v, Date.now(), '', redo); return; }
+      if (editingIn(v)) { freshNote(v, old.at, 'newer', redo); return; }   // never redraw under someone who is typing
+      redo();
+    }).catch(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, old.at, 'failed', redo); });
     return Promise.resolve(old.data);
   }
-  return call().then(data => { remember(key, data); t.done('cold'); note(Date.now(), ''); return data; });
+  return call().then(data => { if (ep === RESULTS_EPOCH) remember(key, data); t.done('cold'); note(Date.now(), ''); return data; });
 }
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
@@ -110,6 +114,59 @@ function perfTimer(label) {
 function perfRows() {
   const st = a => { if (!a || !a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return { n: s.length, med: s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2), max: s[s.length - 1] }; };
   return Object.keys(PERFSTAT).sort().map(k => ({ label: k, cold: st(PERFSTAT[k].cold), cached: st(PERFSTAT[k].cached) }));
+}
+/* ---- Smooth finish: figures that changed ease to their new value; nothing else moves ---- */
+function reducedMotion() { try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; } }
+function parseFigure(t) { const m = /^(-?\d+(?:\.\d+)?)(%?)$/.exec(String(t == null ? '' : t).trim()); return m ? { n: parseFloat(m[1]), pct: m[2], dec: (m[1].split('.')[1] || '').length } : null; }
+/** The text of a figure part-way (p from 0 to 1) from `from` to `to`. Anything that is not a plain number or percentage, and p = 1, give `to` exactly. */
+function figureAt(from, to, p) {
+  const a = parseFigure(from), b = parseFigure(to);
+  if (!a || !b || a.pct !== b.pct || !(p < 1)) return to;
+  const e = 1 - Math.pow(1 - Math.max(0, p), 3), dec = Math.max(a.dec, b.dec);
+  return (a.n + (b.n - a.n) * e).toFixed(dec) + b.pct;
+}
+/** What the tiles, funnel counts and funnel bars on a page say now, by their label. */
+function snapFigures(root) {
+  const s = { v: {}, w: {} };
+  root.querySelectorAll('.kpi').forEach(k => { const l = k.querySelector('.l'), v = k.querySelector('.v'); if (l && v) s.v['t:' + l.textContent.trim()] = v.textContent.trim(); });
+  root.querySelectorAll('.frow').forEach(r => {
+    const l = r.querySelector(':scope > span'), n = r.querySelector('.num'), b = r.querySelector('.fbar span');
+    if (l && n) s.v['f:' + l.textContent.trim()] = n.textContent.trim();
+    if (l && b) s.w[l.textContent.trim()] = b.style.width;
+  });
+  return s;
+}
+/** After a redraw: the figures whose value changed count from the old value to the new one (about 0.4 s) and bars grow or shrink; unchanged figures are not touched. */
+function easeFigures(root, snap, ms) {
+  if (!snap || reducedMotion()) return;
+  const dur = ms || 400, run = (el, from, to) => {
+    if (!parseFigure(from) || !parseFigure(to) || from === to) return;
+    const t0 = perfNow(); el.textContent = from;
+    const tick = () => {
+      if (!el.isConnected) return;
+      const p = (perfNow() - t0) / dur; el.textContent = figureAt(from, to, p);
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
+  root.querySelectorAll('.kpi').forEach(k => { const l = k.querySelector('.l'), v = k.querySelector('.v'); if (l && v) { const old = snap.v['t:' + l.textContent.trim()]; if (old != null) run(v, old, v.textContent.trim()); } });
+  root.querySelectorAll('.frow').forEach(r => {
+    const l = r.querySelector(':scope > span'), n = r.querySelector('.num'), b = r.querySelector('.fbar span');
+    if (!l) return; const key = l.textContent.trim();
+    if (n) { const old = snap.v['f:' + key]; if (old != null) run(n, old, n.textContent.trim()); }
+    if (b && snap.w[key] != null && snap.w[key] !== b.style.width) { const to = b.style.width; b.style.width = snap.w[key]; void b.offsetWidth; b.style.width = to; }
+  });
+}
+/** Runs a page again and puts the screen back as it was: scroll position, the focused control, and the changed figures easing in. */
+function redrawKeeping(v, again) {
+  const sc = document.getElementById('view'), top = sc ? sc.scrollTop : 0, snap = snapFigures(v);
+  const a = document.activeElement, fid = a && v.contains(a) && a.id ? a.id : '';
+  const done = () => {
+    if (sc) sc.scrollTop = top;
+    if (fid) { const f = document.getElementById(fid); if (f && document.activeElement !== f) { try { f.focus({ preventScroll: true }); } catch (e) { } } }
+    easeFigures(v, snap);
+  };
+  return Promise.resolve(again()).then(done, e => { done(); try { toast(e, true); } catch (x) { } });
 }
 /* DATA LAYER END */
 /* Anything that fails without being caught shows a message instead of failing silently (the same message is shown once per 5 seconds). */
@@ -135,7 +192,7 @@ function apiCall(fn, args) {
     /* Any other call may have changed positions on the server (a pipeline move sets the offer, a closure the status):
        the next screen that shows positions checks the server in the background instead of waiting 15 s. */
     /* A write also makes every remembered page result out of date (they are asked for again on the next visit). */
-    const ok = READ_ONLY.has(fn) ? resolve : r => { S.posCheckedAt = 0; RESULTS.clear(); resolve(r); };
+    const ok = READ_ONLY.has(fn) ? resolve : r => { S.posCheckedAt = 0; RESULTS_EPOCH++; RESULTS.clear(); resolve(r); };
     const run = google.script.run.withSuccessHandler(ok)
       .withFailureHandler(e => reject(e && e.message ? e.message.replace(new RegExp('^Error:\\s*'), '') : String(e)));
     if (typeof run[fn] !== 'function') return reject(UPDATED_MSG);
@@ -214,20 +271,35 @@ function isLead() { return can('lead'); }
 
 let toastTimer;
 /** The shared notice element; recreated if a dialog redraw removed it while it was parked inside. */
+let toastNode = null;   // the one notice element, kept even while a redraw has taken it out of the page
 function toastEl() {
+  if (toastNode) return toastNode;
   let t = document.getElementById('toast');
   if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); document.body.appendChild(t); }
-  return t;
+  return (toastNode = t);
 }
 /**
  * A modal <dialog> sits in the browser's top layer, above everything in the page whatever its z-index, so the notice is placed inside
  * the open dialog while one is showing and back in the page when it hides. Errors stay while the pointer is over them.
  */
+/** Where the notice belongs now: inside the top-most open dialog, else in the page. */
+function toastHost() { const d = document.querySelectorAll('dialog[open]'); return d.length ? d[d.length - 1] : document.body; }
+let toastObs = null;
+function parkToast() { const t = toastEl(), h = toastHost(); if (t.parentNode !== h) h.appendChild(t); watchToast(t, h); }
+/** If the dialog holding the notice is redrawn (its innerHTML replaced) the notice is put back, so a confirmation shown just before a redraw is still seen. */
+function watchToast(t, host) {
+  if (toastObs) toastObs.disconnect();
+  if (host === document.body || typeof MutationObserver === 'undefined') { toastObs = null; return; }
+  toastObs = new MutationObserver(() => { if (t.className.indexOf('show') >= 0 && t.parentNode !== toastHost()) parkToast(); else if (!t.isConnected) parkToast(); });
+  toastObs.observe(host, { childList: true });
+}
+/* A dialog that closes right after a notice must not take the notice with it: it moves to the next open dialog or back to the page. */
+document.addEventListener('close', ev => { if (ev.target && ev.target.tagName === 'DIALOG') parkToast(); }, true);
 function toast(msg, err) {
-  const t = toastEl(), dlgs = document.querySelectorAll('dialog[open]'), host = dlgs.length ? dlgs[dlgs.length - 1] : document.body;
-  if (t.parentNode !== host) host.appendChild(t);
+  const t = toastEl();
+  parkToast();
   t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
-  const hide = () => { t.className = 'toast'; if (t.parentNode !== document.body) document.body.appendChild(t); };
+  const hide = () => { t.className = 'toast'; if (toastObs) { toastObs.disconnect(); toastObs = null; } if (t.parentNode !== document.body) document.body.appendChild(t); };
   const arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(hide, err ? 6000 : 2800); };
   t.onmouseenter = () => clearTimeout(toastTimer); t.onmouseleave = arm;
   arm();
@@ -257,7 +329,7 @@ window.addEventListener('load', () => {
   });
   $('#drawerClose').addEventListener('click', closeDrawer);
   $('#scrim').addEventListener('click', closeDrawer);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) closeDrawer(); });   // Escape cancels the dialog on top, not the drawer under it
 });
 
 const NAV_ICON = {
@@ -311,7 +383,7 @@ function go(view, push) {
   if (push) google.script.history.push({ view }, null, view);
   $$('#rail a').forEach(a => { if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   const host = $('#view'); host.innerHTML = ''; host.focus();
-  const v = document.createElement('div'); v.className = 'view-page'; host.appendChild(v);
+  const v = document.createElement('div'); v.className = 'view-page enter'; host.appendChild(v);   // 'enter' plays the short entrance once; a background redraw reuses this element and does not replay it
   const seq = ++S.goSeq, layer = $('#skel'), t0 = performance.now();
   let ready = false;
   clearTimeout(S.skTimer); cancelAnimationFrame(S.skRaf);
@@ -333,11 +405,15 @@ function go(view, push) {
   });
 }
 
+/** Puts one position row (from a write's reply) into the list. The row is also kept in S.posPatch, so a check of the whole list that started before the write cannot throw it away. */
 function putLine(l, id) {
   if (!S.positions || !l) return l;
   const next = S.positions.slice(), i = next.findIndex(x => x.Line_ID === id);
   if (i >= 0) next[i] = l; else next.unshift(l);
   S.positions = next;
+  const m = S.posPatch = S.posPatch || new Map(), now = Date.now();
+  m.set(id, { row: l, at: now });
+  m.forEach((v, k) => { if (now - v.at > 120000) m.delete(k); });   // only recent writes matter to a list that is still being fetched
   return l;
 }
 async function refreshLine(id) { return putLine(await api('apiGetPosition', id), id); }
@@ -355,19 +431,27 @@ function applyBoard(np, id) {
 function loadPositions(force) {
   if (S.positions && !force && !S.posStale) { revalidatePositions(); return Promise.resolve(S.positions); }
   if (S.posLoading && !force) return S.posLoading;
+  const again = !!(S.posStale || force);
   S.posStale = false;
-  const req = S.posLoading = fresh('apiListPositions').then(p => { S.posCheckedAt = Date.now(); return (S.positions = p.slice()); })
+  const t0 = Date.now();   // rows put in from now on are newer than this request's answer
+  /* After a save the list is asked for again, never from a request that was already on its way before the save. */
+  const req = S.posLoading = (again ? freshNew : fresh)('apiListPositions').then(p => { S.posCheckedAt = Date.now(); S.posGen = (S.posGen || 0) + 1; return (S.positions = overlayRows(p.slice(), t0)); })
     .finally(() => { if (S.posLoading === req) S.posLoading = null; });
   return req;
 }
+/** The rows a write returned while a list was being fetched replace the same rows in that list (the list may have been read before the write). */
+function overlayRows(list, since) {
+  if (S.posPatch) S.posPatch.forEach((v, id) => { if (v.at < since) return; const i = list.findIndex(x => x.Line_ID === id); if (i >= 0) list[i] = v.row; else list.unshift(v.row); });
+  return list;
+}
 function revalidatePositions() {
   if (S.posCheck || Date.now() - (S.posCheckedAt || 0) < 15000) return;
-  const was = S.positions, before = (FRESH.get('apiListPositions[]') || {}).v;
+  const before = (FRESH.get('apiListPositions[]') || {}).v, gen = S.posGen || 0, t0 = Date.now();
   S.posCheck = fresh('apiListPositions').then(p => {
     S.posCheckedAt = Date.now();
-    /* A save made meanwhile replaced S.positions or marked it stale: keep that, it is newer. */
-    if (S.positions !== was || S.posStale || (FRESH.get('apiListPositions[]') || {}).v === before) return;
-    S.positions = p.slice();
+    /* A newer full load, or a list marked stale, wins. Rows a write put in meanwhile are kept on top of this answer, which may predate the write. */
+    if ((S.posGen || 0) !== gen || S.posStale || (FRESH.get('apiListPositions[]') || {}).v === before) return;
+    S.positions = overlayRows(p.slice(), t0);
     document.dispatchEvent(new CustomEvent('positions-updated'));
   }).catch(() => { }).finally(() => { S.posCheck = null; });
 }
@@ -396,7 +480,10 @@ function burn(p) {
 }
 function status(s) { return `<span class="status ${esc(s)}">${esc(s || '—')}</span>`; }
 function opts(list, sel, blank = true) {
-  return (blank ? '<option value=""></option>' : '') + list.map(o => {
+  /* A saved value that is no longer in the list (a closed position, a recruiter who left) is still offered and selected, so saving the form does not blank it. */
+  const have = list.some(o => String(Array.isArray(o) ? o[0] : o) === String(sel));
+  const all = sel != null && String(sel) !== '' && !have ? list.concat([[sel, sel]]) : list;
+  return (blank ? '<option value=""></option>' : '') + all.map(o => {
     const [v, l] = Array.isArray(o) ? o : [o, o];
     return `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(l)}</option>`;
   }).join('');
@@ -446,11 +533,23 @@ function readForm(root) {
 function openDrawer(title, html, cls) {
   hideCv(); S.drawerTok = {};
   $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html;
-  $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
+  $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); showScrim();
   setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
   return $('#drawerBody');
 }
-function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').hidden = true; }
+function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/** The backdrop fades with the drawer's slide (same .22 s); with reduced motion it appears and goes at once. */
+let scrimTimer;
+function showScrim() {
+  const s = $('#scrim'); clearTimeout(scrimTimer); s.hidden = false;
+  if (reducedMotion()) { s.classList.add('on'); return; }
+  void s.offsetWidth; s.classList.add('on');   // one frame at opacity 0, then the fade starts
+}
+function hideScrim() {
+  const s = $('#scrim'); s.classList.remove('on'); clearTimeout(scrimTimer);
+  if (reducedMotion()) { s.hidden = true; return; }
+  scrimTimer = setTimeout(() => { if (!s.classList.contains('on')) s.hidden = true; }, 230);
+}
 
 const MS_BASE = 'https:' + '\/\/';
 function istEnd(startIso, minutes) {
@@ -490,6 +589,7 @@ function taskItemHtml(t, mode) {
        ${t.open ? '<button class="btn sm" data-act="open">Open</button>' : ''}
        ${t.chase ? '<button class="btn sm" data-act="chased">I\u2019ve chased</button>' : ''}
        ${t.manual ? '<button class="btn sm" data-act="done">Done</button>' : ''}
+       ${t.noteable ? '<button class="btn sm" data-act="note">Add a note</button>' : ''}
        <button class="btn sm" data-act="snooze">Snooze</button>`;
   return `<li class="task t-${t.level}" data-key="${esc(t.key)}">
     <div class="task-main"><span class="tlevel l-${t.level}">${LEVEL_TEXT[t.level]}</span>
@@ -532,16 +632,16 @@ function bindTaskList(root, tasks, after) {
     const t = tasks.find(x => x.key === li.dataset.key); if (!t) return;
     const run = async (btn, action, data) => {
       busy(btn, true);
-      try { const r = await api('apiTaskAction', t.key, action, data || {}); toast(action === 'chased' ? 'Chase recorded. It comes back in 24 hours if still pending.' : action === 'done' ? 'Marked done' : 'Snoozed'); after(r); }
+      try { const r = await api('apiTaskAction', t.key, action, data || {}); toast(action === 'chased' ? 'Chase recorded. It comes back in 24 hours if still pending.' : action === 'done' ? 'Marked done' : action === 'note' ? 'Note added' : 'Snoozed'); after(r); }
       catch (e) { toast(e, true); busy(btn, false); }
     };
     $$('[data-act]', li).forEach(b => b.onclick = () => {
       const act = b.dataset.act, sz = $('.task-snooze', li);
       if (act === 'copy') copyText(t.message);
       else if (act === 'open') taskOpen(t.open, t.rule);
-      else if (act === 'chased' || act === 'done') { const nr = $('.task-note', li); if (!nr) return run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : 'Mark done'; $('input', nr).focus(); }
+      else if (act === 'chased' || act === 'done' || act === 'note') { const nr = $('.task-note', li); if (!nr) return act === 'note' ? undefined : run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : act === 'note' ? 'Save note' : 'Mark done'; const ni = $('input', nr); ni.placeholder = act === 'note' ? 'Note (required)' : 'Note (optional)'; ni.setAttribute('aria-label', act === 'note' ? 'Note (required)' : 'Note (optional)'); ni.focus(); }
       else if (act === 'noteCancel') $('.task-note', li).hidden = true;
-      else if (act === 'noteSave') { const nr = $('.task-note', li); run(b, nr.dataset.act, { note: $('input', nr).value }); }
+      else if (act === 'noteSave') { const nr = $('.task-note', li), txt = $('input', nr).value; if (nr.dataset.act === 'note' && txt.trim().length < 3) return toast('Write the note (at least 3 characters).', true); run(b, nr.dataset.act, { note: txt }); }
       else if (act === 'snooze') { sz.hidden = false; $('input', sz).focus(); }
       else if (act === 'snoozeCancel') sz.hidden = true;
       else if (act === 'snoozeSave') run(b, 'snooze', { until: $('select', sz).value, reason: $('input', sz).value });
@@ -1452,7 +1552,7 @@ function positionDrawer(p) {
           try { const j = await api('apiUseJd', saved.map(x => x.Line_ID), jdId); saved.forEach(x => { x.JD_File = j.url; }); }
           catch (e) { toast('Position added, but the JD could not be attached: ' + e, true); }
         }
-        S.positions = saved.concat(S.positions);
+        saved.slice().reverse().forEach(x => putLine(x, x.Line_ID));   // newest first, through the same path as every other change
         toast(n > 1 ? `Added ${n} position lines` : 'Position added');
       } else {
         const saved = await api('apiSavePosition', d);
@@ -1463,7 +1563,7 @@ function positionDrawer(p) {
           try { Object.assign(saved, await uploadAttachments('MRF', saved.Line_ID, $('#posForm'))); }
           catch (e) { toast('Position saved, but a file upload failed: ' + e, true); }
         }
-        S.positions = S.positions.map(x => x.Line_ID === saved.Line_ID ? saved : x);
+        putLine(saved, saved.Line_ID);
         toast(hasFiles ? 'Changes and files saved' : 'Changes saved');
       }
       closeDrawer();
@@ -1688,7 +1788,9 @@ async function dailyGrid(box, onRec, fixed) {
       const mark = () => { tr.classList.add('dg-dirty'); const b = $('.dg-save', tr); if (b) b.disabled = false; sync(); };
       $$('[data-k]', tr).forEach(i => { i.addEventListener('input', mark); i.addEventListener('change', mark); });
       const b = $('.dg-save', tr);
-      if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { const sv = await api('apiSaveFunnel', payload(tr)); if (sv && sv.Entry_ID) tr.dataset.entry = sv.Entry_ID; toast('Saved'); onRec(null, true); await draw(); } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
+      if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { const sv = await api('apiSaveFunnel', payload(tr)); if (sv && sv.Entry_ID) tr.dataset.entry = sv.Entry_ID; toast('Saved'); onRec(null, true); tr.classList.remove('dg-dirty');
+        if ($$('tr.dg-dirty', box).length) { busy(b, false, 'Save'); b.disabled = true; sync(); } else await draw();   // other rows still hold unsaved numbers: leave them alone
+      } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
     });
     $('#dgAll', box).onclick = async () => {
       const trs = $$('tr.dg-dirty', box), b = $('#dgAll', box); busy(b, true, 'Saving…'); let ok = 0; const bad = [];
@@ -1784,6 +1886,7 @@ async function viewCandidates(v) {
   };
   /* The last page seen for these filters is drawn at once and the search runs again in the background; the rows are redrawn only if the answer differs. */
   const fetchPage = async () => {
+    if (!$('#ctbody')) return;   // the page was left while a search timer was still waiting
     const my = ++seq, t = perfTimer('Candidates: page of results');
     const q = { q: f.q, hr: f.hr, src: f.src, dup: f.dup, cv: f.cv, archived: f.arch, page: f.page, size: PAGE,
       pool: f.pool, func: f.func, expMin: f.expMin, expMax: f.expMax, loc: f.loc, noticeMax: f.noticeMax, ctcMax: f.ctcMax };
@@ -1823,6 +1926,8 @@ async function viewCandidates(v) {
 function candidateFields(data) {
   data = data || {};
   const lines = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)).map(p => [p.Line_ID, lineLabel(p)]);
+  const curLine = data.Line_ID && lineById(data.Line_ID);   // the position the candidate is on, even if it is closed now, so a save keeps the link
+  if (curLine && !lines.some(l => l[0] === curLine.Line_ID)) lines.push([curLine.Line_ID, lineLabel(curLine) + ' (' + curLine.Position_Status + ')']);
   return [
     { section: 'Candidate' },
     { k: 'Name', l: 'Full name', req: true, wide: true },
@@ -1864,7 +1969,8 @@ function candidateFields(data) {
 async function openCandidate(id) {
   openDrawer('Loading…', `<div role="status" aria-busy="true" aria-label="Loading">${skFields(8)}</div>`);
   const t = perfTimer('Candidate drawer: data shown');
-  try { const [, c] = await Promise.all([loadPositions(), api('apiGetCandidate', id)]); candidateDrawer(c); t.done('cold'); } catch (e) { toast(e, true); closeDrawer(); }   // the position list and the candidate are asked together
+  const tok = S.drawerTok;   // set by openDrawer: another drawer opening (or this one being closed) changes it
+  try { const [, c] = await Promise.all([loadPositions(), api('apiGetCandidate', id)]); if (S.drawerTok !== tok || !$('#drawer').classList.contains('open')) return; candidateDrawer(c); t.done('cold'); } catch (e) { toast(e, true); if (S.drawerTok === tok && $('#drawer').classList.contains('open')) closeDrawer(); }   // the position list and the candidate are asked together
 }
 
 /* ---- CV profile: history, education, skills with evidence, checks (rule-based; no AI) ---- */
@@ -4254,7 +4360,7 @@ async function viewMyDay(v) {
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
-  $('#mdDate').onchange = e => { f.date = e.target.value || today(); go('myday', false); };
+  $('#mdDate').onchange = e => { if (typeof timer !== 'undefined' && timer) save(); f.date = e.target.value || today(); go('myday', false); };   // a note waiting to be saved goes first, under its own day
   api('apiMonthMissed', today().slice(0, 7), me).then(r => {
     const el = $('#mdMonthBody'); if (!el) return; const x = r.rows[0], P = mmLabel(r.prev);
     el.innerHTML = x ? `<p><b>${x.missed}</b> missed in ${esc(mmLabel(r.month))} so far (${x.open} still open) \u00b7 ${mmDelta(x.change)} compared with ${esc(P)} (${x.prev})</p>${mmDetail(r.items[x.recruiter] || [])}` : `<p class="hint">Nothing missed in ${esc(mmLabel(r.month))} so far.</p>`;
@@ -4264,9 +4370,11 @@ async function viewMyDay(v) {
   let timer, saving = Promise.resolve();
   const state = t => { const el = $('#mdState'); if (el) el.textContent = t; };
   const save = () => {
-    clearTimeout(timer);
+    clearTimeout(timer); timer = null;
     state('Saving\u2026');
-    saving = saving.then(() => api('apiSaveDaySummary', { date: f.date, overview: $('#mdNote').value, tasks }))
+    /* What is saved is what was on the page when the save was asked for, for the day it was written on (the queued call can run seconds later, after another day is opened). */
+    const snap = { date: f.date, overview: $('#mdNote').value, tasks: tasks.map(t => Object.assign({}, t)) };
+    saving = saving.then(() => api('apiSaveDaySummary', snap))
       .then(res => state('Saved at ' + res.savedAt)).catch(e => { state('Not saved'); toast(e, true); });
   };
   const later = () => { clearTimeout(timer); state('Unsaved changes'); timer = setTimeout(save, 1200); };
@@ -6526,6 +6634,7 @@ function pipeFilterLines(list, f, depts) {
 const PF_KEY_ = 'bfcl.pipeFilter';
 /* The last board seen for each position (this session, in memory): switching position paints it at once and the server is asked in the background. */
 const PIPE_BOARDS = new Map();
+const BOARD_WRITE_AT = {};   // when a board last came back from a write, per position: an older read must not overwrite it
 function keepBoard(id, np) { PIPE_BOARDS.delete(id); PIPE_BOARDS.set(id, np); while (PIPE_BOARDS.size > 12) PIPE_BOARDS.delete(PIPE_BOARDS.keys().next().value); return np; }
 const boardSig = x => JSON.stringify(Object.assign({}, x, { now: 0 }));
 async function viewPipeline(v) {
@@ -6694,7 +6803,12 @@ async function viewPipeline(v) {
   S.pipeRefresh = async () => { if (!$('#pBody')) return; try { reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); } };
   const refreshTasks = () => { if ($('#pTasks')) lineTasksInto($('#pTasks'), f.line); };
   /* A board the server just returned after a write (or a background check): keep it, redraw, and refresh the to-dos quietly. */
-  const reload = np => { P = keepBoard(f.line, np); derive(); renderBoard(); refreshTasks(); };
+  const reload = np => {
+    const id = (np && np.line && np.line.Line_ID) || f.line;   // the board belongs to the position it is for, not to whichever one is open when the reply arrives
+    BOARD_WRITE_AT[id] = Date.now(); keepBoard(id, np);
+    if (id !== f.line) return;
+    P = np; derive(); renderBoard(); refreshTasks();
+  };
   const idle = fn => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 2500 }) : setTimeout(fn, 800));
   let boardSeq = 0;
   /**
@@ -6703,7 +6817,8 @@ async function viewPipeline(v) {
    */
   const showLine = async id => {
     if (!id) return;
-    const seq = ++boardSeq, wantApp = f.openApp, t = perfTimer('Pipeline: position board');
+    const seq = ++boardSeq, wantApp = f.openApp, t = perfTimer('Pipeline: position board'), t0 = Date.now();
+    if ($('#pClosed')) $('#pClosed').checked = !!f.closed;   // the box always matches what the board shows
     f.line = id; try { localStorage.setItem('bfcl.pipeLine', id); } catch (e) { }
     if ($('#pLine')) drawPicker();
     const mem = wantApp ? null : (PIPE_BOARDS.get(id) || remembered('apiPipeline', id));
@@ -6714,6 +6829,7 @@ async function viewPipeline(v) {
     try { np = await fresh('apiPipeline', id); }
     catch (e) { if (seq === boardSeq) { if (mem) toast(e, true); else if ($('#pBody')) $('#pBody').innerHTML = `<div class="empty">${esc(e)}</div>`; } return; }
     if (seq !== boardSeq || !$('#pBody')) return;
+    if ((BOARD_WRITE_AT[id] || 0) > t0) return;   // a move or save returned a newer board while this read was running
     if (!mem || boardSig(np) !== boardSig(P)) { P = keepBoard(id, np); derive(); renderBoard(); if (!mem) t.done('cold'); }
     else keepBoard(id, P);
     if (wantApp) { f.openApp = ''; const a = P.apps.find(x => x.App_ID === wantApp); if (a) openApp(a); }

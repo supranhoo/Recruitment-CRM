@@ -51,7 +51,7 @@ function readColumns_(sh, names) {
 /** Slim index of the archive: enough for duplicate checks, search, names and pending CV moves. Cached per archive version. */
 function archiveIndex_() {
   if (_tables.__aidx) return _tables.__aidx;
-  const key = 'aidx_' + archiveVer_();
+  const key = 'aidx_' + dbTag_() + '_' + archiveVer_();
   const hit = cacheBigGet_(key);
   if (hit) return (_tables.__aidx = JSON.parse(hit));
   const sh = ss_().getSheetByName(CAND_ARCHIVE_);
@@ -147,12 +147,12 @@ function archiveCandidates_(u, limit) {
           if (h === 'Archived_On') return now;
           if (h === 'Archive_Reason') return 'No activity since ' + ymd_(c.Last_Activity) + ' (' + days + '-day rule)';
           if (h === 'CV_Archived') return c.CV_File_URL ? '' : 'No CV';
-          return c[h] === undefined ? '' : c[h];
+          return c[h] === undefined ? '' : plainCell_(c[h]);   // text read back without its protective apostrophe is protected again, so it cannot become a formula
         });
       });
       ash.getRange(ash.getLastRow() + 1, 1, arows.length, aheads.length).setValues(arows);
     }
-    const out = keep.map(function (c) { return heads.map(function (h) { return c[h] === undefined ? '' : c[h]; }); });
+    const out = keep.map(function (c) { return heads.map(function (h) { return c[h] === undefined ? '' : plainCell_(c[h]); }); });
     const last = sh.getLastRow();
     if (out.length) sh.getRange(2, 1, out.length, n).setValues(out);
     if (last - 1 > out.length) sh.getRange(out.length + 2, 1, last - 1 - out.length, n).clearContent();
@@ -237,7 +237,7 @@ function restoreCandidate_(id, u) {
     const sh = sheet_(T.CAND.name), heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
     const now = new Date();
     o.Last_Activity = now; o.Updated_By = u.email; o.Updated_At = now;
-    sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+    sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : plainCell_(o[h]); })]);
     ash.deleteRow(i + 2);
     archiveBump_(); dropStale_(T.CAND.name);
     return o;

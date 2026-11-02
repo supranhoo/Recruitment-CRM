@@ -154,7 +154,7 @@ function bgvBlankColumn_(name, col, match, val) {
   const rng = t.sheet.getRange(2, ci + 1, n, 1), vals = rng.getValues();
   let k = 0;
   t.rows.forEach(function (r) { const i = r._row - 2; if (i >= 0 && i < n && match(r) && String(vals[i][0]) !== String(val)) { vals[i][0] = val; k++; } });
-  if (k) rng.setValues(vals);
+  if (k) rng.setValues(vals.map(function (r) { return [plainCell_(r[0])]; }));   // the whole column is written back: text that was protected must stay protected
   return k;
 }
 

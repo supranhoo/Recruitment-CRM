@@ -96,9 +96,15 @@ jobs:
             if ! cmp -s "$f" "$RUNNER_TEMP/live/$g"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
           done
           [ "$bad" = 0 ] || { echo "Result: pushed to Apps Script, NOT confirmed live (files differ)."; exit 1; }
-          line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
-          echo "$line"
-          case "$line" in *"v${BUILD}"*) ;; *) echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1;; esac
+          # Apps Script lists a new deployment version a minute or so after `clasp deploy` returns, so ask again for up to 2 minutes.
+          ok=0
+          for i in $(seq 1 12); do
+            line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
+            echo "$line"
+            case "$line" in *"v${BUILD}"*) ok=1; break;; esac
+            sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1; }
           echo "Result: live. Build v${BUILD} is deployed; the page footer should read version ${BUILD} after a hard reload."
 
       - name: Remove the login from the runner
