@@ -213,16 +213,16 @@ function apiMoveStage(appId, toStage, data) {
   if (ti <= fi && !isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can move a candidate back to an earlier stage.');
   if (ti < fi) daySnapDropAll_();
   const patch = { Stage: toStage, Stage_Since: new Date() };
+  const backWrites = [];   // what a move back undoes on the position and the candidate: written only after every check below has passed
   if (ti < fi) {   // moving back undoes what the later stages recorded on the position and the candidate, so nothing still counts the joining or the offer
     if (fi >= STAGES.indexOf('Joined') && ti < STAGES.indexOf('Joined')) {
-      update_(T.MRF, line.Line_ID, { Actual_DOJ: '' }, u);
-      update_(T.CAND, app.Candidate_ID, { DOJ: '' }, u);
+      backWrites.push(function () { update_(T.MRF, line.Line_ID, { Actual_DOJ: '' }, u); update_(T.CAND, app.Candidate_ID, { DOJ: '' }, u); });
       patch.Actual_DOJ = '';
     }
     if (fi >= STAGES.indexOf('Offer') && ti < STAGES.indexOf('Offer')) {
       const mp = { Offer_Sent: 'No', Offer_Date: '', EDOJ: '' };
       if (String(line.Candidate_ID || '') === String(app.Candidate_ID)) mp.Candidate_ID = '';
-      update_(T.MRF, line.Line_ID, mp, u);
+      backWrites.push(function () { update_(T.MRF, line.Line_ID, mp, u); });
       patch.Offer_Date = ''; patch.EDOJ = ''; patch.Offer_Accepted_On = '';
     }
   }
@@ -286,6 +286,7 @@ function apiMoveStage(appId, toStage, data) {
     patch.Onboard_JSON = JSON.stringify(ob);
   }
   if (fastOut) { Object.keys(fastOut.patch).forEach(function (k) { patch[k] = fastOut.patch[k]; }); if (fastOut.outcome) outcome = fastOut.outcome; }
+  backWrites.forEach(function (w) { w(); });   // every check has passed: now the move back is written
   update_(T.APP, appId, patch, u);
   appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
   if (toStage === 'Offer' || toStage === 'Joined' || ti < fi) bgvTouchLine_(app.Line_ID);
@@ -340,13 +341,21 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
   // without writing the withdrawal and its history a second time.
   return withLock_(function () {
     const fresh = appOf_(appId), done = String(fresh.Status) === 'Withdrawn' && !!ymd_(fresh.Backout_Date);
+    /* The position is read again inside the lock: a call that waited for the lock while another one finished the backout finds the replacement already there and returns it. */
+    const lineNow = readTable_(T.MRF.name, true).rows.filter(function (l) { return l.Line_ID === line.Line_ID; })[0] || line;
+    if (done && lineNow.Replaced_By) {
+      const existing = readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === lineNow.Replaced_By; })[0];
+      const out0 = apiPipeline(lineNow.Replaced_By);
+      out0.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: lineNow.Replaced_By, toMrf: String(existing ? existing.MRF_No : lineNow.Replaced_By), moved: 0 };
+      return out0;
+    }
     if (!done) {
       update_(T.APP, appId, patch, u);
       appendHistory_(app, stage, stage, 'Backout', reason, u);
       bgvTouchLine_(app.Line_ID);
     }
     const when2 = done ? parseYmd_(ymd_(fresh.Backout_Date)) : when;
-    const repl = createReplacement_(line, fresh, when2, String(reason || fresh.Backout_Reason || ''), u);
+    const repl = createReplacement_(lineNow, fresh, when2, String(reason || fresh.Backout_Reason || ''), u);
     const out = apiPipeline(repl.Line_ID);
     out.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: repl.Line_ID, toMrf: String(repl.MRF_No), moved: repl._moved };
     return out;

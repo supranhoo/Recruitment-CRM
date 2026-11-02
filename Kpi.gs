@@ -322,7 +322,7 @@ function computeKpis_(fy) {
   // 7. Tracker accuracy — errors in the month's audit sample.
   const auditMonths = {};
   readTable_('Audit_Checks').rows.forEach(function (a) {
-    const m = String(a.Month);
+    const m = auditMonth_(a.Month);
     if (!tracked(m)) return;
     const rec = String(a.Recruiter || 'Unassigned').trim();
     auditMonths[m] = auditMonths[m] || { pending: 0, recs: {} };

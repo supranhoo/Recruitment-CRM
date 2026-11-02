@@ -70,8 +70,8 @@ const BGV_RULE_NUMS_ = [['prevInitDays', 'Previous employer: start within (days 
   ['decisionDays', 'Head of HR decides within (days)', 0, 30], ['amberPct', 'Amber warning at (% of the limit)', 50, 99],
   ['retentionReportYears', 'Keep reports for (years)', 1, 15], ['retentionNonJoinerMonths', 'Keep data of candidates who do not join for (months)', 1, 60]];
 
-function bgvRulesRows_() {
-  return readTable_(BGV_RULES_).rows.map(function (r) {   // cached with the other small tables; saving rules drops it
+function bgvRulesRows_(fresh) {
+  return readTable_(BGV_RULES_, !!fresh).rows.map(function (r) {   // cached with the other small tables; saving rules drops it
     let cfg = {}; try { cfg = JSON.parse(String(r.Config_JSON || '{}')); } catch (e) { }
     return { id: String(r.Version_ID), no: Number(String(r.Version_ID).replace(/\D/g, '')) || 0, eff: ymd_(r.Effective_From), status: String(r.Status || ''), cfg: cfg,
       reason: String(r.Reason || ''), remark: String(r.Remark || ''), by: String(r.Created_By || ''), at: r.Created_At instanceof Date ? fmt_(r.Created_At, TZ, 'd MMM yyyy, HH:mm') : '' };
@@ -590,7 +590,7 @@ function apiBgvRulesSave(d) {
   tplChanged.forEach(function (t) { changes.push('Email template changed: ' + t); });
   if (!changes.length) throw new Error('Nothing changed.');
   const id = withLock_(function () {
-    const rows = bgvRulesRows_(), vid = 'BGR-V' + (rows.reduce(function (m, r) { return Math.max(m, r.no); }, 0) + 1);
+    const rows = bgvRulesRows_(true), vid = 'BGR-V' + (rows.reduce(function (m, r) { return Math.max(m, r.no); }, 0) + 1);
     const sh = sheet_(BGV_RULES_), heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
     const o = { Version_ID: vid, Effective_From: parseYmd_(eff), Status: 'Active', Config_JSON: JSON.stringify(cfg), Reason: reason, Remark: (remark + ' | ' + changes.join('; ')).slice(0, 1500), Created_By: u.email, Created_At: new Date() };
     sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);

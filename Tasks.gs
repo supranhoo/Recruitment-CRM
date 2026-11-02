@@ -256,7 +256,7 @@ function computeTasks_() {
 
     // 7. Psychometric test before Documents verified (Manager and above); the HR interview is optional, so it no longer marks the deadline.
     if ((st === 'Technical' || st === 'HR') && since && managerPlus_(l.Grade, l.Position)) {
-      const done = /complet|done|yes/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date;
+      const done = psychoDone_(c);
       if (!done) add('psychometric', { key: 'psychometric|' + a.App_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
         title: st === 'HR' ? 'Psychometric test missing (HR interview done)' : 'Arrange the psychometric (Mettl) test before documents are verified',
         context: ctxt, startMs: since, forceCritical: st === 'HR', critAt: since, open: { type: 'candidate', id: a.Candidate_ID } });
@@ -446,6 +446,8 @@ function taskState_() {
 }
 
 /** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
+/** The psychometric test needs no to-do once it is done, waived, or has a date (the KPI counts Waived as fine too). */
+function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date; }
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
   const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);

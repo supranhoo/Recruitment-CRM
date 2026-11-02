@@ -8,7 +8,7 @@ function ss_() {
 }
 
 /** A short tag of the database file in use, so a cached copy made from the test copy of the database is never served for the real one. */
-function dbTag_() { return ss_().getId().slice(-8); }
+function dbTag_() { return String(_ss ? _ss.getId() : DB_SPREADSHEET_ID).slice(-8); }   // no need to open the file just to name a cache key
 
 function sheet_(name) {
   const sh = ss_().getSheetByName(name);
@@ -19,7 +19,7 @@ function sheet_(name) {
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
 const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users', 'BGV_Rules'];
 const TABLE_CACHE_SECONDS_ = 600;
-function tableCacheKey_(name) { return 'tbl3_' + name; }
+function tableCacheKey_(name) { return 'tbl3_' + dbTag_() + '_' + name; }   // tagged by database file: the test copy's tables never reach the real app
 function dropTableCache_(name) {
   try { CacheService.getScriptCache().removeAll(name ? [tableCacheKey_(name)] : CACHED_TABLES_.map(tableCacheKey_)); } catch (e) { }
 }

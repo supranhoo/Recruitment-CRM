@@ -883,12 +883,13 @@ function apiCtcRetire(id, remark) {
 /* ---------------------------------------------------------------- access (Role_Access; Admin) -------------- */
 
 function ctcApprovalOn_() { return String(settings_().CTC_APPROVAL || '') === 'Yes'; }
-function ctcDropGrants_() { try { CacheService.getScriptCache().remove('ctc_grants_v1'); } catch (e) { } dropStale_('Role_Access'); }
+function ctcGrantsKey_() { return 'ctc_grants_v1_' + dbTag_(); }
+function ctcDropGrants_() { try { CacheService.getScriptCache().remove(ctcGrantsKey_()); } catch (e) { } dropStale_('Role_Access'); }
 
 /** What each role has been given: { role: [permissions] }. Read for every request, so it is cached for 5 minutes. */
 function ctcGrants_() {
   const cache = CacheService.getScriptCache();
-  const hit = cache.get('ctc_grants_v1');
+  const hit = cache.get(ctcGrantsKey_());
   if (hit) return JSON.parse(hit);
   const g = {};
   try {
@@ -898,7 +899,7 @@ function ctcGrants_() {
     });
   } catch (e) { return {}; }
   Object.keys(g).forEach(function (k) { if (g[k].indexOf('ctc_use') < 0) delete g[k]; });
-  cache.put('ctc_grants_v1', JSON.stringify(g), 300);
+  cache.put(ctcGrantsKey_(), JSON.stringify(g), 300);
   return g;
 }
 

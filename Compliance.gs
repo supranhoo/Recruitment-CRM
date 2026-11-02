@@ -221,9 +221,12 @@ function apiSaveObservation(data) {
 
 /* ---------------- Monthly 20% audit ---------------- */
 
+/** The month key of an audit row as 'yyyy-MM'. Sheets can turn the text 2026-10 into a date when it is written as typed, so a Date is turned back into its month. */
+function auditMonth_(v) { return v instanceof Date ? fmt_(v, TZ, 'yyyy-MM') : String(v == null ? '' : v).trim(); }
+
 function apiAuditList(month) {
   currentUser_(); ensureSchema_();
-  return readTable_('Audit_Checks').rows.filter(function (r) { return String(r.Month) === month; })
+  return readTable_('Audit_Checks').rows.filter(function (r) { return auditMonth_(r.Month) === month; })
     .map(function (r) { const o = toClient_(r); delete o._row; return o; });
 }
 
@@ -232,7 +235,7 @@ function apiAuditGenerate(month) {
   const u = currentUser_(); ensureSchema_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can create the audit sample.');
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Pick a month.');
-  if (readTable_('Audit_Checks').rows.some(function (r) { return String(r.Month) === month; })) throw new Error('A sample for ' + month + ' already exists.');
+  if (readTable_('Audit_Checks').rows.some(function (r) { return auditMonth_(r.Month) === month; })) throw new Error('A sample for ' + month + ' already exists.');
   // Records a person added or edited that month (the one-time migration does not count).
   const touched = function (r) {
     const made = ymd_(r.Created_At).slice(0, 7) === month && String(r.Created_By) !== 'migration';
@@ -260,7 +263,9 @@ function apiAuditGenerate(month) {
         Remarks: '', Created_By: u.email, Created_At: now, Updated_By: '', Updated_At: '' }, p);
       return t.headers.map(function (h) { return o[h] === undefined ? '' : clean_(o[h]); });
     });
-    t.sheet.getRange(t.sheet.getLastRow() + 1, 1, rows.length, t.headers.length).setValues(rows);
+    const at = t.sheet.getLastRow() + 1, mc = t.headers.indexOf('Month');
+    if (mc >= 0) t.sheet.getRange(at, mc + 1, rows.length, 1).setNumberFormat('@');   // text, so 2026-10 stays 2026-10 and is not turned into a date
+    t.sheet.getRange(at, 1, rows.length, t.headers.length).setValues(rows);
     audit_(u, 'Audit_Checks', month, 'Create sample', 'rows', '', String(rows.length) + ' of ' + pool.length);
     markDashDirty_('Audit_Checks');
     dropStale_('Audit_Checks');
