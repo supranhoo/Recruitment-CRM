@@ -60,26 +60,25 @@ This folder is configured for `clasp` through `.clasp.json`.
 2. In the Apps Script editor: **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The web-app link never changes.
 3. Add the release to the changelog in `docs/BFCL_Recruitment_CRM_SSOT.md`, then commit and tag it, for example `git tag v59` and `git push --tags`.
 
-### Releasing (automatic from GitHub)
+### Releasing (from GitHub, with approval)
 
-**Merging to `main` is the release.** The workflow `.github/workflows/deploy.yml` runs on every merge that changes `*.gs`, `*.html` or `appsscript.json`:
+**Merging to `main` prepares the release; approving the deployment puts it live.** The workflow `.github/workflows/deploy.yml` runs on every merge that changes `*.gs`, `*.html` or `appsscript.json`:
 
-1. Syntax gate: `node --check` on every `.gs` file and on the page script in `App.html`. A broken file is never pushed.
-2. `clasp push -f`, then `clasp deploy -i <deployment> -d "v<BUILD_ID> <commit subject>"`. This updates the **existing** web-app deployment, so the link never changes.
-3. Verification: it pulls the project back and compares every file with the repository, and checks that the deployment shows `v<BUILD_ID>`. The log ends with **"Result: live"**, or with **"pushed to Apps Script, NOT confirmed live"** and a red run (GitHub e-mails the owner).
+1. Job **check** (no secrets): `node --check` on every `.gs` file and on the page script in `App.html`. A broken file stops here and nothing is ever offered for approval.
+2. Job **deploy** waits in GitHub for a reviewer: open the run (Actions \u2192 *Deploy to Apps Script*) and press **Review deployments \u2192 production \u2192 Approve and deploy** (or **Reject** to cancel; an unanswered run expires after 30 days). The approval screen shows the commit.
+3. After approval: `clasp push -f`, then `clasp deploy -i <deployment> -d "v<BUILD_ID> <commit subject>"`, which updates the **existing** web-app deployment, so the link never changes.
+4. Verification: the project is pulled back and compared with the repository, and the deployment must show `v<BUILD_ID>`. The log ends with **"Result: live"**, or with **"NOT confirmed live"** and a red run.
 
-Before merging, set `BUILD_ID` in `Config.gs` to the next number. After the run, hard-reload (Ctrl+Shift+R) and check that the footer or Admin \u2192 Tools shows that number, and open every screen the release touched. To re-run without a new commit: GitHub \u2192 Actions \u2192 *Deploy to Apps Script* \u2192 *Run workflow*.
+Before merging, set `BUILD_ID` in `Config.gs` to the next number. After the run, hard-reload (Ctrl+Shift+R), check the footer or Admin \u2192 Tools shows that number, and open every screen the release touched. To release again without a new commit: Actions \u2192 *Deploy to Apps Script* \u2192 *Run workflow* (it also waits for approval).
 
-**One-time setup (owner):**
+**One-time setup (owner, in GitHub):**
 
-1. On your computer run `clasp login`, then copy the whole contents of `~/.clasprc.json`.
-2. GitHub \u2192 this repository \u2192 Settings \u2192 Secrets and variables \u2192 Actions:
-   - New repository **secret** `CLASPRC_JSON` = the file contents.
-   - New repository **variable** `APPS_SCRIPT_DEPLOYMENT_ID` = the existing web-app deployment ID (`clasp deployments` lists it).
-3. Make sure the Apps Script API is switched on for that Google account (script.google.com/home/usersettings).
-4. Optional approval step: create a GitHub Environment named `production` with a required reviewer and add `environment: production` to the job.
+1. Repository \u2192 Settings \u2192 Environments \u2192 *New environment*, named exactly `production`.
+2. In it, under *Required reviewers*, add yourself and anyone else allowed to release. Leave *Prevent self-review* off if you merge and approve your own releases. (Required reviewers on a private repository need a paid GitHub plan; on the free plan they work only for public repositories.)
+3. In the same environment add the **secret** `CLASPRC_JSON` (on your computer run `clasp login`, then paste the whole contents of `~/.clasprc.json`) and the **variable** `APPS_SCRIPT_DEPLOYMENT_ID` (the existing web-app deployment ID; `clasp deployments` lists it). Keep them in the environment only, so only an approved run can read the Google login.
+4. Make sure the Apps Script API is switched on for that Google account (script.google.com/home/usersettings).
 
-If the login ever expires, repeat step 1 and replace the secret. Never commit `.clasprc.json`, never paste it into a chat or issue. The workflow writes it to a temporary file with owner-only permissions, never prints it, and deletes it at the end.
+If the login ever expires, repeat step 3's `clasp login` and replace the secret. Never commit `.clasprc.json`, never paste it into a chat or issue. The workflow writes it to a temporary file with owner-only permissions, never prints it, and deletes it at the end.
 
 Manual fallback (from your computer, on `main`): `clasp push -f`, then `clasp deploy -i <deploymentId> -d "v<BUILD_ID> <description>"`, and check the live build number.
 
