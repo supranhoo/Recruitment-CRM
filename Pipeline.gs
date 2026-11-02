@@ -184,6 +184,59 @@ function apiAddToPipeline(candidateId, lineId) {
   return appClient_(created);
 }
 
+/** The MRF a position belongs to, as a key that ignores case and spaces ('' when it has none). Positions of one MRF share it. */
+function mrfKey_(l) { return String((l && l.MRF_No) || '').trim().toUpperCase(); }
+
+/**
+ * Moves a candidate's card to another position of the SAME MRF, keeping its stage, status and history. Used when one MRF has
+ * several open positions and a candidate fits another one better (for example the first position's candidates were all rejected).
+ * Only cards before the Offer stage move: from Offer on, the offer and joining fields live on the position. A lead can always move
+ * a card; a recruiter only when they own both positions. Every check runs before the first write, the writes are in an order that
+ * can safely be repeated (related records first, the card last), and a second call for a card that is already there does nothing.
+ */
+function apiMoveToLine(appId, toLineId, reason) {
+  const u = currentUser_(); ensureSchema_();
+  reason = clean_(String(reason || '')).trim();
+  if (reason.length < 3) throw new Error('Give a short reason for the move.');
+  const toId = String(toLineId || '').trim();
+  if (!toId) throw new Error('Pick the position to move to.');
+  return withLock_(function () {
+    const app = appOf_(appId);
+    if (String(app.Line_ID) === toId) return boardAfterWrite_(toId);   // already there: a repeated click or a retry
+    const lines = readTable_(T.MRF.name, true).rows;
+    const from = lines.filter(function (l) { return l.Line_ID === app.Line_ID; })[0], to = lines.filter(function (l) { return l.Line_ID === toId; })[0];
+    if (!from) throw new Error('The card’s position was not found.');
+    if (!to) throw new Error('The position to move to was not found.');
+    if (!mrfKey_(from) || mrfKey_(from) !== mrfKey_(to)) throw new Error('A card can move only to another position of the same MRF (' + (from.MRF_No || 'this one') + ').');
+    if (!(isLead_(u) || (canEditLine_(u, from) && canEditLine_(u, to)))) throw new Error('Moving a card between positions needs a TA Lead or the Head of HR unless you are the recruiter of both positions (' + (from.Recruiter || 'not assigned') + ' and ' + (to.Recruiter || 'not assigned') + ').');
+    if (['Active', 'On hold'].indexOf(String(app.Status)) < 0) throw new Error('This card is ' + String(app.Status).toLowerCase() + '. Reactivate it first, then move it.');
+    if (STAGES.indexOf(String(app.Stage)) >= STAGES.indexOf('Offer')) throw new Error('A card at Offer or later cannot be moved to another position yet, because the offer and joining dates sit on the position. Record the backout, or ask a TA Lead.');
+    requireNotReplaced_(from);
+    requireActiveLine_(to);
+    if (routeOf_(from) !== routeOf_(to)) throw new Error('The two positions use different hiring routes (' + routeOf_(from) + ' and ' + routeOf_(to) + '), so their stages differ.');
+    const dup = readTable_(T.APP.name, true).rows.filter(function (a) { return a.Candidate_ID === app.Candidate_ID && a.Line_ID === toId; })[0];
+    if (dup) throw new Error('This candidate already has a card (' + String(dup.Status).toLowerCase() + ') in ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + '.');
+    // Every check has passed. Related records first, then the candidate, then the card, then the history: a retry repeats safely.
+    const sameApp = function (def) {
+      if (!ss_().getSheetByName(def.name)) return [];
+      return readTable_(def.name, true).rows.filter(function (r) { return String(r.App_ID) === String(app.App_ID) && String(r.Line_ID) !== toId; });
+    };
+    sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId }, u); });
+    sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId }, u); });
+    sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId }, u); });
+    if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId }, u); });
+    const cand = readTable_(T.CAND.name, true).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
+    if (cand && String(cand.Line_ID) === String(from.Line_ID)) update_(T.CAND, app.Candidate_ID, { Line_ID: toId }, u);
+    update_(T.APP, app.App_ID, { Line_ID: toId, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, u);
+    appendHistory_(Object.assign({}, app, { Line_ID: toId, Recruiter: to.Recruiter }), String(app.Stage), String(app.Stage), 'Moved',
+      'Moved from ' + (from.MRF_No || from.Line_ID) + ' · ' + from.Position + ' (' + (from.Recruiter || 'not assigned') + ') to ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + ' (' + (to.Recruiter || 'not assigned') + '): ' + reason, u);
+    bgvTouchLine_(from.Line_ID); bgvTouchLine_(toId);
+    const out = boardAfterWrite_(from.Line_ID);   // the board the person is looking at: the card is gone from it
+    out.movedTo = { line: toId, mrf: String(to.MRF_No || ''), position: String(to.Position || '') };
+    return out;
+  });
+}
+
 /**
  * Moves an application to a stage. data carries the stage's details:
  * Screened {answers}, Technical/HR {date, by, result}, Docs {docs, exception}, Offer {offerDate, edoj, ctc},

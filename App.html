@@ -6954,6 +6954,19 @@ async function viewPipeline(v) {
       catch (e) { toast(e, true); busy(b, false); }
     });
   };
+  /* Positions of the same MRF this card can move to: open or offered, and ones this person may work on (a lead: all). Cards before Offer only. */
+  const moveTargets = a => {
+    if (!['Active', 'On hold'].includes(a.Status) || P_STAGES.indexOf(a.Stage) >= P_STAGES.indexOf('Offer')) return [];
+    const key = String(P.line.MRF_No || '').trim().toUpperCase();
+    return key ? (S.positions || []).filter(p => p.Line_ID !== P.line.Line_ID && String(p.MRF_No || '').trim().toUpperCase() === key && ['Open', 'Offered'].includes(p.Position_Status) && (isLead() || p._canEdit)) : [];
+  };
+  const moveToLineHtml = (a, active) => {
+    const t = moveTargets(a); if (!t.length) return '';
+    return `<details class="rc-keep" style="margin-top:10px"><summary>Move to another position of ${esc(P.line.MRF_No)}</summary>
+      <div class="field"><label for="apMvTo">Position</label><select id="apMvTo">${opts(t.map(p => [p.Line_ID, lineLabel(p) + ' \u00b7 ' + (p.Recruiter || 'Not assigned') + ' \u00b7 ' + p.Position_Status]), '', true)}</select></div>
+      <div class="rc-act"><input id="apMvWhy" placeholder="Reason for the move (required)" aria-label="Reason for the move"><button class="btn sm" id="apMvGo">Move</button></div>
+      <p class="hint">The card keeps its stage and its history and appears at the same stage on that position's board. Its interviews and screening go with it, and its to-dos pass to that position's recruiter.</p></details>`;
+  };
   const openApp = (a, hr) => {
     const i = P_STAGES.indexOf(a.Stage);
     let next = fastRoute() ? (P.fastStages.find(x => P_STAGES.indexOf(x) > i) || '') : P_STAGES[i + 1];
@@ -6988,6 +7001,7 @@ async function viewPipeline(v) {
               <div class="field" style="margin-top:8px"><label for="apEdoj">Expected joining date</label><div class="rc-act"><input id="apEdoj" type="date" value="${esc(a.EDOJ || P.line.EDOJ || '')}"><button class="btn sm" id="apEdojSave">Change</button></div></div>
               <p class="hint">Recording a backout closes ${esc(P.line.MRF_No || 'this MRF')} and raises the replacement MRF (policy 9.5). Other active candidates move to it, and its TAT counts from the original start.</p>` : ''}
             ${isLead() ? `<details class="rc-keep" style="margin-top:10px"><summary>Linked in error? (head and admin)</summary><div class="rc-act"><input id="apUnlinkWhy" placeholder="Reason for the correction (required)" aria-label="Reason"><button class="btn sm" id="apUnlink">Remove this card</button></div><p class="hint">Removes the card without recording a backout, and sends the position back to the switch-over check so the right candidate can be linked. The history is kept.</p></details>` : ''}
+            ${moveToLineHtml(a, active)}
             <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
             ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section>` : ''}
         </div>
@@ -7008,6 +7022,18 @@ async function viewPipeline(v) {
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');
     initMulti(d);
     bindInterviewSec(d, a);
+    if ($('#apMvGo', d)) $('#apMvGo', d).onclick = async () => {
+      const to = $('#apMvTo', d).value, why = $('#apMvWhy', d).value, b = $('#apMvGo', d);
+      if (!to) return toast('Pick the position to move to.', true);
+      if (String(why).trim().length < 3) return toast('Give a short reason for the move.', true);
+      busy(b, true, 'Moving\u2026');
+      try {
+        const np = await api('apiMoveToLine', a.App_ID, to, why), tp = lineById(to);
+        PIPE_BOARDS.delete(to);   // that board has one more card now: it is read again when opened
+        applyBoard(np, a.Line_ID); d.close(); reload(np);
+        toast(`${a.cand.name} moved to ${tp ? lineLabel(tp) : 'the other position'}`);   // after the redraw, so the notice is not removed with the dialog
+      } catch (e) { toast(e, true); busy(b, false, 'Move'); }
+    };
     if ($('#apUnlink', d)) $('#apUnlink', d).onclick = async () => {
       const b = $('#apUnlink', d); busy(b, true);
       try { const np = await api('apiUnlinkApp', a.App_ID, $('#apUnlinkWhy', d).value); S.posStale = true; toast('Card removed. The position is back in the switch-over check.'); d.close(); reload(np); }
