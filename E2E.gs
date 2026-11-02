@@ -223,6 +223,14 @@ function e2eRun_(trash) {
     return /not verified/.test(msg) && !!after && String(before) === String(after) ? 'joining date kept: ' + after : false;
   });
   t('Z3 a waived psychometric test closes its to-do', function () { return psychoDone_({ Psychometric_Status: 'Waived' }) && !psychoDone_({ Psychometric_Status: 'Scheduled' }); });
+  t('Z5 a note added to a BGV to-do shows in its (i) and leaves the to-do open', function () {
+    _tables = {}; const bt = allTasks_().filter(function (x) { return /^bgv/.test(String(x.rule)); })[0];
+    if (!bt) return 'no BGV to-do on the copy: skipped';
+    const before = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    apiTaskAction(bt.key, 'note', { note: 'E2E note' });
+    _tables = {}; const after = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    return before && after && after.noteable && after.notes[0].note === 'E2E note' && after.notes[0].action === 'Note' ? 'note shown, to-do still open' : false;
+  });
   t('Z4 the audit sample is found again by its month and cannot be made twice', function () {
     const m = ymd_(new Date()).slice(0, 7); _tables = {};
     try { apiAuditGenerate(m); } catch (e) { if (!/already exists|No positions or candidates/.test(e.message)) throw e; }

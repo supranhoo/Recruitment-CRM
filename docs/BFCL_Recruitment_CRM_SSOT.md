@@ -1170,6 +1170,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**BGV to-dos take a comment** (no schema change; v142; 2 Nov 2026)
+- Report: the (i) on a BGV to-do said "No comments entered yet" and there was no way to add one: BGV to-dos have no \"I've chased\" or Done button (they close when the step is recorded in the BGV tracker), only Open and Snooze, and the case's own Timeline note box is far down the case window.
+- A BGV to-do now has an **Add a note** button (3 to 200 characters, required). The note shows in the (i) at once and, for a to-do tied to a BGV case, is also saved on the case Timeline when the person may work that case. A note does not snooze, chase or close the to-do. Notes typed straight on the Timeline do not show in the (i). Tests: 10 Node cases (old code has no such action), 11 browser checks, E2E Z5.
+
 **Bug fixes from the fresh-context reviews** (no schema change; v141; 2 Nov 2026)
 - Confirmations no longer vanish when their dialog closes; Escape no longer closes the drawer under a dialog; a candidate on a closed position keeps its linked position when saved (and no dropdown blanks a saved value that is missing from its list); My day saves a note for the day it was typed on; saving one Daily-log row keeps the other unsaved rows and a refresh does not redraw under them; leaving Candidates mid-search raises no error; a position row from a write survives a list check that began before it; a slow read cannot draw an older board over a newer one; a candidate drawer closed while loading stays closed.
 - Server: archive, restore and the BGV purge keep text that starts with `=`, `+`, `@` or `-` protected; a move back writes nothing until its checks pass; a double-submitted backout returns the replacement already made; a waived psychometric test closes its to-do; the monthly audit sample is found again by its month; BGV rule versions cannot be numbered twice; the test copy's small tables and caches never reach the real app.

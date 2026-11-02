@@ -589,6 +589,7 @@ function taskItemHtml(t, mode) {
        ${t.open ? '<button class="btn sm" data-act="open">Open</button>' : ''}
        ${t.chase ? '<button class="btn sm" data-act="chased">I\u2019ve chased</button>' : ''}
        ${t.manual ? '<button class="btn sm" data-act="done">Done</button>' : ''}
+       ${t.noteable ? '<button class="btn sm" data-act="note">Add a note</button>' : ''}
        <button class="btn sm" data-act="snooze">Snooze</button>`;
   return `<li class="task t-${t.level}" data-key="${esc(t.key)}">
     <div class="task-main"><span class="tlevel l-${t.level}">${LEVEL_TEXT[t.level]}</span>
@@ -631,16 +632,16 @@ function bindTaskList(root, tasks, after) {
     const t = tasks.find(x => x.key === li.dataset.key); if (!t) return;
     const run = async (btn, action, data) => {
       busy(btn, true);
-      try { const r = await api('apiTaskAction', t.key, action, data || {}); toast(action === 'chased' ? 'Chase recorded. It comes back in 24 hours if still pending.' : action === 'done' ? 'Marked done' : 'Snoozed'); after(r); }
+      try { const r = await api('apiTaskAction', t.key, action, data || {}); toast(action === 'chased' ? 'Chase recorded. It comes back in 24 hours if still pending.' : action === 'done' ? 'Marked done' : action === 'note' ? 'Note added' : 'Snoozed'); after(r); }
       catch (e) { toast(e, true); busy(btn, false); }
     };
     $$('[data-act]', li).forEach(b => b.onclick = () => {
       const act = b.dataset.act, sz = $('.task-snooze', li);
       if (act === 'copy') copyText(t.message);
       else if (act === 'open') taskOpen(t.open, t.rule);
-      else if (act === 'chased' || act === 'done') { const nr = $('.task-note', li); if (!nr) return run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : 'Mark done'; $('input', nr).focus(); }
+      else if (act === 'chased' || act === 'done' || act === 'note') { const nr = $('.task-note', li); if (!nr) return act === 'note' ? undefined : run(b, act); nr.hidden = false; nr.dataset.act = act; $('[data-act=noteSave]', nr).textContent = act === 'chased' ? 'Record the chase' : act === 'note' ? 'Save note' : 'Mark done'; const ni = $('input', nr); ni.placeholder = act === 'note' ? 'Note (required)' : 'Note (optional)'; ni.setAttribute('aria-label', act === 'note' ? 'Note (required)' : 'Note (optional)'); ni.focus(); }
       else if (act === 'noteCancel') $('.task-note', li).hidden = true;
-      else if (act === 'noteSave') { const nr = $('.task-note', li); run(b, nr.dataset.act, { note: $('input', nr).value }); }
+      else if (act === 'noteSave') { const nr = $('.task-note', li), txt = $('input', nr).value; if (nr.dataset.act === 'note' && txt.trim().length < 3) return toast('Write the note (at least 3 characters).', true); run(b, nr.dataset.act, { note: txt }); }
       else if (act === 'snooze') { sz.hidden = false; $('input', sz).focus(); }
       else if (act === 'snoozeCancel') sz.hidden = true;
       else if (act === 'snoozeSave') run(b, 'snooze', { until: $('select', sz).value, reason: $('input', sz).value });

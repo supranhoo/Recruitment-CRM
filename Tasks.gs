@@ -546,9 +546,11 @@ function taskNotes_(upToMs) {
 
 /* ---------------- APIs ---------------- */
 
+/** BGV to-dos can take a comment (they have no Done or Chased button, so this is their only way to leave one without snoozing). */
+function taskNoteable_(t) { return /^bgv/.test(String(t.rule || '')); }
 function taskClient_(t) {
   return { key: t.key, rule: t.rule, level: t.level, title: t.title, context: t.context, age: t.ageText, line: t.line, app: t.app,
-    chase: !!t.chase, manual: !!t.manual, message: t.message || '', link: t.link || null, note: t.note || '', open: t.open || null,
+    chase: !!t.chase, manual: !!t.manual, noteable: taskNoteable_(t), message: t.message || '', link: t.link || null, note: t.note || '', open: t.open || null,
     chases: t.chases, snoozeReason: t.snoozeReason, why: t.why, policy: t.policy, recruiter: t.recruiter, notes: t.notes || [],
     critAt: t.critAt || 0, dueAt: t.dueAt || 0 };
 }
@@ -616,6 +618,15 @@ function apiTaskAction(key, action, data) {
       update_(T.APP, t.app, { Onboard_JSON: JSON.stringify(ob) }, u);
     }
     setTaskState_(t, { Done_At: now, Done_By: u.email, _action: 'Done', _note: String(data.note || '').trim().slice(0, 200) }, u);
+  } else if (action === 'note') {
+    /* A comment on a BGV to-do: it shows in the (i) and, for a case, on the case Timeline. It does not snooze, chase or close the to-do. */
+    if (!taskNoteable_(t)) throw new Error('Notes can be added to BGV to-dos.');
+    const text = String(data.note || '').trim();
+    if (text.length < 3) throw new Error('Write the note.');
+    if (text.length > 200) throw new Error('Keep the note to 200 characters.');
+    insert_(T.TACT, { Task_Key: t.key, Rule: t.rule, Recruiter: t.recruiter, Line_ID: t.line, Action: 'Note', Note: text }, u);
+    dropStale_(T.TASK.name);   // the cached to-do list is rebuilt, so the (i) shows the note at once
+    if (t.open && t.open.type === 'bgv' && t.open.id) { try { apiBgvNote(t.open.id, 'Note', text); } catch (e) { } }   // also on the case Timeline when this person may work the case
   } else throw new Error('Unknown action.');
   return apiMyTasks(isLead_(u) && String(t.recruiter).toLowerCase() !== u.recruiter.toLowerCase() ? t.recruiter : '');
 }
