@@ -75,17 +75,18 @@ function viewData(v, key, call, again, label, opts) {
   opts = opts || {};
   const t = perfTimer(label), local = !!S.keepData, old = opts.force ? null : recall(key), seq = S.goSeq;
   S.keepData = false;
-  const note = (at, state) => { if (opts.note !== false) setTimeout(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, at, state, again); }, 0); };
+  const redo = () => redrawKeeping(v, again);   // the page again, with the screen kept as it was
+  const note = (at, state) => { if (opts.note !== false) setTimeout(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, at, state, redo); }, 0); };
   if (old && (local || Date.now() - old.at < REVAL_MS)) { note(old.at, ''); t.done('cached'); return Promise.resolve(old.data); }
   if (old) {
     note(old.at, 'checking'); t.done('cached');
     call().then(data => {
       const same = JSON.stringify(data) === JSON.stringify(old.data); remember(key, data);
       if (seq !== S.goSeq || !v.isConnected) return;
-      if (same) { freshNote(v, Date.now(), '', again); return; }
-      if (editingIn(v)) { freshNote(v, old.at, 'newer', again); return; }   // never redraw under someone who is typing
-      again();
-    }).catch(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, old.at, 'failed', again); });
+      if (same) { freshNote(v, Date.now(), '', redo); return; }
+      if (editingIn(v)) { freshNote(v, old.at, 'newer', redo); return; }   // never redraw under someone who is typing
+      redo();
+    }).catch(() => { if (seq === S.goSeq && v.isConnected) freshNote(v, old.at, 'failed', redo); });
     return Promise.resolve(old.data);
   }
   return call().then(data => { remember(key, data); t.done('cold'); note(Date.now(), ''); return data; });
@@ -110,6 +111,59 @@ function perfTimer(label) {
 function perfRows() {
   const st = a => { if (!a || !a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return { n: s.length, med: s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2), max: s[s.length - 1] }; };
   return Object.keys(PERFSTAT).sort().map(k => ({ label: k, cold: st(PERFSTAT[k].cold), cached: st(PERFSTAT[k].cached) }));
+}
+/* ---- Smooth finish: figures that changed ease to their new value; nothing else moves ---- */
+function reducedMotion() { try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; } }
+function parseFigure(t) { const m = /^(-?\d+(?:\.\d+)?)(%?)$/.exec(String(t == null ? '' : t).trim()); return m ? { n: parseFloat(m[1]), pct: m[2], dec: (m[1].split('.')[1] || '').length } : null; }
+/** The text of a figure part-way (p from 0 to 1) from `from` to `to`. Anything that is not a plain number or percentage, and p = 1, give `to` exactly. */
+function figureAt(from, to, p) {
+  const a = parseFigure(from), b = parseFigure(to);
+  if (!a || !b || a.pct !== b.pct || !(p < 1)) return to;
+  const e = 1 - Math.pow(1 - Math.max(0, p), 3), dec = Math.max(a.dec, b.dec);
+  return (a.n + (b.n - a.n) * e).toFixed(dec) + b.pct;
+}
+/** What the tiles, funnel counts and funnel bars on a page say now, by their label. */
+function snapFigures(root) {
+  const s = { v: {}, w: {} };
+  root.querySelectorAll('.kpi').forEach(k => { const l = k.querySelector('.l'), v = k.querySelector('.v'); if (l && v) s.v['t:' + l.textContent.trim()] = v.textContent.trim(); });
+  root.querySelectorAll('.frow').forEach(r => {
+    const l = r.querySelector(':scope > span'), n = r.querySelector('.num'), b = r.querySelector('.fbar span');
+    if (l && n) s.v['f:' + l.textContent.trim()] = n.textContent.trim();
+    if (l && b) s.w[l.textContent.trim()] = b.style.width;
+  });
+  return s;
+}
+/** After a redraw: the figures whose value changed count from the old value to the new one (about 0.4 s) and bars grow or shrink; unchanged figures are not touched. */
+function easeFigures(root, snap, ms) {
+  if (!snap || reducedMotion()) return;
+  const dur = ms || 400, run = (el, from, to) => {
+    if (!parseFigure(from) || !parseFigure(to) || from === to) return;
+    const t0 = perfNow(); el.textContent = from;
+    const tick = () => {
+      if (!el.isConnected) return;
+      const p = (perfNow() - t0) / dur; el.textContent = figureAt(from, to, p);
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
+  root.querySelectorAll('.kpi').forEach(k => { const l = k.querySelector('.l'), v = k.querySelector('.v'); if (l && v) { const old = snap.v['t:' + l.textContent.trim()]; if (old != null) run(v, old, v.textContent.trim()); } });
+  root.querySelectorAll('.frow').forEach(r => {
+    const l = r.querySelector(':scope > span'), n = r.querySelector('.num'), b = r.querySelector('.fbar span');
+    if (!l) return; const key = l.textContent.trim();
+    if (n) { const old = snap.v['f:' + key]; if (old != null) run(n, old, n.textContent.trim()); }
+    if (b && snap.w[key] != null && snap.w[key] !== b.style.width) { const to = b.style.width; b.style.width = snap.w[key]; void b.offsetWidth; b.style.width = to; }
+  });
+}
+/** Runs a page again and puts the screen back as it was: scroll position, the focused control, and the changed figures easing in. */
+function redrawKeeping(v, again) {
+  const sc = document.getElementById('view'), top = sc ? sc.scrollTop : 0, snap = snapFigures(v);
+  const a = document.activeElement, fid = a && v.contains(a) && a.id ? a.id : '';
+  const done = () => {
+    if (sc) sc.scrollTop = top;
+    if (fid) { const f = document.getElementById(fid); if (f && document.activeElement !== f) { try { f.focus({ preventScroll: true }); } catch (e) { } } }
+    easeFigures(v, snap);
+  };
+  return Promise.resolve(again()).then(done, done);
 }
 /* DATA LAYER END */
 /* Anything that fails without being caught shows a message instead of failing silently (the same message is shown once per 5 seconds). */
@@ -311,7 +365,7 @@ function go(view, push) {
   if (push) google.script.history.push({ view }, null, view);
   $$('#rail a').forEach(a => { if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   const host = $('#view'); host.innerHTML = ''; host.focus();
-  const v = document.createElement('div'); v.className = 'view-page'; host.appendChild(v);
+  const v = document.createElement('div'); v.className = 'view-page enter'; host.appendChild(v);   // 'enter' plays the short entrance once; a background redraw reuses this element and does not replay it
   const seq = ++S.goSeq, layer = $('#skel'), t0 = performance.now();
   let ready = false;
   clearTimeout(S.skTimer); cancelAnimationFrame(S.skRaf);
@@ -446,11 +500,23 @@ function readForm(root) {
 function openDrawer(title, html, cls) {
   hideCv(); S.drawerTok = {};
   $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html;
-  $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); $('#scrim').hidden = false;
+  $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); showScrim();
   setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
   return $('#drawerBody');
 }
-function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').hidden = true; }
+function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/** The backdrop fades with the drawer's slide (same .22 s); with reduced motion it appears and goes at once. */
+let scrimTimer;
+function showScrim() {
+  const s = $('#scrim'); clearTimeout(scrimTimer); s.hidden = false;
+  if (reducedMotion()) { s.classList.add('on'); return; }
+  void s.offsetWidth; s.classList.add('on');   // one frame at opacity 0, then the fade starts
+}
+function hideScrim() {
+  const s = $('#scrim'); s.classList.remove('on'); clearTimeout(scrimTimer);
+  if (reducedMotion()) { s.hidden = true; return; }
+  scrimTimer = setTimeout(() => { if (!s.classList.contains('on')) s.hidden = true; }, 230);
+}
 
 const MS_BASE = 'https:' + '\/\/';
 function istEnd(startIso, minutes) {
