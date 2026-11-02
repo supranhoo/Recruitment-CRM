@@ -1,16 +1,16 @@
-# Releases the Apps Script web app when code is merged to main.
-# Needs (Settings -> Secrets and variables -> Actions):
+# Releases the Apps Script web app after a merge to main, once a reviewer approves.
+#
+# Job "check" runs on every merge (no secrets) and stops a broken file early.
+# Job "deploy" waits for approval: it uses the GitHub Environment "production", which must have a required reviewer.
+# Put these in that Environment (Settings -> Environments -> production), not at repository level:
 #   secret   CLASPRC_JSON                 the whole contents of ~/.clasprc.json after `clasp login`
 #   variable APPS_SCRIPT_DEPLOYMENT_ID    the existing web-app deployment to update (its URL never changes)
-# Optional approval gate: create a GitHub Environment named "production" with a required reviewer and add
-#   environment: production
-# under `jobs.deploy`.
 name: Deploy to Apps Script
 
 on:
   push:
     branches: [main]
-    paths: ['*.gs', '*.html', 'appsscript.json', '.github/workflows/deploy.yml']
+    paths: ['*.gs', '*.html', 'appsscript.json']
   workflow_dispatch:
 
 permissions:
@@ -21,25 +21,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      DEPLOYMENT_ID: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    timeout-minutes: 10
+    outputs:
+      build: ${{ steps.build.outputs.id }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Check the settings are present
-        run: |
-          missing=0
-          if [ -z "$CLASPRC_JSON" ]; then echo "::error::Repository secret CLASPRC_JSON is not set (see README, Releasing)."; missing=1; fi
-          if [ -z "$DEPLOYMENT_ID" ]; then echo "::error::Repository variable APPS_SCRIPT_DEPLOYMENT_ID is not set (see README, Releasing)."; missing=1; fi
-          if [ "$missing" = 1 ]; then echo "Result: pushed to GitHub, NOT live (deploy settings missing)."; exit 1; fi
 
       - name: Syntax gate (never push a broken file)
         run: |
@@ -61,30 +53,50 @@ jobs:
           b=$(sed -n "s/^const BUILD_ID = '\([0-9]*\)';.*/\1/p" Config.gs | head -1)
           if [ -z "$b" ]; then echo "::error::BUILD_ID not found in Config.gs"; exit 1; fi
           echo "id=$b" >> "$GITHUB_OUTPUT"
-          echo "Build $b"
+          echo "Build $b is ready to deploy. Approve the deployment to put it live."
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      BUILD: ${{ needs.check.outputs.build }}
+      DEPLOYMENT_ID: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check the settings are present
+        run: |
+          missing=0
+          if [ -z "$CLASPRC_JSON" ]; then echo "::error::Secret CLASPRC_JSON is not set in the production environment (see README, Releasing)."; missing=1; fi
+          if [ -z "$DEPLOYMENT_ID" ]; then echo "::error::Variable APPS_SCRIPT_DEPLOYMENT_ID is not set in the production environment (see README, Releasing)."; missing=1; fi
+          if [ "$missing" = 1 ]; then echo "Result: NOT live (deploy settings missing)."; exit 1; fi
 
       - name: Install clasp and sign in
         run: |
           npm install -g @google/clasp@3
-          mkdir -p "$HOME/.clasp-auth"
           umask 077
+          mkdir -p "$HOME/.clasp-auth"
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasp-auth/.clasprc.json"
-          echo "clasp_config_auth=$HOME/.clasp-auth/.clasprc.json" >> "$GITHUB_ENV"   # clasp 3 wants the path of the auth FILE, not its folder
+          echo "clasp_config_auth=$HOME/.clasp-auth" >> "$GITHUB_ENV"
 
       - name: Push the code
         run: clasp push -f
 
       - name: Update the live deployment
         env:
-          BUILD: ${{ steps.build.outputs.id }}
           SUBJECT: ${{ github.event.head_commit.message }}
         run: |
           subject=$(printf '%s' "${SUBJECT:-manual run}" | head -1 | cut -c1-80)
           clasp deploy -i "$DEPLOYMENT_ID" -d "v${BUILD} ${subject}"
 
       - name: Verify what is live
-        env:
-          BUILD: ${{ steps.build.outputs.id }}
         run: |
           set -e
           mkdir "$RUNNER_TEMP/live"
@@ -92,19 +104,12 @@ jobs:
           (cd "$RUNNER_TEMP/live" && clasp pull)
           bad=0
           for f in *.gs *.html appsscript.json; do
-            g="$f"; case "$f" in *.gs) g="${f%.gs}.js";; esac   # clasp 3 pulls the server files as .js
-            if ! cmp -s "$f" "$RUNNER_TEMP/live/$g"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
+            if ! cmp -s "$f" "$RUNNER_TEMP/live/$f"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
           done
           [ "$bad" = 0 ] || { echo "Result: pushed to Apps Script, NOT confirmed live (files differ)."; exit 1; }
-          # Apps Script lists a new deployment version a minute or so after `clasp deploy` returns, so ask again for up to 2 minutes.
-          ok=0
-          for i in $(seq 1 12); do
-            line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
-            echo "$line"
-            case "$line" in *"v${BUILD}"*) ok=1; break;; esac
-            sleep 10
-          done
-          [ "$ok" = 1 ] || { echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1; }
+          line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
+          echo "$line"
+          case "$line" in *"v${BUILD}"*) ;; *) echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1;; esac
           echo "Result: live. Build v${BUILD} is deployed; the page footer should read version ${BUILD} after a hard reload."
 
       - name: Remove the login from the runner

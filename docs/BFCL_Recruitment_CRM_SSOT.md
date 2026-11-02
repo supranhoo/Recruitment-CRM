@@ -1170,6 +1170,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Deploys wait for approval** (no code change; 2 Nov 2026)
+- Owner decision: a merge to `main` no longer goes live on its own. `.github/workflows/deploy.yml` now has two jobs: `check` (syntax gate, no secrets) and `deploy`, which uses the GitHub Environment `production` and waits for a required reviewer before `clasp push`, `clasp deploy -i` and the pull-and-compare verification. The Google login (`CLASPRC_JSON`) and `APPS_SCRIPT_DEPLOYMENT_ID` live in that environment, so only an approved run can read them. Setup, approval and reject steps are in the README (Releasing).
+
 **Move a candidate to another position of the same MRF** (no schema change; v143; 2 Nov 2026)
 - Need: one MRF can open several positions (several lines sharing the MRF number). When one position's candidates are all rejected and another has good candidates, a card can now move across without being added again from the start.
 - In the card dialog, \"Move to another position of <MRF>\" lists the open or offered positions of the same MRF; a reason is required. The card keeps its stage, status, \"days in stage\" and history; its interviews, check-ins, screening and voice calls follow it; the candidate's linked position follows if it pointed at the source; the card takes the target position's recruiter, so its to-dos pass to them. One history row (outcome Moved) records from, to and the reason; the funnel and Daily review ignore that outcome, and each earlier stage keeps its credit to the position where it happened, so nothing counts twice.
