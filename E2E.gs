@@ -152,11 +152,22 @@ function e2eRun_(trash) {
   err('D4a Screened needs a recorded screening', function () { apiMoveStage(A, 'Screened', { answers: {} }); }, /Record the screening first/);
   t('D4 screening recorded: moves to Screened with the answers', function () { _tables = {}; const S1 = screen(A, { 'Current CTC?': '6 LPA', 'Notice period?': '30 days' }); _tables = {}; const a = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0]; return S1.screening.status === 'Complete' && a.Stage === 'Screened' && a.Screening_JSON['Current CTC?'] === '6 LPA' && !!a.screen; });
   mv('D5 shared with department', 'Shared', { note: 'E2E shared' });
-  mv('D6 department confirmed', 'Confirmed', {});
+  err('D6a department confirmation needs the result, the person and the date', function () { apiMoveStage(A, 'Confirmed', { note: 'E2E' }); }, /department.s decision/);
+  mv('D6 department confirmed', 'Confirmed', { result: 'Suitable', by: 'E2E HOD', date: today, note: 'E2E confirmed' }, function (a) { return a.Dept_Confirm_By === 'E2E HOD' && String(a.Dept_Confirm_On).slice(0, 10) === today; });
   err('D7 interview needs result', function () { apiMoveStage(A, 'Technical', {}); }, /date and result/);
   mv('D8 technical interview', 'Technical', { date: today, by: 'Jaspal Bhanker', result: 'Selected' });
   t('D9 interview written to candidate', function () { _tables = {}; return apiGetCandidate(c1.Candidate_ID).Tech_Result === 'Selected'; });
   mv('D10 HR interview', 'HR', { date: today, by: 'Randhir Singh', result: 'Selected' });
+  t('D10x stage tabs: the timeline of a card (lead only) shows where each step was updated', function () {
+    _tables = {}; const tl = apiAppTimeline(A), tb = tl.tabs;
+    const dept = tb.dept.facts.some(function (f) { return f[0] === 'Confirmed by (department)' && f[1] === 'E2E HOD'; }) && tb.dept.facts.some(function (f) { return f[0] === 'Department\u2019s decision' && f[1] === 'Suitable'; });
+    const cv = tb.cv.changes.some(function (c) { return c.kind === 'move' && c.to === 'Screened'; }) && tb.cv.facts.length > 0;
+    const sh = tb.shared.changes.some(function (c) { return c.kind === 'move' && c.to === 'Shared'; });
+    const te = tb.tech.changes.some(function (c) { return c.label === 'Technical result' && c.newV === 'Selected'; });
+    const all = tb.all.changes.some(function (c) { return c.kind === 'move' && c.to === 'HR'; }) && tb.all.changes.every(function (c) { return typeof c.at === 'string' && c.at; });
+    const noCtc = !JSON.stringify(tl).match(/Current_CTC|Expected_CTC|Mobile|Email/);
+    return dept && cv && sh && te && all && noCtc ? 'cv ' + tb.cv.changes.length + ', shared ' + tb.shared.changes.length + ', dept ' + tb.dept.changes.length + ', tech ' + tb.tech.changes.length + ', all ' + tb.all.changes.length : false;
+  });
   err('D11 documents gate', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' } }); }, /not verified/);
   err('D11b an exception needs remarks', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' }, exception: 'Form 16 awaited' }); }, /remarks/);
   mv('D12 documents verified', 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' }, note: 'E2E docs remarks' });

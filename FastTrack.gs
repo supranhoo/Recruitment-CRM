@@ -65,6 +65,26 @@ function canOnboardMove_(u, line, toStage) {
 }
 
 /**
+ * The department's decision on a candidate, from the Department confirmed step: result, who in the department, and the date.
+ * Used by both routes (the fast-track step and the standard step). Returns {patch, outcome}; throws when something is missing.
+ * Not suitable rejects the card and Hold puts it on hold, the same on both routes.
+ */
+function deptConfirmFields_(data) {
+  const out = { patch: {}, outcome: '' };
+  const res = String(data.result || '');
+  if (FAST_CONFIRM_RESULTS_.indexOf(res) < 0) throw new Error('Record the department\u2019s decision: Suitable, Not suitable or Hold.');
+  const by = clean_(String(data.by || '')).trim();
+  if (!by) throw new Error('Add the name of the person in the department who confirmed.');
+  if (!data.date) throw new Error('Add the date of the department\u2019s confirmation.');
+  if (ymd_(data.date) > ymd_(new Date())) throw new Error('The confirmation date cannot be in the future.');
+  out.patch.Dept_Confirm_On = parseYmd_(data.date); out.patch.Dept_Confirm_By = by;
+  out.outcome = res;
+  if (res === 'Not suitable') { out.patch.Status = 'Rejected'; out.patch.Status_Reason = 'Not suitable for the department'; }
+  if (res === 'Hold') { out.patch.Status = 'On hold'; out.patch.Status_Reason = 'Department put the candidate on hold'; }
+  return out;
+}
+
+/**
  * The checks and the saved fields for a move on a fast-track position. Returns {patch, outcome, note}; throws when the
  * move is not allowed. The standard stages are checked by apiMoveStage as before.
  */
@@ -76,16 +96,10 @@ function fastMove_(u, app, line, toStage, data) {
     out.patch.Dept_Confirm_On = '';
   }
   if (toStage === 'Confirmed') {
-    const res = String(data.result || '');
-    if (FAST_CONFIRM_RESULTS_.indexOf(res) < 0) throw new Error('Record the department’s decision: Suitable, Not suitable or Hold.');
-    const by = clean_(String(data.by || '')).trim();
-    if (!by) throw new Error('Add the name of the person in the department who confirmed.');
-    if (!data.date) throw new Error('Add the date of the department’s confirmation.');
-    if (ymd_(data.date) > ymd_(new Date())) throw new Error('The confirmation date cannot be in the future.');
-    out.patch.Dept_Confirm_On = parseYmd_(data.date); out.patch.Dept_Confirm_By = by;
-    out.outcome = res;
-    if (res === 'Not suitable') { out.patch.Status = 'Rejected'; out.patch.Status_Reason = 'Not suitable for the department'; }
-    if (res === 'Hold') { out.patch.Status = 'On hold'; out.patch.Status_Reason = 'Department put the candidate on hold'; }
+    const dc = deptConfirmFields_(data);
+    out.patch.Dept_Confirm_On = dc.patch.Dept_Confirm_On; out.patch.Dept_Confirm_By = dc.patch.Dept_Confirm_By;
+    if (dc.patch.Status) { out.patch.Status = dc.patch.Status; out.patch.Status_Reason = dc.patch.Status_Reason; }
+    out.outcome = dc.outcome;
   }
   if (toStage === 'Offer') {
     // The department's decision must be on record: either the Department confirmed step was completed (date and name saved), or the
