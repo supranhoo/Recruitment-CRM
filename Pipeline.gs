@@ -282,6 +282,11 @@ function apiMoveStage(appId, toStage, data) {
   let outcome = '';
   let fastOut = null;
   if (ti > fi && isFast_(line)) { fastTrackSchema_(); fastOut = fastMove_(u, app, line, toStage, data); }   // fast-track route: its own checks and fields
+  else if (ti > fi && toStage === 'Confirmed') {   // standard route: the department's decision is recorded as fields (result, who, date), not only as a note
+    fastTrackSchema_();
+    const dc = deptConfirmFields_(data);
+    fastOut = { patch: dc.patch, outcome: dc.outcome, note: '' };
+  }
   if (toStage === 'Screened') {
     const scr = scrOf_(appId);
     if (!data._fromScreening && sqFinalFor_(app.Line_ID) && !(scr && String(scr.Status) === 'Complete')) throw new Error('Record the screening first (candidate \u2192 Screening): this position has final screening questions.');
