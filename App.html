@@ -365,7 +365,7 @@ function buildRail(user) {
     `</div><div class="rail-foot" id="userChip" data-label="${esc(user.name)} \u00b7 ${esc(user.role)}" title="${esc(user.email || '')} \u00b7 version ${esc((S.boot && S.boot.build) || '')}"><span class="avatar" aria-hidden="true">${esc(initials)}</span><span class="lbl who"><b>${esc(user.name)}</b><span>${esc(user.role)}</span></span></div>`;
   $$('#rail a').forEach(el => el.addEventListener('click', e => { e.preventDefault(); go(el.dataset.view, true); }));
   let pref = null; try { pref = localStorage.getItem('bfcl.rail'); } catch (e) { }
-  setRail(pref ? pref === 'mini' : window.innerWidth < 1100, false);
+  setRail(pref ? pref === 'mini' : window.innerWidth < 1400, false);   // a saved choice wins; with none, laptops narrower than 1400 px start with the slim menu
   $('#railToggle').onclick = () => setRail(!$('#shell').classList.contains('rail-mini'), true);
 }
 function setRail(mini, save) {
@@ -1711,7 +1711,7 @@ function funnelTable(rows, withPosition) {
   if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
   // From the switch-over each column is a Pipeline stage (the Pipeline board's names); earlier days keep the typed columns.
   const cut = S.boot.cutover || '2026-10-05', v2 = S.boot.funnelV2 || FUNNEL_V2_FALLBACK;
-  const stageCols = Object.keys(P_NAMES).map(k => [k, P_NAMES[k], P_NAMES[k]]);
+  const stageCols = Object.keys(P_NAMES).map(k => [k, P_NAMES[k], stageShort(k)]);
   const now = rows.filter(r => String(r.Entry_Date) >= cut), old = rows.filter(r => String(r.Entry_Date) < cut);
   return (now.length ? funnelTableCore(now, withPosition, stageCols, true)
       + `<p class="hint">From ${fmtDate(cut)}, each column is a stage of the Pipeline, counted from the candidates moved (click a number to see who). CV received is typed until ${fmtDate(v2)}, then counted from the Pipeline too. A candidate who passes several stages counts once in each.</p>` : '')
@@ -1722,16 +1722,16 @@ function funnelTableCore(rows, withPosition, cols, staged) {
   window._fnPeople = window._fnPeople || {};
   const cell = (r, k, i) => {
     const n = Number(r[k]) || 0, ppl = r.People && r.People[k];
-    if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (cols.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
-    return `<td class="num${staged && pipedKeys(r.Entry_Date).length && k !== 'Sourced' ? ' pipe' : ''}">${n || ''}</td>`;
+    if (ppl && ppl.length) { window._fnPeople[i + '|' + k] = { list: ppl, label: (cols.find(m => m[0] === k) || [])[1] || k, day: r.Entry_Date }; return `<td class="num stg pipe"><button type="button" class="pipe-n" data-pm="${i}|${k}" title="Counted from the Pipeline. Click to see the candidates.">${n}</button></td>`; }
+    return `<td class="num stg${staged && pipedKeys(r.Entry_Date).length && k !== 'Sourced' ? ' pipe' : ''}">${n || ''}</td>`;
   };
-  return `<div class="table-wrap"><table><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
-    ${cols.map(([, l, s]) => `<th class="num" title="${esc(l)}">${esc(s)}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
+  return `<div class="table-wrap"><table class="stage-table"><thead><tr><th>Date</th>${withPosition ? '<th>Position</th><th>Recruiter</th>' : ''}
+    ${cols.map(([, l, s]) => `<th class="num stg" title="${esc(l)}" aria-label="${esc(l)}">${esc(s)}</th>`).join('')}<th>Remarks</th><th><span class="sr-only">Edit</span></th></tr></thead><tbody>
     ${rows.map((r, i) => { const p = lineById(r.Line_ID); return `<tr data-entry="${esc(r.Entry_ID)}" style="cursor:default"><td class="nw">${fmtDate(r.Entry_Date)}</td>
       ${withPosition ? `<td>${esc(p ? p.Position : r.Line_ID)}<span class="sub">${esc(r.MRF_No)}</span></td><td>${esc(r.Recruiter)}</td>` : ''}
       ${cols.map(([k]) => cell(r, k, i)).join('')}<td class="remarks">${r.derived ? '<span class="sub">Moves in the Pipeline</span>' : esc(r.Remarks)}${(r.DocRemarks || []).map(x => `<span class="sub">Documents verified, ${esc(x.name)}: ${esc(x.remark)}</span>`).join('')}${r.FB_From_Dept ? `<span class="sub">FB: ${esc(r.FB_From_Dept)}</span>` : ''}</td>
       <td class="nw">${r.derived ? '<span class="locked" title="Counted from the candidates you moved in the Pipeline">Pipeline</span>' : r.canEdit ? `<button class="btn sm" data-edit="${esc(r.Entry_ID)}">Edit</button>` : `<span class="locked" title="Entries can be changed only on the day they are saved">Locked</span>`}</td></tr>`; }).join('')}
-    <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${cols.map(([k]) => `<td class="num">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
+    <tr style="font-weight:600;cursor:default"><td>Total</td>${withPosition ? '<td></td><td></td>' : ''}${cols.map(([k]) => `<td class="num stg">${tot[k]}</td>`).join('')}<td></td><td></td></tr>
     </tbody></table></div>`;
 }
 document.addEventListener('click', e => {
@@ -4249,6 +4249,10 @@ const DAY_LABELS = { CV_Sourced: 'Sourced', CV_Reviewed: 'CVs reviewed', HR_1st_
   Shortlisted_Dept: 'Shortlisted by dept', Interviews_Done: 'Interviews', Selected_Final: 'Selected', Offers: 'Offers released', Joined: 'Joined' };
 /** A funnel column's header: the Pipeline's own stage name, or the typed column's name for days before the switch-over. */
 function dayLabel(s) { return P_NAMES[s] || DAY_LABELS[s] || s; }
+/** The short header used over the narrow number columns of the funnel tables (the full name is the tooltip and the accessible label). */
+const STAGE_SHORT = { Sourced: 'CVs', Screened: 'Screened', Shared: 'Shared', Confirmed: 'Confirmed', Technical: 'Tech', HR: 'HR', Docs: 'Docs', Offer: 'Offer', Prejoin: 'Pre-join', Joined: 'Joined', Onboarded: 'Onboard',
+  CV_Sourced: 'CVs', CV_Reviewed: 'Reviewed', HR_1st_Round: 'HR R1', CV_Shared_Dept: 'Shared', Shortlisted_Dept: 'Shortlisted', Interviews_Done: 'Interviews', Selected_Final: 'Selected', Offers: 'Offers' };
+function stageShort(k) { return STAGE_SHORT[k] || dayLabel(k); }
 /** The Result cell of a candidate in a funnel list: the outcome, and the remarks typed when the documents were verified. */
 function peopleResult(p) { return esc(p.outcome || '') + (p.remark ? `<span class="sub">${esc(p.remark)}</span>` : ''); }
 function dayFunnelHtml(stages, f, people) {
@@ -4290,9 +4294,9 @@ function dayPositionsHtml(rows, ctx) {
   // The Pipeline stages from the switch-over (same names as the Pipeline board), the typed columns before it.
   const cols = (ctx.stages || ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final', 'Offers', 'Joined']).map(k => [k, dayLabel(k)]);
   const pplOf = (g, m) => ((ctx.people || {})[m] || []).filter(p => p.line === g.line);
-  return toggle + `<div class="table-wrap"><table><thead><tr><th>Position / MRF</th><th>Department</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num" title="${esc(c[1])}">${esc(c[1])}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
-    ${rows.map(g => `<tr style="cursor:default"${g.noActivity ? ' class="ds-noact"' : ''}><td>${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span></td><td>${esc(g.dept)}</td>
-      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
+  return toggle + `<div class="table-wrap"><table class="stage-table"><thead><tr><th>Position / MRF</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num stg" title="${esc(c[1])}" aria-label="${esc(c[1])}">${esc(stageShort(c[0]))}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
+    ${rows.map(g => `<tr style="cursor:default"${g.noActivity ? ' class="ds-noact"' : ''}><td>${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span><span class="sub">${esc(g.dept)}</span></td>
+      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num stg">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function bindDayPositions(host, rows, ctx, after) {
