@@ -270,7 +270,7 @@ body.cv-open{--drawer-w:min(640px,100vw)}
 .check summary .sub{display:block;font-size:13px;color:var(--muted);font-weight:400;margin-top:2px}
 .check-n{font-family:var(--num);font-size:22px;font-weight:600;min-width:44px;text-align:right;color:var(--molten)}
 .check-n.zero{color:var(--ok)}
-.dfun{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:8px;align-items:end}
+.dfun{display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:6px;align-items:end}   /* 11 stages in one row down to a 1280 px screen */
 .dfun-step{display:flex;flex-direction:column;align-items:center;text-align:center;gap:3px}
 .dfun-bar{height:70px;width:100%;max-width:56px;background:#E6ECF3;border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}
 .dfun-bar span{display:block;width:100%;background:var(--navy);border-radius:3px 3px 0 0}
@@ -402,6 +402,16 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
   .readout{grid-template-columns:repeat(2,1fr)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* ---- Stage tables (Daily review, My day, Daily log): the number columns are as narrow as their numbers need (three digits), the headers are short with the full name on hover, and the position column carries the department ---- */
+.stage-table th{white-space:normal;line-height:1.2;vertical-align:bottom}
+.stage-table th.stg,.stage-table td.stg{width:52px;min-width:44px;padding-left:4px;padding-right:4px;text-align:center}
+.stage-table th.stg{font-size:12.5px;white-space:nowrap}   /* short one-word headers: never clipped, never broken at the hyphen */
+.stage-table th.pos,.stage-table td.pos{min-width:130px}   /* the position keeps room to read; the remarks give way first */
+.stage-table td.remarks{min-width:170px}
+.stage-table .pipe-n{min-width:26px;padding:2px 7px}
+@media (min-width:861px) and (max-width:1399px){.stage-table td.remarks{min-width:150px}.view{padding:20px 16px 48px}.stage-table th,.stage-table td{padding-left:8px;padding-right:8px}.stage-table th.stg,.stage-table td.stg{padding-left:3px;padding-right:3px}}
+@media (max-width:1100px){.stage-table th:first-child,.stage-table td:first-child{position:sticky;left:0;z-index:1;background:#fff;box-shadow:1px 0 0 var(--line)}.stage-table th:first-child{z-index:3;background:#F7F9FB}}
+.dgrid input[type=number]{width:64px}
 /* ---- Smooth finish (release 140): short, calm motion, and none of it for people who ask for reduced motion ---- */
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes dlgIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
