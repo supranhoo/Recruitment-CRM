@@ -404,8 +404,9 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 /* ---- Stage tables (Daily review, My day, Daily log): the number columns are as narrow as their numbers need (three digits), the headers are short with the full name on hover, and the position column carries the department ---- */
 .stage-table th{white-space:normal;line-height:1.2;vertical-align:bottom}
-.stage-table th.stg,.stage-table td.stg{width:52px;min-width:44px;max-width:64px;padding-left:4px;padding-right:4px;text-align:center}
-.stage-table th.stg{font-size:12.5px}
+.stage-table th.stg,.stage-table td.stg{width:52px;min-width:44px;padding-left:4px;padding-right:4px;text-align:center}
+.stage-table th.stg{font-size:12.5px;white-space:nowrap}   /* short one-word headers: never clipped, never broken at the hyphen */
+.stage-table th.pos,.stage-table td.pos{min-width:130px}   /* the position keeps room to read; the remarks give way first */
 .stage-table td.remarks{min-width:170px}
 .stage-table .pipe-n{min-width:26px;padding:2px 7px}
 @media (min-width:861px) and (max-width:1399px){.stage-table td.remarks{min-width:150px}.view{padding:20px 16px 48px}.stage-table th,.stage-table td{padding-left:8px;padding-right:8px}.stage-table th.stg,.stage-table td.stg{padding-left:3px;padding-right:3px}}
