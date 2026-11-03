@@ -78,7 +78,7 @@ T.AUDIT = {
 const FUNNEL_METRICS = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
 const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER: 'Recruiter', ONBOARDING: 'Onboarding' };
 /** The release number, set before each deploy. Shown in the page (rail footer, Admin → Tools) and compared with the page's own copy, so a page served from an older release is noticed. */
-const BUILD_ID = '145';
+const BUILD_ID = '146';
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
@@ -90,6 +90,7 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
  * 'ctc_use' = use the CTC calculator; 'ctc_rules' = change the CTC rules (Admin only, never grantable); 'ctc_view_all' = see everyone's CTC
  * calculations; 'ctc_codes' = change the structure choices and allowances; 'ctc_issue' = make and issue letters; 'ctc_approve' = approve letters
  * when approval is on. The ctc_* permissions other than ctc_rules can be given to other roles in CTC calculator > Access (Role_Access sheet).
+ * 'kpi_edit' = change the KPI set-up (TAT targets, score bands, count thresholds) as new dated versions; Head of HR and Admin. Reading it needs 'lead'.
  * 'voice_agent' = set up and use the voice screening call while it is being tested (Admin only, never grantable).
  * 'voice_review' = see a voice call's result and rate, edit and complete the screening from it: the owner recruiter for own positions, leads for all. It does not place calls.
  * 'onboard' = the Onboarding team: confirm the hiring, record the joining and complete the onboarding of fast-track (W and T level) positions of any recruiter.
@@ -98,6 +99,6 @@ const PERMS_ = {
   'Recruiter': ['voice_review'],
   'Onboarding': ['onboard'],
   'TA Lead': ['lead', 'tat_view', 'jd_manage', 'voice_review'],
-  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'voice_review'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent', 'voice_review']
+  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'voice_review'],
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'ctc_use', 'ctc_rules', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent', 'voice_review']
 };

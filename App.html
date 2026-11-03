@@ -96,7 +96,7 @@ function viewData(v, key, call, again, label, opts) {
 }
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
-  'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiMonthMissed',
+  'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiMonthMissed',
   'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
@@ -3627,6 +3627,7 @@ const ROLE_MATRIX = [
   ['View the organogram (approved against existing manpower)', 1, 1, 1, 1],
   ['Import the manpower report; edit the organogram structure and department mapping', 0, 0, 1, 1],
   ['Admin: TAT rules', 0, 'view', 'edit', 'edit'],
+  ['Admin: KPI targets, score bands and count thresholds (new dated versions, with a reason)', 0, 'view', 'edit', 'edit'],
   ['Request a TAT exemption', 'own', 'all', 'all', 'all'],
   ['Approve, grant or revoke TAT exemptions; verify notice extensions', 0, 0, 1, 1],
   ['CTC calculator (Admin only at launch)', 0, 0, 0, 1],
@@ -3851,6 +3852,136 @@ async function renderExemptAdmin(el) {
   };
   draw();
 }
+/* ---------------- Admin: KPI targets (everyone with the lead permission can look; kpi_edit can change) ---------------- */
+const KPI_PCT_KPIS = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
+const KPI_KIND_NAMES = { TARGET: 'TAT target', PERCENT: 'Score bands', COUNT: 'Count thresholds', CAPTURE: 'Scoring start' };
+function kpiBandsText(rules) {
+  const b = (rules || []).slice().sort((a, c) => c.min - a.min);
+  return b.length ? b.map(x => `${x.score} for ${x.min}%${x.min === 100 ? '' : '+'}`).join(', ') + `, 0 below ${b[b.length - 1].min}%` : '';
+}
+function kpiStepsText(r) { return (r.steps || []).map(x => `${x.score} for up to ${x.max}`).join(', ') + `, ${r.otherwise || 0} for more`; }
+function kpiTatText(t) { return `${t.days} days · ${t.levels} levels · notice ${t.exempt ? '' : 'not '}exempt`; }
+function kpiNextMonth(m) { const [y, mm] = m.split('-').map(Number), t = y * 12 + mm; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; }
+function kpiCellText(c, count, unit) {
+  if (!c) return '–';
+  const sc = c.score == null ? '–' : c.score;
+  return count ? `${c.num} ${unit} · score ${sc}` : c.pct == null ? '–' : `${c.pct}% (${c.num}/${c.den}) · score ${sc}`;
+}
+
+async function renderKpiTargets(el, setup) {
+  const f = S.kpiAdmin = S.kpiAdmin || { hist: '' };
+  let s = setup;
+  if (!s) {
+    try { s = await api('apiKpiSetup'); }
+    catch (e) { el.innerHTML = `<div class="empty" role="alert">${esc(e)}<br><button class="btn sm" id="kpiaRetry">Try again</button></div>`; $('#kpiaRetry').onclick = () => renderKpiTargets(el); return; }
+  }
+  const edit = s.canEdit;
+  const tatCard = (t, ti) => `<section class="panel kpia-card"><h3>${esc(t.name)}</h3>
+    <p class="kpia-team">${t.team ? `<b>Whole team:</b> ${esc(kpiTatText(t.team))} <span class="sub">in force since ${esc(monthLabel(t.team.from))}${t.team.id ? ' · ' + esc(t.team.id) : ''}</span>` : '<span class="miss">No team target is set.</span>'}</p>
+    ${t.overrides.length ? `<ul class="kpia-list">${t.overrides.map((o, oi) => `<li><span><b>${esc(o.who)}</b> \u00b7 ${o.days} days \u00b7 ${esc(o.levels)} levels \u00b7 notice ${o.exempt ? '' : 'not '}exempt <span class="sub">override since ${esc(monthLabel(o.from))}${o.id ? ' \u00b7 ' + esc(o.id) : ''}</span></span>
+      ${edit ? `<span class="kpia-acts"><button class="btn sm" data-a="ochg" data-t="${ti}" data-o="${oi}">Change</button><button class="btn sm" data-a="oend" data-t="${ti}" data-o="${oi}">End override</button></span>` : ''}</li>`).join('')}</ul>` : '<p class="hint">No recruiter has an override: everyone follows the team target.</p>'}
+    ${t.upcoming.length ? `<p class="hint"><b>Starting later:</b> ${t.upcoming.map(u => `${esc(u.who)}: ${u.active === false ? 'override ends' : esc(kpiTatText(u))} from ${esc(monthLabel(u.from))}`).join('; ')}</p>` : ''}
+    ${edit ? `<div class="btn-row"><button class="btn" data-a="team" data-t="${ti}">Change team target</button><button class="btn" data-a="add" data-t="${ti}">Add recruiter override</button></div>` : ''}</section>`;
+  const sc = k => s.scoring.find(x => x.kpi === k);
+  const scoreRow = (x, xi) => `<tr style="cursor:default"><td><b>${esc(x.name)}</b>${x.isDefault ? '<span class="sub">default rules</span>' : `<span class="sub">since ${esc(monthLabel(x.from))}</span>`}</td>
+    <td>${esc(x.kind === 'PERCENT' ? kpiBandsText(x.rules) : kpiStepsText(x.rules))}${x.upcoming.length ? `<span class="sub">starting later: ${x.upcoming.map(u => esc(monthLabel(u.from))).join(', ')}</span>` : ''}</td>
+    <td>${edit ? `<button class="btn sm" data-a="${x.kind === 'PERCENT' ? 'bands' : 'counts'}" data-s="${xi}">Change</button>` : ''}</td></tr>`;
+  const kinds = ['', 'TARGET', 'PERCENT', 'COUNT', 'CAPTURE'];
+  const hist = s.history.filter(h => !f.hist || h.kind === f.hist);
+  el.innerHTML = `<div class="note">Each change is saved as a <b>new version from the month you choose</b>; nothing is overwritten. A position is counted in its due month but uses the target of the month it joined (or started), so a change can also move earlier months. The preview lists exactly which results change, and a change that moves months already reported needs your confirmation. A recruiter override replaces the team target completely, including its levels.
+      ${edit ? '' : '<br><b>You can look but not change:</b> only the Head of HR or the admin can change the KPI set-up.'}</div>
+    <h3 style="margin:18px 0 8px">TAT targets</h3><div class="kpia-grid">${s.tat.map(tatCard).join('')}</div>
+    <h3 style="margin:22px 0 8px">Score bands and count thresholds</h3>
+    <div class="table-wrap"><table><thead><tr><th>KPI</th><th>Scoring rule in force</th><th></th></tr></thead><tbody>${s.scoring.filter(x => x.kind === 'PERCENT').map(x => scoreRow(x, s.scoring.indexOf(x))).join('')}${s.scoring.filter(x => x.kind === 'COUNT').map(x => scoreRow(x, s.scoring.indexOf(x))).join('')}</tbody></table></div>
+    <p class="hint" style="margin-top:8px">Percentage KPIs: at least this percentage scores this much; below the lowest band scores 0. Count KPIs: up to this many scores this much; more than the last step scores the last figure.</p>
+    <p style="margin:10px 0"><b>Compliance KPIs are scored from ${esc(s.captureFrom === '9999-99' ? 'no month yet' : monthLabel(s.captureFrom))}.</b> ${edit ? '<button class="btn sm" data-a="capture">Change</button>' : ''}</p>
+    <h3 style="margin:22px 0 8px">Change history</h3>
+    <div class="filters"><div class="field"><label for="kpiaHist">Show</label><select id="kpiaHist">${opts(kinds.map(k => [k, k ? KPI_KIND_NAMES[k] : 'All changes']), f.hist, false)}</select></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Saved</th><th>By</th><th>What</th><th>From</th><th>Reason</th></tr></thead><tbody>
+      ${hist.length ? hist.map(h => `<tr style="cursor:default"><td>${esc(h.at || '—')}${h.id ? `<span class="sub">${esc(h.id)}</span>` : ''}</td><td>${esc(h.by || '—')}</td><td><b>${esc(h.name)}</b>${h.who ? ` · ${esc(h.who)}` : ''}<span class="sub">${esc(KPI_KIND_NAMES[h.kind] || h.kind)}: ${esc(h.text)}</span></td><td>${esc(monthLabel(h.from))}</td><td>${esc(h.reason)}</td></tr>`).join('') : '<tr><td colspan="5" class="hint">No changes in this list.</td></tr>'}
+    </tbody></table></div>`;
+  $('#kpiaHist').onchange = e => { f.hist = e.target.value; renderKpiTargets(el, s); };
+  const open = cfg => kpiaDrawer(s, cfg, ns => renderKpiTargets(el, ns));
+  $$('[data-a]', el).forEach(b => b.onclick = () => {
+    const a = b.dataset.a, t = s.tat[+b.dataset.t], o = t && t.overrides[+b.dataset.o];
+    if (a === 'team') open({ kind: 'TARGET', title: 'Change the team target', kpi: t.kpi, who: '*', cur: t.team, name: t.name });
+    else if (a === 'add') open({ kind: 'TARGET', title: 'Add a recruiter override', kpi: t.kpi, cur: t.team, name: t.name });
+    else if (a === 'ochg') open({ kind: 'TARGET', title: 'Change ' + o.who + '’s override', kpi: t.kpi, who: o.who, cur: o, name: t.name });
+    else if (a === 'oend') open({ kind: 'TARGET', title: 'End ' + o.who + '’s override', kpi: t.kpi, who: o.who, end: true, cur: t.team, name: t.name });
+    else if (a === 'bands') open({ kind: 'BANDS', title: 'Change the score bands', kpi: s.scoring[+b.dataset.s].kpi });
+    else if (a === 'counts') open({ kind: 'COUNTS', title: 'Change the count thresholds', kpi: s.scoring[+b.dataset.s].kpi });
+    else if (a === 'capture') open({ kind: 'CAPTURE', title: 'Change when compliance scoring starts' });
+  });
+}
+
+/** The change drawer: fill in, Preview impact, then Save as a new version (enabled only for exactly what was previewed). */
+function kpiaDrawer(s, cfg, done) {
+  const k = cfg.kind, def = s.scoring.find(x => x.kpi === (cfg.kpi || (k === 'BANDS' ? 'M_FULFILMENT' : 'BGV')));
+  const rowsHtml = (list, a, b, la, lb) => list.map(r => `<div class="kpia-row"><input type="number" class="kr-a" value="${r[a]}" min="0" max="100" step="1" aria-label="${la}"><input type="number" class="kr-b" value="${r[b]}" min="0" max="5" step="1" aria-label="${lb}"><button type="button" class="btn sm kr-del" aria-label="Remove this row">Remove</button></div>`).join('');
+  let body = '';
+  if (k === 'TARGET') {
+    const c = cfg.cur || { days: '', levels: 'All', exempt: true };
+    body = `<p class="hint">${esc(cfg.name)}</p>
+      <div class="field"><label for="kfWho">Applies to</label><select id="kfWho" ${cfg.who ? 'disabled' : ''}>${opts(cfg.who ? [[cfg.who, cfg.who === '*' ? 'Whole team' : cfg.who]] : s.recruiters.map(r => [r, r]), cfg.who || '', !cfg.who)}</select></div>
+      ${cfg.end ? `<p>From the month below this recruiter follows the team target again (${esc(kpiTatText(cfg.cur))}).</p>` : `
+      <div class="field"><label for="kfDays">Target days</label><input id="kfDays" type="number" min="1" max="365" step="1" value="${esc(c.days)}"></div>
+      <div class="field"><label for="kfLv">Levels counted</label><select id="kfLv">${opts(s.levels.map(l => [l, l]), c.levels, false)}</select></div>
+      <div class="field"><label for="kfEx">Notice beyond ${s.grace} days exempt</label><select id="kfEx">${opts([['Yes', 'Yes'], ['No', 'No']], c.exempt ? 'Yes' : 'No', false)}</select></div>`}`;
+  } else if (k === 'BANDS') {
+    body = `<fieldset class="kpia-kpis"><legend>Apply to</legend>${KPI_PCT_KPIS.map(x => `<label class="kpia-check"><input type="checkbox" class="kf-kpi" value="${x}" ${x === cfg.kpi ? 'checked' : ''}> ${esc(sc2(x))}</label>`).join('')}</fieldset>
+      <div class="kpia-rows" id="kfRows"><div class="kpia-head"><span>At least this %</span><span>Scores</span></div>${rowsHtml(def.rules.slice().sort((a, c) => c.min - a.min), 'min', 'score', 'Percentage', 'Score')}</div>
+      <button type="button" class="btn sm" id="kfAdd">Add a band</button><p class="hint">Below the lowest band scores 0.</p>`;
+  } else if (k === 'COUNTS') {
+    body = `<p class="hint">${esc(def.name)} · counted in ${esc(def.unit)}</p>
+      <div class="kpia-rows" id="kfRows"><div class="kpia-head"><span>Up to this many</span><span>Scores</span></div>${rowsHtml(def.rules.steps, 'max', 'score', 'Count', 'Score')}</div>
+      <button type="button" class="btn sm" id="kfAdd">Add a step</button>
+      <div class="field"><label for="kfOth">More than the last step scores</label><input id="kfOth" type="number" min="0" max="5" step="1" value="${def.rules.otherwise || 0}"></div>`;
+  } else body = `<p>Psychometric, BGV, MRF adherence and tracker accuracy are scored from this month on. Moving it earlier scores months that were not scored before.</p>
+      <p class="hint">Now: ${esc(s.captureFrom === '9999-99' ? 'not set' : monthLabel(s.captureFrom))}</p>`;
+  function sc2(x) { return (s.scoring.find(y => y.kpi === x) || {}).name || x; }
+  const root = openDrawer(cfg.title, `<div id="kpiaForm">${body}
+      <div class="field"><label for="kfFrom">${k === 'CAPTURE' ? 'Scored from (month)' : 'Takes effect from (month)'}</label><input id="kfFrom" type="month" min="${esc(s.minFrom)}" value="${k === 'CAPTURE' ? esc(s.captureFrom === '9999-99' ? s.now : s.captureFrom) : kpiNextMonth(s.now)}"></div>
+      <div class="field"><label for="kfWhy">Reason (kept in the history, at least 10 characters)</label><textarea id="kfWhy" rows="2" maxlength="500"></textarea></div>
+      <div id="kpiaPrev" aria-live="polite"></div>
+      <div class="drawer-actions" style="position:static"><button class="btn" id="kfPrev">Preview impact</button><button class="btn primary" id="kfSave" disabled>Save as a new version</button></div></div>`, 'wide');
+  const collect = () => {
+    const d = { type: k, from: $('#kfFrom', root).value, reason: $('#kfWhy', root).value, base: s.base };
+    if (k === 'TARGET') {
+      d.kpi = cfg.kpi; d.who = cfg.who || $('#kfWho', root).value;
+      if (cfg.end) d.active = false; else { d.days = $('#kfDays', root).value; d.levels = $('#kfLv', root).value; d.exempt = $('#kfEx', root).value; }
+    } else if (k === 'BANDS' || k === 'COUNTS') {
+      const rows = $$('.kpia-row', root).map(r => [$('.kr-a', r).value, $('.kr-b', r).value]);
+      if (k === 'BANDS') { d.kpis = $$('.kf-kpi', root).filter(x => x.checked).map(x => x.value); d.bands = rows.map(r => ({ min: r[0], score: r[1] })); }
+      else { d.kpi = cfg.kpi; d.steps = rows.map(r => ({ max: r[0], score: r[1] })); d.otherwise = $('#kfOth', root).value; }
+    }
+    return d;
+  };
+  let prev = null, sig = '';
+  const state = () => { const c = $('#kfConfirm', root); $('#kfSave', root).disabled = !(prev && sig === JSON.stringify(collect()) && (!prev.needsConfirm || (c && c.checked))); };
+  const reset = () => { prev = null; $('#kpiaPrev', root).innerHTML = ''; state(); };
+  const bindRows = () => $$('.kr-del', root).forEach(b => b.onclick = () => { b.closest('.kpia-row').remove(); reset(); });
+  bindRows();
+  if ($('#kfAdd', root)) $('#kfAdd', root).onclick = () => { $('#kfRows', root).insertAdjacentHTML('beforeend', rowsHtml([{ a: '', b: '' }], 'a', 'b', k === 'BANDS' ? 'Percentage' : 'Count', 'Score')); bindRows(); reset(); };
+  root.addEventListener('input', e => { if (e.target.id === 'kfConfirm') state(); else reset(); });
+  root.addEventListener('change', e => { if (e.target.id !== 'kfConfirm') reset(); });
+  const prevHtml = p => `<div class="note" role="status"><b>${esc(p.label)}</b>, from ${esc(monthLabel(p.from))}.</div>
+    ${p.rows.length ? `<p class="hint">${p.rows.length}${p.truncated ? '+' : ''} result${p.rows.length === 1 ? '' : 's'} change${p.rows.length === 1 ? 's' : ''}; ${p.pastCount} in months already reported (shaded).</p>
+      <div class="table-wrap"><table class="kpia-prev"><thead><tr><th>KPI</th><th>Who</th><th>Month</th><th>Now</th><th>After</th></tr></thead><tbody>${p.rows.slice(0, 60).map(r => `<tr style="cursor:default" class="${r.past ? 'past' : ''}"><td>${esc(r.name)}</td><td>${esc(r.who)}</td><td>${esc(monthLabel(r.month))}</td><td>${esc(kpiCellText(r.before, r.count, r.unit))}</td><td><b>${esc(kpiCellText(r.after, r.count, r.unit))}</b></td></tr>`).join('')}</tbody></table></div>
+      ${p.rows.length > 60 ? `<p class="hint">…and ${p.rows.length - 60}${p.truncated ? '+' : ''} more.</p>` : ''}` : '<p class="hint">No reported result changes with this version.</p>'}
+    ${p.needsConfirm ? '<label class="kpia-check"><input type="checkbox" id="kfConfirm"> I understand this changes results that were already reported.</label>' : ''}`;
+  $('#kfPrev', root).onclick = async () => {
+    const b = $('#kfPrev', root), d = collect(); busy(b, true, 'Working out the impact…');
+    try { prev = await api('apiKpiPreview', d); sig = JSON.stringify(d); $('#kpiaPrev', root).innerHTML = prevHtml(prev); state(); }
+    catch (e) { prev = null; $('#kpiaPrev', root).innerHTML = `<p class="miss" role="alert">${esc(e)}</p>`; state(); }
+    busy(b, false, 'Preview impact');
+  };
+  $('#kfSave', root).onclick = async () => {
+    const b = $('#kfSave', root), c = $('#kfConfirm', root), d = collect(); busy(b, true, 'Saving…');
+    try { const ns = await api('apiKpiSave', d, !!(c && c.checked)); closeDrawer(); done(ns); toast('Saved as a new version (' + ns.saved.join(', ') + ')'); }
+    catch (e) { $('#kpiaPrev', root).insertAdjacentHTML('afterbegin', `<p class="miss" role="alert">${esc(e)}</p>`); busy(b, false, 'Save as a new version'); state(); }
+  };
+}
+
 async function viewAdmin(v) {
   const admin = can('system');
   const f = S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() };
@@ -3863,6 +3994,7 @@ async function viewAdmin(v) {
       <button role="tab" data-t="hod" aria-selected="${f.tab === 'hod'}">HOD contacts</button>
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
+      <button role="tab" data-t="kpit" aria-selected="${f.tab === 'kpit'}">KPI targets</button>
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
       <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
@@ -3875,6 +4007,7 @@ async function viewAdmin(v) {
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
   if (f.tab === 'org') return renderOrgAdmin(el);
+  if (f.tab === 'kpit') return renderKpiTargets(el);
   if (f.tab === 'tex') return renderExemptAdmin(el);
   if (f.tab === 'dstat') return renderDayStatusAdmin(el);
   if (f.tab === 'hod' || f.tab === 'rules') {
@@ -3913,7 +4046,7 @@ async function viewAdmin(v) {
     el.innerHTML = `<div class="two"><section class="panel"><h2>Database</h2>
         ${admin ? `<p><a href="${esc(S.boot.dbUrl)}" target="_blank" rel="noopener">Open the database sheet</a></p>` : ''}
         <p style="color:var(--ink-2)">Team members: Users sheet (company email, role Admin / Head / Recruiter, recruiter name), then run shareWithTeam in the script editor.</p>
-        <p style="color:var(--ink-2)">TAT per grade: M_Grades. KPI targets per recruiter: KPI_Targets. Scoring start for compliance KPIs: Settings \u2192 KPI_CAPTURE_FROM.</p></section>
+        <p style="color:var(--ink-2)">TAT per grade: M_Grades. KPI targets, score bands and the scoring start for compliance KPIs: Admin \u2192 KPI targets.</p></section>
       <section class="panel"><h2>Backups and recalculation</h2>
         <p style="color:var(--ink-2)">A dated copy of the database is saved every night to the private \u201cBFCL Recruitment CRM - Backups\u201d folder and kept for 14 days (Settings \u2192 BACKUP_KEEP_DAYS).</p>
         <p style="color:var(--ink-2)">This page is version <b>${esc(window.PAGE_BUILD || '?')}</b>; the server is version <b>${esc((S.boot && S.boot.build) || '?')}</b>.</p>
@@ -4036,6 +4169,7 @@ async function viewAdmin(v) {
 
 /** The KPIs placed by their target days and level (Timely closure, M-level, W-level): each has a worked-on line and a reconciliation. */
 const KPI_TAT = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
+const KPI_PCT_DEFAULT_RULES = [{ min: 100, score: 5 }, { min: 95, score: 4 }, { min: 90, score: 3 }, { min: 85, score: 2 }, { min: 80, score: 1 }];
 const KPI_NOTES = {
   OFFER_BACKOUT: 'Backouts ÷ offers made in the month · lower is better · not scored',
   PSYCHOMETRIC: 'Shortlisted Manager+ candidates without a test · 5 for 0, 3 for 1, 0 for more',
@@ -4052,11 +4186,23 @@ async function viewKpi(v, fresh) {
   const k = await viewData(v, 'kpi:' + f.fy, () => api('apiKpi', f.fy, !!fresh), () => viewKpi(v), 'KPI: figures shown', { force: !!fresh });
   const recs = Object.keys(k.data).filter(r => r !== 'TEAM_TOTAL').sort();
   const d = k.data[f.rec] || {};
+  const grace = k.grace || 30, nowM = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 7);
+  const inForce = (t, who) => t.kpi && t.recruiter === who && t.from <= nowM;
   const tgt = kpi => {
     const who = f.rec === 'TEAM_TOTAL' ? '*' : f.rec.toLowerCase();
-    const rows = k.targets.filter(t => t.kpi === kpi && (t.recruiter === who || t.recruiter === '*')).sort((a, b) => (a.recruiter === '*') - (b.recruiter === '*') || (a.from < b.from ? 1 : -1));
-    const t = rows[0]; if (!t) return '';
-    return `${t.days} days · ${String(t.levels || 'All')} levels${t.exempt ? ' · notice beyond 30 days exempt' : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' · team default' : ''}`;
+    /* the rule in force now: the newest version that has started; a recruiter's own row (unless it ended) wins over the team row */
+    const newest = w => k.targets.filter(t => t.kpi === kpi && t.recruiter === w && t.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0];
+    let t = who !== '*' ? newest(who) : null; if (t && t.active === false) t = null;
+    t = t || newest('*') || k.targets.filter(x => x.kpi === kpi && x.recruiter === '*').sort((a, b) => (a.from < b.from ? 1 : -1))[0]; if (!t) return '';
+    return `${t.days} days \u00b7 ${String(t.levels || 'All')} levels${t.exempt ? ` \u00b7 notice beyond ${grace} days exempt` : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' \u00b7 team default' : ''}`;
+  };
+  const teamDays = kpi => { const t = k.targets.filter(x => x.kpi === kpi && x.recruiter === '*' && x.active !== false && x.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0]; return t ? t.days : ({ TIMELY_CLOSURE: 60, M_FULFILMENT: 50, W_FULFILMENT: 20 })[kpi]; };
+  const pctRules = KPI_PCT_KPIS.map(x => k.scoring && k.scoring[x] ? k.scoring[x].rules : null);
+  const bandsLegend = pctRules.every(r => r && JSON.stringify(r) === JSON.stringify(pctRules[0])) ? kpiBandsText(pctRules[0] || KPI_PCT_DEFAULT_RULES) : `Timely closure ${kpiBandsText(pctRules[0])}; M-level ${kpiBandsText(pctRules[1])}; W-level ${kpiBandsText(pctRules[2])}`;
+  const noteOf = kpi => {
+    const base = KPI_NOTES[kpi]; if (!base) return null;
+    const sc = k.scoring && k.scoring[kpi];
+    return sc && !sc.isDefault && sc.rules && sc.rules.steps ? base.split(' \u00b7 ')[0] + ' \u00b7 ' + kpiStepsText(sc.rules) : base;
   };
   const cellHtml = (kpi, m) => {
     const c = d[kpi] && d[kpi][m];
@@ -4070,18 +4216,19 @@ async function viewKpi(v, fresh) {
   };
   v.innerHTML = `
     <div class="page-head"><div><h1>KPI scorecard</h1>
-      <p>Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number.</p></div>
+      <p>Monthly results against each recruiter's own targets${isLead() ? ' (<a href="#" id="kpiSetup">see or change them in Admin \u2192 KPI targets</a>)' : ''}. Click any month to see the positions behind the number.</p></div>
       <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button></div></div>
     <div class="filters">
       <div class="field"><label for="kfy">Financial year</label><select id="kfy">${opts([fyNow() - 1, fyNow()].map(y => [y, `FY ${y}-${String(y + 1).slice(2)}`]), f.fy, false)}</select></div>
       <div class="field"><label for="krec">Recruiter</label><select id="krec">${opts([['TEAM_TOTAL', 'Whole team']].concat(recs.map(r => [r, r])), f.rec, false)}</select></div>
     </div>
     <div class="table-wrap"><table class="ktable"><thead><tr><th class="kname">KPI</th>${k.months.map(m => `<th class="num">${monthLabel(m)}</th>`).join('')}</tr></thead><tbody>
-      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc(KPI_NOTES[kpi] || tgt(kpi))}</span></th>
+      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc(noteOf(kpi) || tgt(kpi))}</span></th>
         ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
     </tbody></table></div>
-    <p class="legend">Score: 5 for 100%, 4 for 95%+, 3 for 90%+, 2 for 85%+, 1 for 80%+, 0 below 80%. The small line \u201cof N worked on\u201d counts every position worked on in the month, due or not. Timely closure (60 days, all levels), M-level fulfilment (50 days) and W-level fulfilment (20 days) each count the positions due in the month (position start date + TAT, with notice beyond 30 days and approved exemptions added), or filled early or on time in the month they join; a late or unfilled position counts against the month it fell due. An M-level or W-level position is also part of Timely closure, which has its own 60 days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Settings → KPI_CAPTURE_FROM); tracker accuracy shows only for months with an audit sample.</p>`;
+    <p class="legend">Score: ${esc(bandsLegend)}. The small line \u201cof N worked on\u201d counts every position worked on in the month, due or not. Timely closure (${teamDays('TIMELY_CLOSURE')} days, all levels), M-level fulfilment (${teamDays('M_FULFILMENT')} days) and W-level fulfilment (${teamDays('W_FULFILMENT')} days) each count the positions due in the month (position start date + TAT, with notice beyond ${grace} days and approved exemptions added), or filled early or on time in the month they join; a late or unfilled position counts against the month it fell due. An M-level or W-level position is also part of Timely closure, which has its own ${teamDays('TIMELY_CLOSURE')} days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Admin \u2192 KPI targets); tracker accuracy shows only for months with an audit sample.</p>`;
   $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
+  if ($('#kpiSetup')) $('#kpiSetup').onclick = e => { e.preventDefault(); (S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() }).tab = 'kpit'; go('admin'); };
   $('#krec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('kpi', false); };   // the data holds every recruiter: no server call
   $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
   $$('.kcell[data-k]', v).forEach(td => {

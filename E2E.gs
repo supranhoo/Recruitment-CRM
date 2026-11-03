@@ -588,6 +588,39 @@ function e2eRun_(trash) {
     });
     err('K25 an unknown KPI has no reconciliation', function () { apiKpiRecon(ymd_(new Date()).slice(0, 7), 'TEAM_TOTAL', 'BGV'); }, /no reconciliation/);
     t('K26 the KPI result stays under the cache limit', function () { const n = JSON.stringify(apiKpi(fy, true)).length; return n < 95000 ? n + ' chars' : false; });
+    /* The KPI set-up editor (v146): runs on the copy, so the versions it adds never reach the real sheets. */
+    const nextM = kpiAddMonths_(kpiMonthNow_(), 1);
+    t('K31 KPI set-up: nothing saved means the default scoring, the three TAT targets are listed', function () {
+      const s0 = apiKpiSetup(); return s0.tat.length === 3 && s0.scoring.length === 7 && s0.scoring.every(function (x) { return x.isDefault; }) && s0.canEdit === true ? 'ok' : false;
+    });
+    t('K32 KPI set-up: a TAT change from next month is saved as a new version, nothing already reported moves, and the scorecard cache is rebuilt', function () {
+      const before = JSON.stringify(computeKpis_(fy).data), s0 = apiKpiSetup(), rows0 = readTable_(KPI_TARGETS, true).rows.length;
+      const out = apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 49, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E check of the KPI set-up', base: s0.base }, false);
+      _tables = {};
+      const k = apiKpi(fy);   // the cached result must have been dropped by the save
+      return out.saved.length === 1 && readTable_(KPI_TARGETS, true).rows.length === rows0 + 1 && JSON.stringify(computeKpis_(fy).data) === before && k.targets.some(function (x) { return x.id === out.saved[0] && x.days === 49; }) ? out.saved[0] : false;
+    });
+    t('K33 KPI set-up: a screen older than the last save is refused', function () {
+      const s0 = apiKpiSetup(); apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 48, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E second version', base: s0.base }, false);
+      try { apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 47, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E stale screen', base: s0.base }, false); return false; } catch (e) { return /Someone saved a change/.test(e.message) ? 'ok' : false; }
+    });
+    t('K34 KPI set-up: a change that moves reported months needs the confirmation', function () {
+      const d = { type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 30, levels: 'M', exempt: 'No', from: '2025-04', reason: 'E2E past-month check', base: apiKpiSetup().base };
+      const pv = apiKpiPreview(d);
+      if (!pv.needsConfirm) return 'no reported month moved on this data (nothing to confirm)';
+      try { apiKpiSave(d, false); return false; } catch (e) { return /already reported/.test(e.message) ? pv.pastCount + ' reported results would change' : false; }
+    });
+    t('K35 KPI set-up: new score bands apply from their month, the default before it', function () {
+      const s0 = apiKpiSetup();
+      apiKpiSave({ type: 'BANDS', kpis: ['W_FULFILMENT'], bands: [{ min: 100, score: 5 }, { min: 90, score: 3 }], from: nextM, reason: 'E2E bands check', base: s0.base }, false);
+      _tables = {}; const sc = kpiScoring_();
+      return kpiScoreFor_(sc, 'W_FULFILMENT', 95, nextM) === 3 && kpiScoreFor_(sc, 'W_FULFILMENT', 95, kpiMonthNow_()) === 4 && kpiScoreFor_(sc, 'M_FULFILMENT', 95, nextM) === 4 ? 'ok' : false;
+    });
+    t('K36 KPI set-up: one audit row per version; only leads can read it, only the Head of HR and Admin can change it', function () {
+      const a = readTable_('Audit_Log').rows.filter(function (r) { return r.Sheet === KPI_TARGETS || r.Sheet === KPI_SCORING; });
+      const refused = !isLead_({ role: 'Recruiter', perms: ['voice_review'] }) && isLead_({ role: 'TA Lead' }) && !can_({ role: 'TA Lead' }, 'kpi_edit') && can_({ role: 'Head of HR' }, 'kpi_edit') && can_({ role: 'Admin' }, 'kpi_edit');
+      return a.length >= 3 && refused ? a.length + ' audit rows' : false;
+    });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
     t('K28 BGV: a previous-employer check started before the offer is flagged as a deviation', function () {
       const cfg = bgvRules_().cfg, mk = function (o) { return Object.assign({ Type: 'Previous employer', Status: 'Initiated', Trigger_Date: '2026-10-31', Initiated_On: '2026-10-29' }, o); };

@@ -33,6 +33,61 @@ const COUNT_SCORES = {
   TRACKER_ACCURACY: function (n) { return n === 0 ? 5 : 0; }
 };
 
+/* ---------------- Score rules (editable since v146; the defaults below are what applies until someone saves a version) ---------------- */
+const KPI_SCORING = 'KPI_Scoring';
+/** Columns the editable set-up adds to KPI_Targets (old rows leave them blank; blank Active means Yes). */
+const KPI_TARGET_EXTRA_COLS_ = ['Version_ID', 'Active', 'Reason', 'Saved_By', 'Saved_At'];
+const KPI_SCORING_COLS_ = ['Version_ID', 'KPI', 'Kind', 'Rules_JSON', 'Effective_From', 'Reason', 'Saved_By', 'Saved_At'];
+/** Percentage KPIs: "at least min % scores score"; below the lowest band scores 0. Count KPIs: "up to max items scores score"; more than the last step scores `otherwise`. */
+const KPI_PERCENT_DEFAULT_ = [{ min: 100, score: 5 }, { min: 95, score: 4 }, { min: 90, score: 3 }, { min: 85, score: 2 }, { min: 80, score: 1 }];
+const KPI_COUNT_DEFAULTS_ = {
+  PSYCHOMETRIC: { steps: [{ max: 0, score: 5 }, { max: 1, score: 3 }], otherwise: 0 },
+  MRF_ADHERENCE: { steps: [{ max: 0, score: 5 }, { max: 1, score: 4 }, { max: 2, score: 3 }, { max: 3, score: 2 }, { max: 4, score: 1 }], otherwise: 0 },
+  BGV: { steps: [{ max: 0, score: 5 }, { max: 1, score: 2 }], otherwise: 0 },
+  TRACKER_ACCURACY: { steps: [{ max: 0, score: 5 }], otherwise: 0 }
+};
+let _kpiDraft_ = null;   // a change being previewed: its rows are laid over the saved ones for one call (set and cleared by apiKpiPreview)
+function kpiDefaultRules_(kpi) {
+  return JSON.parse(JSON.stringify(KPI_DEFS[kpi] && KPI_DEFS[kpi].count ? KPI_COUNT_DEFAULTS_[kpi] : KPI_PERCENT_DEFAULT_));
+}
+function kpiRulesEqual_(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+/** Saved score-rule versions, normalised: {id, kpi, kind, rules, from (yyyy-MM), idx}. A row that cannot be read is ignored (the default applies). */
+function kpiScoring_() {
+  const out = [];
+  if (ss_().getSheetByName(KPI_SCORING)) {
+    readTable_(KPI_SCORING).rows.forEach(function (r, i) {
+      const kpi = String(r.KPI).trim().toUpperCase(), kind = String(r.Kind).trim().toUpperCase();
+      if (!KPI_DEFS[kpi] || (kind !== 'PERCENT' && kind !== 'COUNT')) return;
+      let rules; try { rules = JSON.parse(String(r.Rules_JSON || '')); } catch (e) { return; }
+      const f = r.Effective_From instanceof Date ? fmt_(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '').replace(/^'/, '').slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(f) || !rules) return;
+      out.push({ id: String(r.Version_ID || ''), kpi: kpi, kind: kind, rules: rules, from: f, idx: i });
+    });
+  }
+  if (_kpiDraft_ && _kpiDraft_.scoring) _kpiDraft_.scoring.forEach(function (d, j) { out.push(Object.assign({}, d, { idx: 1e6 + j })); });
+  return out;
+}
+/** The rules in force for a KPI in a month: the saved version with the latest start month on or before it (a later row wins a tie), else the default. */
+function kpiRulesFor_(scoring, kpi, month) {
+  const rows = (scoring || []).filter(function (r) { return r.kpi === kpi && r.from <= month; })
+    .sort(function (a, b) { return a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0); });
+  return rows.length ? rows[0].rules : kpiDefaultRules_(kpi);
+}
+/** The score (0-5) of a value under the rules in force in `month`; null when there is no value. With no saved version it equals kpiScore_ / COUNT_SCORES. */
+function kpiScoreFor_(scoring, kpi, value, month) {
+  if (value === null || value === undefined) return null;
+  const rules = kpiRulesFor_(scoring, kpi, month);
+  if (KPI_DEFS[kpi].count) {
+    const steps = (rules.steps || []).slice().sort(function (a, b) { return a.max - b.max; });
+    for (let i = 0; i < steps.length; i++) if (value <= steps[i].max) return steps[i].score;
+    return Number(rules.otherwise) || 0;
+  }
+  const bands = (Array.isArray(rules) ? rules : []).slice().sort(function (a, b) { return b.min - a.min; });
+  for (let i = 0; i < bands.length; i++) if (value >= bands[i].min) return bands[i].score;
+  return 0;
+}
+
+let _kptColsDone_ = false;
 function ensureKpiTargets_() {
   let sh = ss_().getSheetByName(KPI_TARGETS);
   if (!sh) {
@@ -41,9 +96,12 @@ function ensureKpiTargets_() {
     sh.getRange(2, 6, KPI_DEFAULT_TARGETS_.length, 1).setNumberFormat('@');
     sh.getRange(1, 1, 1, 7).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1F3A5F');
     sh.setFrozenRows(1);
+    addColumns_(KPI_TARGETS, KPI_TARGET_EXTRA_COLS_);
+    _kptColsDone_ = true;
     dropStale_(KPI_TARGETS);
     return;
   }
+  if (!_kptColsDone_) { addColumns_(KPI_TARGETS, KPI_TARGET_EXTRA_COLS_); _kptColsDone_ = true; }   // the columns for versions, once per run (it reads one header row)
   // An existing sheet gets the default row of any TAT KPI it has no row for (a new KPI), once; nothing already there is changed.
   const have = function () { const h = {}; kpiTargets_().forEach(function (t) { h[t.kpi] = true; }); return h; };
   if (!kpiMissingDefaults_(have()).length) return;
@@ -61,9 +119,12 @@ function ensureKpiTargets_() {
 function targetFor_(targets, recruiter, kpi, month) {
   const pick = function (who) {
     return targets.filter(function (t) { return t.recruiter === who && t.kpi === kpi && t.from <= month; })
-      .sort(function (a, b) { return a.from < b.from ? 1 : -1; })[0];
+      .sort(function (a, b) { return a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0); })[0];
   };
-  return pick(String(recruiter).trim().toLowerCase()) || pick('*') || null;
+  const mine = pick(String(recruiter).trim().toLowerCase());
+  if (mine && mine.active !== false) return mine;   // a row with Active = No ends the override: the team target applies again from its month
+  const team = pick('*');
+  return team && team.active !== false ? team : null;
 }
 
 function levelMatch_(levels, grade) {
@@ -94,11 +155,12 @@ function addDays_(ymd, n) {
 
 /** The KPI target rows, normalised. */
 function kpiTargets_() {
-  return readTable_(KPI_TARGETS).rows.map(function (r) {
+  return readTable_(KPI_TARGETS).rows.map(function (r, i) {
     const f = r.Effective_From instanceof Date ? fmt_(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '0000-00').slice(0, 7);
     return { recruiter: String(r.Recruiter).trim().toLowerCase(), kpi: String(r.KPI).trim().toUpperCase(), levels: r.Levels,
-      days: Number(r.TAT_Days) || 0, exempt: String(r.Notice_Exemption).toUpperCase() !== 'NO', from: f };
-  });
+      days: Number(r.TAT_Days) || 0, exempt: String(r.Notice_Exemption).toUpperCase() !== 'NO', from: f,
+      active: String(r.Active == null ? '' : r.Active).trim().toUpperCase() !== 'NO', id: String(r.Version_ID || ''), idx: i };
+  }).concat(_kpiDraft_ && _kpiDraft_.targets ? _kpiDraft_.targets.map(function (d, j) { return Object.assign({}, d, { idx: 1e6 + j }); }) : []);
 }
 
 const KPI_RECON_BUCKETS_ = [
@@ -199,7 +261,7 @@ function kpiDue_(l, kpi, targets, rec, clk, status) {
 function computeKpis_(fy) {
   ensureKpiTargets_();
   ensureSchema_();
-  const targets = kpiTargets_();
+  const targets = kpiTargets_(), scoring = kpiScoring_();
   const months = fyMonths_(fy);
   const lines = readTable_(T.MRF.name).rows;
   const recruiters = {};
@@ -256,7 +318,7 @@ function computeKpis_(fy) {
 
   // ---- Compliance KPIs (scored from KPI_CAPTURE_FROM onward) ----
   const s = settings_();
-  const capRaw = s.KPI_CAPTURE_FROM;
+  const capRaw = _kpiDraft_ && _kpiDraft_.captureFrom ? _kpiDraft_.captureFrom : s.KPI_CAPTURE_FROM;
   const captureFrom = capRaw instanceof Date ? fmt_(capRaw, TZ, 'yyyy-MM') : String(capRaw || '').replace(/^'/, '').slice(0, 7) || '9999-99';
   const nowM = ymd_(new Date()).slice(0, 7), today = ymd_(new Date());
   const tracked = function (m) { return inFy(m) && m >= captureFrom && m <= nowM; };
@@ -361,14 +423,14 @@ function computeKpis_(fy) {
   });
   recruiters['TEAM_TOTAL'] = team;
 
-  const finish = function (kpi, c) {
+  const finish = function (kpi, c, m) {
     if (KPI_DEFS[kpi].count) {
       const pending = c.pending || 0;
       return { num: c.num, den: c.den, pct: null, pending: pending,
-        score: pending ? null : COUNT_SCORES[kpi](c.num), items: c.items };
+        score: pending ? null : kpiScoreFor_(scoring, kpi, c.num, m), items: c.items };
     }
     const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
-    return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScore_(pct) : null, items: c.items,
+    return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
       worked: KPI_TAT_.indexOf(kpi) >= 0 ? c.worked : undefined, workedOk: KPI_TAT_.indexOf(kpi) >= 0 ? c.workedOk : undefined };
   };
   const out = {};
@@ -378,11 +440,18 @@ function computeKpis_(fy) {
       out[rec][kpi] = {};
       months.forEach(function (m) {
         const c = recruiters[rec][kpi] && recruiters[rec][kpi][m];
-        if (c) out[rec][kpi][m] = finish(kpi, c);
+        if (c) out[rec][kpi][m] = finish(kpi, c, m);
       });
     });
   });
-  return { fy: fy, months: months, defs: KPI_DEFS, data: out, targets: targets, captureFrom: captureFrom,
+  /* The rules in force now, for the scorecard's own text (each month's cell is scored by the rules of that month). */
+  const rulesNow = {};
+  Object.keys(KPI_DEFS).forEach(function (kpi) {
+    if (!KPI_DEFS[kpi].scored) return;
+    const r = kpiRulesFor_(scoring, kpi, nowMonth);
+    rulesNow[kpi] = { rules: r, isDefault: kpiRulesEqual_(r, kpiDefaultRules_(kpi)) };
+  });
+  return { fy: fy, months: months, defs: KPI_DEFS, data: out, targets: targets, captureFrom: captureFrom, scoring: rulesNow, grace: clocks.grace,
     audited: Object.keys(auditMonths) };
 }
 
