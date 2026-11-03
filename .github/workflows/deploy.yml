@@ -47,6 +47,14 @@ jobs:
           node --check "$RUNNER_TEMP/chk/app.js"
           echo "Syntax OK"
 
+      - name: Guard the deploy steps (an older copy of this file must never be merged again)
+        run: |
+          f=.github/workflows/deploy.yml; bad=0
+          grep -Eq '^ +echo "clasp_config_auth=\$HOME/\.clasp-auth/\.clasprc\.json" >> ' "$f" || { echo "::error::deploy.yml: clasp_config_auth must point at the auth FILE (.clasprc.json), not its folder (EISDIR)"; bad=1; }
+          grep -Eq '^ +if ! cmp -s "\$f" "\$RUNNER_TEMP/live/\$g"' "$f" || { echo "::error::deploy.yml: the verify step must compare each .gs with the pulled .js"; bad=1; }
+          grep -Eq '^ +for i in \$\(seq 1 12\); do' "$f" || { echo "::error::deploy.yml: the deployment check must wait for Apps Script to list the new version"; bad=1; }
+          [ "$bad" = 0 ] && echo "Deploy steps OK"; exit $bad
+
       - name: Read the build number
         id: build
         run: |
@@ -84,7 +92,7 @@ jobs:
           umask 077
           mkdir -p "$HOME/.clasp-auth"
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasp-auth/.clasprc.json"
-          echo "clasp_config_auth=$HOME/.clasp-auth" >> "$GITHUB_ENV"
+          echo "clasp_config_auth=$HOME/.clasp-auth/.clasprc.json" >> "$GITHUB_ENV"   # clasp 3 wants the path of the auth FILE, not its folder (a folder fails with EISDIR)
 
       - name: Push the code
         run: clasp push -f
@@ -104,12 +112,19 @@ jobs:
           (cd "$RUNNER_TEMP/live" && clasp pull)
           bad=0
           for f in *.gs *.html appsscript.json; do
-            if ! cmp -s "$f" "$RUNNER_TEMP/live/$f"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
+            g="$f"; case "$f" in *.gs) g="${f%.gs}.js";; esac   # clasp 3 pulls the server files as .js
+            if ! cmp -s "$f" "$RUNNER_TEMP/live/$g"; then echo "::error::$f differs between the repository and Apps Script"; bad=1; fi
           done
           [ "$bad" = 0 ] || { echo "Result: pushed to Apps Script, NOT confirmed live (files differ)."; exit 1; }
-          line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
-          echo "$line"
-          case "$line" in *"v${BUILD}"*) ;; *) echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1;; esac
+          # Apps Script lists a new deployment version a minute or so after `clasp deploy` returns, so ask again for up to 2 minutes.
+          ok=0
+          for i in $(seq 1 12); do
+            line=$(clasp deployments | grep "$DEPLOYMENT_ID" || true)
+            echo "$line"
+            case "$line" in *"v${BUILD}"*) ok=1; break;; esac
+            sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "::error::Deployment does not show build v${BUILD}"; echo "Result: pushed to Apps Script, NOT confirmed live."; exit 1; }
           echo "Result: live. Build v${BUILD} is deployed; the page footer should read version ${BUILD} after a hard reload."
 
       - name: Remove the login from the runner

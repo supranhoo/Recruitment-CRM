@@ -69,6 +69,8 @@ This folder is configured for `clasp` through `.clasp.json`.
 3. After approval: `clasp push -f`, then `clasp deploy -i <deployment> -d "v<BUILD_ID> <commit subject>"`, which updates the **existing** web-app deployment, so the link never changes.
 4. Verification: the project is pulled back and compared with the repository, and the deployment must show `v<BUILD_ID>`. The log ends with **"Result: live"**, or with **"NOT confirmed live"** and a red run.
 
+**Three details of the deploy job that must stay as they are** (a rewrite of the workflow from an older copy once removed them, and release 144 failed with `EISDIR`; job **check** now fails the run if any is missing): (1) `clasp_config_auth` must point at the file `$HOME/.clasp-auth/.clasprc.json`, not at its folder; (2) clasp 3 pulls the server files as `.js`, so the verify step compares each `X.gs` with the pulled `X.js`; (3) Apps Script lists the new deployment version about a minute after `clasp deploy` returns, so the deployment check asks again for up to 2 minutes. A re-run of an old run reuses the workflow file of that run's commit: after fixing the workflow, start a new run (Actions \u2192 *Run workflow* on `main`), do not re-run the old one.
+
 Before merging, set `BUILD_ID` in `Config.gs` to the next number. After the run, hard-reload (Ctrl+Shift+R), check the footer or Admin \u2192 Tools shows that number, and open every screen the release touched. To release again without a new commit: Actions \u2192 *Deploy to Apps Script* \u2192 *Run workflow* (it also waits for approval).
 
 **One-time setup (owner, in GitHub):**
