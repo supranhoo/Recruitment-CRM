@@ -5310,6 +5310,8 @@ async function viewDepts(v) {
 const bgvCls = s => String(s || '').replace(/\W+/g, '');
 const bgvRag = r => r.rag ? `<span class="bgv-rag ${r.rag}" title="${esc(r.why || '')}">${r.rag}</span>` : '';
 const bgvStChip = s => `<span class="bgv-st ${bgvCls(s)}">${esc(s)}</span>`;
+/** The status as the person sees it: N/A (not tracked) instead of the stored status, "With the employee" when the employee holds it, then the warning. */
+const bgvStatusHtml = o => (o.na ? `<span class="bgv-st na" title="${esc(o.why || '')}">N/A</span>` : bgvStChip(o.status)) + (o.withEmp ? ' <span class="bgv-st emp" title="The employee has not yet given what is needed">With the employee</span>' : '') + ' ' + bgvRag(o);
 const BGV_TYPE_NOTE = { 'Previous employer': 'Earlier employers · start within 3 days of the offer', 'Current employer': 'The employer being left · start within 2 days of joining' };
 /** After a change made in BGV: forget the remembered list so the page asks the server and draws what it says. */
 function bgvReload(v) { forget('bgv:'); return viewBgv(v); }
@@ -5339,36 +5341,40 @@ function bgvCases(el, B, v) {
       <div class="kpi"><div class="v">${sum.inProgress}</div><div class="l">With the vendor</div></div>
       <div class="kpi"><div class="v">${sum.toReview}</div><div class="l">Report to review</div></div>
       ${B.decide || B.lead ? `<div class="kpi ${sum.toDecide ? 'alert' : ''}"><div class="v">${sum.toDecide || 0}</div><div class="l">Result to decide (Head of HR)</div></div>` : ''}
+      <div class="kpi"><div class="v">${sum.withEmp || 0}</div><div class="l">With the employee</div></div>
       <div class="kpi ${sum.red ? 'alert' : ''}"><div class="v">${sum.red}</div><div class="l">Red: past the limit</div></div>
       <div class="kpi"><div class="v">${sum.amber}</div><div class="l">Amber: close to it</div></div>
+      <div class="kpi"><div class="v">${sum.na || 0}</div><div class="l">N/A: not tracked</div></div>
       <div class="kpi"><div class="v">${sum.closedMonth}</div><div class="l">Closed this month</div></div></div>
     <div class="filters"><div class="field"><label for="bgQ">Search</label><input id="bgQ" value="${esc(f.q)}" placeholder="Candidate, position, MRF"></div>
       <div class="field"><label for="bgType">Type</label><select id="bgType">${opts([['', 'Both'], ...B.types.map(t => [t, t])], f.type, false)}</select></div>
-      <div class="field"><label for="bgSt">Status</label><select id="bgSt">${opts([['', 'All'], ['open', 'Open'], ['decision', 'Result to decide'], ...B.statuses.map(s => [s, s])], f.status, false)}</select></div>
+      <div class="field"><label for="bgSt">Status</label><select id="bgSt">${opts([['', 'All'], ['open', 'Open'], ['decision', 'Result to decide'], ['na', 'N/A (not tracked)'], ...B.statuses.map(s => [s, s])], f.status, false)}</select></div>
+      <div class="field"><label for="bgWith">Pending with</label><select id="bgWith">${opts([['', 'Anyone'], ['Recruiter', 'Recruiter'], ['Employee', 'Employee'], ['Vendor', 'Vendor']], f.holder || '', false)}</select></div>
       <div class="field"><label for="bgRag">Warning</label><select id="bgRag">${opts([['', 'Any'], ['Red', 'Red'], ['Amber', 'Amber'], ['Green', 'Green']], f.rag, false)}</select></div>
       ${own ? '' : `<div class="field"><label for="bgRec">Recruiter</label><select id="bgRec">${opts(recs, f.rec)}</select></div>`}
       <div class="field" style="justify-content:flex-end"><button class="btn sm" id="bgCsv">Download CSV</button></div></div>
-    <div id="bgList"></div><p class="legend">Red means a limit has passed (start date, vendor turnaround of ${B.rules.cfg.vendorTatDays} days, or review within ${B.rules.cfg.reviewDays} days of the report); amber means 80% of it is used. Findings and files are visible to the owner, TA Leads and the Head of HR; others see the status only.</p>`;
+    <div id="bgList"></div><p class="legend">Red means a limit has passed (start date, vendor turnaround of ${B.rules.cfg.vendorTatDays} days, or review within ${B.rules.cfg.reviewDays} days of the report); amber means 80% of it is used. <b>With the employee</b> means the candidate has not yet given something (consent, documents, an experience letter) and the recruiter has set a date it is expected; no warning runs until that date. <b>N/A</b> means an older record with no linked candidate: it is not tracked or counted. Findings and files are visible to the owner, TA Leads and the Head of HR; others see the status only.</p>`;
   const rank = { Red: 0, Amber: 1, Green: 2, '': 3 };
   const draw = () => {
     const q = f.q.trim().toLowerCase();
-    const rows = scope.filter(r => (!f.type || r.type === f.type) && (!f.status || (f.status === 'open' ? !['Closed', 'Cancelled'].includes(r.status) : f.status === 'decision' ? !!r.needsDecision : r.status === f.status)) && (!f.rag || r.rag === f.rag)
+    const rows = scope.filter(r => (!f.type || r.type === f.type) && (!f.status || (f.status === 'open' ? !['Closed', 'Cancelled'].includes(r.status) && !r.na : f.status === 'na' ? !!r.na : f.status === 'decision' ? !!r.needsDecision : r.status === f.status)) && (!f.holder || r.holder === f.holder) && (!f.rag || r.rag === f.rag)
       && (!f.rec || r.recruiter === f.rec) && (!q || [r.candidate, r.position, r.mrf, r.id].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => rank[a.rag] - rank[b.rag] || String(a.due).localeCompare(String(b.due)));
     late('#bgList').innerHTML = rows.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Candidate</th><th>Position</th><th>Type</th><th>Recruiter</th><th>Status</th><th>Start by</th><th>Started</th><th>Report needed</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="${r.canWork ? 'click' : 'ro'}" data-id="${esc(r.id)}" ${r.canWork ? 'tabindex="0"' : `title="Status only: this case belongs to ${esc(r.recruiter)}"`}><td><b>${esc(r.candidate) || '<span class="sub">Candidate not linked</span>'}</b><span class="sub">${esc(r.id)}${r.legacy ? ' · carried over' : ''}</span></td>
         <td>${esc(r.position)}<span class="sub">${esc(r.mrf)} · ${esc(r.dept)} · ${esc(r.grade)}</span></td><td>${esc(r.type)}</td><td>${esc(r.recruiter)}</td>
-        <td>${bgvStChip(r.status)} ${bgvRag(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : r.needsDecision ? ' · <b class="miss">waiting for the Head of HR</b>' : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
+        <td>${bgvStatusHtml(r)}${r.outcome && ['Closed', 'Under review', 'Report received'].includes(r.status) ? `<span class="sub">${esc(r.outcome)}${r.decision ? ' · ' + esc(r.decision) : r.needsDecision ? ' · <b class="miss">waiting for the Head of HR</b>' : ''}</span>` : ''}${r.why && r.rag !== 'Green' ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>
         <td class="nw">${fmtDate(r.due)}</td><td class="nw">${r.initiated ? fmtDate(r.initiated) : '<span class="sub">—</span>'}${r.early ? `<span class="sub miss" title="Policy 9.1.1 starts the check within ${B.rules.cfg.prevInitDays} days after the offer">${r.early} d before the offer</span>` : ''}</td><td class="nw">${r.resultDue ? fmtDate(r.resultDue) : '<span class="sub">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${scope.length ? 'No case matches.' : own ? 'You have no BGV cases yet. A case opens automatically when a candidate for one of your Manager-and-above (or flagged) positions reaches the Offer stage, and a second one when they join.' : 'No BGV cases yet.'}</div>`;
     $$('#bgList tr.click', el).forEach(tr => { tr.onclick = () => openBgvCase(tr.dataset.id, () => bgvReload(v)); tr.onkeydown = e => { if (e.key === 'Enter') openBgvCase(tr.dataset.id, () => bgvReload(v)); }; });
-    $('#bgCsv').onclick = () => csvSave(`bgv-cases-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'MRF', 'Department', 'Grade', 'Recruiter', 'Status', 'Warning', 'Why', 'Start by', 'Started', 'Days started before the offer', 'Report needed', 'Outcome', 'Decision'],
-      rows.map(r => [r.id, r.type, r.candidate, r.position, r.mrf, r.dept, r.grade, r.recruiter, r.status, r.rag, r.why, r.due, r.initiated, r.early || '', r.resultDue, r.outcome || '', r.decision || '']));
+    $('#bgCsv').onclick = () => csvSave(`bgv-cases-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'MRF', 'Department', 'Grade', 'Recruiter', 'Status', 'Warning', 'Why', 'Start by', 'Started', 'Days started before the offer', 'Report needed', 'Outcome', 'Decision', 'Pending with', 'N/A', 'Expected on'],
+      rows.map(r => [r.id, r.type, r.candidate, r.position, r.mrf, r.dept, r.grade, r.recruiter, r.status, r.rag, r.why, r.due, r.initiated, r.early || '', r.resultDue, r.outcome || '', r.decision || '', r.holder || '', r.na ? 'N/A' : '', r.expected || '']));
   };
   $('#bgQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
   $('#bgType').onchange = e => { f.type = e.target.value; draw(); };
   $('#bgSt').onchange = e => { f.status = e.target.value; draw(); };
   $('#bgRag').onchange = e => { f.rag = e.target.value; draw(); };
+  $('#bgWith').onchange = e => { f.holder = e.target.value; draw(); };
   if ($('#bgRec')) $('#bgRec').onchange = e => { f.rec = e.target.value; draw(); };
   draw();
 }
@@ -5382,7 +5388,7 @@ async function openBgvCase(id, after) {
     const fileField = (k, l) => ({ k, l, t: 'file', ro: closed && !X.lead });
     const dt = (l, v, sub) => `<div><span class="sub">${l}</span><b>${v ? fmtDate(v) : '—'}</b>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`;
     body.innerHTML = `<div class="bgv-head"><div><h3 style="margin:0">${c.candidate ? esc(c.candidate) : 'Candidate not linked'}</h3><div class="sub">${esc(c.position)} · ${esc(c.mrf)} · ${esc(c.dept)} · ${esc(c.grade)} · recruiter ${esc(c.recruiter)}</div>
-        <div class="sub"><b>${esc(c.type)}</b> — ${esc(BGV_TYPE_NOTE[c.type] || '')}</div></div><div>${bgvStChip(c.status)} ${bgvRag(c)}</div></div>
+        <div class="sub"><b>${esc(c.type)}</b> — ${esc(BGV_TYPE_NOTE[c.type] || '')}</div></div><div>${bgvStatusHtml(c)}</div></div>
       ${c.why && c.rag !== 'Green' && c.rag ? `<div class="note ${c.rag === 'Red' ? 'warn-note' : ''}">${esc(c.why)}</div>` : ''}${c.early ? `<div class="note warn-note">Started ${c.early} day${c.early === 1 ? '' : 's'} before the offer was released. Policy 9.1.1: the previous-employer check starts within ${(X.rules && X.rules.prevInitDays) || 3} days after the offer. This is a deviation; the BGV compliance KPI is unchanged.</div>` : ''}${c.purged ? `<div class="note">Purged under the retention rule on ${fmtDate(c.purged)}: the files and personal details were deleted. The dates, status and result stay for the reports.</div>` : ''}${c.legacy ? '<div class="note">Carried over from the position’s BGV fields. Check the status and add the checks.</div>' : ''}
       <div class="bgv-dates">${dt(c.type === 'Previous employer' ? 'Offer' : 'Joined', c.trigger)}${dt('Start by', c.due)}${c.type === 'Previous employer' ? dt('Report needed by', c.resultDue) : ''}${dt('Consent', c.consent)}${dt('Started', c.initiated, (c.vendor ? esc(vend[c.vendor] || (c.vendor === 'DIRECT' ? 'Direct' : c.vendor)) + (c.vendorRef ? ' · ' + esc(c.vendorRef) : '') : '') + (c.early ? (c.vendor ? ' · ' : '') + '<b class="miss">' + c.early + ' d before the offer</b>' : ''))}${dt('Report received', c.report)}</div>
       ${c.candId ? `<p style="margin:8px 0"><button class="linklike" id="bcCand">Open candidate</button> · <button class="linklike" id="bcPos">Open position</button></p>` : ''}
@@ -5393,6 +5399,18 @@ async function openBgvCase(id, after) {
           <div class="field" id="bmRefF" hidden><label for="bmRef">Vendor reference</label><input id="bmRef" value="${esc(c.vendorRef || '')}" maxlength="80"></div>
           <div class="field wide"><label for="bmNote">Note ${'<span class="opt">(needed to cancel)</span>'}</label><input id="bmNote" maxlength="400"></div></div>
         <div class="drawer-actions" style="position:static"><button class="btn primary" id="bmGo" disabled>Move</button></div></fieldset>` : (c.status === 'Closed' && X.lead ? `<div class="drawer-actions" style="position:static"><button class="btn" id="bmReopen">Reopen for review</button></div>` : '')}
+      ${closed ? '' : `<fieldset class="bgv-move" id="bgPend"><legend>Pending with the employee</legend>
+        <p class="hint" style="margin:0 0 8px">${c.withEmp ? 'The employee holds this case: ' + esc(c.waitReason) + (c.expected ? ', expected ' + esc(fmtDate(c.expected)) : '') + '. No warning runs until that date.' : 'Use this when the candidate has not given what is needed (consent, documents, an experience letter). Set the date it is expected: the day counts and chasers pause until then, and the case comes back as Red if it has not arrived.'}</p>
+        <div class="grid"><div class="field"><label for="bpReason">Waiting on the employee for</label><select id="bpReason">${opts([['', 'Not waiting']].concat((X.waitReasons || []).map(r => [r, r])), c.waiting ? c.waitReason : '', false)}</select></div>
+          <div class="field"><label for="bpExp">Expected by</label><input id="bpExp" type="date" value="${esc(c.expectedOn || '')}" min="${today()}"></div>
+          ${c.type === 'Previous employer' ? `<div class="field"><label for="bpLeft">Candidate has left the organisation</label><select id="bpLeft">${opts([['', 'Not recorded'], ['Yes', 'Yes'], ['No', 'No']], c.leftOrg, false)}</select></div>
+          <div class="field"><label for="bpLetter">Experience letter</label><select id="bpLetter">${opts([['', 'Not recorded'], ['Pending', 'Pending'], ['Received', 'Received']], c.expLetter, false)}</select></div>` : ''}
+          <div class="field wide"><label for="bpRem">Remark</label><input id="bpRem" maxlength="300" value="${esc(c.pendRemark || '')}" placeholder="Who was asked, what they said"></div></div>
+        ${c.type === 'Previous employer' ? '<p class="hint">A candidate who has left the organisation and has not given the experience letter is pending, never N/A, and cannot be waived without a written reason.</p>' : ''}
+        <div class="drawer-actions" style="position:static"><button class="btn primary" id="bpSave">Save pending details</button></div></fieldset>`}
+      ${X.lead ? `<fieldset class="bgv-move" id="bgTrack"><legend>Tracking</legend>
+        <p class="hint" style="margin:0 0 8px">${c.na ? 'This case is <b>N/A</b>: ' + esc(c.why) + '. It has no warning, no to-do and is not counted.' : c.track === 'NA' ? 'Marked N/A by a lead.' : c.track === 'Tracked' ? 'Marked as tracked by a lead, even if it looks old.' : 'Tracked automatically. Only an older record with no linked candidate becomes N/A by itself.'}${c.trackNote ? ' (' + esc(c.trackNote) + ')' : ''}</p>
+        <div class="rs-row"><input id="btNote" maxlength="200" placeholder="Reason (needed to mark N/A)" style="flex:1;min-width:200px" aria-label="Reason">${c.na ? '<button class="btn sm" id="btTracked">Track this case</button>' : '<button class="btn sm" id="btNa">Mark as N/A</button>'}${c.track ? '<button class="btn sm" id="btAuto">Back to automatic</button>' : ''}</div></fieldset>` : ''}
       <h4>Checks</h4>
       <div class="table-wrap"><table class="bgv-checks"><thead><tr><th>Check</th><th>About (employer, institute, address)</th><th>Period</th><th>Status</th><th>Finding</th><th></th></tr></thead><tbody>
         ${X.checks.map(k => `<tr data-ck="${esc(k.id)}"><td><b>${esc(k.type)}</b></td><td><input class="ck-subject" value="${esc(k.subject)}" ${closed ? 'disabled' : ''}></td><td><input class="ck-period" value="${esc(k.period)}" ${closed ? 'disabled' : ''}></td>
@@ -5430,6 +5448,15 @@ async function openBgvCase(id, after) {
     $$('tr[data-ck]', body).forEach(tr => { const b = $('.ck-save', tr); if (b) b.onclick = () => run(() => api('apiBgvCheckSave', c.id, { id: tr.dataset.ck, subject: $('.ck-subject', tr).value, period: $('.ck-period', tr).value, status: $('.ck-status', tr).value, finding: $('.ck-finding', tr).value }), 'Check saved.'); });
     if ($('#bkAdd')) $('#bkAdd').onclick = () => { if (!$('#bkType').value) return toast('Choose the check to add.', true); run(() => api('apiBgvCheckSave', c.id, { type: $('#bkType').value, subject: $('#bkSubject').value }), 'Check added.'); };
     $('#boSave').onclick = () => run(() => api('apiBgvSave', c.id, { outcome: $('#boOutcome').value, remarks: $('#boRemarks').value }), 'Saved.');
+    if ($('#bpSave')) $('#bpSave').onclick = () => {
+      const d = { expected: $('#bpExp').value, remark: $('#bpRem').value }, rs = $('#bpReason').value;
+      if (rs) { d.waiting = true; d.reason = rs; } else if (c.waiting) d.waiting = false;
+      if ($('#bpLeft')) { d.left = $('#bpLeft').value; d.letter = $('#bpLetter').value; }
+      run(() => api('apiBgvPending', c.id, d), 'Pending details saved.');
+    };
+    if ($('#btNa')) $('#btNa').onclick = () => run(() => api('apiBgvTrack', c.id, 'NA', $('#btNote').value), 'Marked as N/A.');
+    if ($('#btTracked')) $('#btTracked').onclick = () => run(() => api('apiBgvTrack', c.id, 'Tracked', $('#btNote').value), 'This case is now tracked.');
+    if ($('#btAuto')) $('#btAuto').onclick = () => run(() => api('apiBgvTrack', c.id, '', ''), 'Tracking is automatic again.');
     if ($('#bdSave')) $('#bdSave').onclick = () => run(() => api('apiBgvDecide', c.id, { decision: $('#bdDec').value, note: $('#bdNote').value }), 'Decision recorded.');
     if ($('#bmTpl')) { $('#bmTpl').onchange = () => { $('#bmMail').disabled = !$('#bmTpl').value; }; $('#bmMail').onclick = () => { const t = X.templates.find(x => x.id === $('#bmTpl').value); if (t) bgvEmailDialog(X, t, async () => { try { draw(await api('apiBgvCase', c.id)); } catch (e) { } }); }; }
     $('#blAdd').onclick = () => run(() => api('apiBgvNote', c.id, $('#blKind').value, $('#blNote').value), 'Added.');
@@ -5449,7 +5476,7 @@ async function bgvChips(el, o) {
   let rows; try { rows = await api('apiBgvFor', o.kind, o.id); } catch (e) { return; }
   if (!el.isConnected) return;
   if (!rows.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<section class="app-sec bgv-sec"><h3>Background verification</h3><ul class="bgv-chips">${rows.map(r => `<li><b>${esc(r.type)}</b> ${bgvStChip(r.status)} ${bgvRag(r)}
+  el.innerHTML = `<section class="app-sec bgv-sec"><h3>Background verification</h3><ul class="bgv-chips">${rows.map(r => `<li><b>${esc(r.type)}</b> ${bgvStatusHtml(r)}
     <span class="sub">${['Not started', 'Awaiting consent'].includes(r.status) && r.due ? 'start by ' + fmtDate(r.due) : esc(r.recruiter)}${r.canWork && r.outcome ? ' · ' + esc(r.outcome) : ''}</span>${r.canWork ? ` <button class="linklike" data-bgv="${esc(r.id)}">Open</button>` : ''}</li>`).join('')}</ul></section>`;
   $$('[data-bgv]', el).forEach(b => b.onclick = () => { S.bgvOpenId = b.dataset.bgv; S.bgvF = S.bgvF || {}; S.bgvF.tab = 'mine'; closeDrawer(); try { $$('dialog[open]').forEach(x => x.close()); } catch (e) { } go('bgv', true); });
 }

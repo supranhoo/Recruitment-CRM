@@ -315,9 +315,11 @@ function computeTasks_() {
 
   // 9. BGV for offered positions (Manager and above, or flagged).
   const bgvOpen = (function () { try { return bgvOpenCaseMap_(); } catch (e) { return {}; } })();
+  const bgvQuiet = (function () { try { return bgvQuietMap_(); } catch (e) { return {}; } })();   // N/A cases, and cases the employee is expected to deliver by a date still ahead
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Offered' || l.BGV_Prev_Org_Date || !l.Offer_Date) return;
+    if (bgvQuiet[id + '|Previous employer']) return;
     const flag = String(l.BGV_Required || 'Auto');
     if (!(flag === 'Yes' || (flag !== 'No' && managerPlus_(l.Grade, l.Position)))) return;
     add('bgv', { key: 'bgv|' + id, recruiter: String(l.Recruiter), line: id, app: '', title: 'Start background verification',
@@ -328,6 +330,7 @@ function computeTasks_() {
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Closed' || !(l.Actual_DOJ instanceof Date) || l.BGV_Current_Org_Date) return;
+    if (bgvQuiet[id + '|Current employer']) return;
     const doj = ymd_(l.Actual_DOJ);
     if (doj < since30 || doj > ymd_(new Date())) return;
     const flag = String(l.BGV_Required || 'Auto');
