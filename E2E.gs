@@ -661,6 +661,23 @@ function e2eRun_(trash) {
       apiBgvPending(open.Case_ID, { letter: 'Received' });
       return /experience letter is still pending/.test(waive) && /cannot be N\/A/.test(na) ? open.Case_ID : false;
     });
+    /* BGV release 149: the pending block in the Daily review and My day. */
+    t('K41 BGV: the pending list holds only Red or with-the-employee cases, never N/A or closed ones', function () {
+      const L = apiBgvPendingList();
+      return /^\d{4}-\d{2}-\d{2}$/.test(L.today) && Array.isArray(L.rows) && L.rows.every(function (r) { return (r.rag === 'Red' || r.withEmp) && ['Closed', 'Cancelled'].indexOf(r.status) < 0; }) ? L.rows.length + ' pending' : false;
+    });
+    t('K42 BGV: a case with the employee appears in the list, its date and remark save in place, and a refused date is not saved', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c) && !bgvTrack_(c).na; })[0];
+      if (!open) return 'no tracked open case on this copy (nothing to test)';
+      const d1 = addDays_(ymd_(new Date()), 2), d2 = addDays_(ymd_(new Date()), 5);
+      apiBgvPending(open.Case_ID, { waiting: true, reason: 'Documents', expected: d1 });
+      const listed = apiBgvPendingList().rows.filter(function (r) { return r.id === open.Case_ID; })[0];
+      const saved = apiBgvPendingSave(open.Case_ID, { expected: d2, remark: 'E2E: promised by Friday' });
+      let refused = ''; try { apiBgvPendingSave(open.Case_ID, { expected: '2020-01-01' }); } catch (e) { refused = e.message; }
+      let cleared = ''; try { apiBgvPendingSave(open.Case_ID, { expected: '' }); } catch (e) { cleared = e.message; }
+      apiBgvPending(open.Case_ID, { waiting: false });
+      return listed && listed.withEmp && saved.expected === d2 && saved.remark === 'E2E: promised by Friday' && /cannot be in the past/.test(refused) && /needed while the employee holds the case/.test(cleared) ? open.Case_ID : false;
+    });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
       const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';

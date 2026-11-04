@@ -96,7 +96,7 @@ function viewData(v, key, call, again, label, opts) {
 }
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
-  'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiMonthMissed',
+  'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
   'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
@@ -4506,6 +4506,7 @@ async function viewMyDay(v) {
     <div class="page-head"><div><h1>My day</h1><p>Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own.</p></div>
       <div class="field"><label for="mdDate">Day</label><input id="mdDate" type="date" value="${esc(f.date)}" max="${today()}"></div></div>
     ${f.date === today() ? `<section class="panel todo" id="mdTodo">${skRows(3, 2)}</section>` : ''}
+    <section class="panel" id="mdBgv" hidden><h2>BGV pending</h2><div id="mdBgvBody"></div></section>
     <section class="panel" id="mdFunnel"><h2>Funnel for ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, r.funnel, r.people)}${scorecardNote(data)}</section>
     <div class="two" style="margin-top:20px">
       <section class="panel"><h2>Overview of the day</h2>
@@ -4551,6 +4552,7 @@ async function viewMyDay(v) {
   };
   drawTasks();
   bindFunnelPeople($('#mdFunnel'), r.people, false);
+  bgvPendLoad([{ el: $('#mdBgvBody'), rec: me, empty: '' }]).then(() => { const sec = $('#mdBgv'); if (sec) sec.hidden = !($('#mdBgvBody') && $('#mdBgvBody').children.length); });
   if ($('#mdTodo')) api('apiMyTasks').then(res => { const el = $('#mdTodo'); if (el) renderTodo(el, res); }).catch(e => { const el = $('#mdTodo'); if (el) el.innerHTML = `<p class="hint">${esc(e)}</p>`; });
   const loadEntries = () => fresh('apiListFunnel', { from: f.date, to: f.date, mine: true }).then(rows => {
     const el = $('#mdEntries'); if (!el) return;
@@ -4566,6 +4568,47 @@ async function viewMyDay(v) {
   $('#mdNewTask').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   await loadPositions();
   dailyGrid($('#mdLog'), (rec, saved) => { if (saved) loadEntries(); }, { rec: me, date: f.date });
+}
+
+/* ---------------- BGV pending: the block in My day and the Daily review (v149) ---------------- */
+function bgvPendRowHtml(r) {
+  const who = r.withEmp ? `<span class="bgv-st emp" title="The employee has not yet given what is needed">With the employee</span><span class="sub">${esc(r.waitReason)}</span>` : `<span class="bgv-st">${esc(r.holder || 'Recruiter')}</span>`;
+  const warn = r.rag ? `<span class="bgv-rag ${r.rag}" title="${esc(r.why || '')}">${r.rag}</span>` : '';
+  const nm = r.candidate || r.id;
+  return `<tr data-id="${esc(r.id)}"><td><button class="linklike" data-bgvopen="${esc(r.id)}"><b>${esc(r.candidate) || 'Candidate not linked'}</b></button><span class="sub">${esc(r.id)}</span></td>
+    <td>${esc(r.position)}<span class="sub">${esc(r.mrf)} · ${esc(r.type)}</span></td><td>${who} ${warn}<span class="sub">${esc(r.why || '')}</span></td>
+    <td><input type="date" class="bp-exp" value="${esc(r.expected || '')}" aria-label="Expected date for ${esc(nm)}" ${r.canEdit ? '' : 'disabled'}></td>
+    <td><input class="bp-rem" maxlength="300" value="${esc(r.remark || '')}" placeholder="Remark" aria-label="Remark for ${esc(nm)}" ${r.canEdit ? '' : 'disabled'}></td>
+    <td>${r.canEdit ? '<button class="btn sm bp-save" disabled>Save</button>' : ''}</td></tr>`;
+}
+/** Draws the pending cases (rows) into host, with the date and remark editable in place. Nothing is drawn when there are none and `empty` is empty. */
+function bgvPendPaint(host, rows, empty) {
+  if (!host || !host.isConnected) return;
+  if (!rows.length) { host.innerHTML = empty ? `<p class="hint">${esc(empty)}</p>` : ''; return; }
+  host.innerHTML = `<div class="table-wrap"><table class="bgv-pend"><thead><tr><th>Candidate</th><th>Position</th><th>Pending with</th><th>Expected by</th><th>Remark</th><th><span class="sr-only">Save</span></th></tr></thead><tbody>${rows.map(bgvPendRowHtml).join('')}</tbody></table></div>
+    <p class="hint">As of today. The expected date and the remark are saved on the case and its timeline. To pause the warning until a date, mark the case “Waiting on the employee” in the BGV tracker.</p>`;
+  $$('[data-bgvopen]', host).forEach(b => b.onclick = () => { S.bgvOpenId = b.dataset.bgvopen; S.bgvF = Object.assign(S.bgvF || { type: '', status: '', rag: '', q: '', rec: '' }, { tab: 'mine' }); go('bgv', true); });
+  $$('tr[data-id]', host).forEach(tr => {
+    const r = rows.find(x => x.id === tr.dataset.id), save = $('.bp-save', tr); if (!r || !save) return;
+    const changed = () => $('.bp-exp', tr).value !== (r.expected || '') || $('.bp-rem', tr).value !== (r.remark || '');
+    const sync = () => { save.disabled = !changed(); };
+    $('.bp-exp', tr).addEventListener('input', sync); $('.bp-rem', tr).addEventListener('input', sync);
+    save.onclick = async () => {
+      busy(save, true, 'Saving…');
+      try {
+        const nr = await api('apiBgvPendingSave', r.id, { expected: $('.bp-exp', tr).value, remark: $('.bp-rem', tr).value });
+        const i = rows.findIndex(x => x.id === r.id); rows[i] = nr;
+        const t = document.createElement('tbody'); t.innerHTML = bgvPendRowHtml(nr); tr.replaceWith(t.firstElementChild);
+        bgvPendPaint(host, rows, empty); toast('Saved');
+      } catch (e) { toast(e, true); busy(save, false, 'Save'); }
+    };
+  });
+}
+/** Loads the pending cases once and draws them into every host: hosts are [{el, rec (recruiter name, or '' for all), empty}]. */
+async function bgvPendLoad(hosts) {
+  let L; try { L = await api('apiBgvPendingList'); } catch (e) { hosts.forEach(h => { if (h.el && h.el.isConnected) h.el.innerHTML = ''; }); return; }
+  const all = (L && Array.isArray(L.rows)) ? L.rows : [];   // an unexpected reply draws nothing instead of failing
+  hosts.forEach(h => bgvPendPaint(h.el, all.filter(r => !h.rec || String(r.recruiter).toLowerCase() === String(h.rec).toLowerCase()), h.empty));
 }
 
 function todoReviewHtml(r) {
@@ -4636,6 +4679,7 @@ async function viewDailyReview(v) {
           <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
         ${todoReviewHtml(r)}
+        <h3>BGV pending <span class="sub">(as of today)</span></h3><div data-bgvp="${esc(r.recruiter)}"><p class="hint">Loading\u2026</p></div>
         <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
       </article>`;
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
@@ -4648,6 +4692,7 @@ async function viewDailyReview(v) {
   $('#drPrev').onclick = () => shift(-1);
   (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('review', false)));
   $('#drNext').onclick = () => shift(1);
+  bgvPendLoad(list.map(r => ({ el: document.querySelector(`[data-bgvp="${CSS.escape(r.recruiter)}"]`), rec: r.recruiter, empty: 'No BGV case is pending.' })));
 }
 
 const P_STAGES = ['Sourced', 'Screened', 'Shared', 'Confirmed', 'Technical', 'HR', 'Docs', 'Offer', 'Prejoin', 'Joined', 'Onboarded'];

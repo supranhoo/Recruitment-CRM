@@ -543,6 +543,10 @@ function apiBgvNote(id, kind, note) {
  */
 function apiBgvPending(id, d) {
   const u = currentUser_(); ensureSchema_();
+  bgvPendingApply_(u, id, d);
+  return apiBgvCase(id);
+}
+function bgvPendingApply_(u, id, d) {
   d = d || {};
   const c = bgvCaseRow_(id);
   bgvRequireWork_(u, c);
@@ -578,11 +582,54 @@ function apiBgvPending(id, d) {
   }
   if (exp !== null) { patch.Expected_On = exp ? parseYmd_(exp) : ''; if (!('waiting' in d)) notes.push('Expected date ' + (exp || 'cleared')); }
   if ('remark' in d) { patch.Pending_Remark = clean_(String(d.remark || '')).trim().slice(0, 300); notes.push('Remark: ' + (patch.Pending_Remark || 'cleared')); }
-  if (!Object.keys(patch).length) return apiBgvCase(id);
+  if (!Object.keys(patch).length) return;
+  // The employee holds the case only with a date: it cannot be left without one.
+  const waitingAfter = 'Waiting_On' in patch ? patch.Waiting_On === 'Employee' : String(c.Waiting_On) === 'Employee';
+  const letterAfter = 'Exp_Letter' in patch ? (patch.Left_Org === 'Yes' && patch.Exp_Letter === 'Pending') : bgvLetterPending_(c);
+  const dateAfter = 'Expected_On' in patch ? ymd_(patch.Expected_On) : ymd_(c.Expected_On);
+  if ((waitingAfter || letterAfter) && !dateAfter) throw new Error('The expected date is needed while the employee holds the case.');
   patch.Updated_By = u.email;
   update_(BGV_CASES_, id, patch, u);
   bgvLog_(u, id, 'Candidate', '', '', notes.join('. '));
-  return apiBgvCase(id);
+}
+
+/* ---- the "BGV pending" block in the Daily review and My day (v149) ---- */
+/** One pending case for the block. */
+function bgvPendRow_(c, rag, u) {
+  const h = bgvHold_(c);
+  return { id: String(c.Case_ID), recruiter: String(c.Recruiter || ''), candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), mrf: String(c.MRF_No || ''), type: String(c.Type),
+    status: String(c.Status), rag: rag.rag, why: rag.why, holder: bgvWith_(c, rag), withEmp: !!h, waitReason: h ? h.reason : '', letter: !!(h && h.letter), expected: ymd_(c.Expected_On),
+    remark: String(c.Pending_Remark || ''), canEdit: bgvCanWork_(u, c) };
+}
+/**
+ * The cases that need attention now, as of today (not rebuilt for a past day): tracked open cases that are past a limit (Red) or held by the employee,
+ * including a missing experience letter. A recruiter gets their own; a TA Lead, the Head of HR and the admin get everyone's.
+ */
+function apiBgvPendingList() {
+  const u = currentUser_(); ensureSchema_();
+  const today = ymd_(new Date());
+  if (!bgvSheet_()) return { today: today, rows: [] };
+  const cfg = bgvRules_().cfg, lead = isLead_(u), rows = [];
+  readTable_(BGV_CASES_.name).rows.forEach(function (c) {
+    if (!bgvOpen_(c) || !(lead || bgvIsOwner_(u, c))) return;
+    const rag = bgvRagFor_(c, cfg, today);
+    if (rag.na || !(rag.rag === 'Red' || rag.hold)) return;
+    rows.push(bgvPendRow_(c, rag, u));
+  });
+  rows.sort(function (a, b) { return (a.rag === 'Red' ? 0 : 1) - (b.rag === 'Red' ? 0 : 1) || String(a.expected || '9999').localeCompare(String(b.expected || '9999')) || a.id.localeCompare(b.id); });
+  return { today: today, rows: rows };
+}
+/** Saves the expected date and the remark of a pending case from the Daily review or My day (the owner or a lead); returns that case's row. */
+function apiBgvPendingSave(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  d = d || {};
+  const part = {};
+  if ('expected' in d) part.expected = d.expected;
+  if ('remark' in d) part.remark = d.remark;
+  bgvPendingApply_(u, id, part);
+  _tables = {};
+  const c = bgvCaseRow_(id);
+  return bgvPendRow_(c, bgvRagFor_(c, bgvRules_().cfg, ymd_(new Date())), u);
 }
 
 /** A lead marks a case as not tracked (N/A), tracked even though it looks old, or back to automatic ('' ). */
