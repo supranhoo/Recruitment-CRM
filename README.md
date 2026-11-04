@@ -73,6 +73,8 @@ This folder is configured for `clasp` through `.clasp.json`.
 
 Before merging, set `BUILD_ID` in `Config.gs` to the next number. After the run, hard-reload (Ctrl+Shift+R), check the footer or Admin \u2192 Tools shows that number, and open every screen the release touched. To release again without a new commit: Actions \u2192 *Deploy to Apps Script* \u2192 *Run workflow* (it also waits for approval).
 
+**Page check before merging (stale-screen writers):** no screen code may write into an element looked up by id without `late()` (it returns a throwaway element when the screen has changed). This command must print nothing: `grep -nE "\$\('#[A-Za-z0-9_-]+'\)\.(innerHTML|textContent) *=[^=]" App.html`.
+
 **One-time setup (owner, in GitHub):**
 
 1. Repository \u2192 Settings \u2192 Environments \u2192 *New environment*, named exactly `production`.
