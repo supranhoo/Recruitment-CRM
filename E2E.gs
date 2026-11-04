@@ -630,6 +630,37 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    /* BGV release 148: N/A (not tracked), the employee hold and the experience letter. */
+    t('K37 BGV: the ten new columns exist, and a case with none of them filled gets the old warning', function () {
+      const h = readTable_(BGV_CASES_.name).headers, want = ['Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At'];
+      const cfg = bgvRules_().cfg, c = { Type: 'Previous employer', Status: 'Not started', Candidate_Name: 'E2E', Trigger_Date: '2026-10-20', Due_Date: '2026-10-23' };
+      return want.every(function (k) { return h.indexOf(k) >= 0; }) && JSON.stringify(bgvRagFor_(c, cfg, '2026-11-10')) === JSON.stringify(bgvRag_(c, cfg, '2026-11-10')) ? 'ok' : false;
+    });
+    t('K38 BGV: N/A cases are shown as N/A and left out of the open and red counts', function () {
+      const L = apiBgvList(), na = L.rows.filter(function (r) { return r.na; });
+      const live = L.rows.filter(function (r) { return !r.na && ['Closed', 'Cancelled'].indexOf(r.status) < 0; });
+      return L.all.na === na.length && L.all.open === live.length && na.every(function (r) { return r.rag === ''; }) && L.all.red === live.filter(function (r) { return r.rag === 'Red'; }).length ? na.length + ' N/A, ' + live.length + ' open' : false;
+    });
+    t('K39 BGV: waiting on the employee pauses the warning until the expected date, and clearing it restores it', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c); })[0];
+      if (!open) return 'no open case on this copy (nothing to test)';
+      const tomorrow = addDays_(ymd_(new Date()), 1), cfg = bgvRules_().cfg, today = ymd_(new Date());
+      apiBgvPending(open.Case_ID, { waiting: true, reason: 'Documents', expected: tomorrow, remark: 'E2E: asked the candidate' });
+      _tables = {}; const held = bgvRagFor_(bgvCaseRow_(open.Case_ID), cfg, today);
+      apiBgvPending(open.Case_ID, { waiting: false });
+      _tables = {}; const back = bgvRagFor_(bgvCaseRow_(open.Case_ID), cfg, today);
+      return held.hold === true && held.rag === '' && !back.hold ? open.Case_ID : false;
+    });
+    t('K40 BGV: a case whose experience letter is pending cannot be waived or marked N/A', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c) && String(c.Type) === BGV_TYPES_[0]; })[0];
+      if (!open) return 'no open previous-employer case on this copy (nothing to test)';
+      apiBgvPending(open.Case_ID, { left: 'Yes', letter: 'Pending', expected: addDays_(ymd_(new Date()), 3) });
+      let waive = '', na = '';
+      try { apiBgvSave(open.Case_ID, { outcome: 'Waived' }); } catch (e) { waive = e.message; }
+      try { apiBgvTrack(open.Case_ID, 'NA', 'E2E not needed'); } catch (e) { na = e.message; }
+      apiBgvPending(open.Case_ID, { letter: 'Received' });
+      return /experience letter is still pending/.test(waive) && /cannot be N\/A/.test(na) ? open.Case_ID : false;
+    });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
       const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';

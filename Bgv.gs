@@ -15,7 +15,8 @@ const BGV_RULES_ = 'BGV_Rules';
 const BGV_CASE_COLS_ = ['Case_ID', 'Type', 'Line_ID', 'MRF_No', 'App_ID', 'Candidate_ID', 'Candidate_Name', 'Position', 'Grade', 'Dept', 'Recruiter',
   'Trigger_Date', 'Due_Date', 'Result_Due', 'Consent_On', 'Consent_File', 'Vendor_ID', 'Vendor_Ref', 'Initiated_On', 'Initiation_Proof_File', 'Status',
   'Outcome', 'Report_On', 'Report_File', 'Decision', 'Decision_By', 'Decision_On', 'Decision_Note', 'Closed_On', 'Remarks', 'Legacy', 'Rules_Version',
-  'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Purged_On', 'Purged_By'];
+  'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Purged_On', 'Purged_By',
+  'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At'];
 const BGV_CHECK_COLS_ = ['Check_ID', 'Case_ID', 'Check_Type', 'Subject', 'Period', 'Status', 'Finding', 'Verified_On', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
 const BGV_LOG_COLS_ = ['Log_ID', 'Case_ID', 'At', 'By', 'Kind', 'Old_Status', 'New_Status', 'Note'];
 const BGV_VENDOR_COLS_ = ['Vendor_ID', 'Name', 'Contact_Person', 'Email', 'Phone', 'Checks_Offered', 'Std_TAT_Days', 'Active', 'Contract_End', 'Note',
@@ -93,7 +94,7 @@ function bgvRules_(day) {
 
 function bgvSchema_() {
   addSheet_(BGV_CASES_.name, BGV_CASE_COLS_);
-  addColumns_(BGV_CASES_.name, ['Purged_On', 'Purged_By']);
+  addColumns_(BGV_CASES_.name, ['Purged_On', 'Purged_By', 'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At']);
   addSheet_(BGV_CHECKS_.name, BGV_CHECK_COLS_);
   addSheet_(BGV_LOG_.name, BGV_LOG_COLS_);
   addSheet_(BGV_VENDORS_.name, BGV_VENDOR_COLS_);
@@ -287,20 +288,84 @@ function bgvRag_(c, cfg, today) {
 function bgvOut_(c, u, cfg, today, full) {
   const worker = bgvCanWork_(u, c);
   const d = function (v) { return ymd_(v); };
-  const rag = bgvRag_(c, cfg, today);
+  const rag = bgvRagFor_(c, cfg, today);
   const o = { id: String(c.Case_ID), type: String(c.Type), line: String(c.Line_ID), mrf: String(c.MRF_No || ''), app: String(c.App_ID || ''), candId: String(c.Candidate_ID || ''),
     candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), grade: String(c.Grade || ''), dept: String(c.Dept || ''), recruiter: String(c.Recruiter || ''),
     trigger: d(c.Trigger_Date), due: d(c.Due_Date), resultDue: d(c.Result_Due), initiated: d(c.Initiated_On), early: bgvEarly_(c), status: String(c.Status), rag: rag.rag, why: rag.why, mine: bgvIsOwner_(u, c), canWork: worker,
-    legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On), purged: ymd_(c.Purged_On) };
+    legacy: String(c.Legacy) === 'Yes', closed: d(c.Closed_On), purged: ymd_(c.Purged_On),
+    na: !!rag.na, withEmp: !!rag.hold, holder: bgvWith_(c, rag), waitReason: rag.hold ? bgvHold_(c).reason : '', expected: rag.hold ? bgvHold_(c).until : '' };
   if (worker) {
     o.outcome = String(c.Outcome || ''); o.decision = String(c.Decision || ''); o.report = d(c.Report_On); o.vendor = String(c.Vendor_ID || ''); o.vendorRef = String(c.Vendor_Ref || '');
     o.consent = d(c.Consent_On); o.needsDecision = bgvNeedsDecision_(c);
+    o.pendRemark = String(c.Pending_Remark || ''); o.expectedOn = d(c.Expected_On); o.leftOrg = String(c.Left_Org || ''); o.expLetter = String(c.Exp_Letter || '');
+    o.waiting = String(c.Waiting_On || '') === 'Employee'; o.track = String(c.Track || ''); o.trackNote = String(c.Track_Note || '');
   }
   if (full && worker) {
     o.remarks = String(c.Remarks || ''); o.decisionBy = String(c.Decision_By || ''); o.decisionOn = d(c.Decision_On); o.decisionNote = String(c.Decision_Note || '');
     o.consentFile = String(c.Consent_File || ''); o.reportFile = String(c.Report_File || ''); o.proofFile = String(c.Initiation_Proof_File || ''); o.rules = String(c.Rules_Version || '');
   }
   return o;
+}
+
+/* ---------------------------------------------------------------- tracked or not, and who holds the case (v148) ---- */
+/** Why a hold on the employee exists. */
+const BGV_WAIT_REASONS_ = ['Consent', 'Documents', 'Experience letter', 'Other'];
+/** Records older than this date that have no linked candidate are N/A (not tracked). Settings key BGV_NA_BEFORE moves it. */
+const BGV_NA_BEFORE_DEFAULT_ = '2026-11-05';
+function bgvNaBefore_() { const v = settings_().BGV_NA_BEFORE; return ymd_(v) || String(v || '').slice(0, 10) || BGV_NA_BEFORE_DEFAULT_; }
+function bgvOpen_(c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; }
+/** A previous-employer case where the candidate has left the organisation and the experience letter has not come. */
+function bgvLetterPending_(c) { return String(c.Type) === BGV_TYPES_[0] && String(c.Left_Org) === 'Yes' && String(c.Exp_Letter) === 'Pending'; }
+/** The employee is holding the case up (marked by the recruiter, or an experience letter that is missing): {reason, until, letter}. null when not. */
+function bgvHold_(c) {
+  if (!bgvOpen_(c)) return null;
+  const w = String(c.Waiting_On) === 'Employee';
+  if (!w && !bgvLetterPending_(c)) return null;
+  return { reason: w ? String(c.Wait_Reason || 'Documents') : 'Experience letter', until: ymd_(c.Expected_On), letter: !w };
+}
+/** N/A = not tracked: an older record with no linked candidate (or one a lead marked). Never while something is pending with the employee. */
+function bgvTrack_(c) {
+  if (!bgvOpen_(c)) return { na: false };
+  const t = String(c.Track || '');
+  if (t === 'Tracked' || bgvHold_(c)) return { na: false };
+  if (t === 'NA') return { na: true, why: 'N/A: ' + (String(c.Track_Note || '').trim() || 'marked as not tracked by a lead') };
+  const unlinked = !String(c.Candidate_Name || '').trim(), trig = ymd_(c.Trigger_Date);
+  if (unlinked && (String(c.Legacy) === 'Yes' || (trig && trig < bgvNaBefore_()))) return { na: true, why: 'N/A: older record with no linked candidate' };
+  return { na: false };
+}
+/**
+ * The warning the person sees. N/A cases have none. A case with the employee shows no warning until the expected date has passed; then it is
+ * Red ("expected by X, not received"). Without an expected date the normal warning stays and the hold is added to the text.
+ */
+function bgvRagFor_(c, cfg, today) {
+  const t = bgvTrack_(c);
+  if (t.na) return { rag: '', why: t.why, na: true };
+  const h = bgvHold_(c);
+  if (h) {
+    if (h.until && h.until >= today) return { rag: '', why: 'With the employee: ' + h.reason + ', expected ' + h.until, hold: true };
+    if (h.until) return { rag: 'Red', why: 'Expected from the employee by ' + h.until + ', not received (' + h.reason + ')', hold: true };
+    const base = bgvRag_(c, cfg, today);
+    return Object.assign({}, base, { hold: true, why: (base.why ? base.why + ' · ' : '') + 'With the employee: ' + h.reason + ' (no expected date)' });
+  }
+  return bgvRag_(c, cfg, today);
+}
+/** Who the case is waiting for: Employee, Vendor or Recruiter ('' for closed and N/A cases). */
+function bgvWith_(c, r) {
+  if (!bgvOpen_(c) || r.na) return '';
+  if (r.hold) return 'Employee';
+  return ['Initiated', 'In progress'].indexOf(String(c.Status)) >= 0 ? 'Vendor' : 'Recruiter';
+}
+/** 'LINE|Type' of open cases the to-dos should leave alone: N/A, or with the employee until a date still ahead. */
+function bgvQuietMap_() {
+  const m = {};
+  if (!bgvSheet_()) return m;
+  const today = ymd_(new Date());
+  readTable_(BGV_CASES_.name).rows.forEach(function (c) {
+    if (!bgvOpen_(c)) return;
+    const h = bgvHold_(c);
+    if (bgvTrack_(c).na || (h && h.until && h.until >= today)) m[c.Line_ID + '|' + c.Type] = true;
+  });
+  return m;
 }
 
 function bgvCaseRow_(id) {
@@ -317,18 +382,18 @@ function apiBgvList() {
   const rows = readTable_(BGV_CASES_.name).rows.map(function (c) { return bgvOut_(c, u, cfg, today, false); })
     .sort(function (a, b) { return Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')); });
   const mine = rows.filter(function (r) { return r.mine; });
-  const open = function (list) { return list.filter(function (r) { return ['Closed', 'Cancelled'].indexOf(r.status) < 0; }); };
+  const open = function (list) { return list.filter(function (r) { return ['Closed', 'Cancelled'].indexOf(r.status) < 0 && !r.na; }); };   // N/A cases are not tracked: not counted
   const month = today.slice(0, 7);
   const sum = function (list) {
-    return { open: open(list).length, toStart: list.filter(function (r) { return ['Not started', 'Awaiting consent'].indexOf(r.status) >= 0; }).length,
+    return { na: list.filter(function (r) { return r.na; }).length, withEmp: open(list).filter(function (r) { return r.withEmp; }).length, open: open(list).length, toStart: list.filter(function (r) { return !r.na && ['Not started', 'Awaiting consent'].indexOf(r.status) >= 0; }).length,
       red: open(list).filter(function (r) { return r.rag === 'Red'; }).length, amber: open(list).filter(function (r) { return r.rag === 'Amber'; }).length,
-      inProgress: list.filter(function (r) { return ['Initiated', 'In progress', 'Insufficiency'].indexOf(r.status) >= 0; }).length,
-      toReview: list.filter(function (r) { return ['Report received', 'Under review'].indexOf(r.status) >= 0; }).length,
+      inProgress: list.filter(function (r) { return !r.na && ['Initiated', 'In progress', 'Insufficiency'].indexOf(r.status) >= 0; }).length,
+      toReview: list.filter(function (r) { return !r.na && ['Report received', 'Under review'].indexOf(r.status) >= 0; }).length,
       toDecide: list.filter(function (r) { return r.needsDecision; }).length,
       closedMonth: list.filter(function (r) { return r.status === 'Closed' && String(r.closed).slice(0, 7) === month; }).length };
   };
   return { rules: { id: rules.id, cfg: cfg }, today: today, lead: isLead_(u), decide: can_(u, 'bgv_decide'), admin: u.role === ROLES.ADMIN, me: u.recruiter,
-    rows: rows.slice(0, 1500), mine: sum(mine), all: sum(rows), vendors: bgvVendorsOut_(), types: BGV_TYPES_, statuses: BGV_STATUSES_ };
+    rows: rows.slice(0, 1500), mine: sum(mine), all: sum(rows), vendors: bgvVendorsOut_(), types: BGV_TYPES_, statuses: BGV_STATUSES_, waitReasons: BGV_WAIT_REASONS_, canTrack: isLead_(u) };
 }
 
 /** Status lines for a candidate's card, a profile or a position (anyone may see the status). kind: 'line' or 'candidate'. */
@@ -336,7 +401,7 @@ function apiBgvFor(kind, id) {
   const u = currentUser_(); ensureSchema_();
   const col = kind === 'candidate' ? 'Candidate_ID' : 'Line_ID', cfg = bgvRules_().cfg, today = ymd_(new Date());
   return readTable_(BGV_CASES_.name).rows.filter(function (c) { return String(c[col]) === String(id) && String(c.Status) !== 'Cancelled'; })
-    .map(function (c) { const o = bgvOut_(c, u, cfg, today, false); return { id: o.id, type: o.type, status: o.status, due: o.due, rag: o.rag, why: o.why, recruiter: o.recruiter, canWork: o.canWork, outcome: o.outcome || '' }; });
+    .map(function (c) { const o = bgvOut_(c, u, cfg, today, false); return { id: o.id, type: o.type, status: o.status, due: o.due, rag: o.rag, why: o.why, recruiter: o.recruiter, canWork: o.canWork, outcome: o.outcome || '', na: o.na, withEmp: o.withEmp }; });
 }
 
 /** One case with its checks and timeline. Only the owner, TA Leads, the Head of HR and Admin can open it. */
@@ -353,7 +418,7 @@ function apiBgvCase(id) {
   const o = bgvOut_(c, u, cfg, today, true);
   o.next = BGV_NEXT_[o.status] || [];
   return { c: o, checks: checks, log: log, vendors: bgvVendorsOut_(), decide: can_(u, 'bgv_decide'), lead: isLead_(u), decisions: BGV_DECISIONS_[o.type] || [], outcomes: BGV_OUTCOMES_,
-    checkStatuses: BGV_CHECK_STATUSES_, logKinds: BGV_LOG_KINDS_, optionalChecks: cfg.optionalChecks, rules: cfg,
+    checkStatuses: BGV_CHECK_STATUSES_, logKinds: BGV_LOG_KINDS_, optionalChecks: cfg.optionalChecks, rules: cfg, waitReasons: BGV_WAIT_REASONS_,
     templates: BGV_TEMPLATE_IDS_.map(function (t) { return { id: t[0], label: t[1], to: t[2], subject: cfg.templates[t[0]].subject, body: cfg.templates[t[0]].body }; }) };
 }
 
@@ -398,6 +463,7 @@ function apiBgvSave(id, d) {
     const o = String(d.outcome || '');
     if (o && BGV_OUTCOMES_.indexOf(o) < 0) throw new Error('Unknown outcome.');
     if (o === 'Waived' && !isLead_(u)) throw new Error('Only a TA Lead or the Head of HR can waive a BGV case.');
+    if (o === 'Waived' && bgvLetterPending_(c)) throw new Error('The candidate\u2019s experience letter is still pending. Close the case with a written reason instead (Move to \u2192 Closed).');
     patch.Outcome = o; notes.push('Outcome: ' + (o || 'none'));
   }
   if ('remarks' in d) patch.Remarks = clean_(String(d.remarks || '')).slice(0, 1000);
@@ -443,6 +509,7 @@ function apiBgvStatus(id, to, d) {
     if (BGV_OUTCOMES_.indexOf(outcome) < 0) throw new Error('Unknown outcome.');
     if (['Minor discrepancy', 'Major discrepancy', 'Unable to verify'].indexOf(outcome) >= 0 && !c.Decision) throw new Error('This result needs the Head of HR’s decision before the case can be closed.');
     if (outcome === 'Waived' && !isLead_(u)) throw new Error('Only a TA Lead or the Head of HR can waive a BGV case.');
+    if (outcome === 'Waived' && bgvLetterPending_(c) && String(d.note || '').trim().length < 10) throw new Error('The candidate\u2019s experience letter is still pending. Write the reason for waiving (at least 10 characters).');
     const open = readTable_(BGV_CHECKS_.name).rows.filter(function (r) { return String(r.Case_ID) === String(id) && ['Pending', 'In progress'].indexOf(String(r.Status)) >= 0; });
     if (open.length && outcome !== 'Waived') throw new Error(open.length + ' check' + (open.length === 1 ? ' is' : 's are') + ' still open. Mark each as verified, discrepancy, unable to verify or not applicable.');
     patch.Outcome = outcome; patch.Closed_On = new Date();
@@ -466,6 +533,72 @@ function apiBgvNote(id, kind, note) {
   if (note.length < 3) throw new Error('Write the note.');
   bgvLog_(u, id, kind, '', '', note);
   update_(BGV_CASES_, id, { Updated_By: u.email }, u);
+  return apiBgvCase(id);
+}
+
+/**
+ * What the employee (the candidate) owes, when it is expected, and the recruiter's remark. d may carry:
+ * waiting (true/false) + reason + expected (a date, required when waiting); left ('Yes'/'No'/'') + letter ('Pending'/'Received'/'') for a previous-employer case
+ * (a pending letter needs the date it is expected); expected and remark alone update the date and the remark of a pending case. The owner or a lead.
+ */
+function apiBgvPending(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  d = d || {};
+  const c = bgvCaseRow_(id);
+  bgvRequireWork_(u, c);
+  if (!bgvOpen_(c)) throw new Error('This case is ' + String(c.Status).toLowerCase() + ': nothing is pending.');
+  const today = ymd_(new Date()), patch = {}, notes = [];
+  let exp = null;   // null = not given, '' = clear, else a valid date
+  if ('expected' in d) {
+    exp = String(d.expected || '').trim();
+    if (exp) {
+      const s = ymd_(exp);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(exp) || !s) throw new Error('Pick the expected date from the calendar.');
+      if (s < today && s !== ymd_(c.Expected_On)) throw new Error('The expected date cannot be in the past.');
+      if (s > addDays_(today, 180)) throw new Error('The expected date is more than 180 days away.');
+    }
+  }
+  if ('waiting' in d) {
+    if (d.waiting) {
+      const reason = String(d.reason || '');
+      if (BGV_WAIT_REASONS_.indexOf(reason) < 0) throw new Error('Pick what the employee has not yet given.');
+      if (!exp) throw new Error('Give the date the employee is expected to submit.');
+      patch.Waiting_On = 'Employee'; patch.Wait_Reason = reason; patch.Wait_By = u.email; patch.Wait_At = new Date();
+      notes.push('Waiting on the employee: ' + reason + ', expected ' + exp);
+    } else { patch.Waiting_On = ''; patch.Wait_Reason = ''; notes.push('No longer waiting on the employee'); }
+  }
+  if ('left' in d || 'letter' in d) {
+    if (String(c.Type) !== BGV_TYPES_[0]) throw new Error('The experience letter applies to previous-employer cases.');
+    const left = 'left' in d ? String(d.left || '') : String(c.Left_Org || ''), letter = 'letter' in d ? String(d.letter || '') : String(c.Exp_Letter || '');
+    if (['', 'Yes', 'No'].indexOf(left) < 0 || ['', 'Pending', 'Received'].indexOf(letter) < 0) throw new Error('Unknown value for the experience letter.');
+    if (letter === 'Pending' && left !== 'Yes') throw new Error('An experience letter is pending only for a candidate who has left the organisation.');
+    if (letter === 'Pending' && !(exp || ymd_(c.Expected_On))) throw new Error('Give the date the experience letter is expected.');
+    patch.Left_Org = left; patch.Exp_Letter = letter;
+    notes.push('Left the organisation: ' + (left || 'not recorded') + '; experience letter: ' + (letter || 'not recorded'));
+  }
+  if (exp !== null) { patch.Expected_On = exp ? parseYmd_(exp) : ''; if (!('waiting' in d)) notes.push('Expected date ' + (exp || 'cleared')); }
+  if ('remark' in d) { patch.Pending_Remark = clean_(String(d.remark || '')).trim().slice(0, 300); notes.push('Remark: ' + (patch.Pending_Remark || 'cleared')); }
+  if (!Object.keys(patch).length) return apiBgvCase(id);
+  patch.Updated_By = u.email;
+  update_(BGV_CASES_, id, patch, u);
+  bgvLog_(u, id, 'Candidate', '', '', notes.join('. '));
+  return apiBgvCase(id);
+}
+
+/** A lead marks a case as not tracked (N/A), tracked even though it looks old, or back to automatic ('' ). */
+function apiBgvTrack(id, track, note) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change whether a case is tracked.');
+  const c = bgvCaseRow_(id);
+  track = String(track || '');
+  if (['', 'NA', 'Tracked'].indexOf(track) < 0) throw new Error('Unknown setting.');
+  note = clean_(String(note || '')).trim().slice(0, 200);
+  if (track === 'NA') {
+    if (note.length < 5) throw new Error('Write why this case is not tracked.');
+    if (bgvHold_(c)) throw new Error('A case that is waiting on the employee, or for an experience letter, cannot be N/A.');
+  }
+  update_(BGV_CASES_, id, { Track: track, Track_Note: track ? note : '', Updated_By: u.email }, u);
+  bgvLog_(u, id, 'Note', '', '', track === 'NA' ? 'Marked N/A (not tracked): ' + note : track === 'Tracked' ? 'Marked as tracked' + (note ? ': ' + note : '') : 'Tracking set back to automatic');
   return apiBgvCase(id);
 }
 
@@ -618,7 +751,7 @@ function bgvSummary_(u) {
   readTable_(BGV_CASES_.name).rows.forEach(function (c) {
     if (['Closed', 'Cancelled'].indexOf(String(c.Status)) >= 0) return;
     if (can_(u, 'bgv_decide') && bgvNeedsDecision_(c)) out.decide++;
-    if ((lead || bgvIsOwner_(u, c)) && bgvRag_(c, cfg, today).rag === 'Red') out.late++;
+    if ((lead || bgvIsOwner_(u, c)) && bgvRagFor_(c, cfg, today).rag === 'Red') out.late++;
   });
   return out;
 }
@@ -641,7 +774,10 @@ function bgvTasks_(add) {
     if (String(g.By) !== 'system' && t > (logs[id] || 0)) logs[id] = t;
   });
   const lbl = function (c) { return [c.Candidate_Name || 'Candidate', c.Position, c.MRF_No].filter(Boolean).join(' · '); };
+  const todayD = ymd_(new Date());
   readTable_(BGV_CASES_.name).rows.forEach(function (c) {
+    const hold = bgvHold_(c);
+    if (bgvTrack_(c).na || (hold && hold.until && hold.until >= todayD)) return;   // not tracked, or the employee has until a date still ahead
     const st = String(c.Status), id = String(c.Case_ID), base = { recruiter: String(c.Recruiter || ''), line: String(c.Line_ID), app: String(c.App_ID || ''), open: { type: 'bgv', id: id } };
     const mk = function (kind, extra) { return Object.assign({ key: kind + '|' + id }, base, extra); };
     const ms = function (v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; };
@@ -670,7 +806,7 @@ function bgvPct_(n, d) { return d ? Math.round(n / d * 1000) / 10 : null; }
 
 /** The numbers for a group of cases: start on time, days to start, verification and review time, results, open and red. */
 function bgvAgg_(list, cfg, today) {
-  const o = { cases: list.length, onTime: 0, late: 0, overdue: 0, pending: 0, open: 0, red: 0, amber: 0, discrepancies: 0, decisionWaiting: 0, resultOk: 0, resultLate: 0 };
+  const o = { cases: list.length, onTime: 0, late: 0, overdue: 0, pending: 0, open: 0, red: 0, amber: 0, withEmp: 0, discrepancies: 0, decisionWaiting: 0, resultOk: 0, resultLate: 0 };
   const start = [], ver = [], rev = [], within = [];
   list.forEach(function (c) {
     const due = bgvDay_(c.Due_Date), init = bgvDay_(c.Initiated_On), rep = bgvDay_(c.Report_On), trig = bgvDay_(c.Trigger_Date), closed = bgvDay_(c.Closed_On), rd = bgvDay_(c.Result_Due);
@@ -680,7 +816,7 @@ function bgvAgg_(list, cfg, today) {
     if (rep && closed) rev.push(daysBetween_(rep, closed));
     if (c.Type === BGV_TYPES_[0] && rd) { if (rep) { if (rep <= rd) o.resultOk++; else o.resultLate++; } else if (today > rd) o.resultLate++; }
     const st = String(c.Status);
-    if (['Closed', 'Cancelled'].indexOf(st) < 0) { o.open++; const r = bgvRag_(c, cfg, today).rag; if (r === 'Red') o.red++; else if (r === 'Amber') o.amber++; }
+    if (['Closed', 'Cancelled'].indexOf(st) < 0) { o.open++; if (bgvHold_(c)) o.withEmp++; const r = bgvRagFor_(c, cfg, today).rag; if (r === 'Red') o.red++; else if (r === 'Amber') o.amber++; }
     if (BGV_DISCREPANT_.indexOf(String(c.Outcome)) >= 0) o.discrepancies++;
     if (bgvNeedsDecision_(c)) o.decisionWaiting++;
   });
@@ -707,7 +843,8 @@ function apiBgvReports(f) {
   const cfg = bgvRules_().cfg, today = ymd_(new Date()), to = ymd_(f.to) || today, from = ymd_(f.from) || addDays_(today, -180);
   if (from > to) throw new Error('The start of the period is after its end.');
   const all = readTable_(BGV_CASES_.name).rows;
-  const list = all.filter(function (c) { const t = bgvDay_(c.Trigger_Date); return String(c.Status) !== 'Cancelled' && t >= from && t <= to; });
+  const inRange = all.filter(function (c) { const t = bgvDay_(c.Trigger_Date); return String(c.Status) !== 'Cancelled' && t >= from && t <= to; });
+  const list = inRange.filter(function (c) { return !bgvTrack_(c).na; });   // N/A (not tracked) cases are counted apart, not scored
   const vendors = {}; bgvVendorsOut_().forEach(function (v) { vendors[v.id] = v.name; });
   const checks = {}; readTable_(BGV_CHECKS_.name).rows.forEach(function (k) { (checks[k.Case_ID] = checks[k.Case_ID] || []).push(k); });
   const disc = list.filter(function (c) { return BGV_DISCREPANT_.indexOf(String(c.Outcome)) >= 0; }).map(function (c) {
@@ -717,7 +854,7 @@ function apiBgvReports(f) {
   });
   const dept = bgvGroup_(list.filter(function (c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; }), function (c) { return String(c.Dept || '(none)'); }, cfg, today)
     .map(function (x) { return { dept: x.key, open: x.open, red: x.red, amber: x.amber }; });
-  return { from: from, to: to, cfg: cfg, total: bgvAgg_(list, cfg, today),
+  return { from: from, to: to, cfg: cfg, naCount: inRange.length - list.length, total: bgvAgg_(list, cfg, today),
     byRecruiter: bgvGroup_(list, function (c) { return String(c.Recruiter || 'Unassigned'); }, cfg, today),
     byType: bgvGroup_(list, function (c) { return String(c.Type); }, cfg, today),
     byMonth: bgvGroup_(list, function (c) { return bgvDay_(c.Trigger_Date).slice(0, 7); }, cfg, today),
@@ -729,10 +866,11 @@ function apiBgvReports(f) {
 function bgvWeekly_() {
   if (!bgvSheet_()) return null;
   const cfg = bgvRules_().cfg, today = ymd_(new Date());
-  const open = readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; });
-  const red = open.filter(function (c) { return bgvRag_(c, cfg, today).rag === 'Red'; });
+  const all = readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; });
+  const open = all.filter(function (c) { return !bgvTrack_(c).na; });   // N/A (not tracked) cases are left out
+  const red = open.filter(function (c) { return bgvRagFor_(c, cfg, today).rag === 'Red'; });
   const by = {}; red.forEach(function (c) { by[c.Recruiter] = (by[c.Recruiter] || 0) + 1; });
-  return { open: open.length, red: red.length, decide: open.filter(bgvNeedsDecision_).length,
+  return { open: open.length, red: red.length, withEmp: open.filter(function (c) { return !!bgvHold_(c); }).length, na: all.length - open.length, decide: open.filter(bgvNeedsDecision_).length,
     byRecruiter: Object.keys(by).map(function (k) { return { recruiter: k, red: by[k] }; }).sort(function (a, b) { return b.red - a.red; }).slice(0, 8) };
 }
 
@@ -740,8 +878,8 @@ function bgvWeekly_() {
 function bgvLateCases_() {
   if (!bgvSheet_()) return [];
   const cfg = bgvRules_().cfg, today = ymd_(new Date());
-  return readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Not started', 'Awaiting consent'].indexOf(String(c.Status)) >= 0 && bgvRag_(c, cfg, today).rag === 'Red'; })
-    .map(function (c) { return { id: String(c.Line_ID), label: String(c.MRF_No || '') + ' · ' + String(c.Position || '') + ' (' + String(c.Recruiter || '') + ')', detail: c.Type + ': ' + bgvRag_(c, cfg, today).why + ' [' + c.Case_ID + ']' }; });
+  return readTable_(BGV_CASES_.name).rows.filter(function (c) { return ['Not started', 'Awaiting consent'].indexOf(String(c.Status)) >= 0 && bgvRagFor_(c, cfg, today).rag === 'Red'; })
+    .map(function (c) { return { id: String(c.Line_ID), label: String(c.MRF_No || '') + ' · ' + String(c.Position || '') + ' (' + String(c.Recruiter || '') + ')', detail: c.Type + ': ' + bgvRagFor_(c, cfg, today).why + ' [' + c.Case_ID + ']' }; });
 }
 
 /* ---------------------------------------------------------------- vendor spreadsheet import (phase 3) ----------- */
