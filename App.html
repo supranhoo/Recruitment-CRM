@@ -1345,8 +1345,8 @@ function positionFields(isNew, p, orig) {
     { k: 'Offer_Sent', l: 'Offer sent', t: 'select', opts: ['Yes','No'], noBlank: true, ro: pl, hint: pl ? plHint : '' },
     { k: 'Offer_Date', l: 'Offer letter date', t: 'date', ro: pl, hint: pl ? plHint : '' },
     { k: 'EDOJ', l: 'Expected joining date', t: 'date', ro: pl, hint: pl ? plHint : 'Joining days are Monday and Thursday.' },
-    { k: 'Notice_Period_Days', l: 'Notice period (days)', t: 'number', hint: 'Days beyond 30 extend the TAT, and need proof attached below.' },
-    ...(isNew ? [] : [{ k: 'Notice_Proof_File', l: 'Notice period proof', t: 'file', hint: 'Resignation or offer acceptance showing the notice. Required when the notice is over 30 days.' }]),
+    { k: 'Notice_Period_Days', l: 'Notice period (days)', t: 'number', hint: 'Days beyond 30 are exempt and added to the TAT automatically.' },
+    ...(isNew ? [] : [{ k: 'Notice_Proof_File', l: 'Notice period proof', t: 'file', hint: 'Optional: resignation or offer acceptance showing the notice, so the Head of HR can verify it.' }]),
     { k: 'Actual_DOJ', l: 'Actual joining date', t: 'date', ro: pl, hint: pl ? plHint : 'Entering this closes the position.' },
     { k: 'Backout_Date', l: 'Backout date', t: 'date', ro: pl, hint: 'Record backouts in the Pipeline: it closes this MRF and raises the replacement (policy 9.5).' },
     { k: 'Candidate_ID', l: 'Selected candidate ID', ro: pl, hint: pl ? plHint : 'Optional, e.g. CAN-01088' },
@@ -1383,7 +1383,7 @@ async function exemptSectionInto(el, p, afterChange) {
     if (!el.isConnected) return;
     const n = X.notice, locked = X.lock.locked;
     const noticeRow = n.ext > 0 || n.status ? `<div class="tex-notice"><b>Notice ${n.days} days</b> adds ${n.ext} day${n.ext === 1 ? '' : 's'} to the TAT ·
-        ${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener">proof</a>` : '<span class="miss">no proof attached</span>'} ·
+        ${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener">proof</a>` : '<span class="sub">no proof attached (optional)</span>'} ·
         ${n.status === 'Verified' ? '<span class="ok">verified</span>' : n.status === 'Rejected' ? '<span class="sub">rejected earlier; it no longer changes the TAT</span>' : 'not reviewed'}${n.note ? ` <span class="sub">${esc(n.note)} · ${esc(n.by)} ${fmtDate(n.on)}</span>` : ''}
         ${X.canDecide && !locked ? `<span class="btn-row" style="display:inline-flex;margin-left:8px">${n.status !== 'Verified' && n.proof ? '<button class="btn sm" data-nx="Verify">Verify</button>' : ''}${n.status === 'Rejected' ? '<button class="btn sm" data-nx="Reset">Clear the old rejection</button>' : ''}</span>` : ''}</div>` : '';
     const rows = X.items.map(x => `<tr style="cursor:default"><td class="nw"><b>${what(x)}</b><span class="sub">${esc(x.id)} · ${fmtDate(x.on)} by ${esc(x.by)}</span></td>
@@ -1565,7 +1565,6 @@ function positionDrawer(p) {
   $('#pCancel').onclick = closeDrawer;
   $('#pSave').onclick = async () => {
     const d = Object.assign({ Line_ID: isNew ? '' : p.Line_ID }, readForm($('#posForm')));
-    const np = $('.att-input[data-field="Notice_Proof_File"]', $('#posForm')); d._noticeProof = !!(np && np.files[0]);
     const jdId = d._jdFileId; delete d._jdFileId;
     const bad = checkAttachments($('#posForm')); if (bad) return toast(bad, true);
     const btn = $('#pSave'); busy(btn, true, 'Saving…');

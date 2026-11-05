@@ -93,7 +93,7 @@ function e2eRun_(trash) {
     const r = apiExemptionRequest(L1.Line_ID, { reason: 'Department / HOD delay', type: 'Days', days: 3, remark: 'E2E HOD delay' }); apiExemptionDecide(r.id, 'Approve', '');
   }, /proof/);
   t('X4 revoke restores the TAT', function () { apiExemptionRevoke(x1, 'E2E revoke'); return posTat().Pos_Final_TAT === base0.Pos_Final_TAT; });
-  err('X5 notice over 30 days needs proof', function () { apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); }, /proof/);
+  t('X5 a notice over 30 days saves without proof (always exempt, v156)', function () { const r = apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); return Number(r.Notice_Period_Days) === 60 ? 'saved' : false; });
   t('X6 exemption register lists the requests', function () { const r = apiExemptionRegister({}); return r.rows.filter(function (x) { return x.line === L1.Line_ID; }).length >= 2 && r.reasons.length >= 4; });
   t('X7 the exemption reasons include "Delay in MRF Evidence" and "Other, if any" (Days, both clocks, proof), seeded once', function () {
     exemptSchema_(); exemptSchema_(); _tables = {};
