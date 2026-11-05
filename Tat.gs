@@ -71,17 +71,40 @@ function posStart_(l) {
   return ymd_(l.TAT_Start_From) || ymd_(l.Approved_On) || ymd_(l.Receipt_Date);
 }
 
+/** The offer date of a position, when an offer was sent ('' otherwise). */
+function tatOffer_(l) {
+  return String(l.Offer_Sent || '').toUpperCase() === 'YES' ? ymd_(l.Offer_Date) : '';
+}
 /**
- * One clock. Allowed = standard days + notice days above the grace (unless the Head of HR rejected it) + approved
- * extra days that apply to this clock ('r' recruiter, 'p' position). Days taken exclude on-hold days and approved
- * paused days (a paused day already on hold counts once).
+ * Allowed days of one clock (v152). base = target days + approved exemption days; noticeExt = notice beyond the grace,
+ * always added (v151); notice = the full notice period; hold and paused = days not counted.
+ * Today's rule: allowed = base + noticeExt. When the offer went out on or before the offer deadline (start + base + hold
+ * + paused: the TAT without the notice), the notice runs from the offer: the clock falls due on the later of today's due
+ * date and the offer date + the full notice period. A late offer or no offer keeps today's rule, and the result is never
+ * less than today's. Worked in days from the start, so on-hold and paused days move both dates exactly as before.
+ * byOffer = the notice from the offer gave more time than today's rule.
+ */
+function tatAllowed_(start, base, noticeExt, notice, hold, paused, offer) {
+  const plain = base + noticeExt;
+  if (!start || !offer) return { allowed: plain, byOffer: false };
+  const off = daysBetween_(start, offer);
+  if (off > base + hold + paused) return { allowed: plain, byOffer: false };   // offered after the TAT: today's rule
+  const fromOffer = off + (Number(notice) || 0) - hold - paused;
+  return fromOffer > plain ? { allowed: fromOffer, byOffer: true } : { allowed: plain, byOffer: false };
+}
+
+/**
+ * One clock. Allowed = standard days + notice days above the grace (always, v151) + approved extra days that apply to
+ * this clock ('r' recruiter, 'p' position); when the offer went out within the TAT, the notice runs from the offer
+ * (v152, `tatAllowed_`). Days taken exclude on-hold days and approved paused days (a paused day already on hold counts once).
  */
 function tatClock_(l, ctx, start, status, end, which) {
   const rule = ruleFor_(ctx, l.Grade, start);
   const ex = exemptFor_(ctx, l, which || 'r'), notice = noticeExt_(l, rule.grace);
-  const exemption = notice + ex.days, fin = rule.std + exemption;
   const hold = Number(l.Hold_Days) || 0, stop = end || ctx.today;
   const paused = start ? pausedDays_(l, ex.pauses, start, stop) : 0;
+  const offer = tatOffer_(l), a = tatAllowed_(start, rule.std + ex.days, notice, Number(l.Notice_Period_Days) || 0, hold, paused, offer);
+  const fin = a.allowed, exemption = fin - rule.std;
   const days = start ? Math.max(0, daysBetween_(start, stop) - hold - paused) : '';
   let result = '';
   if (days !== '') {
@@ -91,7 +114,7 @@ function tatClock_(l, ctx, start, status, end, which) {
     else result = days > fin ? 'Missed' : 'Achieved';
   }
   return { std: rule.std, exemption: exemption, fin: fin, days: days, result: result, version: rule.version, risk: rule.risk,
-    notice: notice, extra: ex.days, paused: paused, reasons: ex.reasons };
+    notice: notice, extra: ex.days, paused: paused, reasons: ex.reasons, byOffer: a.byOffer, offer: a.byOffer ? offer : '' };
 }
 
 /** Returns the computed fields for one position line: the recruiter clock (stored) and the position clock (Pos_*). */
@@ -109,5 +132,6 @@ function computeTat_(l, ctx) {
     TAT_End_Date: end ? parseYmd_(end) : '', Days_Taken: r.days, TAT_Result: r.result, TAT_Rule: r.version, TAT_Risk: r.risk,
     Pos_TAT_Start: ps, Pos_Standard_TAT: p.std, Pos_Exemption_Days: p.exemption, Pos_Final_TAT: p.fin, Pos_Days_Taken: p.days, Pos_TAT_Result: p.result, Pos_TAT_Rule: p.version,
     Notice_Ext_Days: r.notice, Exempt_Extra_Days: r.extra, Paused_Days: r.paused, Exempt_Reasons: r.reasons.join('; '),
-    Pos_Exempt_Extra_Days: p.extra, Pos_Paused_Days: p.paused, Pos_Exempt_Reasons: p.reasons.join('; ') };
+    Pos_Exempt_Extra_Days: p.extra, Pos_Paused_Days: p.paused, Pos_Exempt_Reasons: p.reasons.join('; '),
+    Notice_From_Offer: r.offer, Pos_Notice_From_Offer: p.offer };   // the offer date when the notice runs from the offer (v152), else ''
 }
