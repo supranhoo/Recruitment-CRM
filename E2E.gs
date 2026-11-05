@@ -630,6 +630,17 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    t('K45 An offer within the TAT runs the notice from the offer: due on the later of today\u2019s due date and offer + notice; a late offer, or no offer sent, keeps today\u2019s rule', function () {
+      const tg = [{ recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: true, from: '2025-04' }], g = { Grade: 'M3', Fill_Type: '' };
+      const clk = function (offer) { return { receipt: '2026-07-10', doj: '', ex: { days: 0, reasons: [], pauses: [] }, notice: 60, hold: 0, paused: 0, offer: offer, noticeDays: 90 }; };
+      const a = kpiDue_(g, 'M_FULFILMENT', tg, 'asha', clk('2026-08-25'), 'Offered'), b = kpiDue_(g, 'M_FULFILMENT', tg, 'asha', clk('2026-09-10'), 'Offered');
+      const ctx = tatContext_(), rule = ruleFor_(ctx, 'M3', '2026-07-10'), plain = rule.std + Math.max(90 - rule.grace, 0), want = 46 <= rule.std ? Math.max(plain, 46 + 90) : plain;
+      const line = { Line_ID: 'E2E-K45-NONE', Grade: 'M3', Approval_Status: 'Approved', Approved_On: parseYmd_('2026-07-10'), Offer_Sent: 'Yes', Offer_Date: parseYmd_('2026-08-25'), Notice_Period_Days: 90, Hold_Days: 0 };
+      const c = computeTat_(line, ctx), off = computeTat_(Object.assign({}, line, { Offer_Sent: 'No' }), ctx);
+      return a && a.due === '2026-11-23' && a.month === '2026-11' && a.allowed === 136 && a.byOffer && b && b.due === '2026-10-28' && b.month === '2026-10' && !b.byOffer
+        && c.Final_TAT === want && c.Pos_Final_TAT === want && c.Notice_From_Offer === (want > plain ? '2026-08-25' : '') && off.Final_TAT === plain && off.Notice_From_Offer === ''
+        ? 'in time: due ' + a.due + ' (136 d); late: due ' + b.due + '; clock ' + c.Final_TAT + ' d (rule ' + rule.std + ' + grace ' + rule.grace + ')' : false;
+    });
     t('K44 Notice beyond the grace is always exempt: a rejection or a "not exempt" target changes nothing, and a rejection can no longer be recorded', function () {
       const l = { Notice_Period_Days: 60, Notice_Ext_Status: 'Rejected' };
       let refused = ''; try { apiNoticeExtDecide('NO-SUCH-LINE', 'Reject', 'x'); } catch (e) { refused = e.message; }

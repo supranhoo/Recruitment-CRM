@@ -240,7 +240,7 @@ function kpiLineClock_(l, k) {
   const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
   const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
   const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
-  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused };
+  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0 };
 }
 /**
  * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
@@ -253,10 +253,12 @@ function kpiDue_(l, kpi, targets, rec, clk, status) {
   if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
-  const allowed = t.days + clk.notice + clk.ex.days;   // notice beyond the grace is always added (v151)
+  // Notice beyond the grace is always added (v151); an offer sent within the TAT runs the full notice from the offer (v152).
+  const a = tatAllowed_(clk.receipt, t.days + clk.ex.days, clk.notice, clk.noticeDays, clk.hold, clk.paused, clk.offer), allowed = a.allowed;
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
   const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
-  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed };
+  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed,
+    byOffer: a.byOffer, offer: a.byOffer ? clk.offer : '' };
 }
 
 function computeKpis_(fy) {
@@ -297,7 +299,10 @@ function computeKpis_(fy) {
       if (!d || !inFy(d.month) || d.month > ymd_(new Date()).slice(0, 7)) return;
       const c = bucket(rec, kpi, d.month);
       c.den++; if (d.ok) c.num++;
-      c.items.push(Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief));
+      const it = Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief);
+      if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
+      else if (clk.notice) it.notice = clk.notice;
+      c.items.push(it);
     });
     // Positions worked on in each month (clock started by month end, not ended before month start), and how many joined on time in it.
     // Each KPI counts only the positions of its own level (kpiDue_ gives null for the others).
