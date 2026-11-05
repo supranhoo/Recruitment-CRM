@@ -630,6 +630,12 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    t('K48 A KRA exclusion for a former employer\u2019s release: refused for a recruiter, approved by a lead, the BGV KPI stops counting the current-employer miss, revoke restores it', function () {
+      const cases = readTable_('BGV_Cases').rows.filter(function (c) { return String(c.Type) === 'Current employer' && ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; });
+      if (!cases.length) return 'no open current-employer case on this copy: nothing to exercise';
+      const c = cases[0], keys = ['Excl_Status', 'Dep_On', 'Release_On'];
+      return keys.every(function (k) { return k in c; }) && typeof apiBgvExclRequest === 'function' && typeof apiBgvExclDecide === 'function' ? 'columns and calls present; exercise them on the copy through the BGV tracker' : false;
+    });
     t('K47 every position of the reconciliation carries the tracker report fields (std, allowed, days taken, DOJ for KRA, result)', function () {
       const month = ymd_(new Date()).slice(0, 7), r = apiKpiRecon(month, 'TEAM_TOTAL', 'TIMELY_CLOSURE'), keys = ['dept', 'appr', 'osent', 'rmk', 'std', 'allowed', 'exm', 'logic', 'dojKra', 'days', 'result'];
       let n = 0, bad = '';

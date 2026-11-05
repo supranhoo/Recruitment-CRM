@@ -404,14 +404,16 @@ function computeKpis_(fy) {
     const prev = ymd_(cp ? cp.Initiated_On : '') || ymd_(l.BGV_Prev_Org_Date), curr = ymd_(cc ? cc.Initiated_On : '') || ymd_(l.BGV_Current_Org_Date);
     const deadline = addDays_(doj, 2);
     const prevOk = !!prev && (!offer || prev <= addDays_(offer, 3)) || !!(cp && String(cp.Outcome) === 'Waived');
-    const currOk = (!!curr && curr <= deadline) || !!(cc && String(cc.Outcome) === 'Waived');
+    // an approved KRA exclusion (v158): the former employer's release is awaited, so the current-employer start is not judged
+    const excl = !!(cc && String(cc.Excl_Status) === 'Approved' && String(cc.Status) !== 'Cancelled'), exclRel = excl ? ymd_(cc.Release_On) : '';
+    const currOk = (!!curr && curr <= deadline) || !!(cc && String(cc.Outcome) === 'Waived') || excl;
     const currPending = !curr && today <= deadline;
     const miss = !prevOk || (!currOk && !currPending);
     const rec = String(l.Recruiter || 'Unassigned').trim();
     const b = bucket(rec, 'BGV', doj.slice(0, 7));
     b.den++; if (miss) b.num++;
     b.items.push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), doj: doj, offer: offer,
-      prev: prev, curr: curr, ok: !miss,
+      prev: prev, curr: curr, ok: !miss, excl: excl ? 'Excluded from the KRA: the former employer\u2019s release is awaited' + (exclRel ? ', expected ' + exclRel : '') : undefined,
       why: miss ? [!prev ? 'No previous-employer BGV' : (!prevOk ? 'Previous-employer BGV initiated more than 3 days after the offer' : ''), (!currOk && !currPending) ? (curr ? 'Current-employer BGV started late' : 'Current-employer BGV not started') : ''].filter(Boolean).join('; ') : (currPending ? 'Current-employer BGV due by ' + deadline : '') });
   });
 

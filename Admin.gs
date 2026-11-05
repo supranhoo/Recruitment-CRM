@@ -222,6 +222,8 @@ function dataChecks_() {
   });
   const bl = add('bgv_late', 'BGV not started past the start-by date', 'The recruiter owns the case: open the BGV tracker, start it, or record why it is not needed.', 'MRF');
   try { bgvLateCases_().forEach(function (x) { bl.items.push(x); }); } catch (e) { }
+  const bx = add('bgv_excl_over', 'BGV excluded from the KRA past its release date', 'The former employer\u2019s data was expected by now: chase it, or revoke the exclusion in the BGV tracker.', 'MRF');
+  try { bgvExclOverdue_().forEach(function (x) { bx.items.push(x); }); } catch (e) { }
   return checks.map(function (c) { c.count = c.items.length; c.items = c.items.slice(0, 200); return c; });
 }
 
@@ -325,7 +327,7 @@ function sendSummary_(to, test) {
     + '<h3 style="margin:0 0 6px">Positions past TAT' + (overdue.length > 15 ? ' (15 of ' + overdue.length + ')' : '') + '</h3>'
     + (overdue.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + rowsOverdue + '</table>' : '<p>None \u2014 every open position is within TAT.</p>')
     + '<h3 style="margin:0 0 6px">Pipeline alerts</h3><p style="margin:0 0 6px">' + pa.hodOverdue.length + ' candidates waiting more than 24 hours for department feedback \u00b7 ' + pa.atRisk.length + ' joiners at risk \u00b7 ' + pa.dueToday.length + ' joining follow-ups due' + (pa.unassessed ? ' \u00b7 ' + pa.unassessed + ' joiners never checked on' : '') + '</p>'
-    + (bgvW && (bgvW.open || bgvW.decide) ? '<p style="margin:0 0 16px"><b>Background verification:</b> ' + bgvW.open + ' open case' + (bgvW.open === 1 ? '' : 's') + ' \u00b7 <span style="color:' + (bgvW.red ? '#D9480F' : '#18222F') + '">' + bgvW.red + ' past a limit</span> \u00b7 ' + bgvW.decide + ' awaiting the Head of HR\u2019s decision' + (bgvW.withEmp ? ' \u00b7 ' + bgvW.withEmp + ' with the employee (not counted as past a limit)' : '') + (bgvW.na ? ' \u00b7 ' + bgvW.na + ' older records not tracked (N/A)' : '')
+    + (bgvW && (bgvW.open || bgvW.decide) ? '<p style="margin:0 0 16px"><b>Background verification:</b> ' + bgvW.open + ' open case' + (bgvW.open === 1 ? '' : 's') + ' \u00b7 <span style="color:' + (bgvW.red ? '#D9480F' : '#18222F') + '">' + bgvW.red + ' past a limit</span> \u00b7 ' + bgvW.decide + ' awaiting the Head of HR\u2019s decision' + (bgvW.withEmp ? ' \u00b7 ' + bgvW.withEmp + ' with the employee (not counted as past a limit)' : '') + (bgvW.excl ? ' \u00b7 <span style="color:' + (bgvW.exclOver ? '#D9480F' : '#18222F') + '">' + bgvW.excl + ' excluded from the KRA awaiting a former employer\u2019s release' + (bgvW.exclOver ? ' (' + bgvW.exclOver + ' past the expected date)' : '') + '</span>' : '') + (bgvW.na ? ' \u00b7 ' + bgvW.na + ' older records not tracked (N/A)' : '')
       + (bgvW.byRecruiter.length ? '<br><span style="color:#8793A3;font-size:13px">Past a limit: ' + bgvW.byRecruiter.map(function (x) { return esc(x.recruiter) + ' ' + x.red; }).join(' \u00b7 ') + '</span>' : '') + ' (BGV tracker).</p>' : '')
     + (texPending ? '<p style="margin:0 0 16px"><b>' + texPending + ' TAT exemption' + (texPending === 1 ? '' : 's') + ' awaiting the Head of HR\u2019s decision</b> (Admin \u2192 TAT exemptions).</p>' : '')
     + (pa.atRisk.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + pa.atRisk.slice(0, 15).map(function (x) {

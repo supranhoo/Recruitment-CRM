@@ -16,7 +16,8 @@ const BGV_CASE_COLS_ = ['Case_ID', 'Type', 'Line_ID', 'MRF_No', 'App_ID', 'Candi
   'Trigger_Date', 'Due_Date', 'Result_Due', 'Consent_On', 'Consent_File', 'Vendor_ID', 'Vendor_Ref', 'Initiated_On', 'Initiation_Proof_File', 'Status',
   'Outcome', 'Report_On', 'Report_File', 'Decision', 'Decision_By', 'Decision_On', 'Decision_Note', 'Closed_On', 'Remarks', 'Legacy', 'Rules_Version',
   'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Purged_On', 'Purged_By',
-  'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At'];
+  'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At',
+  'Dep_On', 'Release_On', 'Excl_Status', 'Excl_Note', 'Excl_Req_By', 'Excl_Req_At', 'Excl_By', 'Excl_At'];
 const BGV_CHECK_COLS_ = ['Check_ID', 'Case_ID', 'Check_Type', 'Subject', 'Period', 'Status', 'Finding', 'Verified_On', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At'];
 const BGV_LOG_COLS_ = ['Log_ID', 'Case_ID', 'At', 'By', 'Kind', 'Old_Status', 'New_Status', 'Note'];
 const BGV_VENDOR_COLS_ = ['Vendor_ID', 'Name', 'Contact_Person', 'Email', 'Phone', 'Checks_Offered', 'Std_TAT_Days', 'Active', 'Contract_End', 'Note',
@@ -94,7 +95,8 @@ function bgvRules_(day) {
 
 function bgvSchema_() {
   addSheet_(BGV_CASES_.name, BGV_CASE_COLS_);
-  addColumns_(BGV_CASES_.name, ['Purged_On', 'Purged_By', 'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At']);
+  addColumns_(BGV_CASES_.name, ['Purged_On', 'Purged_By', 'Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At',
+    'Dep_On', 'Release_On', 'Excl_Status', 'Excl_Note', 'Excl_Req_By', 'Excl_Req_At', 'Excl_By', 'Excl_At']);
   addSheet_(BGV_CHECKS_.name, BGV_CHECK_COLS_);
   addSheet_(BGV_LOG_.name, BGV_LOG_COLS_);
   addSheet_(BGV_VENDORS_.name, BGV_VENDOR_COLS_);
@@ -299,6 +301,7 @@ function bgvOut_(c, u, cfg, today, full) {
     o.consent = d(c.Consent_On); o.needsDecision = bgvNeedsDecision_(c);
     o.pendRemark = String(c.Pending_Remark || ''); o.expectedOn = d(c.Expected_On); o.leftOrg = String(c.Left_Org || ''); o.expLetter = String(c.Exp_Letter || '');
     o.waiting = String(c.Waiting_On || '') === 'Employee'; o.track = String(c.Track || ''); o.trackNote = String(c.Track_Note || '');
+    o.excl = String(c.Excl_Status || ''); o.depOn = d(c.Dep_On); o.releaseOn = d(c.Release_On); o.exclNote = String(c.Excl_Note || ''); o.exclReqBy = String(c.Excl_Req_By || ''); o.exclBy = String(c.Excl_By || '');
   }
   if (full && worker) {
     o.remarks = String(c.Remarks || ''); o.decisionBy = String(c.Decision_By || ''); o.decisionOn = d(c.Decision_On); o.decisionNote = String(c.Decision_Note || '');
@@ -316,9 +319,17 @@ function bgvNaBefore_() { const v = settings_().BGV_NA_BEFORE; return ymd_(v) ||
 function bgvOpen_(c) { return ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; }
 /** A previous-employer case where the candidate has left the organisation and the experience letter has not come. */
 function bgvLetterPending_(c) { return String(c.Type) === BGV_TYPES_[0] && String(c.Left_Org) === 'Yes' && String(c.Exp_Letter) === 'Pending'; }
+/** An approved KRA exclusion of an open current-employer case (v158): the former employer releases the data 40 to 45 days after departure. {depOn, releaseOn, over} or null. */
+function bgvExcl_(c) {
+  if (String(c.Type) !== BGV_TYPES_[1] || String(c.Excl_Status) !== 'Approved' || !bgvOpen_(c)) return null;
+  const rel = ymd_(c.Release_On);
+  return { depOn: ymd_(c.Dep_On), releaseOn: rel, over: !!rel && rel < ymd_(new Date()) };
+}
 /** The employee is holding the case up (marked by the recruiter, or an experience letter that is missing): {reason, until, letter}. null when not. */
 function bgvHold_(c) {
   if (!bgvOpen_(c)) return null;
+  const x = bgvExcl_(c);
+  if (x) return { reason: 'Former employer release', until: x.releaseOn, letter: false, excl: true };   // v158: excluded from the KRA until the former employer releases the data
   const w = String(c.Waiting_On) === 'Employee';
   if (!w && !bgvLetterPending_(c)) return null;
   return { reason: w ? String(c.Wait_Reason || 'Documents') : 'Experience letter', until: ymd_(c.Expected_On), letter: !w };
@@ -363,7 +374,7 @@ function bgvQuietMap_() {
   readTable_(BGV_CASES_.name).rows.forEach(function (c) {
     if (!bgvOpen_(c)) return;
     const h = bgvHold_(c);
-    if (bgvTrack_(c).na || (h && h.until && h.until >= today)) m[c.Line_ID + '|' + c.Type] = true;
+    if (bgvTrack_(c).na || (h && h.until && h.until >= today) || (h && h.excl)) m[c.Line_ID + '|' + c.Type] = true;   // an excluded case stays quiet; its own release to-do chases it
   });
   return m;
 }
@@ -591,6 +602,62 @@ function bgvPendingApply_(u, id, d) {
   patch.Updated_By = u.email;
   update_(BGV_CASES_, id, patch, u);
   bgvLog_(u, id, 'Candidate', '', '', notes.join('. '));
+}
+
+/* ---- excluded from the KRA while the former employer's release is awaited (v158) ---- */
+const BGV_EXCL_DAYS_ = 45;
+/** The case owner (or a lead) asks for the exclusion: when the employee left the former employer and when the data is expected (default 45 days later). */
+function apiBgvExclRequest(id, d) {
+  const u = currentUser_(); ensureSchema_();
+  d = d || {};
+  return withLock_(function () {
+    const c = bgvCaseRow_(id);
+    bgvRequireWork_(u, c);
+    if (String(c.Type) !== BGV_TYPES_[1]) throw new Error('The KRA exclusion applies to the current-employer BGV.');
+    if (!bgvOpen_(c)) throw new Error('This case is ' + String(c.Status).toLowerCase() + '.');
+    if (['Requested', 'Approved'].indexOf(String(c.Excl_Status)) >= 0) throw new Error('An exclusion is already ' + String(c.Excl_Status).toLowerCase() + ' for this case.');
+    const line = lineOf_(String(c.Line_ID)), doj = line ? ymd_(line.Actual_DOJ) : '', today = ymd_(new Date());
+    if (!doj || doj > today) throw new Error('The employee has not joined yet.');
+    const dep = String(d.depOn || '').trim(), depY = ymd_(dep);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dep) || !depY) throw new Error('Give the date the employee left the former employer.');
+    if (depY > today) throw new Error('The departure date cannot be in the future.');
+    const relRaw = String(d.releaseOn || '').trim(), rel = relRaw ? ymd_(relRaw) : addDays_(depY, BGV_EXCL_DAYS_);
+    if (relRaw && !/^\d{4}-\d{2}-\d{2}$/.test(relRaw)) throw new Error('Pick the expected release date from the calendar.');
+    if (rel < addDays_(depY, 30) || rel > addDays_(depY, 90)) throw new Error('The release date should be 30 to 90 days after the departure (the former employer usually releases after 40 to 45 days).');
+    const remark = clean_(String(d.remark || '')).trim();
+    if (remark.length < 10) throw new Error('Say what is pending and from whom (at least 10 characters).');
+    update_(BGV_CASES_, id, { Dep_On: parseYmd_(depY), Release_On: parseYmd_(rel), Excl_Status: 'Requested', Excl_Note: remark.slice(0, 300), Excl_Req_By: u.email, Excl_Req_At: new Date(),
+      Excl_By: '', Excl_At: '', Updated_By: u.email }, u);
+    bgvLog_(u, id, 'Candidate', '', '', 'KRA exclusion requested: left ' + depY + ', release expected ' + rel + '. ' + remark);
+    return apiBgvCase(id);
+  });
+}
+/** A TA Lead, the Head of HR or the admin approves or rejects a request, or revokes an approved exclusion. */
+function apiBgvExclDecide(id, action, note) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can decide a KRA exclusion.');
+  action = String(action || ''); note = clean_(String(note || '')).trim();
+  if (['Approve', 'Reject', 'Revoke'].indexOf(action) < 0) throw new Error('Choose Approve, Reject or Revoke.');
+  return withLock_(function () {
+    const c = bgvCaseRow_(id), st = String(c.Excl_Status);
+    if (action === 'Approve' && st !== 'Requested') throw new Error('There is no request to approve.');
+    if (action === 'Reject' && st !== 'Requested') throw new Error('There is no request to reject.');
+    if (action === 'Revoke' && st !== 'Approved') throw new Error('There is no approved exclusion to revoke.');
+    if (action !== 'Approve' && note.length < 10) throw new Error('Give the reason (at least 10 characters).');
+    const next = action === 'Approve' ? 'Approved' : action === 'Reject' ? 'Rejected' : 'Ended';
+    update_(BGV_CASES_, id, { Excl_Status: next, Excl_By: u.email, Excl_At: new Date(), Excl_Note: action === 'Approve' ? String(c.Excl_Note || '') : (String(c.Excl_Note || '') + ' | ' + action + ': ' + note).slice(0, 500), Updated_By: u.email }, u);
+    bgvLog_(u, id, 'Note', '', '', 'KRA exclusion ' + next.toLowerCase() + ' by ' + u.email + (note ? ': ' + note : ''));
+    _tables = {};
+    return apiBgvCase(id);
+  });
+}
+/** Excluded cases past their expected release date, for Admin > Data checks. */
+function bgvExclOverdue_() {
+  if (!bgvSheet_()) return [];
+  return readTable_(BGV_CASES_.name).rows.filter(function (c) { const x = bgvExcl_(c); return x && x.over; }).map(function (c) {
+    const x = bgvExcl_(c);
+    return { id: String(c.Line_ID), label: String(c.MRF_No || '') + ' \u00b7 ' + String(c.Position || '') + ' (' + String(c.Recruiter || '') + ')', detail: 'Release expected ' + x.releaseOn + ', not received; excluded from the KRA since ' + ymd_(c.Excl_At) };
+  });
 }
 
 /* ---- the "BGV pending" block in the Daily review and My day (v149) ---- */
@@ -824,10 +891,15 @@ function bgvTasks_(add) {
   const todayD = ymd_(new Date());
   readTable_(BGV_CASES_.name).rows.forEach(function (c) {
     const hold = bgvHold_(c);
-    if (bgvTrack_(c).na || (hold && hold.until && hold.until >= todayD)) return;   // not tracked, or the employee has until a date still ahead
     const st = String(c.Status), id = String(c.Case_ID), base = { recruiter: String(c.Recruiter || ''), line: String(c.Line_ID), app: String(c.App_ID || ''), open: { type: 'bgv', id: id } };
     const mk = function (kind, extra) { return Object.assign({ key: kind + '|' + id }, base, extra); };
     const ms = function (v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; };
+    const ex = bgvExcl_(c);
+    if (ex && ex.releaseOn) {   // v158: excluded from the KRA: ask the former employer from 5 days before the release date; critical once it has passed
+      add('bgv_release', mk('bgv_release', { title: 'Ask the former employer for the release / experience letter (excluded from the KRA)', context: lbl(c) + ' · release expected ' + ex.releaseOn + (ex.over ? ' (' + daysBetween_(ex.releaseOn, todayD) + ' days overdue)' : ''),
+        startMs: ms(parseYmd_(ex.releaseOn)) - 5 * 86400000, forceCritical: ex.over }));
+    }
+    if (ex || bgvTrack_(c).na || (hold && hold.until && hold.until >= todayD)) return;   // not tracked, excluded (only the release to-do above), or the employee has until a date still ahead
     if (['Not started', 'Awaiting consent'].indexOf(st) >= 0 && !c.Consent_On && String(c.Legacy) !== 'Yes' && ms(c.Trigger_Date)) {
       add('bgv_consent', mk('bgv_consent', { title: 'Get the candidate’s consent for BGV (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · start by ' + ymd_(c.Due_Date), startMs: ms(c.Trigger_Date) }));
     }
@@ -917,7 +989,8 @@ function bgvWeekly_() {
   const open = all.filter(function (c) { return !bgvTrack_(c).na; });   // N/A (not tracked) cases are left out
   const red = open.filter(function (c) { return bgvRagFor_(c, cfg, today).rag === 'Red'; });
   const by = {}; red.forEach(function (c) { by[c.Recruiter] = (by[c.Recruiter] || 0) + 1; });
-  return { open: open.length, red: red.length, withEmp: open.filter(function (c) { return !!bgvHold_(c); }).length, na: all.length - open.length, decide: open.filter(bgvNeedsDecision_).length,
+  const excl = open.filter(function (c) { return !!bgvExcl_(c); });
+  return { open: open.length, red: red.length, excl: excl.length, exclOver: excl.filter(function (c) { return bgvExcl_(c).over; }).length, withEmp: open.filter(function (c) { return !!bgvHold_(c); }).length, na: all.length - open.length, decide: open.filter(bgvNeedsDecision_).length,
     byRecruiter: Object.keys(by).map(function (k) { return { recruiter: k, red: by[k] }; }).sort(function (a, b) { return b.red - a.red; }).slice(0, 8) };
 }
 
