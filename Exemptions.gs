@@ -4,7 +4,7 @@
  * rejects it, and can grant one directly or revoke it later. The reason decides what an approved exemption changes:
  * the recruiter clock and the KPI score (Applies_Recruiter) and/or the position clock (Applies_Position). Those flags
  * are copied from the reason when the exemption is decided, so a later change to the reason never rewrites the past.
- * The notice-period extension stays automatic but needs proof; the Head of HR can verify or reject it.
+ * The notice-period extension is automatic and always applies (v151); proof is optional (v156) and the Head of HR can verify it.
  * Exemptions for a closed position can be requested, decided or revoked until TEX_LOCK_DAYS_ after the end of the
  * month in which it closed (the month its KPI falls in); after that only the admin can change them.
  */
@@ -261,7 +261,6 @@ function apiNoticeExtDecide(lineId, action, note) {
   if (action === 'Reject') throw new Error('A notice beyond the grace period is always exempt from the TAT; it can no longer be rejected.');
   if (['Verify', 'Reset'].indexOf(action) < 0) throw new Error('Choose Verify.');
   note = clean_(String(note || '').trim()).slice(0, 500);
-  if (action === 'Verify' && !String(l.Notice_Proof_File || '')) throw new Error('Attach the notice proof before verifying.');
   update_(T.MRF, lineId, { Notice_Ext_Status: action === 'Verify' ? 'Verified' : '', Notice_Ext_Note: note,
     Notice_Ext_By: u.email, Notice_Ext_On: new Date() }, u);
   exemptRecalc_(lineId, u);

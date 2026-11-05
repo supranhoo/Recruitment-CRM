@@ -111,12 +111,10 @@ function apiSavePosition(data) {
   if (old) { delete patch.BGV_Prev_Org_Date; delete patch.BGV_Current_Org_Date; delete patch.BGV_Remarks; }   // read-only on an existing position: the BGV tracker keeps them
   if (old && !isLead_(u)) delete patch.Recruiter;   // only a lead reassigns a position (the form locks it; this closes the direct call)
   checkDesignation_(patch, old);
-  // Notice beyond the grace extends the TAT automatically, so it needs proof; a changed notice resets the Head of HR's check.
+  // Notice beyond the grace is always exempt (v151) and needs no proof (v156); a changed notice resets the Head of HR's optional check.
   if ('Notice_Period_Days' in patch) {
     const was = old ? Number(old.Notice_Period_Days) || 0 : 0, now = Number(patch.Notice_Period_Days) || 0;
     if (now !== was) {
-      const g = ruleFor_(ctx, patch.Grade || (old && old.Grade), tatStart_(Object.assign({}, old || {}, patch))).grace;
-      if (now > g && !(old && old.Notice_Proof_File) && !data._noticeProof) throw new Error('A notice period over ' + g + ' days extends the TAT, so it needs proof. ' + (old ? 'Attach the notice proof (resignation or offer acceptance showing the notice) in \u201cNotice period proof\u201d and save again.' : 'Save the position first, then enter the notice period with its proof attached.'));
       Object.assign(patch, { Notice_Ext_Status: '', Notice_Ext_Note: '', Notice_Ext_By: '', Notice_Ext_On: '' });
     }
   }

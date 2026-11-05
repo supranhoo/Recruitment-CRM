@@ -172,14 +172,13 @@ function dataChecks_() {
   const c5 = add('mobile', 'Candidates with a missing or invalid mobile number', 'Mobile should be 10 digits.', 'CAND');
   const c6 = add('dup', 'Candidates sharing a mobile number or email', 'Probably the same person entered twice.', 'CAND');
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
-  const c8 = add('notice_proof', 'Notice beyond the grace without proof', 'Notice over 30 days extends the TAT automatically; attach the notice proof or ask the Head of HR to review it (Admin \u2192 TAT exemptions).', 'MRF');
+  const c8 = add('notice_edoj', 'Expected joining later than offer + notice', 'The expected joining date is more than 14 days after the offer date plus the notice period: the notice or the date is probably wrong.', 'MRF');
   const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
   const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
   try {
     const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
     funnelDuplicates_().forEach(function (g) { g.extra.forEach(function (e) { const l = lm[e.Line_ID] || {}; c9.items.push({ id: e.Entry_ID, label: String(l.MRF_No || e.Line_ID) + ' \u00b7 ' + String(l.Position || '') + ' (' + String(e.Recruiter || '') + ') \u00b7 ' + ymd_(e.Entry_Date), detail: (funnelSame_(g.keep, e) ? 'Identical to ' : 'Different numbers from ') + g.keep.Entry_ID }); }); });
   } catch (e) { }
-  const nctx = tatContext_();
   const weekday = function (ymd) { const p = ymd.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay(); };
   readTable_(T.MRF.name).rows.forEach(function (l) {
     if (positionStatus_(l) === 'Removed') return;
@@ -192,9 +191,10 @@ function dataChecks_() {
     if (doj && positionStatus_(l) === 'Open') c10.items.push({ id: l.Line_ID, label: label, detail: 'Joining date ' + doj + ' but Offer sent is not Yes' });
     else if (doj && !tatStart_(l)) c10.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' but no start date' });
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
-    if (!l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
-      const g = ruleFor_(nctx, l.Grade, tatStart_(l)).grace, n = Number(l.Notice_Period_Days) || 0;
-      if (n > g) c8.items.push({ id: l.Line_ID, label: label, detail: 'Notice ' + n + ' days adds ' + (n - g) + ' days to the TAT' });
+    const nd = Number(l.Notice_Period_Days) || 0, edoj = ymd_(l.EDOJ);
+    if (positionStatus_(l) === 'Offered' && offer && nd > 0 && edoj) {
+      const lim = addDays_(offer, nd), late = daysBetween_(lim, edoj);
+      if (late > 14) c8.items.push({ id: l.Line_ID, label: label, detail: 'Offer ' + offer + ' + ' + nd + ' days notice = ' + lim + ', but expected joining is ' + edoj + ' (' + late + ' days later): check the notice period or the date' });
     }
     if (doj) { const w = weekday(doj); if (w !== 1 && w !== 4) c4.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][w] + ')' }); }
   });
