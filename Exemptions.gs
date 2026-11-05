@@ -55,6 +55,14 @@ function exemptIndex_() {
     (out[String(x.Line_ID)] = out[String(x.Line_ID)] || []).push({ id: String(x.Exemption_ID), type: String(x.Type), days: Number(x.Days) || 0,
       from: ymd_(x.From_Date), to: ymd_(x.To_Date), r: String(x.Applies_Recruiter) === 'Yes', p: String(x.Applies_Position) === 'Yes', reason: String(x.Reason) });
   });
+  /* v154: a replacement after a backout keeps the original start, so it also keeps the original's approved exemptions
+     (they were granted for the same vacancy). Followed up the Parent_Line_ID chain; the original is Replaced and not counted. */
+  const parent = {};
+  readTable_(T.MRF.name).rows.forEach(function (l) { if (l.Parent_Line_ID) parent[String(l.Line_ID)] = String(l.Parent_Line_ID); });
+  Object.keys(parent).forEach(function (id) {
+    let p = parent[id], depth = 0; const mine = (out[id] = out[id] || []);
+    while (p && depth++ < 10) { (out[p] || []).forEach(function (x) { if (!mine.some(function (m) { return m.id === x.id; })) mine.push(x); }); p = parent[p]; }
+  });
   return out;
 }
 /** The approved exemptions of one position that apply to a clock ('r' recruiter and KPI, 'p' position). */
