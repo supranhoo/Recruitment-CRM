@@ -307,12 +307,13 @@ function computeKpis_(fy) {
         if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
         const c = bucket(rec, kpi, m);
         c.worked++; if (clk.doj && clk.doj.slice(0, 7) === m && d.days <= d.allowed) c.workedOk++;
+        if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month: the same figure as the "N of M worked on" line of Timely closure
       });
     });
 
-    // 3. Offer backout rate — backouts in the month ÷ offers made in the month.
-    const offerM = ymd_(l.Offer_Date).slice(0, 7), backM = ymd_(l.Backout_Date).slice(0, 7);
-    if (offerM && inFy(offerM)) { const c = bucket(rec, 'OFFER_BACKOUT', offerM); c.den++; c.items.push(Object.assign({ event: 'Offer', date: ymd_(l.Offer_Date) }, brief)); }
+    // 3. Offer backout rate (v150) — candidates who backed out in the month ÷ positions worked on in the month × 100.
+    // The backout is counted in the month of its date, for the position's recruiter; the positions worked on are counted in the loop above.
+    const backM = ymd_(l.Backout_Date).slice(0, 7);
     if (backM && inFy(backM)) { const c = bucket(rec, 'OFFER_BACKOUT', backM); c.num++; c.items.push(Object.assign({ event: 'Backout', date: ymd_(l.Backout_Date) }, brief)); }
   });
 

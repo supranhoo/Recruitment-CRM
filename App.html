@@ -4184,7 +4184,7 @@ async function viewAdmin(v) {
 const KPI_TAT = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
 const KPI_PCT_DEFAULT_RULES = [{ min: 100, score: 5 }, { min: 95, score: 4 }, { min: 90, score: 3 }, { min: 85, score: 2 }, { min: 80, score: 1 }];
 const KPI_NOTES = {
-  OFFER_BACKOUT: 'Backouts ÷ offers made in the month · lower is better · not scored',
+  OFFER_BACKOUT: 'Candidates who backed out ÷ positions worked on in the month × 100 · lower is better · not scored',
   PSYCHOMETRIC: 'Shortlisted Manager+ candidates without a test · 5 for 0, 3 for 1, 0 for more',
   MRF_ADHERENCE: 'Observations logged in the month · 5 for 0, down to 0 for more than 4',
   BGV: 'Manager+ or flagged hires without BGV on time · 5 for 0, 2 for 1, 0 for more',
@@ -4224,6 +4224,7 @@ async function viewKpi(v, fresh) {
       if (kpi === 'TRACKER_ACCURACY' && c.pending) return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.num}</b><span class="frac">${c.pending} to check</span></td>`;
       return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.num}</b><span class="frac">${esc(k.defs[kpi].unit)}</span>${scoreBadge(c.score)}</td>`;
     }
+    if (c.pct == null && kpi === 'OFFER_BACKOUT') return c.num ? `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>\u2013</b><span class="frac">${c.num} backout${c.num === 1 ? '' : 's'}, no position worked on</span></td>` : '<td class="kcell empty-cell">\u2013</td>';
     if (c.pct == null) return c.worked ? `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>\u2013</b><span class="frac">${c.workedOk} of ${c.worked} worked on</span></td>` : '<td class="kcell empty-cell">\u2013</td>';
     return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.pct}%</b><span class="frac">${c.num}/${c.den}</span>${scoreBadge(c.score)}${c.worked ? `<span class="frac" title="Positions worked on in the month, and how many joined on time in it">${c.workedOk} of ${c.worked} worked on</span>` : ''}</td>`;
   };
@@ -4273,8 +4274,8 @@ function kpiDrill(k, f, kpi, m) {
     head = `<th>Record</th>${recHead}<th>Result</th>`;
     rows = c.items.sort((a, b) => (a.result === 'Error' ? -1 : 1)).map(i => `<tr><td>${esc(i.label)}<span class="sub">${esc(i.entity)} · ${esc(i.record)}</span></td>${recCol(i)}<td>${i.result === 'Error' ? `<span class="miss">Error: ${esc(i.field)}${i.critical ? ' (critical)' : ''}</span>` : esc(i.result)}${i.remarks ? `<span class="sub">${esc(i.remarks)}</span>` : ''}</td></tr>`);
   } else if (kpi === 'OFFER_BACKOUT') {
-    head = `<th>Event</th><th>Date</th><th>Position</th>${team ? '<th>Recruiter</th>' : ''}`;
-    rows = c.items.sort((a, b) => a.date < b.date ? -1 : 1).map(i => `<tr><td>${i.event === 'Backout' ? '<b>Backout</b>' : 'Offer'}</td><td class="nw">${fmtDate(i.date)}</td><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}</tr>`);
+    head = `<th>Backed out on</th><th>Position</th>${team ? '<th>Recruiter</th>' : ''}`;
+    rows = c.items.sort((a, b) => a.date < b.date ? -1 : 1).map(i => `<tr><td class="nw"><b>${fmtDate(i.date)}</b></td><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}</tr>`);
   } else {
     const due = KPI_TAT.includes(kpi);
     head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>TAT start</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
@@ -4284,10 +4285,12 @@ function kpiDrill(k, f, kpi, m) {
   }
   const drawer = openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
     ${KPI_TAT.includes(kpi) ? '<p style="margin:12px 0 0"><button class="btn" id="kpiRecon">Where are all the positions of this month?</button></p>' : ''}
-    <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : (c.pct == null ? '\u2013' : c.pct + '%')}</b></div><div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / offers' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div><div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
-    ${c.items.length ? '' : '<p class="empty">Nothing to count this month.</p>'}
+    <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : (c.pct == null ? '\u2013' : c.pct + '%')}</b></div><div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / positions worked on' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div><div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
+    ${kpi === 'OFFER_BACKOUT' ? `<p style="margin:12px 0 0"><button class="btn" id="kpiWorked">See the positions worked on this month</button></p><p class="hint">Rate = candidates who backed out in the month \u00f7 positions worked on in the month \u00d7 100. A position is worked on in the month if its recruiter clock started by the month end and it had not joined before the month began; it is the same count as the \u201cof N worked on\u201d line of Timely closure.</p>` : ''}
+    ${c.items.length ? '' : kpi === 'OFFER_BACKOUT' ? '<p class="empty">No candidate backed out this month.</p>' : '<p class="empty">Nothing to count this month.</p>'}
     <div class="table-wrap" style="margin-top:14px"><table><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`);
   if ($('#kpiRecon', drawer)) $('#kpiRecon', drawer).onclick = () => kpiReconDialog(m, f.rec, kpi, k.defs[kpi].name);
+  if ($('#kpiWorked', drawer)) $('#kpiWorked', drawer).onclick = () => kpiReconDialog(m, f.rec, 'TIMELY_CLOSURE', k.defs.TIMELY_CLOSURE.name);
 }
 
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
