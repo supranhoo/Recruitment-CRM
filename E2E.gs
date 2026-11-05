@@ -630,6 +630,18 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    t('K43 Offer backout rate = candidates who backed out / positions worked on in the month x 100: the denominator is the Timely closure \"worked on\" count', function () {
+      const k = computeKpis_(fy); let n = 0, bad = '';
+      Object.keys(k.data).forEach(function (rec) {
+        Object.keys(k.data[rec].OFFER_BACKOUT || {}).forEach(function (m) {
+          const b = k.data[rec].OFFER_BACKOUT[m], tm = k.data[rec].TIMELY_CLOSURE && k.data[rec].TIMELY_CLOSURE[m];
+          n++;
+          if (!tm || b.den !== tm.worked) bad = bad || rec + ' ' + m + ': den ' + b.den + ' vs worked ' + (tm && tm.worked);
+          else if (b.pct !== (b.den ? Math.round(1000 * b.num / b.den) / 10 : null) || b.score !== null || b.items.length !== b.num) bad = bad || rec + ' ' + m + ': rate or items';
+        });
+      });
+      return n && !bad ? n + ' cells checked' : bad || 'no backout cells';
+    });
     /* BGV release 148: N/A (not tracked), the employee hold and the experience letter. */
     t('K37 BGV: the ten new columns exist, and a case with none of them filled gets the old warning', function () {
       const h = readTable_(BGV_CASES_.name).headers, want = ['Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At'];
