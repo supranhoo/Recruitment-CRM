@@ -164,6 +164,8 @@ function kpiTargets_() {
   }).concat(_kpiDraft_ && _kpiDraft_.targets ? _kpiDraft_.targets.map(function (d, j) { return Object.assign({}, d, { idx: 1e6 + j }); }) : []);
 }
 
+/** The TAT KPIs scored on positions worked on (worked − missed) ÷ worked: Timely closure (v153) and M-level fulfilment (v157). W-level stays on time ÷ due. */
+const KPI_WORKED_BASIS_ = ['TIMELY_CLOSURE', 'M_FULFILMENT'];
 const KPI_RECON_BUCKETS_ = [
   ['ontime', 'Counted, on time', 'Joined within the allowed days, in the month it joined (or fell due).'],
   ['late', 'Counted, filled late', 'Joined after the allowed days; counted as a miss in the month it fell due.'],
@@ -473,7 +475,7 @@ function computeKpis_(fy) {
     }
     /* Timely closure (v153) = positions worked on in the month without a TAT miss ÷ positions worked on; a miss is a position that fell
        due in the month and joined late or has not joined (den − num), counted once, in that month. The other KPIs: num ÷ den. */
-    const tat = KPI_TAT_.indexOf(kpi) >= 0, timely = kpi === 'TIMELY_CLOSURE', missed = c.den - c.num;
+    const tat = KPI_TAT_.indexOf(kpi) >= 0, timely = KPI_WORKED_BASIS_.indexOf(kpi) >= 0, missed = c.den - c.num;   // v157: M-level on the same basis as Timely closure
     const pct = timely ? (c.worked ? Math.round(1000 * (c.worked - missed) / c.worked) / 10 : null) : c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
     return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
       worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: timely ? missed : undefined,

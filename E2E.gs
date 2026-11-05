@@ -637,12 +637,13 @@ function e2eRun_(trash) {
         if (b.key === 'ontime' && i.result !== 'Achieved') bad = bad || 'ontime result'; if ((b.key === 'late' || b.key === 'overdue') && i.result !== 'Missed') bad = bad || 'missed result'; }); });
       return bad ? false : n + ' positions';
     });
-    t('K46 Timely closure = positions worked on without a TAT miss \u00f7 positions worked on; M-level and W-level stay on time \u00f7 due; a position not yet due is not a miss; the reconciliation adds up to the worked-on count', function () {
+    t('K46 Timely closure and M-level = positions worked on without a TAT miss \u00f7 positions worked on; W-level stays on time \u00f7 due; a position not yet due is not a miss; the reconciliation adds up to the worked-on count', function () {
       const k = apiKpi(fy, true), d = k.data.TEAM_TOTAL, month = ymd_(new Date()).slice(0, 7), today = ymd_(new Date()); let bad = '', cells = 0;
       Object.keys(d.TIMELY_CLOSURE || {}).forEach(function (m) { const c = d.TIMELY_CLOSURE[m]; cells++;
         const want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null;
         if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'Timely ' + m + ': ' + c.pct + ' vs ' + want; });
-      ['M_FULFILMENT', 'W_FULFILMENT'].forEach(function (kpi) { Object.keys(d[kpi] || {}).forEach(function (m) { const c = d[kpi][m]; if (c.pct !== (c.den ? Math.round(1000 * c.num / c.den) / 10 : null) || c.missed !== undefined) bad = bad || kpi + ' ' + m; }); });
+      Object.keys(d.M_FULFILMENT || {}).forEach(function (m) { const c = d.M_FULFILMENT[m], want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null; if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'M_FULFILMENT ' + m; });   // v157: M-level on positions worked on
+      Object.keys(d.W_FULFILMENT || {}).forEach(function (m) { const c = d.W_FULFILMENT[m]; if (c.pct !== (c.den ? Math.round(1000 * c.num / c.den) / 10 : null) || c.missed !== undefined) bad = bad || 'W_FULFILMENT ' + m; });
       KPI_TAT_.forEach(function (kpi) {
         const c = (d[kpi] || {})[month] || { num: 0, den: 0, worked: 0, notDue: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
         const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
