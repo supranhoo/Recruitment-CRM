@@ -1548,9 +1548,9 @@ function positionDrawer(p) {
     fA.addEventListener('change', () => onA(true));
     fS.addEventListener('change', () => { sAuto = fS.value === fA.value; });
     if (fRec && !isNew) fRec.addEventListener('change', () => {
-      const moved = fRec.value && fRec.value !== origRec;
+      const joinedAlready = !!(p && p.Actual_DOJ), moved = fRec.value && fRec.value !== origRec && !joinedAlready;   // v154: a joined position keeps its TAT start
       fS.value = moved ? today() : origAssigned; sAuto = false;
-      if (hintS) hintS.textContent = moved ? 'Reassigned to ' + fRec.value + ': TAT restarts from this date for the new recruiter. The original date stays in the change history.' : baseHint;
+      if (hintS) hintS.textContent = joinedAlready && fRec.value !== origRec ? 'This position has already joined, so its TAT start stays as it is.' : moved ? 'Reassigned to ' + fRec.value + ': TAT restarts from this date for the new recruiter. The original date stays in the change history.' : baseHint;
       readout();
     });
   }

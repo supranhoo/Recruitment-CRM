@@ -190,7 +190,10 @@ function assignDates_(patch, old, u) {
   const reassigned = !!(old && String(old.Recruiter || '').trim() && patch.Recruiter && String(old.Recruiter).trim() !== String(patch.Recruiter).trim());
   if (!patch.Approved_On && patch.Approval_Status === 'Approved' && patch.Receipt_Date) { patch.Approved_On = patch.Receipt_Date; patch.Approved_Date_Check = 'Default'; }   // filled in automatically: a lead checks it later
   else if (ymd_(patch.Approved_On) && ymd_(patch.Approved_On) !== ymd_(patch.Receipt_Date)) patch.Approved_Date_Check = 'Confirmed';   // a real approval date was typed
-  if (reassigned && (!lead || !patch.Assigned_On || ymd_(patch.Assigned_On) === ymd_(old.Assigned_On))) patch.Assigned_On = parseYmd_(today);
+  // v154: a position that has already joined keeps its TAT start when the recruiter changes (restarting the clock after the joining date would give it a free on-time result)
+  const joined = !!(ymd_(patch.Actual_DOJ) || (old && ymd_(old.Actual_DOJ)));
+  if (reassigned && joined && old) patch.Assigned_On = old.Assigned_On;
+  else if (reassigned && (!lead || !patch.Assigned_On || ymd_(patch.Assigned_On) === ymd_(old.Assigned_On))) patch.Assigned_On = parseYmd_(today);
   if (!patch.Assigned_On && patch.Approved_On) patch.Assigned_On = patch.Approved_On;
   if (old && !lead) {
     [['Approved_On', 'MRF approved on'], ['Assigned_On', 'Position assigned on']].forEach(function (f) {
