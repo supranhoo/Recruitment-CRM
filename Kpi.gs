@@ -168,7 +168,8 @@ const KPI_RECON_BUCKETS_ = [
   ['ontime', 'Counted, on time', 'Joined within the allowed days, in the month it joined (or fell due).'],
   ['late', 'Counted, filled late', 'Joined after the allowed days; counted as a miss in the month it fell due.'],
   ['overdue', 'Counted, overdue and not joined', 'Fell due in this month and nobody has joined yet; a miss.'],
-  ['other', 'Counted in another month', 'Not yet due, or it joined or falls due in a different month.'],
+  ['notyet', 'Not yet due', 'Falls due later this month and has not joined yet; it counts once it joins or its due date passes.'],
+  ['other', 'Counted in another month', 'Falls due in a later month, or joined or fell due in an earlier one.'],
   ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
   ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
@@ -190,22 +191,28 @@ function kpiRecon_(month, recruiter, kpi) {
   readTable_(T.MRF.name).rows.forEach(function (l) {
     const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
     if (want && rec.toLowerCase() !== want) return;
-    const lvl = targetFor_(targets, rec, kpi, month);
-    if (lvl && !levelMatch_(lvl.levels, l.Grade)) return;   // a position of another level is not part of this KPI
     const status = positionStatus_(l), clk = kpiLineClock_(l, clocks), receipt = clk.receipt, doj = clk.doj;
-    const closedOn = doj || ymd_(l.Internal_Effective_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Replaced_On);
     const joinedIn = !!doj && doj.slice(0, 7) === month;
     let bucket = '';
-    if (joinedIn && !receipt) bucket = 'nostart';
-    else if (!receipt || receipt > end || (closedOn && closedOn < start)) return;
-    else if (status === 'Replaced' || status === 'Removed') bucket = 'replaced';
-    else if (['Not Needed', 'No Vacancy', 'On Hold'].indexOf(status) >= 0) bucket = 'nohire';
-    else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
-    else {
+    if (kpiWorkable_(l, status) && receipt) {
+      /* A position that can count is placed exactly as on the scorecard (the "worked on" test and kpiDue_), so the rows up to
+         "Counted in another month" add up to the cell's worked-on count and the first three to its due count (v153). */
+      if (!kpiWorkedIn_(clk, month)) return;
       const d = kpiDue_(l, kpi, targets, rec, clk, status);
-      if (!d) bucket = 'notarget';
+      if (!d) { const t = kpiTargetFor_(l, kpi, targets, rec, clk); if (t && !levelMatch_(t.levels, l.Grade)) return; bucket = 'notarget'; }   // another level is not part of this KPI
       else if (d.month !== month) bucket = 'other';
+      else if (d.notDue) bucket = 'notyet';
       else bucket = d.ok ? 'ontime' : doj ? 'late' : 'overdue';
+    } else {
+      const lvl = targetFor_(targets, rec, kpi, month);
+      if (lvl && !levelMatch_(lvl.levels, l.Grade)) return;   // a position of another level is not part of this KPI
+      const closedOn = doj || ymd_(l.Internal_Effective_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Replaced_On);
+      if (joinedIn && !receipt) bucket = 'nostart';
+      else if (!receipt || receipt > end || (closedOn && closedOn < start)) return;
+      else if (status === 'Replaced' || status === 'Removed') bucket = 'replaced';
+      else if (['Not Needed', 'No Vacancy', 'On Hold'].indexOf(status) >= 0) bucket = 'nohire';
+      else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
+      else return;
     }
     out[bucket].push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
       receipt: receipt, doj: doj });
@@ -240,7 +247,7 @@ function kpiLineClock_(l, k) {
   const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
   const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
   const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
-  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0 };
+  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday };
 }
 /**
  * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
@@ -258,7 +265,8 @@ function kpiDue_(l, kpi, targets, rec, clk, status) {
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
   const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
   return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed,
-    byOffer: a.byOffer, offer: a.byOffer ? clk.offer : '' };
+    byOffer: a.byOffer, offer: a.byOffer ? clk.offer : '',
+    notDue: !clk.doj && !!clk.today && due >= clk.today };   // not joined and the due date is today or later: not a miss yet (v153)
 }
 
 function computeKpis_(fy) {
@@ -268,7 +276,7 @@ function computeKpis_(fy) {
   const months = fyMonths_(fy);
   const lines = readTable_(T.MRF.name).rows;
   const recruiters = {};
-  const cell = function () { return { num: 0, den: 0, worked: 0, workedOk: 0, items: [] }; };
+  const cell = function () { return { num: 0, den: 0, worked: 0, workedOk: 0, items: [], notDue: 0, notDueItems: [] }; };
   const bucket = function (rec, kpi, month) {
     const r = recruiters[rec] = recruiters[rec] || {};
     const k = r[kpi] = r[kpi] || {};
@@ -298,6 +306,8 @@ function computeKpis_(fy) {
       const d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d || !inFy(d.month) || d.month > ymd_(new Date()).slice(0, 7)) return;
       const c = bucket(rec, kpi, d.month);
+      // Falls due later this month and has not joined: not counted until it joins or the due date passes (v153); still worked on.
+      if (d.notDue) { c.notDue++; c.notDueItems.push(Object.assign({ due: d.due, allowed: d.allowed, status: status }, brief)); return; }
       c.den++; if (d.ok) c.num++;
       const it = Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief);
       if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
@@ -423,8 +433,9 @@ function computeKpis_(fy) {
         const src = recruiters[rec][kpi][m];
         const t = (team[kpi] = team[kpi] || {})[m] = team[kpi][m] || cell();
         t.worked += src.worked || 0; t.workedOk += src.workedOk || 0;
-        t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0);
+        t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0); t.notDue += src.notDue || 0;
         src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
+        (src.notDueItems || []).forEach(function (it) { t.notDueItems.push(Object.assign({ recruiter: rec }, it)); });
       });
     });
   });
@@ -436,9 +447,13 @@ function computeKpis_(fy) {
       return { num: c.num, den: c.den, pct: null, pending: pending,
         score: pending ? null : kpiScoreFor_(scoring, kpi, c.num, m), items: c.items };
     }
-    const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
+    /* Timely closure (v153) = positions worked on in the month without a TAT miss ÷ positions worked on; a miss is a position that fell
+       due in the month and joined late or has not joined (den − num), counted once, in that month. The other KPIs: num ÷ den. */
+    const tat = KPI_TAT_.indexOf(kpi) >= 0, timely = kpi === 'TIMELY_CLOSURE', missed = c.den - c.num;
+    const pct = timely ? (c.worked ? Math.round(1000 * (c.worked - missed) / c.worked) / 10 : null) : c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
     return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
-      worked: KPI_TAT_.indexOf(kpi) >= 0 ? c.worked : undefined, workedOk: KPI_TAT_.indexOf(kpi) >= 0 ? c.workedOk : undefined };
+      worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: timely ? missed : undefined,
+      notDue: tat ? c.notDue : undefined, notDueItems: tat ? c.notDueItems : undefined };
   };
   const out = {};
   Object.keys(recruiters).forEach(function (rec) {
@@ -467,7 +482,7 @@ function apiKpi(fy, fresh) {
   currentUser_();
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
-  const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0');
+  const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0') + '|' + ymd_(new Date());   // a new day can make a position due (v153)
   const key = 'kpi_b' + BUILD_ID + '_' + dbTag_() + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
   if (!fresh) {
     /* The result is kept in pieces (cacheBigPut_), so it is cached however large it grows; a piece that is missing counts as no cache. */

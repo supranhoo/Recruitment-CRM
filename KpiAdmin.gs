@@ -209,8 +209,8 @@ function kpiDiff_(before, after, now) {
   const rows = []; let truncated = false, past = 0;
   const recs = Object.keys(after.data);
   Object.keys(before.data).forEach(function (r) { if (recs.indexOf(r) < 0) recs.push(r); });
-  const key = function (c) { return c ? JSON.stringify([c.num, c.den, c.pct, c.score, c.pending || 0]) : ''; };
-  const view = function (c) { return c ? { num: c.num, den: c.den, pct: c.pct, score: c.score, pending: c.pending || 0 } : null; };
+  const key = function (c) { return c ? JSON.stringify([c.num, c.den, c.pct, c.score, c.pending || 0, c.missed == null ? '' : c.worked]) : ''; };
+  const view = function (c) { return c ? { num: c.num, den: c.den, pct: c.pct, score: c.score, pending: c.pending || 0, worked: c.worked, missed: c.missed } : null; };   // worked and missed: Timely closure (v153)
   recs.forEach(function (rec) {
     Object.keys(KPI_DEFS).forEach(function (kpi) {
       after.months.forEach(function (m) {
