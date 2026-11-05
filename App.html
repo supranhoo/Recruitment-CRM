@@ -1266,9 +1266,9 @@ function previewTat(d) {
   let end = d.Actual_DOJ || (s === 'No Vacancy' ? d.No_Vacancy_Date : ['Not Needed','On Hold'].includes(s) ? d.Not_Needed_Date : '');
   const hold = Number(d.Hold_Days) || 0;
   /* Approved exemptions come from the server (extra days and paused days per clock); the notice extension is recalculated
-     here as it is typed, and drops to 0 if the Head of HR rejected it. */
+     here as it is typed; a notice beyond the grace is always exempt (v151). */
   const clock = (start, pos) => {
-    const rule = tatRuleFor(d.Grade, start), notice = d.Notice_Ext_Status === 'Rejected' ? 0 : Math.max((Number(d.Notice_Period_Days) || 0) - rule.grace, 0);
+    const rule = tatRuleFor(d.Grade, start), notice = Math.max((Number(d.Notice_Period_Days) || 0) - rule.grace, 0);
     const extra = Number(pos ? d.Pos_Exempt_Extra_Days : d.Exempt_Extra_Days) || 0, paused = Number(pos ? d.Pos_Paused_Days : d.Paused_Days) || 0;
     const ex = notice + extra, fin = rule.std + ex;
     const days = start ? Math.max(0, Math.round((Date.parse(end || today()) - Date.parse(start)) / 86400000) - hold - paused) : '';
@@ -1355,10 +1355,10 @@ function positionFields(isNew, p, orig) {
 /* ---------------- TAT exemptions (position drawer) ---------------- */
 function exemptBadge(p) {
   const r = (Number(p.Exempt_Extra_Days) || 0) + (Number(p.Paused_Days) || 0), q = (Number(p.Pos_Exempt_Extra_Days) || 0) + (Number(p.Pos_Paused_Days) || 0);
-  if (!r && !q && p.Notice_Ext_Status !== 'Rejected') return '';
+  if (!r && !q) return '';
   const t = [p.Exempt_Extra_Days ? `+${p.Exempt_Extra_Days} d exemption` : '', p.Paused_Days ? `${p.Paused_Days} d paused` : '', q && !r ? 'position TAT only' : '',
-    p.Notice_Ext_Status === 'Rejected' ? 'notice extension rejected' : '', p.Exempt_Reasons || p.Pos_Exempt_Reasons || ''].filter(Boolean).join(' · ');
-  return ` <span class="badge-pipe" title="${esc(t)}">${p.Notice_Ext_Status === 'Rejected' && !r && !q ? 'Notice rejected' : 'Exempt'}</span>`;
+    p.Exempt_Reasons || p.Pos_Exempt_Reasons || ''].filter(Boolean).join(' · ');
+  return ` <span class="badge-pipe" title="${esc(t)}">Exempt</span>`;
 }
 async function exemptSectionInto(el, p, afterChange) {
   if (!el) return;
@@ -1372,8 +1372,8 @@ async function exemptSectionInto(el, p, afterChange) {
     const n = X.notice, locked = X.lock.locked;
     const noticeRow = n.ext > 0 || n.status ? `<div class="tex-notice"><b>Notice ${n.days} days</b> adds ${n.ext} day${n.ext === 1 ? '' : 's'} to the TAT ·
         ${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener">proof</a>` : '<span class="miss">no proof attached</span>'} ·
-        ${n.status === 'Verified' ? '<span class="ok">verified</span>' : n.status === 'Rejected' ? '<span class="miss">rejected by the Head of HR (not counted)</span>' : 'not reviewed'}${n.note ? ` <span class="sub">${esc(n.note)} · ${esc(n.by)} ${fmtDate(n.on)}</span>` : ''}
-        ${X.canDecide && !locked ? `<span class="btn-row" style="display:inline-flex;margin-left:8px">${n.status !== 'Verified' && n.proof ? '<button class="btn sm" data-nx="Verify">Verify</button>' : ''}${n.status !== 'Rejected' ? '<button class="btn sm" data-nx="Reject">Reject extension</button>' : '<button class="btn sm" data-nx="Reset">Undo rejection</button>'}</span>` : ''}</div>` : '';
+        ${n.status === 'Verified' ? '<span class="ok">verified</span>' : n.status === 'Rejected' ? '<span class="sub">rejected earlier; it no longer changes the TAT</span>' : 'not reviewed'}${n.note ? ` <span class="sub">${esc(n.note)} · ${esc(n.by)} ${fmtDate(n.on)}</span>` : ''}
+        ${X.canDecide && !locked ? `<span class="btn-row" style="display:inline-flex;margin-left:8px">${n.status !== 'Verified' && n.proof ? '<button class="btn sm" data-nx="Verify">Verify</button>' : ''}${n.status === 'Rejected' ? '<button class="btn sm" data-nx="Reset">Clear the old rejection</button>' : ''}</span>` : ''}</div>` : '';
     const rows = X.items.map(x => `<tr style="cursor:default"><td class="nw"><b>${what(x)}</b><span class="sub">${esc(x.id)} · ${fmtDate(x.on)} by ${esc(x.by)}</span></td>
         <td>${esc(x.reason)}<span class="sub">${esc(x.remark)}</span></td>
         <td>${x.proof ? `<a href="${esc(x.proof)}" target="_blank" rel="noopener">View</a>` : x.status === 'Pending' || x.status === 'Approved' ? `<label class="linklike tex-up">Attach<input type="file" class="att-input" data-field="Proof_File" data-id="${esc(x.id)}" hidden accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"></label>` : '—'}</td>
@@ -1397,8 +1397,7 @@ async function exemptSectionInto(el, p, afterChange) {
       </div></fieldset>
       <div class="btn-row"><button class="btn" id="texCancel">Cancel</button>${X.canRequest ? '<button class="btn" id="texSend">Send for approval</button>' : ''}${X.canDecide ? '<button class="btn primary" id="texGrant">Grant now</button>' : ''}</div></div></section>`;
     const run = async (b, fn, done) => { if (b) b.disabled = true; try { await fn(); if (done) toast(done); await afterChange(); } catch (e) { toast(e, true); } await load(); };
-    $$('[data-nx]', el).forEach(b => b.onclick = () => { const a = b.dataset.nx; const note = a === 'Reject' ? prompt('Why is the notice extension rejected?') : a === 'Reset' ? prompt('Why is the rejection undone?') || '' : '';
-      if (a === 'Reject' && !note) return; run(b, () => api('apiNoticeExtDecide', p.Line_ID, a, note), a === 'Verify' ? 'Notice extension verified' : a === 'Reject' ? 'Notice extension rejected: it no longer counts' : 'Rejection undone'); });
+    $$('[data-nx]', el).forEach(b => b.onclick = () => { const a = b.dataset.nx; run(b, () => api('apiNoticeExtDecide', p.Line_ID, a, ''), a === 'Verify' ? 'Notice extension verified' : 'Old rejection cleared'); });
     $$('[data-act]', el).forEach(b => b.onclick = () => {
       const a = b.dataset.act, id = b.dataset.id;
       if (a === 'Approve') return run(b, () => api('apiExemptionDecide', id, 'Approve', ''), 'Exemption approved; TAT recalculated');
@@ -3821,11 +3820,11 @@ async function renderExemptAdmin(el) {
     el.innerHTML = `
       <section class="panel"><div class="dp-h"><h2>Awaiting the Head of HR <span class="pcount">${pend.length}</span></h2><span class="hint">Oldest first. Open a row to see the position and its TAT.</span></div>
         ${pend.length ? `<div class="table-wrap"><table><thead><tr><th>Exemption</th><th>Position</th><th>Reason and remark</th><th>Proof</th><th>Status</th><th></th></tr></thead><tbody>${pend.map(x => row(x, true)).join('')}</tbody></table></div>` : '<p class="hint">Nothing is waiting.</p>'}</section>
-      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Notice extensions to review</h2><span class="hint">Notice beyond the grace adds days to the TAT automatically. Verify it against the proof, or reject it so it no longer counts.</span></div>
+      <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Notice extensions to review</h2><span class="hint">Notice beyond the grace is always exempt: it adds days to the allowed TAT automatically and cannot be rejected. Verify it against the proof.</span></div>
         ${R.notices.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th class="num">Notice</th><th class="num">Adds</th><th>Proof</th><th>Review</th><th></th></tr></thead><tbody>
           ${R.notices.map(n => `<tr data-line="${esc(n.line)}"><td>${esc(n.position)}<span class="sub">${esc(n.mrf)} · ${esc(n.dept)} · ${esc(n.recruiter)}</span></td><td class="num">${n.days} d</td><td class="num">${n.ext} d</td>
-            <td>${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener" data-stop>View</a>` : '<span class="miss">none</span>'}</td><td>${n.status === 'Verified' ? '<span class="ok">Verified</span>' : n.status === 'Rejected' ? '<span class="miss">Rejected</span>' : 'Not reviewed'}${n.note ? `<span class="sub">${esc(n.note)}</span>` : ''}</td>
-            <td class="nw">${R.canDecide ? `${n.status !== 'Verified' && n.proof ? `<button class="btn sm" data-nx="Verify" data-line="${esc(n.line)}">Verify</button>` : ''}${n.status !== 'Rejected' ? `<button class="btn sm" data-nx="Reject" data-line="${esc(n.line)}">Reject</button>` : ''}` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No open position has a notice beyond the grace.</p>'}</section>
+            <td>${n.proof ? `<a href="${esc(n.proof)}" target="_blank" rel="noopener" data-stop>View</a>` : '<span class="miss">none</span>'}</td><td>${n.status === 'Verified' ? '<span class="ok">Verified</span>' : n.status === 'Rejected' ? '<span class="sub">Rejected earlier (no effect)</span>' : 'Not reviewed'}${n.note ? `<span class="sub">${esc(n.note)}</span>` : ''}</td>
+            <td class="nw">${R.canDecide ? `${n.status !== 'Verified' && n.proof ? `<button class="btn sm" data-nx="Verify" data-line="${esc(n.line)}">Verify</button>` : ''}${n.status === 'Rejected' ? `<button class="btn sm" data-nx="Reset" data-line="${esc(n.line)}">Clear</button>` : ''}` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No open position has a notice beyond the grace.</p>'}</section>
       <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Register</h2><button class="btn sm" id="texCsv">Download CSV</button></div>
         <div class="filters"><div class="field"><label for="texS">Status</label><select id="texS">${opts(['Pending', 'Approved', 'Rejected', 'Withdrawn', 'Revoked'], f.status)}</select></div>
           <div class="field"><label for="texR">Reason</label><select id="texR">${opts(R.reasons.map(r => r.reason), f.reason)}</select></div>
@@ -3849,9 +3848,8 @@ async function renderExemptAdmin(el) {
       try { await api('apiExemptionDecide', b.dataset.id, a, note || ''); await refresh(a === 'Approve' ? 'Approved; TAT recalculated' : 'Rejected'); } catch (e) { toast(e, true); b.disabled = false; }
     });
     $$('[data-nx]', el).forEach(b => b.onclick = async () => {
-      const a = b.dataset.nx, note = a === 'Reject' ? prompt('Why is the notice extension rejected?') : '';
-      if (a === 'Reject' && !note) return; b.disabled = true;
-      try { await api('apiNoticeExtDecide', b.dataset.line, a, note || ''); await refresh(a === 'Verify' ? 'Notice extension verified' : 'Notice extension rejected'); } catch (e) { toast(e, true); b.disabled = false; }
+      const a = b.dataset.nx; b.disabled = true;
+      try { await api('apiNoticeExtDecide', b.dataset.line, a, ''); await refresh(a === 'Verify' ? 'Notice extension verified' : 'Old rejection cleared'); } catch (e) { toast(e, true); b.disabled = false; }
     });
     $('#texS').onchange = e => { f.status = e.target.value; draw(); };
     $('#texR').onchange = e => { f.reason = e.target.value; draw(); };
@@ -3939,7 +3937,7 @@ function kpiaDrawer(s, cfg, done) {
       ${cfg.end ? `<p>From the month below this recruiter follows the team target again (${esc(kpiTatText(cfg.cur))}).</p>` : `
       <div class="field"><label for="kfDays">Target days</label><input id="kfDays" type="number" min="1" max="365" step="1" value="${esc(c.days)}"></div>
       <div class="field"><label for="kfLv">Levels counted</label><select id="kfLv">${opts(s.levels.map(l => [l, l]), c.levels, false)}</select></div>
-      <div class="field"><label for="kfEx">Notice beyond ${s.grace} days exempt</label><select id="kfEx">${opts([['Yes', 'Yes'], ['No', 'No']], c.exempt ? 'Yes' : 'No', false)}</select></div>`}`;
+      <p class="hint">Notice beyond ${s.grace} days is always exempt: it is added to the allowed days and does not affect the TAT.</p>`}`;
   } else if (k === 'BANDS') {
     body = `<fieldset class="kpia-kpis"><legend>Apply to</legend>${KPI_PCT_KPIS.map(x => `<label class="kpia-check"><input type="checkbox" class="kf-kpi" value="${x}" ${x === cfg.kpi ? 'checked' : ''}> ${esc(sc2(x))}</label>`).join('')}</fieldset>
       <div class="kpia-rows" id="kfRows"><div class="kpia-head"><span>At least this %</span><span>Scores</span></div>${rowsHtml(def.rules.slice().sort((a, c) => c.min - a.min), 'min', 'score', 'Percentage', 'Score')}</div>
@@ -3961,7 +3959,7 @@ function kpiaDrawer(s, cfg, done) {
     const d = { type: k, from: $('#kfFrom', root).value, reason: $('#kfWhy', root).value, base: s.base };
     if (k === 'TARGET') {
       d.kpi = cfg.kpi; d.who = cfg.who || $('#kfWho', root).value;
-      if (cfg.end) d.active = false; else { d.days = $('#kfDays', root).value; d.levels = $('#kfLv', root).value; d.exempt = $('#kfEx', root).value; }
+      if (cfg.end) d.active = false; else { d.days = $('#kfDays', root).value; d.levels = $('#kfLv', root).value; d.exempt = 'Yes'; }
     } else if (k === 'BANDS' || k === 'COUNTS') {
       const rows = $$('.kpia-row', root).map(r => [$('.kr-a', r).value, $('.kr-b', r).value]);
       if (k === 'BANDS') { d.kpis = $$('.kf-kpi', root).filter(x => x.checked).map(x => x.value); d.bands = rows.map(r => ({ min: r[0], score: r[1] })); }

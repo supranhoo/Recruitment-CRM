@@ -66,7 +66,7 @@ function exemptFor_(ctx, l, which) {
 }
 /** Notice days above the grace, unless the Head of HR rejected the extension. */
 function noticeExt_(l, grace) {
-  if (String(l.Notice_Ext_Status || '') === 'Rejected') return 0;
+  /* v151: a notice beyond the grace is always exempt (it is added to the allowed time) and the turnaround time is not affected by it. A rejection recorded earlier no longer changes anything. */
   return Math.max((Number(l.Notice_Period_Days) || 0) - grace, 0);
 }
 /** On-hold periods from Hold_Log lines "yyyy-mm-dd to yyyy-mm-dd (n days): reason", as [from, to) day ranges. */
@@ -244,17 +244,17 @@ function apiExemptionRevoke(id, note) {
   return apiExemptionsForLine(String(x.Line_ID));
 }
 
-/** Head of HR verifies or rejects the automatic notice-period extension of a position. */
+/** Head of HR verifies the automatic notice-period extension of a position against its proof, or clears a rejection recorded before v151. A notice beyond the grace can no longer be rejected. */
 function apiNoticeExtDecide(lineId, action, note) {
   const u = currentUser_(); ensureSchema_();
   requireExemptDecider_(u);
   const l = lineOf_(lineId); if (!l) throw new Error('Position ' + lineId + ' was not found.');
   requireUnlocked_(u, l);
-  if (['Verify', 'Reject', 'Reset'].indexOf(action) < 0) throw new Error('Choose Verify or Reject.');
+  if (action === 'Reject') throw new Error('A notice beyond the grace period is always exempt from the TAT; it can no longer be rejected.');
+  if (['Verify', 'Reset'].indexOf(action) < 0) throw new Error('Choose Verify.');
   note = clean_(String(note || '').trim()).slice(0, 500);
-  if (action === 'Reject' && !note) throw new Error('Give a reason for rejecting the notice extension.');
   if (action === 'Verify' && !String(l.Notice_Proof_File || '')) throw new Error('Attach the notice proof before verifying.');
-  update_(T.MRF, lineId, { Notice_Ext_Status: action === 'Verify' ? 'Verified' : action === 'Reject' ? 'Rejected' : '', Notice_Ext_Note: note,
+  update_(T.MRF, lineId, { Notice_Ext_Status: action === 'Verify' ? 'Verified' : '', Notice_Ext_Note: note,
     Notice_Ext_By: u.email, Notice_Ext_On: new Date() }, u);
   exemptRecalc_(lineId, u);
   return apiExemptionsForLine(lineId);

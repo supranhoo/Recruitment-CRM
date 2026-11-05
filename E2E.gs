@@ -630,6 +630,13 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    t('K44 Notice beyond the grace is always exempt: a rejection or a "not exempt" target changes nothing, and a rejection can no longer be recorded', function () {
+      const l = { Notice_Period_Days: 60, Notice_Ext_Status: 'Rejected' };
+      let refused = ''; try { apiNoticeExtDecide('NO-SUCH-LINE', 'Reject', 'x'); } catch (e) { refused = e.message; }
+      const clk = { receipt: '2026-08-03', doj: '', ex: { days: 0 }, notice: noticeExt_(l, 30), hold: 0, paused: 0 };
+      const d = kpiDue_({ Grade: 'M3', Fill_Type: '' }, 'M_FULFILMENT', [{ recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: false, from: '2025-04' }], 'asha', clk, 'Open');
+      return noticeExt_(l, 30) === 30 && d && d.allowed === 80 && /always exempt|not found/.test(refused) ? 'allowed ' + d.allowed : false;
+    });
     t('K43 Offer backout rate = candidates who backed out / positions worked on in the month x 100: the denominator is the Timely closure \"worked on\" count', function () {
       const k = computeKpis_(fy); let n = 0, bad = '';
       Object.keys(k.data).forEach(function (rec) {

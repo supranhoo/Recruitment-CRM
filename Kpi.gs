@@ -158,7 +158,8 @@ function kpiTargets_() {
   return readTable_(KPI_TARGETS).rows.map(function (r, i) {
     const f = r.Effective_From instanceof Date ? fmt_(r.Effective_From, TZ, 'yyyy-MM') : String(r.Effective_From || '0000-00').slice(0, 7);
     return { recruiter: String(r.Recruiter).trim().toLowerCase(), kpi: String(r.KPI).trim().toUpperCase(), levels: r.Levels,
-      days: Number(r.TAT_Days) || 0, exempt: String(r.Notice_Exemption).toUpperCase() !== 'NO', from: f,
+      days: Number(r.TAT_Days) || 0, exempt: true, from: f,   // v151: notice beyond the grace is always exempt; the sheet's Notice_Exemption column is no longer read
+     
       active: String(r.Active == null ? '' : r.Active).trim().toUpperCase() !== 'NO', id: String(r.Version_ID || ''), idx: i };
   }).concat(_kpiDraft_ && _kpiDraft_.targets ? _kpiDraft_.targets.map(function (d, j) { return Object.assign({}, d, { idx: 1e6 + j }); }) : []);
 }
@@ -252,7 +253,7 @@ function kpiDue_(l, kpi, targets, rec, clk, status) {
   if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
-  const allowed = t.days + (t.exempt ? clk.notice : 0) + clk.ex.days;
+  const allowed = t.days + clk.notice + clk.ex.days;   // notice beyond the grace is always added (v151)
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
   const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
   return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed };

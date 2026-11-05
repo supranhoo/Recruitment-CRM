@@ -110,9 +110,7 @@ function kpiParseDraft_(d) {
       const days = kpiInt_(d.days, 1, 365, 'The target days');
       const lv = KPI_LEVEL_CHOICES_.filter(function (l) { return l.toLowerCase() === String(d.levels || '').trim().toLowerCase(); })[0];
       if (!lv) throw new Error('Levels must be All, M, W or T.');
-      const ex = String(d.exempt || '').trim().toLowerCase();
-      if (ex !== 'yes' && ex !== 'no') throw new Error('Say whether notice beyond the grace period is exempt (Yes or No).');
-      const row = { recruiter: key, kpi: kpi, levels: lv, days: days, exempt: ex === 'yes', from: from, active: true, id: '', _who: who };
+      const row = { recruiter: key, kpi: kpi, levels: lv, days: days, exempt: true, from: from, active: true, id: '', _who: who };   // notice beyond the grace is always exempt (v151): there is nothing to choose
       if (cur && String(cur.levels || 'All').toLowerCase() === lv.toLowerCase() && cur.days === days && cur.exempt === row.exempt && (who === '*' || cur.recruiter === key))
         throw new Error('That is the target already in force from ' + from + '. Nothing to save.');
       if (cur && who !== '*' && cur.recruiter === '*' && String(cur.levels || 'All').toLowerCase() === lv.toLowerCase() && cur.days === days && cur.exempt === row.exempt)
