@@ -33,6 +33,7 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'release_offer', title: 'Release the offer', due: 24, crit: 72, missed: true, policy: 'Appendix A step 7: offer within 72 h of finalisation' },
   { id: 'bgv', title: 'Start background verification', due: 0, crit: 72, missed: true, policy: '9.1.1: BGV within 3 days of the offer (Manager and above)' },
   { id: 'bgv_join', title: 'Start current-employer BGV', due: 0, crit: 48, missed: true, policy: 'Current-employer BGV within 2 days of joining (Manager and above, or flagged)' },
+  { id: 'bgv_release', title: 'Ask the former employer for the release / experience letter', due: 0, crit: null, missed: false, policy: 'BGV tracker: excluded from the KRA while the former employer\u2019s release (40 to 45 days after departure) is awaited; chased from 5 days before the expected date' },
   { id: 'bgv_consent', title: 'Get the candidate\u2019s consent for BGV', due: 24, crit: null, missed: false, policy: 'BGV tracker: nothing is checked without the candidate\u2019s consent' },
   { id: 'bgv_chase', title: 'Chase the vendor: BGV update', due: 72, crit: 168, missed: false, policy: 'BGV tracker: chaser after 3 days without an update; vendor limit 7 days per check' },
   { id: 'bgv_result', title: 'Previous-employer BGV report is needed before joining', due: 0, crit: 24, missed: true, policy: 'BGV tracker: report 2 days before joining (1 day when the offer is close to joining)' },
