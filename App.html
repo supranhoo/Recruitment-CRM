@@ -4318,6 +4318,34 @@ function kpiDrill(k, f, kpi, m) {
   if ($('#kpiWorked', drawer)) $('#kpiWorked', drawer).onclick = () => kpiReconDialog(m, f.rec, 'TIMELY_CLOSURE', k.defs.TIMELY_CLOSURE.name);
 }
 
+/** The tracker-style report of a reconciliation (v155): the sheet's columns in its order, then Where it sits, Due by, TAT start and Counted in. */
+const RECON_REPORT_HEAD = ['MRF No.', 'Review Month', 'MRF Receipt date', 'Position', 'Level', 'Dept', 'Recruiter', 'No.of positions/Resource', 'Approved', 'No vanacy marked date', 'Not needed marked date', 'Offer sent',
+  'Offer letter date', 'EDOJ as per Offer', 'DOJ for KRA', 'Actual DOJ', 'Position Status', 'Position closed on', 'Notice Period', 'Backout', 'Final Remark', 'Standard TAT', 'Exemption days', 'Final allowed TAT', 'TAT logic',
+  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in'];
+const RECON_DATE_COLS = [2, 9, 10, 12, 13, 14, 15, 17, 19, 28, 29];   // 0-based columns that hold dates
+function reconReport(r, kpiName) {
+  const mm = r.month.slice(5, 7) + '-' + r.month.slice(0, 4), toD = v => v ? new Date(v + 'T00:00:00Z') : '';
+  const rows = [];
+  r.buckets.forEach(b => b.items.forEach(i => rows.push([i.mrf, mm, i.receipt, i.position, i.grade, i.dept, i.recruiter, i.nres, i.appr, i.nv, i.nn, i.osent, i.odate, i.edoj, i.dojKra, i.doj, i.status, i.closed, i.notice, i.bo, i.rmk,
+    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || ''].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
+  return { head: RECON_REPORT_HEAD, rows };
+}
+async function reconExcel(r, kpi, kpiName) {
+  const rep = reconReport(r, kpiName), plain = [['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined']].concat(r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const file = `kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${r.month}`;
+  try { await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js'); } catch (e) {
+    csvSave(file + '-tracker.csv', rep.head, rep.rows.map(x => x.map((v, k) => v instanceof Date ? v.toISOString().slice(0, 10) : v)));
+    toast('The Excel library could not be loaded, so the tracker report was saved as a CSV file instead.'); return;
+  }
+  const wb = XLSX.utils.book_new(), s1 = XLSX.utils.aoa_to_sheet(plain), s2 = XLSX.utils.aoa_to_sheet([rep.head].concat(rep.rows), { cellDates: true });
+  Object.keys(s2).forEach(a => { if (a[0] !== '!' && s2[a].t === 'd') s2[a].z = 'd-mmm-yy'; });
+  s2['!cols'] = rep.head.map((h, k) => ({ wch: k === 20 ? 60 : k === 3 || k === 24 ? 28 : Math.max(10, Math.min(22, h.length + 2)) }));
+  s2['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rep.rows.length, c: rep.head.length - 1 } }) }; s2['!freeze'] = { xSplit: 0, ySplit: 1 };
+  s1['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 30 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, s1, 'Positions'); XLSX.utils.book_append_sheet(wb, s2, 'Tracker report');
+  XLSX.writeFile(wb, file + '.xlsx', { cellDates: true });
+}
+
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
@@ -4329,7 +4357,7 @@ async function kpiReconDialog(month, rec, kpi, kpiName) {
     ${r.buckets.map(b => `<tr data-b="${esc(b.key)}"><td>${esc(b.title)}<span class="sub">${esc(b.note)}</span></td><td class="num">${b.items.length ? `<button type="button" class="linklike" data-open="${esc(b.key)}">${b.items.length}</button>` : 0}</td></tr>`).join('')}
     <tr style="font-weight:600"><td>Total</td><td class="num">${r.total}</td></tr></tbody></table></div>
     <div id="krList"></div>
-    <div class="drawer-actions" style="position:static"><button class="btn" id="krCsv">Download CSV</button><button class="btn" data-close>Close</button></div>`);
+    <div class="drawer-actions" style="position:static"><button class="btn" id="krXls">Download Excel (2 sheets)</button><button class="btn" id="krCsv">Download CSV</button><button class="btn" data-close>Close</button></div>`);
   const root = d || document;
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
@@ -4337,6 +4365,7 @@ async function kpiReconDialog(month, rec, kpi, kpiName) {
       ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
+  const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);
 }
 
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
