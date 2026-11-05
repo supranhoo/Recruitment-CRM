@@ -193,12 +193,12 @@ function kpiRecon_(month, recruiter, kpi) {
     if (want && rec.toLowerCase() !== want) return;
     const status = positionStatus_(l), clk = kpiLineClock_(l, clocks), receipt = clk.receipt, doj = clk.doj;
     const joinedIn = !!doj && doj.slice(0, 7) === month;
-    let bucket = '';
+    let bucket = '', d = null;
     if (kpiWorkable_(l, status) && receipt) {
       /* A position that can count is placed exactly as on the scorecard (the "worked on" test and kpiDue_), so the rows up to
          "Counted in another month" add up to the cell's worked-on count and the first three to its due count (v153). */
       if (!kpiWorkedIn_(clk, month)) return;
-      const d = kpiDue_(l, kpi, targets, rec, clk, status);
+      d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d) { const t = kpiTargetFor_(l, kpi, targets, rec, clk); if (t && !levelMatch_(t.levels, l.Grade)) return; bucket = 'notarget'; }   // another level is not part of this KPI
       else if (d.month !== month) bucket = 'other';
       else if (d.notDue) bucket = 'notyet';
@@ -214,11 +214,35 @@ function kpiRecon_(month, recruiter, kpi) {
       else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
       else return;
     }
-    out[bucket].push({ id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
-      receipt: receipt, doj: doj });
+    const it = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
+      receipt: receipt, doj: doj };
+    Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end));
+    out[bucket].push(it);
   });
   const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
+}
+
+/** Where a position's TAT clock starts from (the same order as tatStart_), as text for the tracker report. */
+function kpiStartSource_(l) {
+  return ymd_(l.TAT_Start_From) ? 'Original MRF start' : ymd_(l.Assigned_On) ? 'Assigned' : ymd_(l.Approved_On) ? 'MRF approved' : 'MRF received';
+}
+/**
+ * The tracker-style fields of one position of the reconciliation (v155), for the Excel report: the MRF columns as recorded plus the
+ * TAT figures the scorecard used (target days, allowed days, due date, days taken to DOJ for KRA, achieved or missed). DOJ for KRA =
+ * the actual joining date, else the review month's last day (today, in the current month); days taken run to it, less on-hold and paused days.
+ */
+function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
+  const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
+  const dojKra = clk.doj || (monthEnd > today ? today : monthEnd);
+  const closed = clk.doj || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
+  const res = { ontime: 'Achieved', late: 'Missed', overdue: 'Missed', notyet: 'Pending (not yet due)', other: 'Counted in another month' }[bucket] || 'Not counted';
+  const remark = String(l.Remarks || '');
+  return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
+    osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
+    rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: t && d ? t.days : '', allowed: d ? d.allowed : '', exm: t && d ? d.allowed - t.days : '',
+    logic: clk.receipt ? kpiStartSource_(l) + ' to DOJ' + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
+    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
 }
 
 function apiKpiRecon(month, recruiter, kpi) {

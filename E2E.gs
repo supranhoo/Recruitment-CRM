@@ -630,6 +630,13 @@ function e2eRun_(trash) {
         && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
         && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
     });
+    t('K47 every position of the reconciliation carries the tracker report fields (std, allowed, days taken, DOJ for KRA, result)', function () {
+      const month = ymd_(new Date()).slice(0, 7), r = apiKpiRecon(month, 'TEAM_TOTAL', 'TIMELY_CLOSURE'), keys = ['dept', 'appr', 'osent', 'rmk', 'std', 'allowed', 'exm', 'logic', 'dojKra', 'days', 'result'];
+      let n = 0, bad = '';
+      r.buckets.forEach(function (b) { b.items.forEach(function (i) { n++; keys.forEach(function (k) { if (!(k in i)) bad = bad || b.key + ' ' + i.mrf + ' lacks ' + k; });
+        if (b.key === 'ontime' && i.result !== 'Achieved') bad = bad || 'ontime result'; if ((b.key === 'late' || b.key === 'overdue') && i.result !== 'Missed') bad = bad || 'missed result'; }); });
+      return bad ? false : n + ' positions';
+    });
     t('K46 Timely closure = positions worked on without a TAT miss \u00f7 positions worked on; M-level and W-level stay on time \u00f7 due; a position not yet due is not a miss; the reconciliation adds up to the worked-on count', function () {
       const k = apiKpi(fy, true), d = k.data.TEAM_TOTAL, month = ymd_(new Date()).slice(0, 7), today = ymd_(new Date()); let bad = '', cells = 0;
       Object.keys(d.TIMELY_CLOSURE || {}).forEach(function (m) { const c = d.TIMELY_CLOSURE[m]; cells++;
