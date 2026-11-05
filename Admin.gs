@@ -192,7 +192,7 @@ function dataChecks_() {
     if (doj && positionStatus_(l) === 'Open') c10.items.push({ id: l.Line_ID, label: label, detail: 'Joining date ' + doj + ' but Offer sent is not Yes' });
     else if (doj && !tatStart_(l)) c10.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' but no start date' });
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
-    if (String(l.Notice_Ext_Status || '') !== 'Rejected' && !l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
+    if (!l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
       const g = ruleFor_(nctx, l.Grade, tatStart_(l)).grace, n = Number(l.Notice_Period_Days) || 0;
       if (n > g) c8.items.push({ id: l.Line_ID, label: label, detail: 'Notice ' + n + ' days adds ' + (n - g) + ' days to the TAT' });
     }
