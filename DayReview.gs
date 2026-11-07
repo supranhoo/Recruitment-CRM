@@ -222,6 +222,7 @@ function dayData_(date, onlyRecruiter) {
   const dsMap = dayStatusMap_(dsLines, date);
   Object.keys(recs).forEach(function (k) { Object.keys(recs[k].byPosition).forEach(function (id) {
     const g = recs[k].byPosition[id]; g.day = dsMap[id] || null;
+    g.mrfDate = lineById[id] ? ymd_(lineById[id].Receipt_Date) : '';
     if (g.noActivity && stages.some(function (m) { return g[m]; })) g.noActivity = false;
   }); });
   const out = Object.keys(recs).map(function (k) {

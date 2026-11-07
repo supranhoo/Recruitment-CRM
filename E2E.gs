@@ -225,6 +225,21 @@ function e2eRun_(trash) {
     const n = apiListPositions().filter(function (x) { return x.Line_ID === R.to; })[0]; return a.Actual_DOJ === today && n.Position_Status === 'Closed' && n.Actual_DOJ === today; });
   err('D24 onboarding needs induction and buddy', function () { apiMoveStage(B, 'Onboarded', { onboard: {} }); }, /induction/);
   t('D25 onboarded', function () { return B2('Onboarded', { onboard: { induction: today, buddy: 'Randhir Singh', hrms: 'Yes' } }).Stage === 'Onboarded'; });
+  const dAgo = function (n) { return ymd_(new Date(Date.now() - n * 86400000)); };
+  err('D25a a joining date cannot be corrected without a reason', function () { apiCorrectJoiningDate(B, dAgo(1), 'short'); }, /at least 10/);
+  err('D25b a joining date in the future is refused', function () { apiCorrectJoiningDate(B, ymd_(new Date(Date.now() + 5 * 86400000)), 'Recruiter typed the wrong day'); }, /future/);
+  err('D25c the same date is refused', function () { apiCorrectJoiningDate(B, today, 'Recruiter typed the wrong day'); }, /already/);
+  err('D25d a date before the offer was accepted is refused', function () { apiCorrectJoiningDate(B, dAgo(1), 'Recruiter typed the wrong day'); }, /before the offer was accepted/);
+  t('D25e a joining date is corrected on the candidate, the card and the position, with history', function () {
+    const u0 = currentUser_(), early = dAgo(3), fix = dAgo(1);
+    update_(T.APP, B, { Offer_Accepted_On: parseYmd_(early) }, u0);
+    const p = apiCorrectJoiningDate(B, fix, 'Recruiter keyed the wrong day, HR record shows yesterday');
+    const a = p.apps.filter(function (x) { return x.App_ID === B; })[0];
+    _tables = {};
+    const ln = lineOf_(a.Line_ID), cd = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === a.Candidate_ID; })[0];
+    const last = a.history[a.history.length - 1];
+    return a.Actual_DOJ === fix && ymd_(ln.Actual_DOJ) === fix && ymd_(cd.DOJ) === fix && a.Stage === 'Onboarded' && last.outcome === 'Date corrected' && last.note.indexOf(today) >= 0 && last.note.indexOf(fix) >= 0 ? last.note.slice(0, 60) : false;
+  });
   t('D26 stage history complete', function () { _tables = {}; const h = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0].history; return h.length >= 10 && h[h.length - 1].outcome === 'Backout' ? h.length + ' entries' : false; });
   // Fixes of release 141 (to run in the editor on a database copy)
   t('Z1 a refused move back leaves the position as it was', function () {
@@ -774,7 +789,7 @@ function e2eRun_(trash) {
     t('O5 a grade outside M, W, T is refused', function () { const r = apiOrgImport([{ 'Department Name': mapped[0].crm, 'Level Name': 'Z9', 'ApprovedManPower': 1, 'ExixtingManpower': 1 }], {}); return r.ok === false && /not a grade/.test(r.errors[0]); });
     t('O6 a report without the right columns is refused', function () { const r = apiOrgImport([{ A: 1 }], {}); return r.ok === false && /missing these columns/.test(r.errors[0]); });
     t('O7 applying an import replaces the headcount snapshot', function () { const r = apiOrgImport(rep(10, 8, 20, 22), { apply: true, asOn: today, file: 'e2e.xlsx' }); const o = apiOrganogram(); return r.applied === true && o.totals.approved === 30 && o.totals.existing === 30 && o.asOn === today ? r.batch : false; });
-    t('O8 a second import replaces the first, it does not add to it', function () { apiOrgImport(rep(5, 5, 7, 6), { apply: true, asOn: today, file: 'e2e2.xlsx' }); const o = apiOrganogram(); return o.totals.approved === 12 && o.totals.existing === 11 && o.totals.net === 1; });
+    t('O8 a second import refreshes existing headcount and keeps the plan', function () { const r = apiOrgImport(rep(5, 5, 7, 6), { apply: true, asOn: today, file: 'e2e2.xlsx' }); const o = apiOrganogram(); return r.planKept === true && r.plan && r.plan.cells === 2 && o.totals.approved === 30 && o.totals.existing === 11 && o.plan.rev >= 1; });
     t('O9 the import log keeps one row per import', function () { return apiOrgAdmin().log.length >= 2; });
     const d0 = orgA.depts[0];
     t('O10 a HOD name and email save and read back', function () { const r = apiOrgSaveStructure({ depts: [{ dept: d0.dept, division: d0.division, hod: 'E2E HOD', email: 'e2e.hod@example.com', active: true }] }); const x = r.depts.filter(function (d) { return d.dept === d0.dept; })[0]; return x.hod === 'E2E HOD' && x.email === 'e2e.hod@example.com'; });
@@ -791,6 +806,8 @@ function e2eRun_(trash) {
     const upSub = t('O16 a seat filled at a higher grade is covered, not vacant, and needs a note', function () {
       const dn = mapped[0].crm;
       const r = apiOrgImport([{ 'Department Name': dn, 'Level Name': 'W5', 'ApprovedManPower': 3, 'ExixtingManpower': 1 }, { 'Department Name': dn, 'Level Name': 'W4', 'ApprovedManPower': 0, 'ExixtingManpower': 2 }], { apply: true, asOn: today, file: 'e2e-mix.xlsx' });
+      apiOrgPlanRestore('report');
+      apiOrgPlanActivate(apiOrgPlan().draft.id, { reason: 'E2E plan from the report', approvedBy: 'E2E', effectiveOn: today });
       const o = apiOrganogram(), s = o.mix.filter(function (x) { return x.dept === mapped[0].org && x.from === 'W5' && x.to === 'W4'; })[0];
       return r.applied && s && s.seats === 2 && s.dir === 'Upgrade' && s.state === 'needs' && o.totals.vacancy === 0 && o.totals.excess === 0 && o.totals.covered === 2 && o.totals.net === 0 ? s : false;
     });
@@ -810,6 +827,46 @@ function e2eRun_(trash) {
     });
     t('O21 re-importing the headcount keeps the notes sheet', function () { const n = readTable_(ORG_NOTE_, true).rows.length; apiOrgImport(rep(5, 5, 7, 6), { apply: true, asOn: today, file: 'e2e3.xlsx' }); return readTable_(ORG_NOTE_, true).rows.length === n; });
     t('O22 no grade is counted both as vacant and as covered beyond what is approved', function () { const o = apiOrganogram(); return o.divisions.every(function (dv) { return dv.depts.every(function (d) { return d.grades.every(function (g) { return g.vacancy >= 0 && g.excess >= 0 && g.covered <= g.grossVacancy && g.covers <= g.grossExcess; }); }); }); });
+    const planCell = function (p, dept, g) { const d = p.depts.filter(function (x) { return x.dept === dept; })[0]; return d ? d.plan[p.grades.indexOf(g)] : null; };
+    const allCells = function (p, over) {
+      const cells = [];
+      p.depts.forEach(function (d) { p.grades.forEach(function (g, k) { const v = over && over[d.dept + '|' + g] !== undefined ? over[d.dept + '|' + g] : (d.draft || d.plan)[k]; if (v) cells.push({ dept: d.dept, grade: g, approved: v }); }); });
+      return cells;
+    };
+    const pdept = mapped[0].org;
+    t('O23 the plan screen shows revision 1 in force', function () { const p = apiOrgPlan(); return p.active && p.active.status === 'Active' && p.active.no >= 1 && p.draft === null && p.depts.length > 0 ? p.active.no : false; });
+    err('O24 a plan cell that is not a whole number is refused', function () { const r = apiOrgPlanSaveDraft([{ dept: pdept, grade: 'M6', approved: 2.5 }], {}); if (!r.ok) throw new Error(r.errors[0]); }, /whole number/);
+    err('O25 a plan row for an unknown department is refused', function () { const r = apiOrgPlanSaveDraft([{ dept: 'No Such Dept', grade: 'M6', approved: 1 }], {}); if (!r.ok) throw new Error(r.errors[0]); }, /not an active department/);
+    let baseNo = 0, oldTotal = 0;
+    t('O26 a draft saves and changes nothing in force', function () {
+      const p0 = apiOrgPlan(); baseNo = p0.active.no; oldTotal = p0.active.total;
+      const before = planCell(p0, pdept, 'M6') || 0;
+      const r = apiOrgPlanSaveDraft(allCells(p0, (function () { const o = {}; o[pdept + '|M6'] = before + 2; return o; })()), {});
+      return r.ok && r.draft && r.active.no === baseNo && apiOrganogram().plan.rev === baseNo && r.changes === 1;
+    });
+    err('O27 activating needs a reason', function () { apiOrgPlanActivate(apiOrgPlan().draft.id, { reason: 'ab', approvedBy: 'E2E', effectiveOn: today }); }, /reason/);
+    err('O28 activating needs an approver', function () { apiOrgPlanActivate(apiOrgPlan().draft.id, { reason: 'Added two seats', approvedBy: '', effectiveOn: today }); }, /approved/);
+    t('O29 activating puts the draft in force and supersedes the old revision', function () {
+      const r = apiOrgPlanActivate(apiOrgPlan().draft.id, { reason: 'E2E two added seats', approvedBy: 'E2E', effectiveOn: today });
+      const old = r.revisions.filter(function (x) { return x.no === baseNo; })[0];
+      return r.active.no === baseNo + 1 && r.draft === null && old && old.status === 'Superseded' && r.active.total === oldTotal + 2 && apiOrganogram().totals.approved === oldTotal + 2;
+    });
+    t('O30 the diff of the new revision lists the changed cell', function () { const p = apiOrgPlan(), d = apiOrgPlanDiff(p.active.id); return d.changes.length === 1 && d.changes[0].dept === pdept && d.changes[0].grade === 'M6' && d.up === 2 && d.down === 0; });
+    t('O31 a restored revision is a new draft and history keeps both', function () {
+      const p = apiOrgPlan(), first = p.revisions.filter(function (x) { return x.no === baseNo; })[0];
+      const r = apiOrgPlanRestore(first.id);
+      const ok = r.draft && r.draft.source === 'Restored' && r.revisions.length === p.revisions.length + 1;
+      apiOrgPlanDiscard(r.draft.id);
+      return ok && apiOrgPlan().draft === null;
+    });
+    t('O32 an Excel upload saves a draft only, blanks keep current numbers', function () {
+      const r = apiOrgPlanUpload([{ Department: pdept, M6: 1 }], { apply: true });
+      const p = apiOrgPlan(), cur = planCell(p, pdept, 'M7');
+      const d = p.depts.filter(function (x) { return x.dept === pdept; })[0];
+      const ok = r.ok && p.draft && d.draft[p.grades.indexOf('M6')] === 1 && d.draft[p.grades.indexOf('M7')] === cur && p.active.no === baseNo + 1;
+      if (p.draft) apiOrgPlanDiscard(p.draft.id);
+      return ok;
+    });
   }
   return { pass: pass, fail: fail, log: log };
 }
