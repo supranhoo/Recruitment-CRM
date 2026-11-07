@@ -637,6 +637,12 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V3 voice access, Do Not Disturb register and requests', function () {
+      const n = voiceDndParse_('9876543210, +91 9123456780, abc'), ev = voiceAccessEval_([{ Email: 'a@x.com', Active: 'Yes', Daily_Limit: 2 }], 'a@x.com', 2, false);
+      const admin = voiceRequireCaller_({ email: 'a@x.com', recruiter: 'A', perms: ['voice_agent'] }, { Recruiter: 'A' }, 'APP-X').admin;
+      let refused = false; try { voiceRequireCaller_({ email: 'r@x.com', recruiter: 'R', perms: ['voice_review'] }, { Recruiter: 'R' }, 'APP-NONE'); } catch (er) { refused = /voice calling access/.test(er.message); }
+      return n.numbers.length === 2 && n.bad.length === 1 && voiceDndMatch_('09876543210', n.numbers) && !voiceDndMatch_('9000000000', n.numbers) && ev.ok === false && admin === true && refused ? 'ok' : false;
+    });
     t('V2 voice review aids: flags, what was said and disposition to-dos', function () {
       const f = voiceRowFlags_({ unclear: 'maybe', type: 'text', value: '', answer: '' }, true), a = voiceDispositionAction_('not_interested'), b = voiceDispositionAction_('callback_requested');
       const said = voiceSaidFor_([{ who: 'Agent', text: 'What is your notice period?' }, { who: 'Candidate', text: 'Sixty days notice' }], 'Notice period', 'sixty days');

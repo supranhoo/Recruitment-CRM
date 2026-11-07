@@ -7,7 +7,9 @@ function currentUser_() {
   })[0];
   if (!u) throw new Error('ACCESS: ' + email + ' is not on the recruitment team list. Ask the admin to add you in Admin \u2192 Users.');
   const role = normRole_(u.Role);
-  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: effectivePerms_(role) };
+  const perms = effectivePerms_(role);
+  if (typeof voiceHasAccess_ === 'function' && perms.indexOf('voice_call') < 0) { try { if (voiceHasAccess_(email)) perms.push('voice_call'); } catch (e) { } }
+  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: perms };
 }
 
 /** A plausible e-mail address, lower-cased and trimmed; '' when it is not one. */

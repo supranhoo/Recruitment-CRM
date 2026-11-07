@@ -18,6 +18,12 @@ const VOICE_CALL_COLS_ = ['Call_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Phone
 const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON', 'Recording_URL', 'Cost', 'Cost_Unit'];
 /** Results arrive here from the separate webhook receiver (docs/voice-webhook). The CRM matches each row to a call; nothing outside reads this sheet. */
 const VOICE_INBOX_ = { name: 'Voice_Inbox', cols: ['Received_At', 'Attempt_ID', 'Event_Key', 'Payload', 'Processed_At', 'Result'] };
+/** The numbers that must never be called (opted out, added by HR, or uploaded from the national list), who may use the tool, and requests to call. */
+const VOICE_DND_ = { name: 'Voice_DND', cols: ['Phone', 'Source', 'Note', 'Active', 'Added_By', 'Added_On', 'Removed_By', 'Removed_On', 'Remove_Reason'] };
+const VOICE_ACCESS_ = { name: 'Voice_Access', cols: ['Email', 'Active', 'Daily_Limit', 'Reason', 'Granted_By', 'Granted_At'] };
+const VOICE_REQ_ = { name: 'Voice_Requests', id: 'Req_ID', prefix: 'VRQ-', width: 5,
+  cols: ['Req_ID', 'App_ID', 'Line_ID', 'Candidate_ID', 'Requested_By', 'Requested_At', 'Reason', 'Status', 'Decided_By', 'Decided_At', 'Decision_Note', 'Call_ID'] };
+const VOICE_DEFAULT_LIMIT_ = 20;
 const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
 const VOICE_OPEN_STATUSES_ = ['Starting', 'Started'];
 const VOICE_KEY_PROP_ = 'VOICE_API_KEY';
@@ -31,7 +37,10 @@ const VOICE_LISTONLY_FROM_ = 5;
 const VOICE_RATINGS_FROM_ = 6;
 
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
-function voiceSchema_() { addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols); }
+function voiceSchema_() {
+  addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols);
+  addSheet_(VOICE_DND_.name, VOICE_DND_.cols); addSheet_(VOICE_ACCESS_.name, VOICE_ACCESS_.cols); addSheet_(VOICE_REQ_.name, VOICE_REQ_.cols);
+}
 /** A reviewer may see a call's result and work the screening from it: the Admin, or whoever may edit that position's pipeline and holds voice_review. */
 function voiceCanReview_(u, line) { return can_(u, 'voice_agent') || (can_(u, 'voice_review') && !!line && canEditLine_(u, line)); }
 function requireVoiceReview_(u, line) { if (!voiceCanReview_(u, line)) throw new Error('You can see a voice result only for your own positions (a TA Lead or the Head of HR sees all).'); }
@@ -62,7 +71,7 @@ function voiceCfgOut_(c) {
 }
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
 function voicePlaceWritten_() { return true; }
-function voiceDndWritten_() { return false; }
+function voiceDndWritten_() { return true; }
 function voiceResultsWritten_() { return true; }
 /** True when a call can be placed with the Do Not Disturb rule honoured (the check, or the Admin has switched it off). */
 function voiceProviderConnected_() { return voicePlaceWritten_() && voiceDndWritten_(); }
@@ -274,7 +283,7 @@ function voicePlanFromSelection_(items, selection, followUp) {
 }
 /** Admin only: the desk's data for one card (every question, default ticks, estimate and the thresholds that warn). */
 function apiVoicePlanDraft(appId) {
-  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const u = currentUser_(); ensureSchema_(); voiceRequireCaller_(u, lineOf_(appOf_(appId).Line_ID), appId, true);
   try { voiceIngest_(u); } catch (e) { }
   const app = appOf_(appId), line = lineOf_(app.Line_ID), cand = candRow_(app.Candidate_ID) || {}, fin = sqFinalFor_(app.Line_ID);
   if (!fin) throw new Error('This position has no final screening questions yet. Confirm them in JD & questions first.');
@@ -380,9 +389,10 @@ function voiceRequestBody_(phone, brief, cfg, callId) {
  * the Admin what would be sent. A real start also needs the settings, the Do Not Disturb check and the provider.
  */
 function apiVoiceStartScreening(appId, opts) {
-  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const u = currentUser_(); ensureSchema_();
   opts = opts || {};
   const app = appOf_(appId), line = lineOf_(app.Line_ID), cand = candRow_(app.Candidate_ID) || {};
+  const who = voiceRequireCaller_(u, line, appId, !!opts.dryRun);
   if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them before a screening call.');
   const fin = sqFinalFor_(app.Line_ID);
   if (!fin) throw new Error('This position has no final screening questions yet. Confirm them in JD & questions first.');
@@ -413,7 +423,7 @@ function apiVoiceStartScreening(appId, opts) {
   const body = voiceRequestBody_(phone, brief, cfg, '(call id)'); body.user_config.user_phone_number = '+91XXXXXX' + phone.slice(-4);
   const out = { dryRun: !!opts.dryRun, candidate: String(cand.Name || ''), phoneLast4: phone.slice(-4), questionsVersion: Number(fin.Version), brief: brief, request: body, notSent: ['gender', 'candidate_location', 'resume_highlights'],
     questionsSent: !!cfg.questionsVar, resultsReturn: cfg.webhookUrl ? 'Results will be sent to your webhook address' : 'No webhook address set: results will not come back automatically',
-    dnd: cfg.dndRequired ? 'Required: checked before every call' : 'Not required (switched off)', ready: !problems.length, problems: problems,
+    dnd: cfg.dndRequired ? 'Required: our own register is checked before every call (the provider\u2019s list is not connected yet)' : 'Not required (switched off)', ready: !problems.length, problems: problems,
     warnings: (function () { const w = [], n = brief.plan.sent.length, mins = Math.round((brief.plan.secs || 0) / 60); if (n > VOICE_WARN_Q_) w.push(n + ' questions in one call is a lot for a candidate'); if (mins > VOICE_WARN_MIN_) w.push('about ' + mins + ' minutes is a long call'); return w; })(), estimate: { questions: brief.plan.sent.length, seconds: brief.plan.secs || 0 } };
   if (opts.dryRun) return out;
   if (problems.length) throw new Error('The call was not placed: ' + problems.join('; ') + '.');
@@ -433,11 +443,14 @@ function apiVoiceStartScreening(appId, opts) {
     voiceUpdate_(row.Call_ID, { Status: 'Failed', Status_Note: String(e && e.message || e).slice(0, 300), Updated_By: u.email });
     throw new Error('The call could not be placed: ' + String(e && e.message || e));
   }
+  if (who.req) { try { voiceReqMarkPlaced_(who.req.Req_ID, row.Call_ID); } catch (e) { } }
   out.callId = row.Call_ID; return out;
 }
 
-/** PROVIDER STUB: returns true when the number is on the Do Not Disturb list. To be written from the provider's DND list API. */
-function voiceDndCheck_(phone, cfg) { throw new Error('The Do Not Disturb check is not connected yet.'); }
+/** True when the number is on our own Do Not Disturb register or (once connected) on the provider's list. */
+function voiceDndCheck_(phone, cfg) { return voiceDndMatch_(phone, voiceDndNumbers_()) || voiceDndProvider_(phone, cfg); }
+/** HOOK for the provider's Do Not Disturb list API: returns false until its documentation is available and this is written. The own register above is checked first. */
+function voiceDndProvider_(phone, cfg) { return false; }
 
 /**
  * Places the call through the provider's instant outbound API (request as in the provider's own example). Returns
@@ -531,6 +544,232 @@ function voiceApplyResult_(u, callId, result) {
 }
 
 
+
+
+/* ---------------------------------------------------------------- Do Not Disturb register, who may call, requests ----------- */
+
+/** A mobile number as the 10 digits it is called on ('' when it is not a valid Indian mobile). Accepts +91, 91, 0 prefixes and spaces. */
+function voiceDndNorm_(v) {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.length === 12 && d.indexOf('91') === 0) d = d.slice(2);
+  else if (d.length === 11 && d.charAt(0) === '0') d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : '';
+}
+/** Splits pasted text (commas, spaces, new lines) into valid numbers and the pieces that are not numbers. */
+function voiceDndParse_(text) {
+  const ok = [], bad = [], seen = {};
+  String(text == null ? '' : text).split(/[\n,;]+/).forEach(function (piece) {
+    const raw = piece.trim(); if (!raw) return;
+    const n = voiceDndNorm_(raw);
+    if (!n) { bad.push(raw.slice(0, 30)); return; }
+    if (!seen[n]) { seen[n] = true; ok.push(n); }
+  });
+  return { numbers: ok, bad: bad };
+}
+function voiceDndMatch_(phone, numbers) { const n = voiceDndNorm_(phone); return !!n && (numbers || []).indexOf(n) >= 0; }
+function voiceDndNumbers_() {
+  voiceSchema_();
+  return readTable_(VOICE_DND_.name).rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return voiceDndNorm_(r.Phone); }).filter(String);
+}
+/** Whether a person may place calls and how many are left today. rows: Voice_Access rows; used: calls placed today by them. Admin: always, no limit. */
+function voiceAccessEval_(rows, email, used, isAdmin) {
+  if (isAdmin) return { ok: true, limit: 0, used: used, left: -1, why: '' };
+  const r = (rows || []).filter(function (x) { return String(x.Email).toLowerCase().trim() === String(email).toLowerCase().trim() && String(x.Active) !== 'No'; })[0];
+  if (!r) return { ok: false, limit: 0, used: used, left: 0, why: 'You do not have voice calling access. Ask for a call from the card, or ask the Admin to give you access.' };
+  const lim = Math.max(1, Math.min(500, Number(r.Daily_Limit) || VOICE_DEFAULT_LIMIT_));
+  if (used >= lim) return { ok: false, limit: lim, used: used, left: 0, why: 'You have reached your limit of ' + lim + ' voice calls for today.' };
+  return { ok: true, limit: lim, used: used, left: lim - used, why: '' };
+}
+function voiceAccessRows_() { voiceSchema_(); return readTable_(VOICE_ACCESS_.name).rows; }
+/** Emails with an active access row, cached for 5 minutes so every page action does not read the sheet. */
+function voiceAccessEmails_() {
+  const cache = CacheService.getScriptCache(), hit = cache.get('voice_access_v1');
+  if (hit) return JSON.parse(hit);
+  let list = [];
+  try { if (ss_().getSheetByName(VOICE_ACCESS_.name)) list = readTable_(VOICE_ACCESS_.name).rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Email).toLowerCase().trim(); }); } catch (e) { list = []; }
+  cache.put('voice_access_v1', JSON.stringify(list), 300);
+  return list;
+}
+/** Used by currentUser_: true when this person has been given voice calling access. */
+function voiceHasAccess_(email) { return voiceAccessEmails_().indexOf(String(email).toLowerCase().trim()) >= 0; }
+function voiceDropAccess_() { try { CacheService.getScriptCache().remove('voice_access_v1'); } catch (e) { } }
+function voiceUsedToday_(email) {
+  const today = ymd_(new Date());
+  return voiceCallsRows_().filter(function (c) { return String(c.Started_By).toLowerCase() === String(email).toLowerCase() && String(c.Status) !== 'Failed' && String(c.Status).indexOf('Blocked') !== 0 && ymd_(c.Started_At) === today; }).length;
+}
+function voiceReqRows_() { voiceSchema_(); return readTable_(VOICE_REQ_.name).rows; }
+/** An approved request that has not been used yet and that this person may use (the one who asked, or the one who approved it). */
+function voiceApprovedReq_(u, appId) {
+  return voiceReqRows_().filter(function (r) { return String(r.App_ID) === String(appId) && String(r.Status) === 'Approved' && !String(r.Call_ID || '') && (String(r.Requested_By).toLowerCase() === u.email || String(r.Decided_By).toLowerCase() === u.email); })[0] || null;
+}
+/**
+ * Who may plan and place a call for a card: the Admin; a person with voice access who may edit that position and is under the daily
+ * limit; or the person an approved request names (one call per request). preview = looking at what would be sent: no limit applies.
+ */
+function voiceRequireCaller_(u, line, appId, preview) {
+  if (can_(u, 'voice_agent')) return { admin: true, req: null };
+  const req = voiceApprovedReq_(u, appId);
+  if (req && line && canEditLine_(u, line)) return { admin: false, req: req };
+  if (!can_(u, 'voice_call')) throw new Error('You do not have voice calling access. Use Request a voice call on the card, or ask the Admin to give you access.');
+  if (!line || !canEditLine_(u, line)) throw new Error('You can place a voice call only for your own positions (a TA Lead or the Head of HR for all).');
+  if (!preview) { const ev = voiceAccessEval_(voiceAccessRows_(), u.email, voiceUsedToday_(u.email), false); if (!ev.ok) throw new Error(ev.why); }
+  return { admin: false, req: null };
+}
+
+/** The register: active numbers with who added them and why (Admin). */
+function apiVoiceDndList() {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u); voiceSchema_();
+  const at = function (v) { return v instanceof Date ? fmt_(v, TZ, 'd MMM yyyy') : String(v || ''); };
+  const rows = readTable_(VOICE_DND_.name).rows.filter(function (r) { return String(r.Active) !== 'No'; }).reverse();
+  return { total: rows.length, rows: rows.slice(0, 300).map(function (r) { return { phone: String(r.Phone), source: String(r.Source || ''), note: String(r.Note || ''), by: String(r.Added_By || ''), on: at(r.Added_On) }; }) };
+}
+function voiceDndAdd_(u, numbers, source, note) {
+  voiceSchema_();
+  return withLock_(function () {
+    const t = readTable_(VOICE_DND_.name, true), have = {}; t.rows.forEach(function (r) { if (String(r.Active) !== 'No') have[voiceDndNorm_(r.Phone)] = true; });
+    const fresh = numbers.filter(function (n) { return !have[n]; }), now = new Date();
+    if (fresh.length) {
+      const rows = fresh.map(function (n) { const o = { Phone: n, Source: source, Note: String(note || '').slice(0, 200), Active: 'Yes', Added_By: u.email, Added_On: now };
+        return t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; }); });
+      t.sheet.getRange(t.sheet.getLastRow() + 1, 1, rows.length, t.headers.length).setValues(rows);
+      dropStale_(VOICE_DND_.name);
+      audit_(u, 'Voice agent', 'DND', 'Do not call added', '', '', fresh.length + ' number' + (fresh.length === 1 ? '' : 's') + ' (' + source + ')');
+    }
+    return { added: fresh.length, already: numbers.length - fresh.length };
+  });
+}
+/** Adds pasted numbers to the register (Admin). */
+function apiVoiceDndAdd(text, note) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const p = voiceDndParse_(text);
+  if (!p.numbers.length) throw new Error('No valid 10-digit mobile number found. Paste numbers separated by commas, spaces or new lines.');
+  if (p.numbers.length > 5000) throw new Error('Add at most 5,000 numbers at a time.');
+  const r = voiceDndAdd_(u, p.numbers, p.numbers.length > 5 ? 'Uploaded list' : 'HR added', note);
+  r.bad = p.bad.slice(0, 10); r.badCount = p.bad.length; return r;
+}
+/** Takes a number off the register (Admin), with a reason; the row is kept and marked. */
+function apiVoiceDndRemove(phone, reason) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const n = voiceDndNorm_(phone), why = clean_(String(reason || '').trim());
+  if (!n) throw new Error('That is not a valid mobile number.');
+  if (why.length < 3) throw new Error('Give a short reason for taking the number off the list.');
+  voiceSchema_();
+  withLock_(function () {
+    const t = readTable_(VOICE_DND_.name, true), hit = t.rows.filter(function (r) { return String(r.Active) !== 'No' && voiceDndNorm_(r.Phone) === n; });
+    if (!hit.length) throw new Error('That number is not on the list.');
+    hit.forEach(function (r) { r.Active = 'No'; r.Removed_By = u.email; r.Removed_On = new Date(); r.Remove_Reason = why.slice(0, 200); t.sheet.getRange(r._row, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return r[h] === undefined ? '' : r[h]; })]); });
+    dropStale_(VOICE_DND_.name);
+    audit_(u, 'Voice agent', 'DND', 'Do not call removed', '', '', 'ending ' + n.slice(-4) + ': ' + why);
+  });
+  return apiVoiceDndList();
+}
+/** "Do not call" for the candidate on a card: the Admin, a person with voice access, or a lead. The number goes on the register. */
+function apiVoiceDndMark(appId, note) {
+  const u = currentUser_(); ensureSchema_();
+  const app = appOf_(appId), line = lineOf_(app.Line_ID);
+  if (!(can_(u, 'voice_agent') || can_(u, 'voice_call') || isLead_(u)) || !(isLead_(u) || (line && canEditLine_(u, line)))) throw new Error('Only a lead, the Admin, or a recruiter with voice access for this position can mark a number as do not call.');
+  const phone = voicePhone_(candRow_(app.Candidate_ID) || {});
+  if (!phone) throw new Error('The candidate has no valid 10-digit mobile number on file.');
+  const r = voiceDndAdd_(u, [phone], 'Candidate opted out', note || 'Marked from the card');
+  return { added: r.added, already: r.already, last4: phone.slice(-4) };
+}
+
+/** Who may call (Admin): every active team member with their access, limit and reason. */
+function apiVoiceAccessList() {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const rows = voiceAccessRows_(), by = {}; rows.forEach(function (r) { by[String(r.Email).toLowerCase().trim()] = r; });
+  const users = usersCached_().filter(function (x) { return String(x.Active || 'Yes') !== 'No'; });
+  return { defaultLimit: VOICE_DEFAULT_LIMIT_, users: users.map(function (x) {
+    const e = String(x.Email).toLowerCase().trim(), r = by[e], admin = normRole_(x.Role) === ROLES.ADMIN;
+    return { email: e, name: String(x.Name), role: normRole_(x.Role), admin: admin, active: admin || (!!r && String(r.Active) !== 'No'), limit: r ? Number(r.Daily_Limit) || VOICE_DEFAULT_LIMIT_ : VOICE_DEFAULT_LIMIT_, reason: r ? String(r.Reason || '') : '', used: voiceUsedToday_(e) };
+  }) };
+}
+/** Saves access for named people (Admin). list: [{email, active, limit, reason}]; only people on the team list; every change is audited. */
+function apiVoiceAccessSave(list) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u); voiceSchema_();
+  const team = {}; usersCached_().forEach(function (x) { team[String(x.Email).toLowerCase().trim()] = x; });
+  withLock_(function () {
+    const t = readTable_(VOICE_ACCESS_.name, true), by = {}; t.rows.forEach(function (r) { by[String(r.Email).toLowerCase().trim()] = r; });
+    (list || []).forEach(function (x) {
+      const e = cleanMail_(x.email); if (!e || !team[e]) throw new Error((x.email || 'That person') + ' is not on the team list.');
+      if (normRole_(team[e].Role) === ROLES.ADMIN) return;
+      const act = x.active ? 'Yes' : 'No', lim = Math.max(1, Math.min(500, Math.floor(Number(x.limit) || VOICE_DEFAULT_LIMIT_))), why = clean_(String(x.reason || '').trim()).slice(0, 200), r = by[e];
+      if (!r && !x.active) return;
+      if (act === 'Yes' && why.length < 3 && (!r || String(r.Active) === 'No')) throw new Error('Give a short reason for giving ' + String(team[e].Name) + ' voice calling access.');
+      if (r && String(r.Active) === act && Number(r.Daily_Limit) === lim && String(r.Reason || '') === why) return;
+      const o = { Email: e, Active: act, Daily_Limit: lim, Reason: why || (r ? String(r.Reason || '') : ''), Granted_By: u.email, Granted_At: new Date() };
+      const row = t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; });
+      if (r) t.sheet.getRange(r._row, 1, 1, t.headers.length).setValues([row]); else t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([row]);
+      audit_(u, 'Voice agent', e, 'Voice access ' + (act === 'Yes' ? 'given' : 'removed'), '', '', 'limit ' + lim + '/day' + (why ? ': ' + why : ''));
+    });
+    dropStale_(VOICE_ACCESS_.name);
+  });
+  voiceDropAccess_();
+  return apiVoiceAccessList();
+}
+
+/** A recruiter without voice access asks for a call on a card: one open request per card. */
+function apiVoiceRequest(appId, reason) {
+  const u = currentUser_(); ensureSchema_(); voiceSchema_();
+  const app = appOf_(appId), line = lineOf_(app.Line_ID), why = clean_(String(reason || '').trim());
+  if (!line || !canEditLine_(u, line)) throw new Error('You can ask for a voice call only for your own positions.');
+  if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them before a screening call.');
+  if (why.length < 3) throw new Error('Say briefly why this candidate should be called (at least 3 characters).');
+  return withLock_(function () {
+    const t = readTable_(VOICE_REQ_.name, true);
+    if (t.rows.some(function (r) { return String(r.App_ID) === String(appId) && (String(r.Status) === 'Pending' || (String(r.Status) === 'Approved' && !String(r.Call_ID || ''))); })) throw new Error('There is already an open voice call request for this candidate.');
+    const o = { Req_ID: nextId_(VOICE_REQ_, t.rows), App_ID: String(appId), Line_ID: String(app.Line_ID), Candidate_ID: String(app.Candidate_ID), Requested_By: u.email, Requested_At: new Date(), Reason: why.slice(0, 300), Status: 'Pending' };
+    t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+    dropStale_(VOICE_REQ_.name);
+    audit_(u, 'Voice agent', o.Req_ID, 'Voice call requested', '', '', 'candidate ' + app.Candidate_ID);
+    return voiceReqOut_(o);
+  });
+}
+function voiceReqOut_(r) {
+  const at = function (v) { return v instanceof Date ? fmt_(v, TZ, 'd MMM yyyy, HH:mm') : String(v || ''); };
+  return { id: String(r.Req_ID), app: String(r.App_ID), line: String(r.Line_ID), by: String(r.Requested_By), at: at(r.Requested_At), reason: String(r.Reason || ''), status: String(r.Status), decidedBy: String(r.Decided_By || ''), decidedAt: at(r.Decided_At), note: String(r.Decision_Note || ''), call: String(r.Call_ID || '') };
+}
+/** The requests on one card (anyone who may see the card); the latest first. */
+function apiVoiceRequestsFor(appId) {
+  const u = currentUser_(); ensureSchema_();
+  const app = appOf_(appId), line = lineOf_(app.Line_ID);
+  if (!isLead_(u) && !(line && canEditLine_(u, line))) throw new Error('You can see voice call requests only for your own positions.');
+  const rows = voiceReqRows_().filter(function (r) { return String(r.App_ID) === String(appId); }).reverse().map(voiceReqOut_);
+  return { requests: rows, canDecide: isLead_(u), canCall: can_(u, 'voice_agent') || can_(u, 'voice_call') || !!voiceApprovedReq_(u, appId) };
+}
+/** Pending requests across the team (leads). */
+function apiVoiceRequestsPending() {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin sees the voice call requests.');
+  const names = {}; readTable_(T.CAND.name).rows.forEach(function (c) { names[c.Candidate_ID] = String(c.Name); });
+  return voiceReqRows_().filter(function (r) { return String(r.Status) === 'Pending'; }).map(function (r) { const o = voiceReqOut_(r); o.name = names[r.Candidate_ID] || String(r.Candidate_ID); return o; });
+}
+/** A lead approves or declines. Approval lets the person who asked (or the approver) place that one call. */
+function apiVoiceRequestDecide(reqId, approve, note) {
+  const u = currentUser_(); ensureSchema_(); voiceSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can decide a voice call request.');
+  const why = clean_(String(note || '').trim()).slice(0, 300);
+  if (!approve && why.length < 3) throw new Error('Give a short reason for declining.');
+  return withLock_(function () {
+    const t = readTable_(VOICE_REQ_.name, true), r = t.rows.filter(function (x) { return String(x.Req_ID) === String(reqId); })[0];
+    if (!r) throw new Error('That request was not found.');
+    if (String(r.Status) !== 'Pending') throw new Error('That request was already ' + String(r.Status).toLowerCase() + '.');
+    r.Status = approve ? 'Approved' : 'Declined'; r.Decided_By = u.email; r.Decided_At = new Date(); r.Decision_Note = why;
+    t.sheet.getRange(r._row, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return r[h] === undefined ? '' : r[h]; })]);
+    dropStale_(VOICE_REQ_.name);
+    audit_(u, 'Voice agent', String(reqId), approve ? 'Voice call approved' : 'Voice call declined', '', '', why);
+    return voiceReqOut_(r);
+  });
+}
+function voiceReqMarkPlaced_(reqId, callId) {
+  withLock_(function () {
+    const t = readTable_(VOICE_REQ_.name, true), r = t.rows.filter(function (x) { return String(x.Req_ID) === String(reqId); })[0];
+    if (!r) return;
+    r.Status = 'Placed'; r.Call_ID = callId;
+    t.sheet.getRange(r._row, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return r[h] === undefined ? '' : r[h]; })]);
+    dropStale_(VOICE_REQ_.name);
+  });
+}
 
 /* ---------------------------------------------------------------- review aids: what was said, flags, recording ------------- */
 
@@ -753,9 +992,10 @@ function voiceTurnsFromResponse_(j) {
  * waiting): attempt record -> interaction id -> transcript. Records it the same way a webhook result is recorded.
  */
 function apiVoiceFetchResult(callId) {
-  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const u = currentUser_(); ensureSchema_();
   const call = voiceCallsRows_().filter(function (r) { return String(r.Call_ID) === String(callId); })[0];
   if (!call) throw new Error('Call ' + callId + ' was not found.');
+  if (!can_(u, 'voice_agent') && !(can_(u, 'voice_call') && String(call.Started_By).toLowerCase() === u.email) && !isLead_(u)) throw new Error('Only the person who placed this call, a lead or the Admin can fetch its result.');
   if (String(call.Status) === 'Completed' && String(call.Transcript || '')) throw new Error('This call already has its result.');
   let att = String(call.Provider_Call_ID || '');
   if (!att) { const m = String(call.Status_Note || '').match(/"attempt_id"\s*:\s*"([0-9A-Za-z\-]{8,80})"/); att = m ? m[1] : ''; }
