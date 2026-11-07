@@ -637,6 +637,11 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V2 voice review aids: flags, what was said and disposition to-dos', function () {
+      const f = voiceRowFlags_({ unclear: 'maybe', type: 'text', value: '', answer: '' }, true), a = voiceDispositionAction_('not_interested'), b = voiceDispositionAction_('callback_requested');
+      const said = voiceSaidFor_([{ who: 'Agent', text: 'What is your notice period?' }, { who: 'Candidate', text: 'Sixty days notice' }], 'Notice period', 'sixty days');
+      return f.length === 1 && f[0].k === 'unclear' && a && a.key === 'notint' && b && b.key === 'callback' && voiceDispositionAction_('x') === null && said && /Sixty/.test(said.candidate) && voiceFindRecording_({ x: { recording_url: 'https://e.test/a.mp3' } }) === 'https://e.test/a.mp3' ? 'ok' : false;
+    });
     t('K28 BGV: a previous-employer check started before the offer is flagged as a deviation', function () {
       const cfg = bgvRules_().cfg, mk = function (o) { return Object.assign({ Type: 'Previous employer', Status: 'Initiated', Trigger_Date: '2026-10-31', Initiated_On: '2026-10-29' }, o); };
       const rag = bgvRag_(mk({}), cfg, '2026-10-30');

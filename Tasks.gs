@@ -46,6 +46,11 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'replacement_next', title: 'Replacement MRF: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5: new MRF after a backout; TAT continues from the original start' },
   { id: 'filled_cleanup', title: 'Position filled: close the remaining candidates', due: 0, crit: null, missed: false, policy: 'Reject, hold or move candidates left on a filled position' },
   { id: 'inform_closed', title: 'Inform candidates and panel: position closed', due: 0, crit: null, missed: false, policy: '18: keep candidates informed; position closed without a hire' },
+  { id: 'voice_review', title: 'Review the voice screening draft', due: 0, crit: null, missed: false, policy: 'Voice screening: the call is complete; a person checks, rates and completes the screening' },
+  { id: 'voice_notint', title: 'Voice screening: candidate not interested', due: 0, crit: null, missed: false, policy: 'Voice screening: confirm with the candidate, then close the card with a reason' },
+  { id: 'voice_callback', title: 'Voice screening: candidate asked for a call back', due: 0, crit: null, missed: false, policy: 'Voice screening: call the candidate back' },
+  { id: 'voice_incomplete', title: 'Voice screening: questions still open', due: 0, crit: null, missed: false, policy: 'Voice screening: ask the remaining questions or place a follow-up call' },
+  { id: 'voice_wrongno', title: 'Voice screening: wrong number', due: 0, crit: null, missed: false, policy: 'Voice screening: check the candidate\u2019s mobile number' },
   { id: 'switchover', title: 'Switch-over check: positions to fix', due: 0, crit: null, missed: false, policy: 'Typed offer details must match the pipeline before the switch-over date' },
   { id: 'tat_overdue', title: 'Positions past TAT', due: 0, crit: null, missed: false, policy: 'Plan next steps for overdue positions' },
   { id: 'day_note', title: 'Write your day note', due: 0, crit: null, missed: false, policy: 'After 5 pm when nothing is logged for today' }
@@ -386,6 +391,13 @@ function computeTasks_() {
       title: 'Inform ' + list.length + ' candidate' + (list.length === 1 ? '' : 's') + ': ' + (l.MRF_No || id) + ' ' + (s === 'On Hold' ? 'on hold' : 'closed'),
       context: names.slice(0, 4).join(', ') + (names.length > 4 ? ' and ' + (names.length - 4) + ' more' : '') + ' \u00b7 ' + l.Position,
       startMs: parseYmd_(when).getTime(), manual: true, message: msg });
+  });
+
+  // Voice screening calls: what the agent heard (completed, not interested, call back, incomplete, wrong number) becomes a to-do for the card's recruiter.
+  voiceTaskRows_(apps).forEach(function (v) {
+    const a = v.app;
+    add('voice_' + v.action.key, { key: 'voice_' + v.action.key + '|' + v.callId, recruiter: String(a.Recruiter), line: a.Line_ID, app: a.App_ID, title: v.action.title + ': ' + candName(a),
+      context: lineLabel(lines[a.Line_ID]) + ' \u00b7 ' + v.action.why, startMs: v.at || now, manual: true, open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
   });
 
   // Switch-over check: one task per recruiter while positions still disagree with the pipeline.
