@@ -15,7 +15,7 @@ const VOICE_CALLS_ = { name: 'Voice_Calls', id: 'Call_ID', prefix: 'VCL-', width
 const VOICE_CALL_COLS_ = ['Call_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Phone_Last4', 'Status', 'Status_Note', 'Provider_Call_ID', 'Questions_Version',
   'Started_By', 'Started_At', 'Completed_At', 'Transcript', 'Answers_JSON', 'Draft_Applied', 'Updated_By', 'Updated_At'];
 /** Added later: what the provider reported (answered, no answer, busy, failed), the length, the provider's interaction id, and the variables the agent filled in. */
-const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON'];
+const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON', 'Recording_URL', 'Cost', 'Cost_Unit'];
 /** Results arrive here from the separate webhook receiver (docs/voice-webhook). The CRM matches each row to a call; nothing outside reads this sheet. */
 const VOICE_INBOX_ = { name: 'Voice_Inbox', cols: ['Received_At', 'Attempt_ID', 'Event_Key', 'Payload', 'Processed_At', 'Result'] };
 const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
@@ -531,6 +531,125 @@ function voiceApplyResult_(u, callId, result) {
 }
 
 
+
+/* ---------------------------------------------------------------- review aids: what was said, flags, recording ------------- */
+
+/** The words of a text that carry meaning for matching: lower case, 2+ characters or any digit group. */
+function voiceTokens_(t) {
+  return String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9ऀ-ॿ ]+/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 2 || /\d/.test(w); });
+}
+/**
+ * The part of the transcript that answers one question: the candidate's turn that shares most words with the answer, and the agent's
+ * turn just before it. lines: [{who, text}] as read from the stored transcript. Returns null when nothing matches well enough.
+ */
+function voiceSaidFor_(lines, question, answer) {
+  const at = voiceTokens_(answer);
+  if (!at.length || !Array.isArray(lines)) return null;
+  const qt = voiceTokens_(question), seen = {};
+  let best = -1, bestScore = 0;
+  lines.forEach(function (l, i) {
+    if (String(l.who) === 'Agent') return;
+    const w = voiceTokens_(l.text); if (!w.length) return;
+    const hit = at.filter(function (x) { return w.indexOf(x) >= 0; }).length / at.length;
+    let ask = 0;
+    for (let j = i - 1; j >= 0 && j >= i - 2; j--) if (String(lines[j].who) === 'Agent') { const a = voiceTokens_(lines[j].text); ask = qt.length ? qt.filter(function (x) { return a.indexOf(x) >= 0; }).length / qt.length : 0; break; }
+    const sc = hit + ask * 0.5;
+    if (hit > 0 && sc > bestScore) { bestScore = sc; best = i; }
+  });
+  if (best < 0 || bestScore < 0.34) return null;
+  let agent = '';
+  for (let j = best - 1; j >= 0; j--) if (String(lines[j].who) === 'Agent') { agent = String(lines[j].text); break; }
+  return { agent: agent.slice(0, 400), candidate: String(lines[best].text).slice(0, 400) };
+}
+/** The first http(s) address under a key that looks like a recording or audio, anywhere in the provider's payload ('' when none). */
+function voiceFindRecording_(p) {
+  let found = '';
+  const walk = function (o, depth) {
+    if (found || depth > 5 || o == null || typeof o !== 'object') return;
+    Object.keys(o).forEach(function (k) {
+      if (found) return;
+      const v = o[k];
+      if (typeof v === 'string' && /^https?:\/\/\S+$/i.test(v) && /record|audio|call_url|media/i.test(k)) found = v.slice(0, 1000);
+      else if (v && typeof v === 'object') walk(v, depth + 1);
+    });
+  };
+  walk(p, 0);
+  return found;
+}
+/** A cost the provider reported: the first number under a key like cost, charge, credits or price (null when none). */
+function voiceFindCost_(p) {
+  let found = null;
+  const walk = function (o, depth) {
+    if (found || depth > 5 || o == null || typeof o !== 'object') return;
+    Object.keys(o).forEach(function (k) {
+      if (found) return;
+      const v = o[k];
+      if ((typeof v === 'number' || (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v))) && /cost|charge|credit|price|billed/i.test(k) && Number(v) >= 0) found = { amount: Number(v), key: k };
+      else if (v && typeof v === 'object') walk(v, depth + 1);
+    });
+  };
+  walk(p, 0);
+  return found;
+}
+/**
+ * Flags that tell the reviewer what to check first, per question: Unclear, Could not read, Not answered, No rating. Only what the call
+ * itself shows: never a judgement about the candidate. row is a review row from apiVoiceCallDetail; asked = it was sent to the agent.
+ */
+function voiceRowFlags_(row, asked) {
+  const f = [];
+  if (row.unclear) f.push({ k: 'unclear', t: 'Unclear' });
+  else if (asked && row.type !== 'text' && row.answer && row.value === '') f.push({ k: 'unread', t: 'Could not read' });
+  else if (asked && !row.answer && !row.earlier && !(row.cur && row.cur.a)) f.push({ k: 'missing', t: 'Not answered' });
+  if (asked && row.sec !== 'P' && (row.value !== '' || row.answer) && !row.rating && !row.suggest && !(row.cur && row.cur.r)) f.push({ k: 'norate', t: 'No rating' });
+  return f;
+}
+/** Call-level notes for the reviewer: a very short call, or one with no transcript. */
+function voiceCallFlags_(call) {
+  const f = [], secs = Number(call && call.Duration_Sec) || 0;
+  if (secs > 0 && secs < 60) f.push('The call lasted under a minute. Check that the candidate really answered.');
+  if (call && String(call.Status) === 'Completed' && !String(call.Transcript || '')) f.push('The provider sent no transcript for this call.');
+  return f;
+}
+/**
+ * The voice-call to-dos for active cards: the latest completed call of each card, mapped by its disposition (voiceDispositionAction_).
+ * A "review" to-do goes once the screening is completed; the others stay until the recruiter marks them done. Returns [] when the
+ * voice sheet does not exist yet. apps: the active Applications rows.
+ */
+function voiceTaskRows_(apps) {
+  if (!ss_().getSheetByName(VOICE_CALLS_.name)) return [];
+  const last = {};
+  voiceCallsRows_().forEach(function (c) {
+    if (String(c.Status) !== 'Completed' || !String(c.Final_Vars_JSON || '')) return;
+    const k = String(c.App_ID), at = c.Completed_At instanceof Date ? c.Completed_At.getTime() : 0;
+    if (!last[k] || at >= last[k].at) last[k] = { call: c, at: at };
+  });
+  const complete = {};
+  if (ss_().getSheetByName(T.SCR.name)) readTable_(T.SCR.name).rows.forEach(function (r) { if (String(r.Status) === 'Complete') complete[String(r.App_ID)] = true; });
+  const out = [];
+  apps.forEach(function (a) {
+    const l = last[String(a.App_ID)]; if (!l) return;
+    let vars = {}; try { vars = JSON.parse(String(l.call.Final_Vars_JSON || '{}')); } catch (e) { vars = {}; }
+    const action = voiceDispositionAction_(vars.call_disposition);
+    if (!action) return;
+    if (action.key === 'review' && complete[String(a.App_ID)]) return;
+    if (action.key === 'incomplete' && complete[String(a.App_ID)]) return;
+    out.push({ app: a, callId: String(l.call.Call_ID), action: action, at: l.at });
+  });
+  return out;
+}
+/** What a call's disposition asks the recruiter to do next (the agent only suggests; a person acts): { key, title, why } or null. */
+function voiceDispositionAction_(disposition) {
+  const d = String(disposition || '').toLowerCase().trim().replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
+  const m = {
+    completed: { key: 'review', title: 'Review the voice screening draft', why: 'The call is complete: check the answers, rate them and complete the screening.' },
+    not_interested: { key: 'notint', title: 'Candidate said not interested: confirm and close the card', why: 'The candidate told the agent they are not interested. Confirm with them, then reject or withdraw the card with a reason.' },
+    callback_requested: { key: 'callback', title: 'Candidate asked for a call back', why: 'The candidate asked to be called later. Call them back or place the voice call again.' },
+    incomplete_screening: { key: 'incomplete', title: 'Voice screening incomplete: ask the remaining questions', why: 'Some questions were not answered. Ask them yourself or place a follow-up call.' },
+    wrong_number: { key: 'wrongno', title: 'Wrong number on the candidate record', why: 'The number did not reach the candidate. Check and correct the mobile number.' }
+  };
+  return m[d] || null;
+}
+
 /* ---------------------------------------------------------------- results coming back ----------------------- */
 
 /** A call's transcript as text: "Agent: ..." / "Candidate: ...". */
@@ -584,7 +703,7 @@ function voiceIngestRun_(u) {
           if (String(call.Status) === 'Completed' && String(call.Transcript || '')) res = 'Repeat delivery, ignored';
           else {
             voiceApplyResult_(u, call.Call_ID, { status: o.status, note: o.note, transcript: tr, answers: o.status === 'Completed' && Object.keys(answers).length ? answers : null });
-            voiceUpdate_(call.Call_ID, { Outcome: o.outcome, Duration_Sec: Number(p.duration) || '', Interaction_ID: String(p.interaction_id || ''), Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000), Provider_Call_ID: att || String(call.Provider_Call_ID || '') });
+            voiceUpdate_(call.Call_ID, { Outcome: o.outcome, Duration_Sec: Number(p.duration) || '', Interaction_ID: String(p.interaction_id || ''), Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000), Provider_Call_ID: att || String(call.Provider_Call_ID || ''), Recording_URL: voiceFindRecording_(p), Cost: (voiceFindCost_(p) || { amount: '' }).amount, Cost_Unit: (voiceFindCost_(p) || { key: '' }).key });
             res = 'Recorded on ' + call.Call_ID; n++;
           }
         } catch (e) { res = 'Error: ' + String(e && e.message || e).slice(0, 150); }
@@ -686,6 +805,7 @@ function apiVoiceCallDetail(callId) {
       answer: x ? x.raw : '', value: x ? x.a : '', rating: auto, suggest: !auto && x && rates[it.id] ? rates[it.id] : null, unclear: m.unclear[it.id] || '',
       earlier: !x && all[it.id] ? { call: all[it.id].call, answer: all[it.id].raw } : null,   // answered in another call of this candidate
       cur: c ? { a: String(c.a == null ? '' : c.a), r: String(c.r || '') } : null }; });
+  review.forEach(function (x) { const asked = stdIds.indexOf(x.id) >= 0 || sentIds.indexOf(x.id) >= 0; x.said = x.answer || x.value ? voiceSaidFor_(lines, x.q, x.answer || x.value) : null; x.flags = voiceRowFlags_(x, asked); });
   const score = sqScore_(plan.items, ans);
   const asked = plan.items.filter(function (it) { return stdIds.indexOf(it.id) >= 0 || sentIds.indexOf(it.id) >= 0; });
   const open = plan.items.filter(function (it) { return !all[it.id]; }).map(function (it) { return it.id; });
@@ -693,7 +813,9 @@ function apiVoiceCallDetail(callId) {
     toRate: review.filter(function (x) { return x.sec !== 'P' && (x.value !== '' || x.answer) && !x.rating && !x.suggest && !(x.cur && x.cur.r); }).length, autoRated: review.filter(function (x) { return !!x.rating; }).length, suggested: review.filter(function (x) { return !!x.suggest; }).length,
     notSentVar: !!plan.sent.length && !plan.via && !plan.derived };
   const hint = { summary: String(vars.call_summary || ''), disposition: String(vars.call_disposition || '') };
-  return { call: voiceCallOut_(r), appId: String(r.App_ID), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review,
+  const next = voiceDispositionAction_(hint.disposition);
+  const check = review.filter(function (x) { return x.flags.length; }).length;
+  return { call: voiceCallOut_(r), appId: String(r.App_ID), transcript: lines, vars: Object.keys(vars).map(function (k) { return [k, vars[k]]; }), interaction: String(r.Interaction_ID || ''), review: review, check: check, callFlags: voiceCallFlags_(r), next: next, recording: String(r.Recording_URL || ''), cost: r.Cost === '' || r.Cost == null ? null : { amount: Number(r.Cost) || 0, unit: String(r.Cost_Unit || '') },
     score: { pct: score.pct, band: score.band, koFailed: score.koFailed, met: score.met, gaps: score.gaps, rated: score.rated, total: score.total }, other: m.other, hint: hint, planDerived: !!plan.derived, coverage: coverage,
     screening: scr ? { status: String(scr.Status), band: String(scr.Band || '') } : null, canAdmin: can_(u, 'voice_agent'), sentText: voiceRoleQuestionsText_({ sent: plan.sent }) };
 }
