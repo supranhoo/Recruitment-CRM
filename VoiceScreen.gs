@@ -15,7 +15,7 @@ const VOICE_CALLS_ = { name: 'Voice_Calls', id: 'Call_ID', prefix: 'VCL-', width
 const VOICE_CALL_COLS_ = ['Call_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Phone_Last4', 'Status', 'Status_Note', 'Provider_Call_ID', 'Questions_Version',
   'Started_By', 'Started_At', 'Completed_At', 'Transcript', 'Answers_JSON', 'Draft_Applied', 'Updated_By', 'Updated_At'];
 /** Added later: what the provider reported (answered, no answer, busy, failed), the length, the provider's interaction id, and the variables the agent filled in. */
-const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON', 'Recording_URL', 'Cost', 'Cost_Unit'];
+const VOICE_CALL_EXTRA_ = ['Outcome', 'Duration_Sec', 'Interaction_ID', 'Final_Vars_JSON', 'Plan_JSON', 'Recording_URL', 'Cost', 'Cost_Unit', 'Suggest_Total', 'Suggest_Kept'];
 /** Results arrive here from the separate webhook receiver (docs/voice-webhook). The CRM matches each row to a call; nothing outside reads this sheet. */
 const VOICE_INBOX_ = { name: 'Voice_Inbox', cols: ['Received_At', 'Attempt_ID', 'Event_Key', 'Payload', 'Processed_At', 'Result'] };
 /** The numbers that must never be called (opted out, added by HR, or uploaded from the national list), who may use the tool, and requests to call. */
@@ -54,7 +54,7 @@ function voiceCfg_() {
   return { enabled: String(s.VOICE_ENABLED || 'No') === 'Yes', agentId: String(s.VOICE_AGENT_ID || VOICE_DEFAULTS_.agentId), agentVersion: v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion,
     connectionId: String(s.VOICE_CONNECTION_ID || VOICE_DEFAULTS_.connectionId), fromNumber: String(s.VOICE_FROM_NUMBER || VOICE_DEFAULTS_.fromNumber), dndRequired: String(s.VOICE_DND_REQUIRED || 'Yes') !== 'No',
     orgId: String(s.VOICE_ORG_ID || VOICE_DEFAULTS_.orgId), workspaceId: String(s.VOICE_WORKSPACE_ID || VOICE_DEFAULTS_.workspaceId),
-    openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_, ratings: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_RATINGS_FROM_,
+    ratePerMin: Math.max(0, Number(s.VOICE_RATE_PER_MIN) || 0), openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_, ratings: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_RATINGS_FROM_,
     keySet: !!key, keyHint: key ? '\u2026' + key.slice(-4) : '' };
 }
 /** What still has to be filled in before a call can be placed (empty = ready). */
@@ -66,7 +66,7 @@ function voiceMissing_(c) {
 function voiceCfgOut_(c) {
   const m = voiceMissing_(c);
   return { enabled: c.enabled, agentId: c.agentId, agentVersion: c.agentVersion, connectionId: c.connectionId, fromNumber: c.fromNumber, dndRequired: c.dndRequired, orgId: c.orgId, workspaceId: c.workspaceId,
-    openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
+    ratePerMin: c.ratePerMin, openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
     keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length, connected: voiceProviderConnected_(), dndWritten: voiceDndWritten_(), resultsWritten: voiceResultsWritten_() };
 }
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
@@ -115,6 +115,9 @@ function apiVoiceConfigSave(d) {
   const mq = d.maxQ === undefined || d.maxQ === '' ? before.maxQ : Number(d.maxQ);
   if (!(mq >= 1 && mq <= 10) || mq % 1) throw new Error('The most role-specific questions per call must be a whole number from 1 to 10.');
   put('VOICE_MAX_Q', 'most role questions', mq, before.maxQ);
+  const rate = d.ratePerMin === undefined || d.ratePerMin === '' ? 0 : Number(d.ratePerMin);
+  if (!(rate >= 0 && rate <= 10000)) throw new Error('The cost per minute must be a number from 0 to 10,000 (leave 0 or blank when unknown).');
+  put('VOICE_RATE_PER_MIN', 'cost per minute', rate, before.ratePerMin);
   put('VOICE_QUESTIONS_VAR', 'questions variable', qv, before.questionsVar); put('VOICE_WEBHOOK_URL', 'webhook address', hook, before.webhookUrl);
   put('VOICE_ENABLED', 'allow calls', d.enabled === true ? 'Yes' : 'No', before.enabled ? 'Yes' : 'No');
   put('VOICE_DND_REQUIRED', 'Do Not Disturb check', d.dndRequired === false ? 'No' : 'Yes', before.dndRequired ? 'Yes' : 'No');
@@ -771,6 +774,67 @@ function voiceReqMarkPlaced_(reqId, callId) {
   });
 }
 
+
+/* ---------------------------------------------------------------- command center: success rate, cost, review ---------------- */
+
+/** How many of the agent's suggested ratings the reviewer kept: sug = {id: {r}}, given = {id: {r}} as saved by the reviewer. Only rated ids count. */
+function voiceSuggestKept_(sug, given) {
+  let total = 0, kept = 0;
+  Object.keys(sug || {}).forEach(function (id) { const g = given && given[id]; if (!g || !g.r) return; total++; if (g.r === sug[id].r) kept++; });
+  return { total: total, kept: kept };
+}
+/**
+ * Figures for a period from the call rows (Started_At on or after `from`, up to and including `to`, as yyyy-mm-dd). rate: cost per minute (0 = unknown).
+ * labels: { Line_ID: 'MRF Position' }. Placed = every call that went to the provider (not blocked by Do Not Disturb). Success = completed with answers.
+ */
+function voiceStats_(calls, from, to, rate, labels) {
+  const day = function (v) { return v instanceof Date ? ymd_(v) : String(v || '').slice(0, 10); };
+  const rows = (calls || []).filter(function (c) { const d = day(c.Started_At); return d && d >= from && d <= to; });
+  const z = function () { return { placed: 0, completed: 0, success: 0, failed: 0, secs: 0, cost: 0, costN: 0 }; };
+  const all = z(), byUser = {}, byLine = {}, disp = {};
+  let blocked = 0, sugTotal = 0, sugKept = 0, noAnswer = 0, est = 0;
+  rows.forEach(function (c) {
+    const st = String(c.Status);
+    if (st.indexOf('Blocked') === 0) { blocked++; return; }
+    if (st === 'Cancelled') return;
+    const u = String(c.Started_By || '').toLowerCase(), l = String(c.Line_ID || '');
+    const bucket = [all, byUser[u] || (byUser[u] = z()), byLine[l] || (byLine[l] = z())];
+    const secs = Number(c.Duration_Sec) || 0, hasAns = String(c.Answers_JSON || '') !== '' && String(c.Answers_JSON) !== '{}';
+    bucket.forEach(function (b) {
+      b.placed++;
+      if (st === 'Completed') { b.completed++; b.secs += secs; if (hasAns) b.success++; }
+      if (st === 'Failed') b.failed++;
+      if (String(c.Cost) !== '' && c.Cost != null && !isNaN(Number(c.Cost))) { b.cost += Number(c.Cost); b.costN++; }
+    });
+    if (st === 'Completed' && !hasAns) noAnswer++;
+    if (st === 'Completed') {
+      let d = ''; try { d = String((JSON.parse(String(c.Final_Vars_JSON || '{}')).call_disposition) || ''); } catch (e) { d = ''; }
+      d = d || 'not reported'; disp[d] = (disp[d] || 0) + 1;
+    }
+    sugTotal += Number(c.Suggest_Total) || 0; sugKept += Number(c.Suggest_Kept) || 0;
+  });
+  const fin = function (b, extra) {
+    const mins = Math.round(b.secs / 6) / 10, withCost = b.costN > 0;
+    return Object.assign({ placed: b.placed, completed: b.completed, success: b.success, failed: b.failed, minutes: mins,
+      avgSecs: b.completed ? Math.round(b.secs / b.completed) : 0, rate: b.placed ? Math.round(b.success / b.placed * 100) : null,
+      cost: withCost ? Math.round(b.cost * 100) / 100 : (rate > 0 ? Math.round(b.secs / 60 * rate * 100) / 100 : null), costBasis: withCost ? 'reported' : (rate > 0 ? 'estimate' : 'none'),
+      perSuccess: b.success && (withCost || rate > 0) ? Math.round((withCost ? b.cost : b.secs / 60 * rate) / b.success * 100) / 100 : null }, extra || {});
+  };
+  return { from: from, to: to, total: fin(all), blocked: blocked, noAnswer: noAnswer, suggested: { total: sugTotal, kept: sugKept, pct: sugTotal ? Math.round(sugKept / sugTotal * 100) : null },
+    byUser: Object.keys(byUser).map(function (k) { return fin(byUser[k], { user: k }); }).sort(function (a, b) { return b.placed - a.placed; }),
+    byLine: Object.keys(byLine).map(function (k) { return fin(byLine[k], { line: k, label: (labels && labels[k]) || k }); }).sort(function (a, b) { return b.placed - a.placed; }).slice(0, 25),
+    dispositions: Object.keys(disp).map(function (k) { return { name: k, n: disp[k] }; }).sort(function (a, b) { return b.n - a.n; }) };
+}
+/** The command center (Admin): figures for the last `days` days (7, 30 or 90). */
+function apiVoiceStats(days) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const n = [7, 30, 90].indexOf(Number(days)) >= 0 ? Number(days) : 30, to = ymd_(new Date()), from = ymd_(new Date(Date.now() - (n - 1) * 86400000));
+  const labels = {}; readTable_(T.MRF.name).rows.forEach(function (l) { labels[String(l.Line_ID)] = (l.MRF_No ? l.MRF_No + ' ' : '') + String(l.Position || ''); });
+  const r = voiceStats_(voiceCallsRows_(), from, to, voiceCfg_().ratePerMin, labels);
+  r.days = n; r.rateSet = voiceCfg_().ratePerMin;
+  return r;
+}
+
 /* ---------------------------------------------------------------- review aids: what was said, flags, recording ------------- */
 
 /** The words of a text that carry meaning for matching: lower case, 2+ characters or any digit group. */
@@ -1091,6 +1155,11 @@ function apiVoiceReviewSave(callId, d) {
     else throw new Error('The screening questions were changed after this call (the call used version ' + (plan.ver || '?') + (scr ? ', the saved screening version ' + Number(scr.SQ_Version) : ', the position now has version ' + (fin ? Number(fin.Version) : '?')) + '). Open the candidate\u2019s card and use Continue screening to start it on the current questions.');
   }
   const out = apiSaveScreening(app.App_ID, { answers: answers, note: String(d.note || 'Reviewed from voice call ' + callId + '.').slice(0, 500), complete: !!d.complete, restart: restart });
+  try {
+    let cv = {}; try { cv = JSON.parse(String(call.Final_Vars_JSON || '{}')); } catch (e) { cv = {}; }
+    const sug = voiceParseRatings_(cv.screening_ratings, plan), sc = voiceSuggestKept_(sug, d.answers || {});
+    if (sc.total) voiceUpdate_(callId, { Suggest_Total: sc.total, Suggest_Kept: sc.kept });
+  } catch (e) { }
   audit_(u, 'Voice agent', callId, d.complete ? 'Screening completed from the call' : 'Screening draft saved from the call', '', '', Object.keys(d.answers || {}).length + ' answers');
   return out;
 }

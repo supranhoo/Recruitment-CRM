@@ -5986,6 +5986,7 @@ async function renderVoiceAdmin(el) {
         <div class="field"><label for="vcState">Entry state <span class="opt">(optional)</span></label><input id="vcState" value="${esc(C.entryState)}" maxlength="80"></div>
         <div class="field"><label for="vcQv">Agent variable that receives the role questions <span class="opt">(optional)</span></label><input id="vcQv" value="${esc(C.questionsVar)}" maxlength="60" placeholder="e.g. role_questions"><span class="hint">Define this variable in the agent first. The agent asks its own standard questions (education, experience, CTC, notice, location) and then these. <b>Blank: no role questions are sent and a call for a position that has them is refused.</b></span></div>
         <div class="field"><label for="vcMq">Most role questions per call</label><input id="vcMq" type="number" min="1" max="10" step="1" value="${esc(C.maxQ)}"><span class="hint">Highest priority first: knock-out eligibility, then must-have role fit. The rest are left for the recruiter.</span></div>
+        <div class="field"><label for="vcRate">Cost per minute <span class="opt">(optional, rupees)</span></label><input id="vcRate" type="number" min="0" max="10000" step="0.01" value="${esc(C.ratePerMin || '')}"><span class="hint">Used only to estimate cost in the command center when the provider reports none.</span></div>
         <div class="field wide"><label for="vcHook">Webhook address <span class="opt">(where the provider sends the result: the receiver\u2019s address, ending ?key=\u2026)</span></label><input id="vcHook" value="${esc(C.webhookUrl)}" maxlength="400" placeholder="https:\/\/\u2026"></div>
         <div class="field wide"><div class="rs-row"><label class="chk"><input type="checkbox" id="vcDnd" ${C.dndRequired ? 'checked' : ''}> Check the Do Not Disturb list before every call (recommended; on)</label></div></div></div>
       <div class="drawer-actions" style="position:static">${C.keySet ? '<button class="btn" id="vcClear">Remove the API key</button>' : ''}<button class="btn primary" id="vcSave">Save</button></div></section>
@@ -5994,13 +5995,42 @@ async function renderVoiceAdmin(el) {
   const save = async (extra, btn, label) => {
     busy(btn, true, 'Saving…');
     if (!$('#vcDnd').checked && C.dndRequired && !confirm('Switch off the Do Not Disturb check? Candidates on the Do Not Disturb list could then be called.')) return;
-    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, maxQ: $('#vcMq').value, webhookUrl: $('#vcHook').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
+    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, maxQ: $('#vcMq').value, ratePerMin: $('#vcRate').value, webhookUrl: $('#vcHook').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
     catch (e) { toast(e, true); busy(btn, false, label); }
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
   if ($('#vcClear')) $('#vcClear').onclick = e => { if (confirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
+  const cc = document.createElement('div'); cc.id = 'vcCommand'; el.insertBefore(cc, el.firstChild); voiceCommand(cc);
   const host = document.createElement('div'); host.id = 'vcExtras'; el.appendChild(host);
   voiceAdminExtras(host);
+}
+async function voiceCommand(host) {
+  const f = S.vcCmd = S.vcCmd || { days: 30 };
+  host.innerHTML = '<section class="panel"><div class="dp-h"><h2>Command center</h2></div><p class="hint">Loading\u2026</p></section>';
+  let R; try { R = await api('apiVoiceStats', f.days); } catch (e) { host.innerHTML = `<section class="panel"><h2>Command center</h2><div class="empty">${esc(e)}</div></section>`; return; }
+  if (!host.isConnected) return;
+  const t = R.total, m = x => x == null ? '\u2014' : x, money = x => x == null ? '\u2014' : '\u20b9' + Number(x).toLocaleString('en-IN');
+  const basis = t.costBasis === 'reported' ? 'reported by the provider' : t.costBasis === 'estimate' ? 'an estimate: minutes \u00d7 the rate set below' : 'not reported by the provider; set a cost per minute below to estimate';
+  const tbl = (head, rows) => `<div class="table-wrap"><table class="bgv-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${head.length}" class="empty">No calls in this period.</td></tr>`}</tbody></table></div>`;
+  const rowOf = (name, x) => `<tr><td><b>${esc(name)}</b></td><td class="num">${x.placed}</td><td class="num">${x.success}</td><td class="num">${m(x.rate)}${x.rate == null ? '' : '%'}</td><td class="num">${x.failed}</td><td class="num">${x.minutes}</td><td class="num">${money(x.cost)}</td></tr>`;
+  host.innerHTML = `<section class="panel"><div class="dp-h"><h2>Command center</h2><span class="hint">${esc(R.from)} to ${esc(R.to)}</span>
+      <select id="vcmDays" aria-label="Period">${opts([['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']], String(f.days), false)}</select><button class="btn sm" id="vcmCsv">Download CSV</button></div>
+    <div class="kpis">
+      <div class="kpi"><div class="v">${t.placed}</div><div class="l">Calls placed${R.blocked ? ` (${R.blocked} more stopped by Do Not Disturb)` : ''}</div></div>
+      <div class="kpi"><div class="v">${t.success}</div><div class="l">Completed with answers</div></div>
+      <div class="kpi"><div class="v">${m(t.rate)}${t.rate == null ? '' : '%'}</div><div class="l">Success rate (answers \u00f7 calls placed)</div></div>
+      <div class="kpi ${t.failed ? 'alert' : ''}"><div class="v">${t.failed}</div><div class="l">Failed, no answer or busy</div></div>
+      <div class="kpi"><div class="v">${t.avgSecs ? VOICE_MIN_(t.avgSecs) : '\u2014'}</div><div class="l">Average length of a completed call</div></div>
+      <div class="kpi"><div class="v">${money(t.cost)}</div><div class="l">Cost: ${esc(basis)}</div></div>
+      <div class="kpi"><div class="v">${money(t.perSuccess)}</div><div class="l">Cost per call with answers</div></div>
+      <div class="kpi"><div class="v">${m(R.suggested.pct)}${R.suggested.pct == null ? '' : '%'}</div><div class="l">Suggested ratings kept by reviewers${R.suggested.total ? ` (${R.suggested.kept} of ${R.suggested.total})` : ''}</div></div></div>
+    ${R.noAnswer ? `<p class="hint">${R.noAnswer} completed call${R.noAnswer === 1 ? '' : 's'} came back with no answers.</p>` : ''}
+    <h3 class="org-h3">By person</h3>${tbl(['Person', 'Calls', 'With answers', 'Success', 'Failed', 'Minutes', 'Cost'], R.byUser.map(x => rowOf(String(x.user).split('@')[0] || 'unknown', x)).join(''))}
+    <h3 class="org-h3">By position</h3>${tbl(['Position', 'Calls', 'With answers', 'Success', 'Failed', 'Minutes', 'Cost'], R.byLine.map(x => rowOf(x.label, x)).join(''))}
+    <h3 class="org-h3">What the agent reported</h3>${tbl(['Outcome', 'Calls'], R.dispositions.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.n}</td></tr>`).join(''))}</section>`;
+  $('#vcmDays', host).onchange = e => { f.days = Number(e.target.value); voiceCommand(host); };
+  $('#vcmCsv', host).onclick = () => csvSave('voice-calls-' + R.from + '-to-' + R.to + '.csv', ['Group', 'Name', 'Calls placed', 'With answers', 'Success %', 'Failed', 'Minutes', 'Cost', 'Cost basis'],
+    [['All', 'All', t.placed, t.success, m(t.rate), t.failed, t.minutes, m(t.cost), t.costBasis]].concat(R.byUser.map(x => ['Person', x.user, x.placed, x.success, m(x.rate), x.failed, x.minutes, m(x.cost), x.costBasis]), R.byLine.map(x => ['Position', x.label, x.placed, x.success, m(x.rate), x.failed, x.minutes, m(x.cost), x.costBasis])));
 }
 async function voiceAdminExtras(host) {
   let D, A, R;
