@@ -637,6 +637,12 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V4 voice command center figures', function () {
+      const d0 = '2026-11-05', row = function (o) { return Object.assign({ Status: 'Completed', Started_By: 'a@x.com', Line_ID: 'L1', Started_At: d0, Duration_Sec: 120, Answers_JSON: '{"1":"x"}', Final_Vars_JSON: '{"call_disposition":"completed"}', Cost: '' }, o); };
+      const r = voiceStats_([row({}), row({ Status: 'Failed', Answers_JSON: '', Final_Vars_JSON: '' }), row({ Status: 'Blocked (Do Not Disturb)' })], '2026-11-01', '2026-11-07', 3, {});
+      const k = voiceSuggestKept_({ 1: { r: 'M' }, 2: { r: 'P' } }, { 1: { r: 'M' }, 2: { r: 'G' } });
+      return r.total.placed === 2 && r.total.success === 1 && r.total.rate === 50 && r.blocked === 1 && r.total.costBasis === 'estimate' && k.total === 2 && k.kept === 1 ? 'ok' : false;
+    });
     t('V3 voice access, Do Not Disturb register and requests', function () {
       const n = voiceDndParse_('9876543210, +91 9123456780, abc'), ev = voiceAccessEval_([{ Email: 'a@x.com', Active: 'Yes', Daily_Limit: 2 }], 'a@x.com', 2, false);
       const admin = voiceRequireCaller_({ email: 'a@x.com', recruiter: 'A', perms: ['voice_agent'] }, { Recruiter: 'A' }, 'APP-X').admin;
