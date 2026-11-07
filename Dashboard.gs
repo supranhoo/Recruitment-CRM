@@ -5,7 +5,15 @@
  * data has changed, and by the nightly job.
  */
 const DASH_SHEET = 'Dash_Snapshot';
-const DASH_CACHE_KEY = 'dash_v1';
+/** The release number is part of the key, so a release never reads a snapshot saved by older code. */
+function dashCacheKey_() { return 'dash_b' + BUILD_ID; }
+/**
+ * A saved snapshot is used only if it was built by this release and carries the shape the page reads (every Pipeline
+ * stage in the funnel). Anything else is rebuilt on the next open, so a release that changes the snapshot never shows blanks.
+ */
+function snapshotUsable_(snap) {
+  return !!snap && String(snap.build) === String(BUILD_ID) && !!snap.funnel && STAGES.every(function (k) { return k in snap.funnel; });
+}
 
 function apiDashboard() {
   const u = currentUser_();
@@ -28,20 +36,23 @@ function decorate_(snap, u) {
 
 function readSnapshot_() {
   const cache = CacheService.getScriptCache();
-  const hit = cache.get(DASH_CACHE_KEY);
-  if (hit) return JSON.parse(hit);
+  const hit = cache.get(dashCacheKey_());
+  if (hit) { const c = JSON.parse(hit); if (snapshotUsable_(c)) return c; }
   const sh = ss_().getSheetByName(DASH_SHEET);
   if (!sh) return null;
   const json = sh.getRange(2, 3).getValue();
   if (!json) return null;
-  cache.put(DASH_CACHE_KEY, json, 21600);
-  return JSON.parse(json);
+  const snap = JSON.parse(json);
+  if (!snapshotUsable_(snap)) return null;   // saved by an older release: rebuilt by the caller
+  cache.put(dashCacheKey_(), json, 21600);
+  return snap;
 }
 
 function buildSnapshot_(by) {
   const started = Date.now();
   const data = computeDashboard_();
   const now = new Date();
+  data.build = BUILD_ID;
   data.builtAt = fmt_(now, TZ, 'd MMM yyyy, HH:mm');
   data.builtAtMs = now.getTime();
   data.builtBy = by || 'scheduled refresh';
@@ -53,7 +64,7 @@ function buildSnapshot_(by) {
     sh.getRange(1, 1, 1, 3).setValues([['Built_At', 'Built_By', 'Snapshot_JSON (do not edit)']]).setFontWeight('bold');
   }
   sh.getRange(2, 1, 1, 3).setValues([[now, data.builtBy, json]]);
-  CacheService.getScriptCache().put(DASH_CACHE_KEY, json, 21600);
+  CacheService.getScriptCache().put(dashCacheKey_(), json, 21600);
   return data;
 }
 
@@ -66,20 +77,26 @@ function markDashDirty_(sheetName) {
 
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */
 function refreshDashboardJob() {
-  try { reconcileTasks_(); } catch (e) { console.error('To-do reconcile failed: ' + e); }
-  try { archiveDaily_(); } catch (e) { console.error('Candidate archive failed: ' + e); }
-  try {
+  requireEditorOrAdmin_();
+  runStep_('refresh', 'schema', function () { ensureSchema_(); });
+  runStep_('refresh', 'to-dos', function () { reconcileTasks_(); });
+  runStep_('refresh', 'candidate archive', function () { archiveDaily_(); });
+  runStep_('refresh', 'voice results', function () {   // results are processed here, not only when someone opens a voice screen
+    voiceIngest_({ email: 'system', name: 'Scheduled job', role: ROLES.ADMIN, recruiter: '', perms: effectivePerms_(ROLES.ADMIN) });
+  });
+  runStep_('refresh', 'daily review pre-build', function () {
     const y = fmt_(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
     if (typeof daySnapGet_ === 'function' && !daySnapGet_(y)) { _tables = {}; daySnapPut_(y, dayData_(y, '')); _tables = {}; }
-  } catch (e) { console.error('Daily review pre-build failed: ' + e); }
+  });
   const dirtyAt = Number(PropertiesService.getScriptProperties().getProperty('DASH_DIRTY_AT') || 0);
-  const snap = readSnapshot_();
-  if (snap && dirtyAt <= Number(snap.builtAtMs || 0)) return;
-  buildSnapshot_('scheduled refresh');
+  const snap = runStep_('refresh', 'read snapshot', function () { return readSnapshot_(); });
+  if (!(snap && dirtyAt <= Number(snap.builtAtMs || 0))) runStep_('refresh', 'dashboard snapshot', function () { buildSnapshot_('scheduled refresh'); });
+  jobDone_('refresh');
 }
 
 /** Run once after this update (safe to re-run): installs the nightly and 30-minute jobs. */
 function installTriggers() {
+  requireEditorOrAdmin_();
   ScriptApp.getProjectTriggers().forEach(function (t) {
     const h = t.getHandlerFunction();
     if (h === 'nightlyJob' || h === 'refreshDashboardJob') ScriptApp.deleteTrigger(t);

@@ -10,12 +10,27 @@ function currentUser_() {
   return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: effectivePerms_(role) };
 }
 
+/** A plausible e-mail address, lower-cased and trimmed; '' when it is not one. */
+function cleanMail_(s) { const e = String(s == null ? '' : s).trim().toLowerCase(); return /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(e) ? e : ''; }
+/**
+ * Where mail for a Users row goes: the official address when one is recorded, else the sign-in account.
+ * The sign-in account (Users.Email) stays the only key for access; correspondence uses this.
+ */
+function mailTo_(row) { return cleanMail_(row && row.Official_Email) || cleanMail_(row && row.Email); }
+/** The mail address for a sign-in account (falls back to the account itself). */
+function mailOfLogin_(email) {
+  const k = String(email || '').trim().toLowerCase();
+  const r = readTable_('Users').rows.filter(function (x) { return String(x.Email || '').trim().toLowerCase() === k; })[0];
+  return r ? mailTo_(r) : k;
+}
+
 /** Accepts older or informal role names from the Users sheet: "Head", "Head HR", "Lead TA" and so on. */
 function normRole_(r) {
   const s = String(r || '').trim().toLowerCase().replace(/[^a-z]/g, '');
   if (s === 'admin' || s === 'administrator') return ROLES.ADMIN;
   if (s === 'head' || s === 'headhr' || s === 'headofhr' || s === 'hrhead') return ROLES.HEAD;
   if (s === 'talead' || s === 'leadta' || s === 'tl' || s === 'lead') return ROLES.TALEAD;
+  if (s === 'onboarding' || s === 'onboard' || s === 'onboardingteam' || s === 'onboardingexecutive') return ROLES.ONBOARDING;
   return ROLES.RECRUITER;
 }
 /** A role's built-in permissions plus the CTC permissions the admin has given it (CTC calculator > Access). */
@@ -31,6 +46,21 @@ function isLead_(u) { return can_(u, 'lead'); }
 
 function requireAdmin_(u) {
   if (u.role !== ROLES.ADMIN) throw new Error('Only the CRM admin can do this.');
+}
+
+/**
+ * For functions meant to be run from the script editor or by a trigger (setup, sharing, jobs, test harness). They are also
+ * callable from the browser, so a signed-in web user must be the database owner or an Admin. A trigger or the editor has no
+ * browser user and passes.
+ */
+function requireEditorOrAdmin_() {
+  const email = (Session.getActiveUser().getEmail() || '').toLowerCase();
+  if (!email) return;
+  try {
+    const owner = DriveApp.getFileById(ss_().getId()).getOwner();
+    if (owner && String(owner.getEmail()).toLowerCase() === email) return;
+  } catch (e) { }
+  requireAdmin_(currentUser_());
 }
 
 /** Recruiters edit their own positions; Head and Admin edit all. */

@@ -6,6 +6,7 @@
  * - Installs the nightly TAT refresh
  */
 function setup() {
+  requireEditorOrAdmin_();
   if (DB_SPREADSHEET_ID.indexOf('PASTE') === 0) throw new Error('Paste the database sheet ID into Config.gs first.');
   const required = ['MRF', 'Daily_Funnel', 'Candidates', 'Panel_Unavailability', 'M_Departments', 'M_Grades',
     'M_Recruiters', 'M_Lists', 'Users', 'Settings', 'Audit_Log'];
@@ -47,6 +48,7 @@ function setup() {
  * It adds every active user as an editor and removes editors who are no longer listed.
  */
 function shareWithTeam() {
+  requireEditorOrAdmin_();
   const owner = Session.getEffectiveUser().getEmail().toLowerCase();
   const team = readTable_('Users', true).rows
     .filter(function (r) { return r.Email && String(r.Active || 'Yes') !== 'No'; })

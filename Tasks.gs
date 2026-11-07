@@ -33,6 +33,7 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'release_offer', title: 'Release the offer', due: 24, crit: 72, missed: true, policy: 'Appendix A step 7: offer within 72 h of finalisation' },
   { id: 'bgv', title: 'Start background verification', due: 0, crit: 72, missed: true, policy: '9.1.1: BGV within 3 days of the offer (Manager and above)' },
   { id: 'bgv_join', title: 'Start current-employer BGV', due: 0, crit: 48, missed: true, policy: 'Current-employer BGV within 2 days of joining (Manager and above, or flagged)' },
+  { id: 'bgv_release', title: 'Ask the former employer for the release / experience letter', due: 0, crit: null, missed: false, policy: 'BGV tracker: excluded from the KRA while the former employer\u2019s release (40 to 45 days after departure) is awaited; chased from 5 days before the expected date' },
   { id: 'bgv_consent', title: 'Get the candidate\u2019s consent for BGV', due: 24, crit: null, missed: false, policy: 'BGV tracker: nothing is checked without the candidate\u2019s consent' },
   { id: 'bgv_chase', title: 'Chase the vendor: BGV update', due: 72, crit: 168, missed: false, policy: 'BGV tracker: chaser after 3 days without an update; vendor limit 7 days per check' },
   { id: 'bgv_result', title: 'Previous-employer BGV report is needed before joining', due: 0, crit: 24, missed: true, policy: 'BGV tracker: report 2 days before joining (1 day when the offer is close to joining)' },
@@ -81,6 +82,25 @@ function hoursText_(h) { h = Math.max(0, Math.floor(h)); return h >= 48 ? Math.f
 function istTime_(d) { return fmt_(d, TZ, 'd MMM, HH:mm'); }
 
 /** Computes every open task from the data. Pure read: no writes. */
+/** An HR / final interview that has been scheduled and not held yet (so it still needs its to-dos). */
+function hrInterviewOpen_(interviews) {
+  return (interviews || []).some(function (i) { return i.Round === 'HR' && (i.Status === 'Scheduled' || i.Status === 'Panel unavailable'); });
+}
+/**
+ * The interview round a card is waiting for: the technical interview from Confirmed. The HR / final interview is optional (v135),
+ * so a card at Technical has an HR round to-do only once an HR interview has been scheduled for it.
+ */
+function interviewRoundFor_(stage, interviews) {
+  if (stage === 'Confirmed') return 'Technical';
+  if (stage === 'Technical' && hrInterviewOpen_(interviews)) return 'HR';
+  return '';
+}
+/** Whether the "verify documents and release the offer" to-do applies: at HR or Documents, or at Technical once selected with no HR interview pending. */
+function offerTodoApplies_(stage, techResult, interviews) {
+  if (stage === 'HR' || stage === 'Docs') return true;
+  return stage === 'Technical' && /select|shortlist/i.test(String(techResult || '')) && !hrInterviewOpen_(interviews);
+}
+
 function computeTasks_() {
   const now = Date.now(), today = ymd_(new Date());
   const rules = {}; taskRules_().forEach(function (r) { rules[r.id] = r; });
@@ -98,6 +118,12 @@ function computeTasks_() {
   const add = function (rid, t) {
     const r = rules[rid];
     if (!r || !r.on) return;
+    const fl = t.line && lines[t.line];
+    if (fl && isFast_(fl)) {   // fast-track position: no JD / questions / CV-sharing / interview-scheduling to-dos
+      if (FAST_SKIP_TASKS_.indexOf(rid) >= 0) return;
+      if (rid === 'release_offer') t.title = 'Confirm the hiring';
+      if (rid === 'hod_feedback') t.title = 'Chase the department\u2019s written confirmation';
+    }
     const dueAt = t.startMs + (r.due || 0) * HOUR_MS_;
     if (now < dueAt) return;
     const critAt = t.forceCritical ? (t.critAt || t.startMs) : (r.crit === null ? 0 : t.startMs + r.crit * HOUR_MS_);
@@ -115,7 +141,7 @@ function computeTasks_() {
   const since30 = ymd_(new Date(now - 30 * 86400000));
   const sharedLines = {};
   allApps.forEach(function (a) { if (stageIdx(a.Stage) >= stageIdx('Shared')) sharedLines[a.Line_ID] = true; });
-  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0) sharedLines[f.Line_ID] = true; });
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0 && ymd_(f.Entry_Date) < cutover_()) sharedLines[f.Line_ID] = true; });   // after the switch-over the pipeline is the only signal
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Open' || sharedLines[id]) return;
@@ -137,7 +163,7 @@ function computeTasks_() {
     const start = tatStart_(l);
     if (!start || start < since30) return;
     const dd = docsBy[id] || { JD: [], SQ: [] }, jl = vlast(dd.JD), sl = vlast(dd.SQ);
-    const base = { recruiter: String(l.Recruiter), line: id, app: '', open: { type: 'pipeline', line: id } };
+    const base = { recruiter: String(l.Recruiter), line: id, app: '', open: { type: 'docflow', line: id } };
     const ctx = lineLabel(l) + ' \u00b7 ' + l.Dept;
     [jl, sl].forEach(function (d) {
       if (!d) return;
@@ -187,16 +213,15 @@ function computeTasks_() {
   const intsByApp = {};
   ints.forEach(function (i) { (intsByApp[i.App_ID] = intsByApp[i.App_ID] || []).push(i); });
   Object.keys(intsByApp).forEach(function (k) { intsByApp[k].sort(function (x, y) { return ms_(y.Created_At) - ms_(x.Created_At); }); });
-  const roundFor = function (stage) { return stage === 'Confirmed' ? 'Technical' : stage === 'Technical' ? 'HR' : ''; };
 
   apps.forEach(function (a) {
     const l = lines[a.Line_ID]; if (!l) return;
-    const rec = String(a.Recruiter || l.Recruiter), c = cands[a.Candidate_ID] || {};
+    const rec = String(l.Recruiter || a.Recruiter), c = cands[a.Candidate_ID] || {};
     const who = candName(a), ctxt = who + ' \u00b7 ' + lineLabel(l), since = ms_(a.Stage_Since), st = String(a.Stage);
     const mine = intsByApp[a.App_ID] || [];
 
     // 3-6. Interview rules.
-    const round = roundFor(st);
+    const round = interviewRoundFor_(st, mine);
     if (round && since) {
       const live = mine.filter(function (i) { return i.Round === round && i.Status === 'Scheduled'; })[0];
       const unavailable = mine.filter(function (i) { return i.Round === round && i.Status === 'Panel unavailable'; })[0];
@@ -230,18 +255,18 @@ function computeTasks_() {
       }
     }
 
-    // 7. Psychometric test before the final interview (Manager and above).
+    // 7. Psychometric test before Documents verified (Manager and above); the HR interview is optional, so it no longer marks the deadline.
     if ((st === 'Technical' || st === 'HR') && since && managerPlus_(l.Grade, l.Position)) {
-      const done = /complet|done|yes/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date;
+      const done = psychoDone_(c);
       if (!done) add('psychometric', { key: 'psychometric|' + a.App_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
-        title: st === 'HR' ? 'Psychometric test missing (final interview done)' : 'Arrange the psychometric (Mettl) test before the final interview',
+        title: st === 'HR' ? 'Psychometric test missing (HR interview done)' : 'Arrange the psychometric (Mettl) test before documents are verified',
         context: ctxt, startMs: since, forceCritical: st === 'HR', critAt: since, open: { type: 'candidate', id: a.Candidate_ID } });
     }
 
-    // 8. Offer after selection.
-    if ((st === 'HR' || st === 'Docs') && since) {
+    // 8. Offer after selection. A card at Technical with a Selected result goes straight to documents: the HR interview is optional.
+    if (offerTodoApplies_(st, c.Tech_Result, mine) && since) {
       add('release_offer', { key: 'release_offer|' + a.App_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
-        title: st === 'HR' ? 'Verify documents and release the offer' : 'Release the offer', context: ctxt, startMs: since,
+        title: st === 'Technical' ? 'Verify documents and release the offer (an HR interview is optional)' : st === 'HR' ? 'Verify documents and release the offer' : 'Release the offer', context: ctxt, startMs: since,
         open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
     }
 
@@ -291,9 +316,11 @@ function computeTasks_() {
 
   // 9. BGV for offered positions (Manager and above, or flagged).
   const bgvOpen = (function () { try { return bgvOpenCaseMap_(); } catch (e) { return {}; } })();
+  const bgvQuiet = (function () { try { return bgvQuietMap_(); } catch (e) { return {}; } })();   // N/A cases, and cases the employee is expected to deliver by a date still ahead
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Offered' || l.BGV_Prev_Org_Date || !l.Offer_Date) return;
+    if (bgvQuiet[id + '|Previous employer']) return;
     const flag = String(l.BGV_Required || 'Auto');
     if (!(flag === 'Yes' || (flag !== 'No' && managerPlus_(l.Grade, l.Position)))) return;
     add('bgv', { key: 'bgv|' + id, recruiter: String(l.Recruiter), line: id, app: '', title: 'Start background verification',
@@ -304,6 +331,7 @@ function computeTasks_() {
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Closed' || !(l.Actual_DOJ instanceof Date) || l.BGV_Current_Org_Date) return;
+    if (bgvQuiet[id + '|Current employer']) return;
     const doj = ymd_(l.Actual_DOJ);
     if (doj < since30 || doj > ymd_(new Date())) return;
     const flag = String(l.BGV_Required || 'Auto');
@@ -422,18 +450,21 @@ function taskState_() {
 }
 
 /** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
+/** The psychometric test needs no to-do once it is done, waived, or has a date (the KPI counts Waived as fine too). */
+function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date; }
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
-  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members']);
+  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
      which used to mean it was never cached and was rebuilt from about ten sheets on every call. */
   try { const hit = cacheBigGet_(key); if (hit) return JSON.parse(hit); } catch (e) { }
   const now = Date.now(), t0 = now;
-  const state = taskState_().map;
+  const state = taskState_().map, notes = taskNotes_(0);
   const list = computeTasks_().map(function (t) {
     const s = state[t.key];
+    t.notes = notes[t.key] || [];
     const reopened = s && s.Resolved_At;
     const st = s && !reopened ? s : {};
     t.chases = Number(st.Chase_Count) || 0;
@@ -454,10 +485,11 @@ function allTasks_() {
 /** Background job (every 30 minutes, with the dashboard refresh): records new, critical and resolved tasks. */
 function reconcileTasks_() {
   ensureSchema_();
+  const computed = computeTasks_();   // the heavy part (about ten sheets) runs before the lock, so saves are not held up while it works
   return withLock_(function () {
     const now = new Date();
     const st = taskState_(), sh = st.table.sheet, headers = st.table.headers;
-    const current = {}; computeTasks_().forEach(function (t) { current[t.key] = t; });
+    const current = {}; computed.forEach(function (t) { current[t.key] = t; });
     const updates = [], appends = [];
     const row = function (o) { return headers.map(function (h) { return o[h] === undefined ? '' : o[h]; }); };
     Object.keys(current).forEach(function (k) {
@@ -500,12 +532,30 @@ function setTaskState_(t, patch, u) {
   insert_(T.TACT, { Task_Key: t.key, Rule: t.rule, Recruiter: t.recruiter, Line_ID: t.line, Action: patch._action, Note: patch._note || '' }, u);
 }
 
+/**
+ * The notes entered on to-dos, for the (i) next to each one: the latest 5 actions per task key (chased, snoozed, done) from the last
+ * 60 days, newest first, each with who, when and the note. upToMs: only actions before that moment (the end of a reviewed day); 0 = all.
+ */
+function taskNotes_(upToMs) {
+  const names = {}; usersCached_().forEach(function (x) { names[String(x.Email).toLowerCase()] = String(x.Name); });
+  const by = {};
+  readTableFrom_(T.TACT.name, 'Created_At', addDays_(ymd_(new Date()), -60)).rows.forEach(function (a) {
+    const at = ms_(a.Created_At); if (!at || (upToMs && at >= upToMs)) return;
+    const k = String(a.Task_Key), em = String(a.Created_By || '').toLowerCase();
+    (by[k] = by[k] || []).push({ action: String(a.Action || ''), note: String(a.Note || ''), by: names[em] || em.split('@')[0], at: at });
+  });
+  Object.keys(by).forEach(function (k) { by[k].sort(function (x, y) { return y.at - x.at; }); by[k] = by[k].slice(0, 5); });
+  return by;
+}
+
 /* ---------------- APIs ---------------- */
 
+/** BGV to-dos can take a comment (they have no Done or Chased button, so this is their only way to leave one without snoozing). */
+function taskNoteable_(t) { return /^bgv/.test(String(t.rule || '')); }
 function taskClient_(t) {
   return { key: t.key, rule: t.rule, level: t.level, title: t.title, context: t.context, age: t.ageText, line: t.line, app: t.app,
-    chase: !!t.chase, manual: !!t.manual, message: t.message || '', link: t.link || null, note: t.note || '', open: t.open || null,
-    chases: t.chases, snoozeReason: t.snoozeReason, why: t.why, policy: t.policy, recruiter: t.recruiter,
+    chase: !!t.chase, manual: !!t.manual, noteable: taskNoteable_(t), message: t.message || '', link: t.link || null, note: t.note || '', open: t.open || null,
+    chases: t.chases, snoozeReason: t.snoozeReason, why: t.why, policy: t.policy, recruiter: t.recruiter, notes: t.notes || [],
     critAt: t.critAt || 0, dueAt: t.dueAt || 0 };
 }
 function sortTasks_(a, b) {
@@ -554,7 +604,7 @@ function apiTaskAction(key, action, data) {
   const now = new Date();
   if (action === 'chased') {
     if (!t.chase) throw new Error('This task closes on its own once the step is recorded.');
-    setTaskState_(t, { Chase_Count: (t.chases || 0) + 1, Last_Chased_At: now, _action: 'Chased', _note: String(data.note || '') }, u);
+    setTaskState_(t, { Chase_Count: (t.chases || 0) + 1, Last_Chased_At: now, _action: 'Chased', _note: String(data.note || '').trim().slice(0, 200) }, u);
   } else if (action === 'snooze') {
     const reason = String(data.reason || '').trim();
     if (!reason) throw new Error('Add a reason for snoozing.');
@@ -571,7 +621,16 @@ function apiTaskAction(key, action, data) {
       ob[t.checkin] = ymd_(now);
       update_(T.APP, t.app, { Onboard_JSON: JSON.stringify(ob) }, u);
     }
-    setTaskState_(t, { Done_At: now, Done_By: u.email, _action: 'Done', _note: String(data.note || '') }, u);
+    setTaskState_(t, { Done_At: now, Done_By: u.email, _action: 'Done', _note: String(data.note || '').trim().slice(0, 200) }, u);
+  } else if (action === 'note') {
+    /* A comment on a BGV to-do: it shows in the (i) and, for a case, on the case Timeline. It does not snooze, chase or close the to-do. */
+    if (!taskNoteable_(t)) throw new Error('Notes can be added to BGV to-dos.');
+    const text = String(data.note || '').trim();
+    if (text.length < 3) throw new Error('Write the note.');
+    if (text.length > 200) throw new Error('Keep the note to 200 characters.');
+    insert_(T.TACT, { Task_Key: t.key, Rule: t.rule, Recruiter: t.recruiter, Line_ID: t.line, Action: 'Note', Note: text }, u);
+    dropStale_(T.TASK.name);   // the cached to-do list is rebuilt, so the (i) shows the note at once
+    if (t.open && t.open.type === 'bgv' && t.open.id) { try { apiBgvNote(t.open.id, 'Note', text); } catch (e) { } }   // also on the case Timeline when this person may work the case
   } else throw new Error('Unknown action.');
   return apiMyTasks(isLead_(u) && String(t.recruiter).toLowerCase() !== u.recruiter.toLowerCase() ? t.recruiter : '');
 }
@@ -584,6 +643,7 @@ function missedTasks_(date, recruiter) {
   readTableFrom_(T.TACT.name, 'Created_At', addDays_(date, -30)).rows.forEach(function (a) {
     if (String(a.Action) === 'Chased' && ms_(a.Created_At) < end) chases[a.Task_Key] = (chases[a.Task_Key] || 0) + 1;
   });
+  const notes = taskNotes_(end);
   const bgvDate = {}, bgvCurr = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { if (l.BGV_Prev_Org_Date) bgvDate[l.Line_ID] = ymd_(l.BGV_Prev_Org_Date); if (l.BGV_Current_Org_Date) bgvCurr[l.Line_ID] = ymd_(l.BGV_Current_Org_Date); });
   return readTable_(T.TASK.name).rows.filter(function (s) {
@@ -597,11 +657,84 @@ function missedTasks_(date, recruiter) {
     return crit && crit < end && first && first < end && (!res || res > end);
   }).map(function (s) {
     const snz = ms_(s.Snoozed_Until);
-    return { recruiter: String(s.Recruiter), title: String(s.Title), context: String(s.Context), rule: String(s.Rule),
+    return { key: String(s.Task_Key), notes: notes[String(s.Task_Key)] || [], recruiter: String(s.Recruiter), title: String(s.Title), context: String(s.Context), rule: String(s.Rule),
       chaseable: ['hod_feedback', 'offer_acceptance'].indexOf(String(s.Rule)) >= 0,
       late: hoursText_((end - ms_(s.Critical_At)) / HOUR_MS_), chases: chases[s.Task_Key] || 0,
       snoozed: snz && snz >= end - 86400000 ? String(s.Snooze_Reason) : '' };
   });
+}
+
+
+/* ---------------- Monthly summary of missed to-dos ---------------- */
+
+/**
+ * A to-do is missed in a month when its rule counts, it became critical in that month (IST) and it was not completed before it became
+ * critical; BGV start rules keep the daily rule (not missed when the start date entered on the position is on or before the day it became
+ * critical). tasks: [{key, rule, recruiter, line, context, firstMs, critMs, resMs, chases}]; missedRules: {ruleId: title};
+ * bgvStart: {bgv: {line: ymd}, bgv_join: {line: ymd}}; nowMs: the current time. Returns the per-recruiter figures for the month.
+ */
+function monthMissedCore_(month, tasks, missedRules, bgvStart, nowMs) {
+  const p = String(month).split('-'), y = Number(p[0]), m = Number(p[1]);
+  const start = Date.UTC(y, m - 1, 1) - IST_OFFSET_MS, fullEnd = Date.UTC(y, m, 1) - IST_OFFSET_MS, end = Math.min(fullEnd, nowMs);
+  const DAY = 86400000, by = {}, out = { rows: [], items: {}, carried: 0 };
+  const rec = function (name) { const k = String(name || '').trim() || 'Unassigned'; return by[k] = by[k] || { recruiter: k, missed: 0, open: 0, late: 0, lateDays: 0, chased: 0, kinds: {} }; };
+  tasks.forEach(function (t) {
+    if (!missedRules[t.rule] || !t.critMs) return;
+    if (t.resMs && t.resMs < t.critMs) return;                       // done before it became critical
+    const bs = bgvStart[t.rule] && bgvStart[t.rule][t.line];
+    if (bs && bs <= ymd_(new Date(t.critMs))) return;                // the start date entered is on time
+    if (t.critMs < start) { if (!t.resMs || t.resMs >= start) out.carried++; return; }
+    if (t.critMs >= fullEnd) return;
+    const r = rec(t.recruiter), open = !t.resMs || t.resMs >= fullEnd, to = !open ? t.resMs : end;
+    const days = Math.max(0, (to - t.critMs) / DAY);
+    r.missed++; if (open) r.open++; else r.late++;
+    r.lateDays += days; r.chased += Number(t.chases) || 0;
+    r.kinds[t.rule] = (r.kinds[t.rule] || 0) + 1;
+    (out.items[r.recruiter] = out.items[r.recruiter] || []).push({ key: t.key, rule: t.rule, kind: missedRules[t.rule], context: t.context, line: t.line,
+      critOn: ymd_(new Date(t.critMs)), closedOn: open ? '' : ymd_(new Date(t.resMs)), open: open, daysLate: Math.round(days * 10) / 10, chases: Number(t.chases) || 0 });
+  });
+  Object.keys(by).forEach(function (k) {
+    const r = by[k];
+    out.rows.push({ recruiter: r.recruiter, missed: r.missed, open: r.open, late: r.late, avgLate: r.missed ? Math.round(r.lateDays / r.missed * 10) / 10 : 0, chased: r.chased,
+      kinds: Object.keys(r.kinds).map(function (id) { return { rule: id, title: missedRules[id], n: r.kinds[id] }; }).sort(function (a, b) { return b.n - a.n; }) });
+  });
+  out.rows.sort(function (a, b) { return b.missed - a.missed || a.recruiter.localeCompare(b.recruiter); });
+  Object.keys(out.items).forEach(function (k) { out.items[k].sort(function (a, b) { return b.daysLate - a.daysLate; }); });
+  return out;
+}
+
+/**
+ * Missed to-dos of a month, recruiter by recruiter, with the change from the month before. A lead sees everyone (or one recruiter);
+ * anyone else only their own line. month = "YYYY-MM", not in the future, at most 24 months back.
+ */
+function apiMonthMissed(month, recruiter) {
+  const u = currentUser_(); ensureSchema_();
+  const mm = String(month || '').match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!mm) throw new Error('Pick a month.');
+  const nowYm = fmt_(new Date(), TZ, 'yyyy-MM'), ny = Number(nowYm.slice(0, 4)), nm = Number(nowYm.slice(5, 7)), idx = Number(mm[1]) * 12 + Number(mm[2]), nowIdx = ny * 12 + nm;
+  if (idx > nowIdx) throw new Error('That month has not started.');
+  if (nowIdx - idx > 24) throw new Error('Months more than 24 months back are not kept in this summary.');
+  const prevM = idx - 1, prev = Math.floor((prevM - 1) / 12) + '-' + String(((prevM - 1) % 12) + 1).padStart(2, '0');
+  const rules = {}; taskRules_().forEach(function (r) { if (r.missed) rules[r.id] = r.title; });
+  const tasks = readTable_(T.TASK.name).rows.map(function (s) {
+    return { key: String(s.Task_Key), rule: String(s.Rule), recruiter: String(s.Recruiter || ''), line: String(s.Line_ID || ''), context: String(s.Title || '') + (s.Context ? ' · ' + String(s.Context) : ''),
+      firstMs: ms_(s.First_Seen), critMs: ms_(s.Critical_At), resMs: ms_(s.Resolved_At), chases: Number(s.Chase_Count) || 0 };
+  });
+  const bgv = { bgv: {}, bgv_join: {} };
+  readTable_(T.MRF.name).rows.forEach(function (l) { if (l.BGV_Prev_Org_Date) bgv.bgv[l.Line_ID] = ymd_(l.BGV_Prev_Org_Date); if (l.BGV_Current_Org_Date) bgv.bgv_join[l.Line_ID] = ymd_(l.BGV_Current_Org_Date); });
+  const now = Date.now(), cur = monthMissedCore_(String(month), tasks, rules, bgv, now), was = monthMissedCore_(prev, tasks, rules, bgv, now);
+  const lead = isLead_(u), who = (lead ? String(recruiter || '') : u.recruiter).trim().toLowerCase();
+  const prevBy = {}; was.rows.forEach(function (r) { prevBy[r.recruiter.toLowerCase()] = r.missed; });
+  const keep = function (name) { return !who || String(name).toLowerCase() === who; };
+  const notes = taskNotes_(0), rows = cur.rows.filter(function (r) { return keep(r.recruiter); }).map(function (r) {
+    r.prev = prevBy[r.recruiter.toLowerCase()] || 0; r.change = r.missed - r.prev; return r;
+  });
+  const items = {};
+  rows.forEach(function (r) { items[r.recruiter] = (cur.items[r.recruiter] || []).slice(0, 100).map(function (i) { i.notes = notes[i.key] || []; return i; }); });
+  const all = readTable_('M_Recruiters').rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Recruiter); });
+  const none = lead && !who ? all.filter(function (n) { return !cur.rows.some(function (r) { return r.recruiter.toLowerCase() === n.toLowerCase(); }); }).length : 0;
+  return { month: String(month), prev: prev, rows: rows, items: items, carried: cur.carried, none: none, partial: idx === nowIdx,
+    total: { missed: rows.reduce(function (s, r) { return s + r.missed; }, 0), open: rows.reduce(function (s, r) { return s + r.open; }, 0), prev: rows.reduce(function (s, r) { return s + r.prev; }, 0) } };
 }
 
 /** Per-recruiter task activity for the Daily review. */

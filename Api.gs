@@ -9,6 +9,7 @@ function apiBootstrap() {
   const lists = {};
   readTable_('M_Lists').rows.forEach(function (r) { (lists[r.List] = lists[r.List] || []).push(String(r.Value)); });
   return {
+    build: BUILD_ID,
     user: u,
     depts: readTable_('M_Departments').rows.map(function (r) { return { dept: String(r.Dept), bu: String(r.Business_Unit), division: String(r.Division || '') }; }),
     grades: gradesForClient_(),
@@ -18,6 +19,7 @@ function apiBootstrap() {
     lists: lists,
     dbUrl: u.role === ROLES.ADMIN ? ss_().getUrl() : '',
     cutover: cutover_(),
+    funnelV2: funnelV2_(),
     archiveDays: archiveDays_()
   };
 }
@@ -29,6 +31,7 @@ function listLine_(l, ctx, u) {
   Object.keys(c).forEach(function (k) { l[k] = c[k]; });
   const o = toClient_(l);
   o._canEdit = canEditLine_(u, l);
+  o.Route = routeOf_(l);
   delete o._row;
   return o;
 }
@@ -53,23 +56,30 @@ function apiGetPosition(lineId) {
  * Stamps are read before the data is built, so a write during the build can only cause an extra refetch.
  */
 const FETCHABLE_ = {
-  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions'], per: 'day', packed: true },
+  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
-  apiListFunnel: { tables: ['Daily_Funnel', 'Users'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members'], per: 'hour', packed: false }
+  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
+  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
-  const u = currentUser_();
+  const t0 = Date.now(), u = currentUser_();
   const spec = FETCHABLE_[fn];
   if (!spec) throw new Error('Unknown list.');
   args = args || [];
   const now = new Date();
   const period = spec.per === 'day' ? ymd_(now) : spec.per === 'hour' ? fmt_(now, TZ, 'yyyy-MM-dd HH') : '';
   const version = [SCHEMA_VERSION, u.email, u.role, fn, JSON.stringify(args), period].concat(tableStamps_(spec.tables)).join('|');
-  if (known && known === version) return { v: version, same: true };
+  if (known && known === version) return { v: version, same: true, ms: Date.now() - t0 };
   const all = { apiListPositions: apiListPositions, apiListCandidates: apiListCandidates, apiListFunnel: apiListFunnel, apiPipeline: apiPipeline };
   const data = spec.packed ? apiPacked(fn, args) : all[fn].apply(null, args);
-  return { v: version, data: data };
+  return { v: version, data: data, ms: Date.now() - t0 };   // ms: the server's own time, so the page can tell it from the network time
+}
+/** One position as the Positions list has it (so a screen can patch its list from a write's reply instead of asking again), or null. */
+function positionRow_(lineId) {
+  try {
+    const l = lineOf_(lineId);
+    return l ? listLine_(l, tatContext_(), currentUser_()) : null;
+  } catch (e) { return null; }
 }
 
 /**
@@ -90,16 +100,21 @@ function apiSavePosition(data) {
   const ctx = tatContext_();
   const patch = prepare_(T.MRF, data);
   delete patch.JD_Confirmed_Date; delete patch.SQ_Confirmed_Date;
+  if ('Hiring_Route' in patch) {   // blank = by grade; only a lead can set it by hand
+    const hr = String(patch.Hiring_Route || '').trim();
+    if (hr && FAST_ROUTES_.indexOf(hr) < 0) throw new Error('The hiring route must be Fast-track or Standard.');
+    if (!isLead_(u)) delete patch.Hiring_Route; else patch.Hiring_Route = hr;
+  }
   if (!patch.Position || !patch.Grade || !patch.Dept || !patch.Receipt_Date) throw new Error('Position, grade, department and MRF receipt date are required.');
   checkConfirmDates_(patch);
   const old = data.Line_ID ? readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === data.Line_ID; })[0] : null;
+  if (old) { delete patch.BGV_Prev_Org_Date; delete patch.BGV_Current_Org_Date; delete patch.BGV_Remarks; }   // read-only on an existing position: the BGV tracker keeps them
+  if (old && !isLead_(u)) delete patch.Recruiter;   // only a lead reassigns a position (the form locks it; this closes the direct call)
   checkDesignation_(patch, old);
-  // Notice beyond the grace extends the TAT automatically, so it needs proof; a changed notice resets the Head of HR's check.
+  // Notice beyond the grace is always exempt (v151) and needs no proof (v156); a changed notice resets the Head of HR's optional check.
   if ('Notice_Period_Days' in patch) {
     const was = old ? Number(old.Notice_Period_Days) || 0 : 0, now = Number(patch.Notice_Period_Days) || 0;
     if (now !== was) {
-      const g = ruleFor_(ctx, patch.Grade || (old && old.Grade), tatStart_(Object.assign({}, old || {}, patch))).grace;
-      if (now > g && !(old && old.Notice_Proof_File) && !data._noticeProof) throw new Error('A notice period over ' + g + ' days extends the TAT, so it needs proof. ' + (old ? 'Attach the notice proof (resignation or offer acceptance showing the notice) in \u201cNotice period proof\u201d and save again.' : 'Save the position first, then enter the notice period with its proof attached.'));
       Object.assign(patch, { Notice_Ext_Status: '', Notice_Ext_Note: '', Notice_Ext_By: '', Notice_Ext_On: '' });
     }
   }
@@ -108,7 +123,7 @@ function apiSavePosition(data) {
   if ((patch.Approval_Status === 'Not Needed' || patch.Approval_Status === 'On Hold') && !patch.Not_Needed_Date) throw new Error('Add the date the position was marked ' + patch.Approval_Status + '.');
   if (patch.Actual_DOJ && String(patch.Offer_Sent).toUpperCase() !== 'YES') throw new Error('Set Offer sent to Yes before entering the actual joining date.');
   guardPipelineFields_(patch, old, u);
-  Object.assign(patch, storedTat_(computeTat_(patch, ctx)));
+  Object.assign(patch, storedTat_(computeTat_(Object.assign({}, old || {}, patch), ctx)));   // the whole record, so hold days, exemptions and replacement start count
   let rec;
   if (data.Line_ID) {
     rec = update_(T.MRF, data.Line_ID, patch, u, function (old) {
@@ -121,6 +136,11 @@ function apiSavePosition(data) {
   }
   const oldText = old ? String(old.JD_Text || '').trim() : '', newText = String(rec.JD_Text || '').trim();
   if (newText && newText !== oldText && 'JD_Text' in patch) pdocAddJd_(u, rec.Line_ID, { content: newText, source: 'Typed on the position form' });
+  if (old && 'EDOJ' in patch && ymd_(old.EDOJ) !== ymd_(rec.EDOJ)) {   // keep the card's copy of the expected joining date in step
+    readTable_(T.APP.name).rows.forEach(function (ap) {
+      if (ap.Line_ID === rec.Line_ID && String(ap.Status) === 'Active' && ['Offer', 'Prejoin'].indexOf(String(ap.Stage)) >= 0 && ymd_(ap.EDOJ) !== ymd_(rec.EDOJ)) update_(T.APP, ap.App_ID, { EDOJ: rec.EDOJ || '' }, u);
+    });
+  }
   bgvTouchLine_(rec.Line_ID);
   const o = toClient_(lineOf_(rec.Line_ID) || rec); o._canEdit = true; delete o._row;
   return o;
@@ -129,6 +149,18 @@ function apiSavePosition(data) {
 /** Switch-over date (Settings \u2192 PIPELINE_CUTOVER): from then on offers, joinings and backouts are recorded only in the Pipeline. */
 function cutover_() { return ymd_(settings_().PIPELINE_CUTOVER) || String(settings_().PIPELINE_CUTOVER || '').slice(0, 10) || '2026-10-05'; }
 const PIPELINE_FIELDS_ = [['Offer_Sent', 'Offer sent'], ['Offer_Date', 'Offer letter date'], ['EDOJ', 'Expected joining date'], ['Actual_DOJ', 'Actual joining date'], ['Backout_Date', 'Backout date'], ['Candidate_ID', 'Selected candidate']];
+const CAND_PIPELINE_FIELDS_ = [['Tech_Result', 'Technical result'], ['HR_Result', 'HR result'], ['DOJ', 'Joining date']];
+/** After the switch-over, recruiters cannot type interview results or the joining date on the candidate form of a candidate linked to a position: the card's moves write them, and the Daily review counts those moves. */
+function guardCandidatePipelineFields_(patch, old, u) {
+  if (isLead_(u) || ymd_(new Date()) < cutover_()) return;
+  if (!String(patch.Line_ID || (old && old.Line_ID) || '')) return;   // a candidate in the talent pool is not in the pipeline
+  CAND_PIPELINE_FIELDS_.forEach(function (f) {
+    if (!(f[0] in patch)) return;
+    const was = old ? old[f[0]] : '', now = patch[f[0]];
+    if ((ymd_(was) || String(was || '')) === (ymd_(now) || String(now || ''))) return;
+    throw new Error(f[1] + ' is recorded from the candidate pipeline now. Move the candidate in the Pipeline instead, or ask a TA Lead or the Head of HR to correct it.');
+  });
+}
 /** After the switch-over, recruiters cannot type offer, joining or backout details on the position form; the head and admin can correct them. */
 function guardPipelineFields_(patch, old, u) {
   if (isLead_(u) || ymd_(new Date()) < cutover_()) return;
@@ -154,8 +186,12 @@ function guardPipelineFields_(patch, old, u) {
 function assignDates_(patch, old, u) {
   const lead = isLead_(u), today = ymd_(new Date());
   const reassigned = !!(old && String(old.Recruiter || '').trim() && patch.Recruiter && String(old.Recruiter).trim() !== String(patch.Recruiter).trim());
-  if (!patch.Approved_On && patch.Approval_Status === 'Approved' && patch.Receipt_Date) patch.Approved_On = patch.Receipt_Date;
-  if (reassigned && (!lead || !patch.Assigned_On || ymd_(patch.Assigned_On) === ymd_(old.Assigned_On))) patch.Assigned_On = parseYmd_(today);
+  if (!patch.Approved_On && patch.Approval_Status === 'Approved' && patch.Receipt_Date) { patch.Approved_On = patch.Receipt_Date; patch.Approved_Date_Check = 'Default'; }   // filled in automatically: a lead checks it later
+  else if (ymd_(patch.Approved_On) && ymd_(patch.Approved_On) !== ymd_(patch.Receipt_Date)) patch.Approved_Date_Check = 'Confirmed';   // a real approval date was typed
+  // v154: a position that has already joined keeps its TAT start when the recruiter changes (restarting the clock after the joining date would give it a free on-time result)
+  const joined = !!(ymd_(patch.Actual_DOJ) || (old && ymd_(old.Actual_DOJ)));
+  if (reassigned && joined && old) patch.Assigned_On = old.Assigned_On;
+  else if (reassigned && (!lead || !patch.Assigned_On || ymd_(patch.Assigned_On) === ymd_(old.Assigned_On))) patch.Assigned_On = parseYmd_(today);
   if (!patch.Assigned_On && patch.Approved_On) patch.Assigned_On = patch.Approved_On;
   if (old && !lead) {
     [['Approved_On', 'MRF approved on'], ['Assigned_On', 'Position assigned on']].forEach(function (f) {
@@ -170,6 +206,55 @@ function assignDates_(patch, old, u) {
   if (s && s > today) throw new Error('The position assigned date cannot be in the future.');
   if (a && r && a < r) throw new Error('The MRF approved date cannot be before the MRF received date.');
   if (s && a && s < a) throw new Error('The position assigned date cannot be before the MRF approved date.');
+}
+
+/**
+ * The TAT starts when the MRF is approved (the approved MRF arrives with the JD), not when it was received. The approved date defaults to
+ * the received date when nobody types it, so an approved position whose two dates are equal and not yet confirmed may be counting from the
+ * wrong day. This is the list a lead checks. A replacement position carries the start of the original MRF, so its approved date does not matter.
+ */
+function approvedDateCheck_(l) {
+  if (String(l.Approval_Status || '').trim().toUpperCase() !== 'APPROVED' || ymd_(l.TAT_Start_From)) return false;
+  const a = ymd_(l.Approved_On);
+  return !!a && a === ymd_(l.Receipt_Date) && String(l.Approved_Date_Check || '') !== 'Confirmed';
+}
+/** The patch that corrects a position's approved date: the assigned date moves with it when it was the same day (or would be before it). */
+function approvedDatePatch_(l, date, today) {
+  const d = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Pick the date the MRF was approved.');
+  if (d > today) throw new Error('The MRF approved date cannot be in the future.');
+  const r = ymd_(l.Receipt_Date);
+  if (r && d < r) throw new Error('The MRF approved date cannot be before the MRF received date (' + r + ').');
+  const patch = { Approved_On: parseYmd_(d), Approved_Date_Check: 'Confirmed' }, was = ymd_(l.Approved_On), asg = ymd_(l.Assigned_On);
+  if (!asg || asg === was || asg < d) patch.Assigned_On = parseYmd_(d);
+  return patch;
+}
+function approvedDateRow_(l) {
+  return { id: String(l.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), grade: String(l.Grade || ''), dept: String(l.Dept || ''),
+    recruiter: String(l.Recruiter || ''), status: positionStatus_(l), received: ymd_(l.Receipt_Date), approved: ymd_(l.Approved_On), assigned: ymd_(l.Assigned_On),
+    jdFinal: ymd_(l.JD_Confirmed_Date), start: tatStart_(l), check: String(l.Approved_Date_Check || '') };
+}
+/** Approved positions to check (leads). Open and Offered ones; closed ones too when asked, because correcting them moves past TAT results. */
+function apiApprovedDatesToCheck(includeClosed) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can check the approved dates.');
+  const want = includeClosed ? ['Open', 'Offered', 'Closed'] : ['Open', 'Offered'];
+  const rows = readTable_(T.MRF.name).rows.filter(function (l) { return approvedDateCheck_(l) && want.indexOf(positionStatus_(l)) >= 0; })
+    .map(approvedDateRow_).sort(function (a, b) { return a.received < b.received ? 1 : a.received > b.received ? -1 : a.mrf.localeCompare(b.mrf); });
+  return { rows: rows, includeClosed: !!includeClosed, today: ymd_(new Date()) };
+}
+/** Sets the real MRF approved date of a position (leads), or confirms the date it has (date left blank). The TAT is recalculated. */
+function apiSetApprovedDate(lineId, date, includeClosed) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change the approved date.');
+  const l = lineOf_(lineId);
+  if (!l) throw new Error('Position ' + lineId + ' was not found.');
+  if (String(l.Approval_Status || '').trim().toUpperCase() !== 'APPROVED') throw new Error('This position is not approved.');
+  const patch = String(date || '').trim() ? approvedDatePatch_(l, date, ymd_(new Date())) : { Approved_Date_Check: 'Confirmed' };
+  update_(T.MRF, lineId, patch, u);
+  exemptRecalc_(lineId, u);   // stored TAT columns and the dashboards follow the new start
+  daySnapDropAll_();
+  return apiApprovedDatesToCheck(includeClosed);
 }
 
 /** Adds N identical lines for a multi-position MRF (the tracker keeps one row per resource). */
@@ -215,21 +300,29 @@ function apiListFunnel(filter) {
  */
 function funnelWithPipeline_(u, filter, from, to, rows) {
   const cut = cutover_(), today = ymd_(new Date());
-  const piped = PIPE_METRICS_.filter(function (m) { return TYPED_METRICS_.indexOf(m) < 0 && FUNNEL_METRICS.indexOf(m) >= 0; });
-  rows.forEach(function (o) { if (String(o.Entry_Date) >= cut) piped.forEach(function (m) { o[m] = 0; }); });
+  const pipedOn = function (day) { return derivedMetrics_(day); };
+  const staleTyped = ['HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
+  // From the switch-over a row carries one number per Pipeline stage. CV received is the typed CVs sourced until the funnel start date.
+  rows.forEach(function (o) {
+    const day = String(o.Entry_Date); if (day < cut) return;
+    STAGES.forEach(function (k) { o[k] = 0; });
+    staleTyped.forEach(function (k) { o[k] = 0; });
+    if (pipedOn(day).indexOf('Sourced') < 0) o.Sourced = Number(o.CV_Sourced) || 0;
+  });
   const f0 = from && from > cut ? from : cut, upto = to > today ? today : to;
   if (upto < f0) return rows;
   const mineName = String(u.recruiter || '').trim().toLowerCase();
   const groups = {};
   pipelineEvents_(f0, upto).forEach(function (ev) {
-    if (piped.indexOf(ev.metric) < 0) return;
+    if (pipedOn(ev.day).indexOf(ev.metric) < 0) return;
     if (filter.lineId && ev.line !== filter.lineId) return;
     if (filter.recruiter && String(ev.recruiter) !== filter.recruiter) return;
     if (filter.mine && String(ev.recruiter).trim().toLowerCase() !== mineName) return;
     const k = ev.day + '|' + ev.line + '|' + ev.recruiter;
-    const g = groups[k] = groups[k] || { day: ev.day, line: ev.line, recruiter: ev.recruiter, mrf: ev.mrf, counts: {}, people: {} };
+    const g = groups[k] = groups[k] || { day: ev.day, line: ev.line, recruiter: ev.recruiter, mrf: ev.mrf, counts: {}, people: {}, docs: [] };
     g.counts[ev.metric] = (g.counts[ev.metric] || 0) + 1;
-    (g.people[ev.metric] = g.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, outcome: ev.outcome, time: ev.time });
+    (g.people[ev.metric] = g.people[ev.metric] || []).push({ name: ev.name, position: ev.position, mrf: ev.mrf, outcome: ev.outcome, time: ev.time, remark: ev.remark || '' });
+    if (ev.remark) g.docs.push({ name: ev.name, remark: ev.remark });
   });
   const firstOf = {};
   rows.forEach(function (o) { const k = String(o.Entry_Date) + '|' + o.Line_ID + '|' + o.Recruiter; if (!firstOf[k]) firstOf[k] = o; });
@@ -239,10 +332,12 @@ function funnelWithPipeline_(u, filter, from, to, rows) {
     if (!o) {
       o = { Entry_ID: '', Entry_Date: g.day, Line_ID: g.line, MRF_No: g.mrf, Recruiter: g.recruiter, Remarks: '', FB_From_Dept: '', derived: true, canEdit: false };
       FUNNEL_METRICS.forEach(function (m) { o[m] = 0; });
+      STAGES.forEach(function (k) { o[k] = 0; });
       rows.push(o);
     }
     Object.keys(g.counts).forEach(function (m) { o[m] = g.counts[m]; });
     o.People = g.people;
+    if (g.docs.length) o.DocRemarks = g.docs;   // the remarks typed when the documents were verified, shown in the Remarks column
   });
   return rows.sort(function (a, b) { return a.Entry_Date < b.Entry_Date ? 1 : a.Entry_Date > b.Entry_Date ? -1 : (a.derived ? 1 : 0) - (b.derived ? 1 : 0); });
 }
@@ -261,21 +356,72 @@ function apiSaveFunnel(data) {
   });
   // From the switch-over date those columns are counted from the pipeline and cannot be typed: whatever the form sends
   // (a stale page, or the pipeline counts shown in the list) is dropped, not refused.
-  if (scorecardDerived_(ymd_(patch.Entry_Date))) FUNNEL_METRICS.forEach(function (m) { if (TYPED_METRICS_.indexOf(m) < 0) patch[m] = 0; });
-  if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error('Enter at least one count or a remark.');
+  const typedM = typedMetrics_(ymd_(patch.Entry_Date));
+  FUNNEL_METRICS.forEach(function (m) { if (typedM.indexOf(m) < 0) patch[m] = 0; });
+  if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error(typedM.length ? 'Enter at least one count or a remark.' : 'Enter a remark or the department feedback. The counts come from the pipeline.');
   patch.MRF_No = line.MRF_No;
+  return withLock_(function () {
   let rec;
-  if (data.Entry_ID) {
-    rec = update_(T.FUNNEL, data.Entry_ID, patch, u, function (old) {
+  // One entry per position and day: a "new" entry for a position and day that already has one (a second click, a slow reply, a second tab,
+  // a lead and a recruiter typing the same row) updates that entry with the numbers sent; it never adds a second one.
+  let entryId = data.Entry_ID;
+  if (!entryId) {
+    const day = ymd_(patch.Entry_Date);
+    const same = readTable_(T.FUNNEL.name, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')); })[0];
+    if (same) {
+      if (!isLead_(u) && String(same.Created_By).toLowerCase() !== u.email) throw new Error('An entry for this position and day already exists (logged by ' + String(same.Created_By) + '). Ask a TA Lead to change it.');
+      entryId = same.Entry_ID;
+    }
+  }
+  if (entryId) {
+    rec = update_(T.FUNNEL, entryId, patch, u, function (old) {
       if (!isLead_(u) && String(old.Created_By).toLowerCase() !== u.email) throw new Error('You can only edit entries you logged.');
       if (!canEditEntry_(u, old)) throw new Error('This entry was saved on ' + (old.Created_At instanceof Date ? fmt_(old.Created_At, TZ, 'd MMM yyyy') : String(old.Created_At || 'an earlier day')) + '. Entries can be changed only on the day they are saved. Ask a TA Lead or the Head of HR to correct it.');
     });
   } else {
-    patch.Recruiter = u.recruiter;
+    // An entry counts for the position's recruiter, also when a lead or a colleague types it; Created_By keeps who typed it.
+    patch.Recruiter = String(line.Recruiter || '').trim() || u.recruiter;
     rec = insert_(T.FUNNEL, patch, u);
   }
   const o = toClient_(rec); delete o._row;
   return o;
+  });
+}
+const FUNNEL_REMOVED_RE_ = /^\[duplicate removed/;
+/** Entries logged more than once for one position and day: [{keep, extra: [entries]}], earliest first. */
+function funnelDuplicates_() {
+  const by = {};
+  readTable_(T.FUNNEL.name).rows.forEach(function (r) {
+    if (!r.Entry_ID || FUNNEL_REMOVED_RE_.test(String(r.Remarks || ''))) return;
+    const k = String(r.Line_ID) + '|' + ymd_(r.Entry_Date);
+    (by[k] = by[k] || []).push(r);
+  });
+  const out = [];
+  Object.keys(by).forEach(function (k) {
+    const list = by[k]; if (list.length < 2) return;
+    list.sort(function (a, b) { return (a.Created_At instanceof Date ? a.Created_At.getTime() : 0) - (b.Created_At instanceof Date ? b.Created_At.getTime() : 0) || String(a.Entry_ID).localeCompare(String(b.Entry_ID)); });
+    out.push({ keep: list[0], extra: list.slice(1) });
+  });
+  return out;
+}
+function funnelSame_(a, b) {
+  return FUNNEL_METRICS.every(function (m) { return (Number(a[m]) || 0) === (Number(b[m]) || 0); }) && String(a.Remarks || '').trim() === String(b.Remarks || '').trim() && String(a.FB_From_Dept || '') === String(b.FB_From_Dept || '');
+}
+/** A lead removes the extra copies that are identical to the first entry of the day (counts zeroed, marked, audited; nothing is deleted). Entries with different numbers are left for a person to decide. */
+function apiRemoveDuplicateEntries() {
+  const u = currentUser_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can remove duplicate entries.');
+  let removed = 0, left = 0;
+  funnelDuplicates_().forEach(function (g) {
+    g.extra.forEach(function (e) {
+      if (!funnelSame_(g.keep, e)) { left++; return; }
+      const p = { Remarks: '[duplicate removed by ' + u.email + ' on ' + ymd_(new Date()) + '; same as ' + g.keep.Entry_ID + ']', FB_From_Dept: '' };
+      FUNNEL_METRICS.forEach(function (m) { p[m] = 0; });
+      update_(T.FUNNEL, e.Entry_ID, p, u);
+      removed++;
+    });
+  });
+  return { removed: removed, left: left };
 }
 
 /* ---------------- Candidates ---------------- */
@@ -294,7 +440,8 @@ function apiListCandidates() {
 
 function apiGetCandidate(id) {
   currentUser_();
-  const r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
+  let r = candRowFast_(id);
+  if (!r) r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
   if (!r) {
     const a = archivedById_(id);
     if (a) return { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, Position: a.position, Dept: a.dept, Relevant_Experience: a.exp,
@@ -302,6 +449,22 @@ function apiGetCandidate(id) {
     throw new Error('Candidate ' + id + ' was not found.');
   }
   const o = toClient_(r); delete o._row; return o;
+}
+
+/**
+ * One candidate's sheet row, read by its row number from the cached index instead of reading the whole sheet. The id in the row is
+ * checked, so a row that has moved since the index was made falls back to the full read (null here).
+ */
+function candRowFast_(id) {
+  if (_tables[T.CAND.name]) return null;   // the sheet is already in memory in this run
+  try {
+    const idx = candIndexCached_(); if (!idx) return null;
+    const e = idx.filter(function (x) { return x.id === id; })[0]; if (!e || !e.r) return null;
+    const sh = sheet_(T.CAND.name), lc = sh.getLastColumn();
+    const heads = sh.getRange(1, 1, 1, lc).getValues()[0].map(String), vals = sh.getRange(e.r, 1, 1, lc).getValues()[0];
+    const o = { _row: e.r }; heads.forEach(function (h, j) { o[h] = vals[j]; });
+    return String(o.Candidate_ID) === id ? o : null;
+  } catch (err) { return null; }
 }
 
 function normPhone_(p) {
@@ -334,6 +497,11 @@ function apiSaveCandidate(data, force) {
     });
     if (dups.length) return { duplicates: dups };
   }
+  if (patch.Line_ID) {   // attaching a candidate to a position needs the right to edit that position
+    const was = data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null;
+    if (!was || String(was.Line_ID || '') !== String(patch.Line_ID)) requireLineEdit_(u, patch.Line_ID);
+  }
+  guardCandidatePipelineFields_(patch, data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null, u);
   const rec = data.Candidate_ID ? update_(T.CAND, data.Candidate_ID, patch, u) : insert_(T.CAND, Object.assign({ Sourced_By: u.recruiter }, patch), u);
   if (rec.Line_ID) ensureApp_(rec, u);
   if (data._parsed && typeof data._parsed === 'object') {
@@ -476,22 +644,27 @@ function computeDashboard_() {
     if (ymd_(l.Backout_Date) >= since180) k.backouts180++;
   });
 
-  const funnel = { CV_Sourced: 0, CV_Reviewed: 0, HR_1st_Round: 0, CV_Shared_Dept: 0, Shortlisted_Dept: 0, Interviews_Done: 0, Selected_Final: 0 };
+  const funnel = {}; STAGES.forEach(function (k) { funnel[k] = 0; });   // the Pipeline stages, from the switch-over
   const cut = cutover_(), todayYmd = ymd_(new Date());
-  readTable_(T.FUNNEL.name).rows.forEach(function (f) {
+  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) {   // only the last 30 days are read, not the whole log
     const day = ymd_(f.Entry_Date);
     if (day < since30) return;
-    const typedOnly = day >= cut;
-    FUNNEL_METRICS.forEach(function (m) { if (!typedOnly || TYPED_METRICS_.indexOf(m) >= 0) funnel[m] += Number(f[m]) || 0; });
+    const typedM = typedMetrics_(day);
+    if (day >= cut && typedM.indexOf('CV_Sourced') >= 0) funnel.Sourced += Number(f.CV_Sourced) || 0;   // typed CVs sourced until the funnel start date
     const b = byRec[String(f.Recruiter)];
-    if (b) { b.cv30 += Number(f.CV_Sourced) || 0; if (!typedOnly) { b.interviews30 += Number(f.Interviews_Done) || 0; b.selected30 += Number(f.Selected_Final) || 0; } }
+    if (b) {
+      if (typedM.indexOf('CV_Sourced') >= 0) b.cv30 += Number(f.CV_Sourced) || 0;
+      if (typedM.indexOf('Interviews_Done') >= 0) b.interviews30 += Number(f.Interviews_Done) || 0;
+      if (typedM.indexOf('Selected_Final') >= 0) b.selected30 += Number(f.Selected_Final) || 0;
+    }
   });
   if (todayYmd >= cut) {
     pipelineEvents_(since30 > cut ? since30 : cut, todayYmd).forEach(function (ev) {
+      if (derivedMetrics_(ev.day).indexOf(ev.metric) < 0) return;   // CVs sourced / reviewed stay typed before the funnel start date
       if (funnel[ev.metric] !== undefined) funnel[ev.metric]++;
       const b = byRec[ev.recruiter];
-      if (b && ev.metric === 'Interviews_Done') b.interviews30++;
-      if (b && ev.metric === 'Selected_Final') b.selected30++;
+      if (b && ev.metric === 'Sourced') b.cv30++;
+      if (b && (ev.metric === 'Technical' || ev.metric === 'HR')) b.interviews30++;
     });
   }
 
@@ -547,9 +720,12 @@ function recomputeAllTat_() {
 
 /** Nightly job installed by setup(): keeps TAT columns in the sheet current for anyone reading it directly. */
 function nightlyJob() {
-  try { backupDb_(); } catch (e) { console.error('Backup failed: ' + e); }
-  try { bgvSyncFolders_(); } catch (e) { console.error('BGV folders: ' + e); }
-  recomputeAllTat_();
+  requireEditorOrAdmin_();
+  runStep_('nightly', 'schema', function () { ensureSchema_(); });
+  runStep_('nightly', 'backup', function () { backupDb_(); });
+  runStep_('nightly', 'bgv folders', function () { bgvSyncFolders_(); });
+  runStep_('nightly', 'recalculate TAT', function () { recomputeAllTat_(); });
   _tables = {};
-  buildSnapshot_('nightly refresh');
+  runStep_('nightly', 'dashboard snapshot', function () { buildSnapshot_('nightly refresh'); });
+  jobDone_('nightly');
 }

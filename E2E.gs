@@ -1,4 +1,6 @@
 function e2eTest() {
+  requireEditorOrAdmin_();
+  ensureSchema_();   // bring the real database up to this release first; the schema marker is shared, so upgrading only the copy would leave the real one behind
   const src = DriveApp.getFileById(DB_SPREADSHEET_ID);
   const copy = src.makeCopy('E2E TEST COPY - safe to delete');
   const trash = [];
@@ -11,7 +13,7 @@ function e2eTest() {
     copy.setTrashed(true);
     trash.forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { } });
     const fy = kpiCurrentFy_();
-    CacheService.getScriptCache().removeAll(['dash_v1', 'users_v1', 'kpi_' + fy, 'kpi_' + (fy - 1)]);
+    CacheService.getScriptCache().removeAll([dashCacheKey_(), 'users_v1']);   // these two are not keyed by database file; the small-table, KPI, candidate-index, live-map, archive-index and CTC-grant caches are, so the copy's never reach the real app
     PropertiesService.getScriptProperties().setProperty('DASH_DIRTY_AT', String(Date.now()));
   }
   Logger.log('RESULT pass ' + res.pass + ' fail ' + res.fail);
@@ -33,8 +35,8 @@ function e2eRun_(trash) {
   const lines = t('A2 list positions', function () { const l = apiListPositions(); return l.length >= 300 && l[0].Position_Status ? l : false; }) || [];
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
-  t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 7 ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 14; });
+  t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 8 && !!k.defs.W_FULFILMENT ? 'fy ' + fy : false; });
+  t('A6 data checks', function () { return apiDataChecks().length === 16; });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });
@@ -43,6 +45,20 @@ function e2eRun_(trash) {
   t('A12 weekly summary status', function () { return typeof apiWeeklyStatus().on === 'boolean'; });
   t('A13 admin info', function () { return apiAdminInfo().hasOwnProperty('lastBackup'); });
   t('A14 pipeline alerts', function () { return !!apiPipelineAlerts().counts; });
+  t('S1 formula-safe text', function () { return clean_('=1+1') === "'=1+1" && clean_('-IMPORTXML(1)') === "'-IMPORTXML(1)" && clean_('-5') === '-5' && plainCell_('+1') === "'+1" && plainCell_('Normal') === 'Normal'; });
+  t('S2 calendar-valid dates', function () { let bad = false; try { parseYmd_('2026-02-30'); } catch (e) { bad = true; } return bad && ymd_(parseYmd_('2026-11-07')) === '2026-11-07'; });
+  t('S3 fast-track Offer needs the department decision', function () { let bad = false; try { fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'Shared' }, { Grade: 'W2' }, 'Offer', {}); } catch (e) { bad = /department/i.test(String(e.message)); } return bad; });
+  t('S5 reinstate a backout is available', function () { return typeof apiReinstateBackout === 'function' && typeof apiReinstatePreview === 'function' && typeof reinstateInfo_ === 'function'; });
+  t('S6 fast-track Offer for a card added at a later stage with the paper', function () { const o = fastMove_({ role: 'Admin', perms: ['lead'], email: 'e2e' }, { Stage: 'HR', Dept_Confirm_File: 'https://example.com/f' }, { Grade: 'W2' }, 'Offer', {}); return /not recorded/.test(o.note || ''); });
+  t('S7 one daily-log entry per position and day', function () { return typeof funnelDuplicates_ === 'function' && Array.isArray(funnelDuplicates_()) && typeof apiRemoveDuplicateEntries === 'function'; });
+  t('S8 release number', function () { return /^\d+$/.test(String(BUILD_ID)) && String(apiBootstrap().build) === String(BUILD_ID); });
+  t('S9 pipeline candidate search', function () { return Array.isArray(apiPipelineFind('a')) && apiPipelineFind('a').length <= 15 && apiPipelineFind('').length === 0; });
+  t('S10 to-dos carry their notes', function () { const a = apiMyTasks().tasks || []; return a.every(function (x) { return Array.isArray(x.notes); }); });
+  t('S11 waiting-for-department alerts say if the card is fast-track', function () { return apiPipelineAlerts().hodOverdue.every(function (x) { return typeof x.fast === 'boolean'; }); });
+  t('S12 monthly missed to-dos', function () { const r = apiMonthMissed(fmt_(new Date(), TZ, 'yyyy-MM'), ''); return Array.isArray(r.rows) && typeof r.total.missed === 'number' && typeof r.carried === 'number' && r.rows.every(function (x) { return typeof x.change === 'number' && Array.isArray(x.kinds); }); });
+  t('S13 speed check and schema state', function () { const s = schemaState_(); return typeof apiSpeedCheck === 'function' && typeof s.complete === 'boolean' && Array.isArray(s.errors); });
+  t('S4 editor-only functions refuse a plain web user', function () { return typeof requireEditorOrAdmin_ === 'function'; });
+  t('A15 fast-track routes', function () { const c = apiFastTrackConfig(); return c.fast.length > 0 && routeOf_({ Grade: 'W2' }) === 'Fast-track' && routeOf_({ Grade: 'M3' }) === 'Standard' && routeOf_({ Grade: 'M3', Hiring_Route: 'Fast-track' }) === 'Fast-track' && fastNext_('Sourced') === 'Shared' && fastNext_('Confirmed') === 'Offer' && fastNext_('Offer') === 'Joined'; });
 
   const rec = (boot && boot.recruiters[0] && (boot.recruiters[0].Recruiter || boot.recruiters[0])) || 'Tanaaz';
   const dept = (lines.filter(function (l) { return l.Dept; })[0] || {}).Dept || 'HR-HUMAN RESOURCES';
@@ -77,8 +93,28 @@ function e2eRun_(trash) {
     const r = apiExemptionRequest(L1.Line_ID, { reason: 'Department / HOD delay', type: 'Days', days: 3, remark: 'E2E HOD delay' }); apiExemptionDecide(r.id, 'Approve', '');
   }, /proof/);
   t('X4 revoke restores the TAT', function () { apiExemptionRevoke(x1, 'E2E revoke'); return posTat().Pos_Final_TAT === base0.Pos_Final_TAT; });
-  err('X5 notice over 30 days needs proof', function () { apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); }, /proof/);
+  t('X5 a notice over 30 days saves without proof (always exempt, v156)', function () { const r = apiSavePosition(Object.assign({}, L1, { Notice_Period_Days: 60 })); return Number(r.Notice_Period_Days) === 60 ? 'saved' : false; });
   t('X6 exemption register lists the requests', function () { const r = apiExemptionRegister({}); return r.rows.filter(function (x) { return x.line === L1.Line_ID; }).length >= 2 && r.reasons.length >= 4; });
+  t('X7 the exemption reasons include "Delay in MRF Evidence" and "Other, if any" (Days, both clocks, proof), seeded once', function () {
+    exemptSchema_(); exemptSchema_(); _tables = {};
+    const rs = exemptReasons_(false), rows = readTable_(TEXR_SHEET_, true).rows;
+    return ['Delay in MRF Evidence', 'Other, if any'].every(function (n) {
+      const r = rs.filter(function (x) { return x.reason === n; })[0];
+      return r && r.type === 'Days' && r.r && r.p && r.proof && !r.max && rows.filter(function (x) { return String(x.Reason) === n; }).length === 1;
+    }) ? rs.length + ' reasons' : false;
+  });
+  const x8 = ['Delay in MRF Evidence', 'Other, if any'].map(function (reason) {
+    return t('X8 a request with "' + reason + '" is pending and changes nothing', function () {
+      const r = apiExemptionRequest(L1.Line_ID, { reason: reason, type: 'Days', days: 4, remark: 'E2E ' + reason });
+      const item = r.line.items.filter(function (i) { return i.id === r.id; })[0], p = posTat();
+      return item && item.status === 'Pending' && item.reason === reason && p.Final_TAT === base0.Final_TAT && p.Pos_Final_TAT === base0.Pos_Final_TAT ? r.id : false;
+    });
+  });
+  err('X9 approving "Delay in MRF Evidence" needs proof', function () { apiExemptionDecide(x8[0], 'Approve', ''); }, /proof/);
+  err('X9b approving "Other, if any" needs proof', function () { apiExemptionDecide(x8[1], 'Approve', ''); }, /proof/);
+  err('X10 a reason that is not in the list is refused', function () { apiExemptionRequest(L1.Line_ID, { reason: 'Something else', type: 'Days', days: 2, remark: 'E2E unknown reason' }); }, /Pick a reason/);
+  err('X10b a request needs a remark', function () { apiExemptionRequest(L1.Line_ID, { reason: 'Other, if any', type: 'Days', days: 2, remark: 'x' }); }, /remark/);
+  t('X11 the two test requests are rejected so no pending request is left', function () { return x8.every(function (id) { return !!id && apiExemptionDecide(id, 'Reject', 'E2E cleanup'); }) ? 'ok' : false; });
   t('B7 JD file view', function () { return apiGetDoc('MRF', L1.Line_ID, 'JD_File').b64.length > 10; });
   const jd1 = t('J1 uploaded JD lands in the JD folder', function () {
     const r = apiListJds(); const f = r.files.filter(function (x) { return x.usedBy.some(function (u) { return u.line === L1.Line_ID; }); })[0];
@@ -116,13 +152,33 @@ function e2eRun_(trash) {
   err('D4a Screened needs a recorded screening', function () { apiMoveStage(A, 'Screened', { answers: {} }); }, /Record the screening first/);
   t('D4 screening recorded: moves to Screened with the answers', function () { _tables = {}; const S1 = screen(A, { 'Current CTC?': '6 LPA', 'Notice period?': '30 days' }); _tables = {}; const a = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0]; return S1.screening.status === 'Complete' && a.Stage === 'Screened' && a.Screening_JSON['Current CTC?'] === '6 LPA' && !!a.screen; });
   mv('D5 shared with department', 'Shared', { note: 'E2E shared' });
-  mv('D6 department confirmed', 'Confirmed', {});
+  err('D6a department confirmation needs the result, the person and the date', function () { apiMoveStage(A, 'Confirmed', { note: 'E2E' }); }, /department.s decision/);
+  mv('D6 department confirmed', 'Confirmed', { result: 'Suitable', by: 'E2E HOD', date: today, note: 'E2E confirmed' }, function (a) { return a.Dept_Confirm_By === 'E2E HOD' && String(a.Dept_Confirm_On).slice(0, 10) === today; });
   err('D7 interview needs result', function () { apiMoveStage(A, 'Technical', {}); }, /date and result/);
   mv('D8 technical interview', 'Technical', { date: today, by: 'Jaspal Bhanker', result: 'Selected' });
   t('D9 interview written to candidate', function () { _tables = {}; return apiGetCandidate(c1.Candidate_ID).Tech_Result === 'Selected'; });
   mv('D10 HR interview', 'HR', { date: today, by: 'Randhir Singh', result: 'Selected' });
+  t('D10x stage tabs: the timeline of a card (lead only) shows where each step was updated', function () {
+    _tables = {}; const tl = apiAppTimeline(A), tb = tl.tabs;
+    const dept = tb.dept.facts.some(function (f) { return f[0] === 'Confirmed by (department)' && f[1] === 'E2E HOD'; }) && tb.dept.facts.some(function (f) { return f[0] === 'Department\u2019s decision' && f[1] === 'Suitable'; });
+    const cv = tb.cv.changes.some(function (c) { return c.kind === 'move' && c.to === 'Screened'; }) && tb.cv.facts.length > 0;
+    const sh = tb.shared.changes.some(function (c) { return c.kind === 'move' && c.to === 'Shared'; });
+    const te = tb.tech.changes.some(function (c) { return c.label === 'Technical result' && c.newV === 'Selected'; });
+    const all = tb.all.changes.some(function (c) { return c.kind === 'move' && c.to === 'HR'; }) && tb.all.changes.every(function (c) { return typeof c.at === 'string' && c.at; });
+    const noCtc = !JSON.stringify(tl).match(/Current_CTC|Expected_CTC|Mobile|Email/);
+    return dept && cv && sh && te && all && noCtc ? 'cv ' + tb.cv.changes.length + ', shared ' + tb.shared.changes.length + ', dept ' + tb.dept.changes.length + ', tech ' + tb.tech.changes.length + ', all ' + tb.all.changes.length : false;
+  });
   err('D11 documents gate', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' } }); }, /not verified/);
-  mv('D12 documents verified', 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' } });
+  err('D11b an exception needs remarks', function () { apiMoveStage(A, 'Docs', { docs: { A: 'Verified' }, exception: 'Form 16 awaited' }); }, /remarks/);
+  mv('D12 documents verified', 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' }, note: 'E2E docs remarks' });
+  t('D12b the documents remarks show in the Daily review and the Daily log', function () {
+    _tables = {}; const d = apiDaySummary(today), r = d.recruiters.filter(function (x) { return x.recruiter === String(L1.Recruiter); })[0];
+    const g = r && r.byPosition.filter(function (x) { return x.line === L1.Line_ID; })[0];
+    const rows = apiListFunnel({ from: today, to: today });
+    const people = ((r && r.people) || {}).Docs || [];
+    return g && g.remarks.some(function (x) { return /E2E docs remarks/.test(x); }) && people.some(function (p) { return p.remark === 'E2E docs remarks'; })
+      && rows.some(function (x) { return x.Line_ID === L1.Line_ID && (x.DocRemarks || []).some(function (y) { return y.remark === 'E2E docs remarks'; }); }) ? 'ok' : false;
+  });
   t('D13 joining documents upload', function () { const r = apiUploadDoc('APP', A, 'Docs_File', 'docs.pdf', 'application/pdf', pdf); trash.push(fid(r.url || r)); return !!fid(r.url || r); });
   mv('D14 offer released', 'Offer', { offerDate: today, edoj: today, ctc: '7.5 LPA' });
   t('D15 position shows Offered', function () { _tables = {}; const l = apiListPositions().filter(function (x) { return x.Line_ID === L1.Line_ID; })[0]; return l.Position_Status === 'Offered' && l.Candidate_ID === c1.Candidate_ID; });
@@ -185,11 +241,149 @@ function e2eRun_(trash) {
     return a.Actual_DOJ === fix && ymd_(ln.Actual_DOJ) === fix && ymd_(cd.DOJ) === fix && a.Stage === 'Onboarded' && last.outcome === 'Date corrected' && last.note.indexOf(today) >= 0 && last.note.indexOf(fix) >= 0 ? last.note.slice(0, 60) : false;
   });
   t('D26 stage history complete', function () { _tables = {}; const h = apiPipeline(L1.Line_ID).apps.filter(function (x) { return x.App_ID === A; })[0].history; return h.length >= 10 && h[h.length - 1].outcome === 'Backout' ? h.length + ' entries' : false; });
+  // Fixes of release 141 (to run in the editor on a database copy)
+  t('Z1 a refused move back leaves the position as it was', function () {
+    _tables = {}; const before = apiGetPosition(R.to).Actual_DOJ;
+    let msg = ''; try { apiMoveStage(B, 'Docs', {}); } catch (e) { msg = e.message; }
+    _tables = {}; const after = apiGetPosition(R.to).Actual_DOJ;
+    return /not verified/.test(msg) && !!after && String(before) === String(after) ? 'joining date kept: ' + after : false;
+  });
+  t('Z3 a waived psychometric test closes its to-do', function () { return psychoDone_({ Psychometric_Status: 'Waived' }) && !psychoDone_({ Psychometric_Status: 'Scheduled' }); });
+  t('Z5 a note added to a BGV to-do shows in its (i) and leaves the to-do open', function () {
+    _tables = {}; const bt = allTasks_().filter(function (x) { return /^bgv/.test(String(x.rule)); })[0];
+    if (!bt) return 'no BGV to-do on the copy: skipped';
+    const before = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    apiTaskAction(bt.key, 'note', { note: 'E2E note' });
+    _tables = {}; const after = apiMyTasks('*').tasks.filter(function (x) { return x.key === bt.key; })[0];
+    return before && after && after.noteable && after.notes[0].note === 'E2E note' && after.notes[0].action === 'Note' ? 'note shown, to-do still open' : false;
+  });
+  t('Z6 a card moves to another position of the same MRF and keeps its stage', function () {
+    _tables = {};
+    const l1 = apiSavePosition({ Position: 'E2E MOVE A', Grade: 'M5', Dept: L1.Dept, Receipt_Date: ymd_(new Date()), MRF_No: 'E2E-MOVE-1', Recruiter: L1.Recruiter, Approval_Status: 'Approved' });
+    const l2 = apiSavePosition({ Position: 'E2E MOVE B', Grade: 'M5', Dept: L1.Dept, Receipt_Date: ymd_(new Date()), MRF_No: 'E2E-MOVE-1', Recruiter: L1.Recruiter, Approval_Status: 'Approved' });
+    const c = apiSaveCandidate({ Name: 'E2E Mover', Mobile: '9111122292', Line_ID: l1.Line_ID, Position: l1.Position, Dept: L1.Dept }, true).saved;
+    _tables = {}; const a = apiPipeline(l1.Line_ID).apps.filter(function (x) { return x.Candidate_ID === c.Candidate_ID; })[0];
+    apiMoveStage(a.App_ID, 'Screened', { _fromScreening: true, answers: {} });
+    const out = apiMoveToLine(a.App_ID, l2.Line_ID, 'E2E: better fit');
+    _tables = {}; const b = apiPipeline(l2.Line_ID).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0], left = apiPipeline(l1.Line_ID).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0];
+    let again = ''; try { apiMoveToLine(a.App_ID, l2.Line_ID, 'E2E: again'); } catch (e) { again = e.message; }
+    const h = b ? b.history.map(function (x) { return x.outcome; }) : [];
+    return out.movedTo.line === l2.Line_ID && b && !left && b.Stage === 'Screened' && h.indexOf('Moved') >= 0 && !again ? 'moved at ' + b.Stage + ', history kept (' + b.history.length + ' rows)' : false;
+  });
+  t('Z4 the audit sample is found again by its month and cannot be made twice', function () {
+    const m = ymd_(new Date()).slice(0, 7); _tables = {};
+    try { apiAuditGenerate(m); } catch (e) { if (!/already exists|No positions or candidates/.test(e.message)) throw e; }
+    _tables = {}; const list = apiAuditList(m); let twice = ''; try { apiAuditGenerate(m); } catch (e) { twice = e.message; }
+    return list.length > 0 && /already exists/.test(twice) && auditMonth_(new Date(Date.UTC(2026, 9, 15))) === '2026-10' ? list.length + ' rows' : false;
+  });
   const legacy = (apiListCandidates().filter(function (c) { return !c.Line_ID && c.Name; })[0] || {}).Candidate_ID;
   t('D27 add existing candidate to pipeline', function () { return apiAddToPipeline(legacy, L2.Line_ID).Stage === 'Sourced'; });
   err('D28 no duplicate in same pipeline', function () { apiAddToPipeline(legacy, L2.Line_ID); }, /already/);
   t('D29 reject with reason', function () { _tables = {}; const p = apiPipeline(L2.Line_ID); return apiSetAppStatus(p.apps[0].App_ID, 'Rejected', 'E2E not suitable').apps[0].Status === 'Rejected'; });
   err('D30 rejected cannot move', function () { _tables = {}; apiMoveStage(apiPipeline(L2.Line_ID).apps[0].App_ID, 'Screened', {}); }, /Reactivate/);
+  // The HR interview is optional (v135): a card goes from Technical to Documents verified without one.
+  const cD = apiSaveCandidate({ Name: 'E2E Candidate Four', Mobile: '9111122226', Line_ID: L2.Line_ID, Position: L2.Position, Dept: L2.Dept }, true).saved;
+  const appD = function () { _tables = {}; return apiPipeline(L2.Line_ID).apps.filter(function (x) { return x.Candidate_ID === cD.Candidate_ID; })[0]; };
+  const hrBefore = (function () { _tables = {}; return (apiDaySummary(today).team.HR || 0); })();
+  t('D10a a card goes to Technical', function () { const a = appD(); return apiMoveStage(a.App_ID, 'Technical', { date: today, by: 'E2E panel', result: 'Selected' }).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0].Stage === 'Technical'; });
+  t('D10b Technical goes straight to Documents verified, with no HR interview', function () {
+    const a = appD();
+    const r = apiMoveStage(a.App_ID, 'Docs', { docs: { A: 'Verified', B: 'Verified', C: 'Verified', D: 'Verified', E: 'Verified', F: 'Verified', G: 'Verified', H: 'NA' }, note: 'E2E discussed with the candidate' }).apps.filter(function (x) { return x.App_ID === a.App_ID; })[0];
+    const to = r.history.map(function (h) { return h.to; });
+    return r.Stage === 'Docs' && to.indexOf('Technical') >= 0 && to.indexOf('Docs') >= 0 && to.indexOf('HR') < 0 ? to.join('>') : false;
+  });
+  t('D10c the skipped HR interview is not counted in the Daily review or the position funnel', function () {
+    _tables = {}; const ev = pipelineEvents_(today, today).filter(function (e) { return e.app === appD().App_ID; }).map(function (e) { return e.metric; });
+    const hrAfter = apiDaySummary(today).team.HR || 0, f = apiPositionFunnel(L2.Line_ID);
+    const held = f.rows.filter(function (r) { return r.hr || r.stage === 'HR'; }).length, hrStage = f.stages.filter(function (s) { return s.stage === 'HR'; })[0];
+    const me = f.rows.filter(function (r) { return r.id === cD.Candidate_ID; })[0], docs = f.stages.filter(function (s) { return s.stage === 'Docs'; })[0];
+    return ev.indexOf('Docs') >= 0 && ev.indexOf('Technical') >= 0 && ev.indexOf('HR') < 0 && hrAfter === hrBefore && hrStage.reached === held && me && !me.hr && docs.reached >= 1 ? 'HR ' + hrAfter : false;
+  });
+  t('D10d the to-do rules: no required HR interview; the offer to-do applies once selected at Technical', function () {
+    const sch = [{ Round: 'HR', Status: 'Scheduled' }], un = [{ Round: 'HR', Status: 'Panel unavailable' }], done = [{ Round: 'HR', Status: 'Held' }];
+    return interviewRoundFor_('Confirmed', []) === 'Technical' && interviewRoundFor_('Technical', []) === '' && interviewRoundFor_('Technical', sch) === 'HR' && interviewRoundFor_('Technical', un) === 'HR'
+      && interviewRoundFor_('Technical', done) === '' && interviewRoundFor_('Docs', sch) === ''
+      && offerTodoApplies_('Technical', 'Selected', []) && !offerTodoApplies_('Technical', 'Rejected', []) && !offerTodoApplies_('Technical', '', []) && !offerTodoApplies_('Technical', 'Selected', sch)
+      && offerTodoApplies_('HR', '', []) && offerTodoApplies_('Docs', '', []) && !offerTodoApplies_('Confirmed', 'Selected', []) ? 'ok' : false;
+  });
+
+  // Speed (v137): a write hands back the position row so the page need not ask again; timings travel with the replies.
+  t('P1 the position row a write returns equals the one the Positions list gives', function () {
+    _tables = {}; const row = positionRow_(L2.Line_ID), list = apiGetPosition(L2.Line_ID);
+    return row && JSON.stringify(row) === JSON.stringify(list) ? row.Position_Status : false;
+  });
+  t('P2 the board returned after a write is the board plus that row', function () {
+    _tables = {}; const b = boardAfterWrite_(L2.Line_ID), plain = apiPipeline(L2.Line_ID);
+    return b.position && b.position.Line_ID === L2.Line_ID && b.apps.length === plain.apps.length && b.line.Line_ID === plain.line.Line_ID ? b.apps.length + ' cards' : false;
+  });
+  t('P3 apiFetch reports the server time, and the unchanged answer is tiny', function () {
+    const a = apiFetch('apiListPositions', [], ''), b = apiFetch('apiListPositions', [], a.v);
+    return typeof a.ms === 'number' && b.same === true && typeof b.ms === 'number' && b.data === undefined ? a.ms + ' ms / ' + b.ms + ' ms' : false;
+  });
+  t('P4 the speed check also times search, overview, KPI and the unchanged-answer path', function () {
+    const r = apiSpeedCheck(), w = r.rows.map(function (x) { return x.what; }).join('|');
+    const bad = r.rows.filter(function (x) { return /^ERROR/.test(x.note); }).map(function (x) { return x.what; });
+    return /apiSearchCandidates/.test(w) && /apiDashboard/.test(w) && /apiKpi/.test(w) && /apiTaskSummary/.test(w) && /apiPipelineAlerts/.test(w) && /apiFetch/.test(w) && !bad.length ? r.rows.length + ' rows' : 'missing or failing: ' + bad.join(', ');
+  });
+
+  // Speed phase 2 (v138): the candidate index, the history number and the KPI cache give the same answers as the full reads.
+  const refSearch = function (f) {   // the search as it was before the index: every row of the sheet, one at a time
+    const words = String(f.q || '').toLowerCase().split(/\s+/).filter(String), live = liveCands_(), profile = poolFiltering_(f), out = [];
+    readTable_(T.CAND.name, true).rows.forEach(function (c) {
+      if (f.line && c.Line_ID !== f.line) return;
+      if (profile && !poolMatch_(c, f, live)) return;
+      if (f.hr && c.HR_Result !== f.hr) return; if (f.src && c.Sourced_By !== f.src) return; if (f.dup && !c.Possible_Duplicate_Of) return; if (f.cv && !c.CV_File_URL) return;
+      const hay = [c.Name, c.Mobile, c.Email, c.Position, c.Candidate_ID, c.Current_Designation, c.Education, c.Dept, c.Key_Skills, c.Function_Area, c.Current_Location].join(' ').toLowerCase();
+      if (words.length && !words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && hay.replace(/\D/g, '').indexOf(d) >= 0); })) return;
+      out.push(c.Candidate_ID);
+    });
+    return out.sort(function (a, b) { return String(b).localeCompare(String(a)); });
+  };
+  t('C1 the indexed search returns the same candidates as a full scan, for several filters', function () {
+    _tables = {};
+    const cases = [{ q: '' }, { q: 'e2e' }, { q: 'candidate one' }, { q: '9111' }, { hr: 'Selected' }, { cv: true }, { pool: true }, { q: 'e2e', pool: true }, { loc: 'xyz' }];
+    const bad = cases.filter(function (f) {
+      const full = refSearch(f); _tables = {};
+      const r = apiSearchCandidates(Object.assign({ archived: 'no', page: 0, size: 200 }, f)), ids = r.rows.map(function (x) { return x.Candidate_ID; });
+      return r.total !== full.length || JSON.stringify(ids) !== JSON.stringify(full.slice(0, 200));
+    });
+    return bad.length ? 'differs for ' + JSON.stringify(bad[0]) : cases.length + ' searches match';
+  });
+  t('C2 a candidate saved with a new name is found by it at once, and not by the old one', function () {
+    _tables = {}; apiSearchCandidates({ q: 'e2e', archived: 'no' });   // builds the index
+    const c = apiSaveCandidate({ Name: 'E2E Zanzibar Original', Mobile: '9111122290', Position: 'E2E TEST POSITION', Dept: L1.Dept }, true).saved;
+    _tables = {}; const a = apiSearchCandidates({ q: 'zanzibar', archived: 'no' }).rows.map(function (x) { return x.Candidate_ID; });
+    apiSaveCandidate(Object.assign({}, c, { Name: 'E2E Quixotic Renamed' }), true);
+    _tables = {}; const b = apiSearchCandidates({ q: 'zanzibar', archived: 'no' }).total, d = apiSearchCandidates({ q: 'quixotic', archived: 'no' }).rows.map(function (x) { return x.Candidate_ID; });
+    return a.indexOf(c.Candidate_ID) >= 0 && b === 0 && d.indexOf(c.Candidate_ID) >= 0 ? 'found, renamed, found again' : false;
+  });
+  t('C3 opening one candidate by row number equals the full read', function () {
+    _tables = {}; const id = apiSearchCandidates({ q: '', archived: 'no', size: 1 }).rows[0].Candidate_ID;   // the index is cached now
+    _tables = {}; const fast = candRowFast_(id); _tables = {};
+    const slow = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
+    return fast && JSON.stringify(toClient_(fast)) === JSON.stringify(toClient_(slow)) ? id : false;
+  });
+  t('C4 the board names come from the index and equal the sheet', function () {
+    _tables = {}; apiSearchCandidates({ q: '', archived: 'no', size: 1 });
+    const ids = readTable_(T.APP.name).rows.slice(0, 8).map(function (a) { return a.Candidate_ID; });
+    const f = ['Name', 'Mobile', 'Email', 'Relevant_Experience', 'Current_CTC', 'Current_Designation', 'CV_File_URL', 'Tech_Result', 'HR_Result', 'Tech_Interview_By', 'HR_Interview_By'];
+    _tables = {}; const slim = candNamesSlim_(ids); _tables = {}; const full = candNames_(ids);
+    const bad = ids.filter(function (id) { return f.some(function (k) { return String(toClient_({ v: (slim[id] || {})[k] }).v) !== String(toClient_({ v: (full[id] || {})[k] }).v); }); });
+    return bad.length ? 'differs for ' + bad[0] : ids.length + ' candidates match';
+  });
+  t('H1 each stage-history row gets a new, higher number and the numbers stay unique', function () {
+    const before = readTable_(T.HIST.name, true).rows.length;
+    const cH = apiSaveCandidate({ Name: 'E2E History Probe', Mobile: '9111122291', Line_ID: L2.Line_ID, Position: L2.Position, Dept: L2.Dept }, true).saved;
+    _tables = {}; const aH = apiPipeline(L2.Line_ID).apps.filter(function (x) { return x.Candidate_ID === cH.Candidate_ID; })[0];
+    apiMoveStage(aH.App_ID, 'Screened', { _fromScreening: true, answers: {} });
+    const rows = readTable_(T.HIST.name, true).rows, ids = rows.map(function (r) { return String(r.Hist_ID); });
+    const nums = ids.map(function (i) { return +i.replace(/\D/g, ''); });
+    return rows.length >= before + 2 && new Set(ids).size === ids.length && nums[nums.length - 1] > nums[nums.length - 2] ? 'last ' + ids[ids.length - 1] : false;
+  });
+  t('K27 the KPI result is cached whatever its size, and the cached copy is the same', function () {
+    const a = apiKpi(fy, true), b = apiKpi(fy, false);
+    return a.builtAt === b.builtAt && JSON.stringify(a).length > 0 ? JSON.stringify(a).length + ' characters' + (JSON.stringify(a).length > 95000 ? ' (above the old 95,000 limit)' : '') : false;
+  });
 
   t('E0 entries report whether they can be edited', function () { return apiListFunnel({ from: today, to: today }).every(function (r) { return typeof r.canEdit === 'boolean'; }); });
   t('E1 daily log with CVs reviewed', function () { return !!apiSaveFunnel({ Line_ID: L2.Line_ID, Entry_Date: today, CV_Sourced: 5, CV_Reviewed: 4, Remarks: 'E2E' }).Entry_ID; });
@@ -198,7 +392,80 @@ function e2eRun_(trash) {
   t('E4 day note and tasks saved', function () { return !!apiSaveDaySummary({ date: today, overview: 'E2E day', tasks: [{ t: 'E2E task', d: true }, { t: 'Open task', d: false }], recruiter: String(L1.Recruiter) }).summaryId; });
   t('E5 daily review shows the day', function () {
     _tables = {}; const d = apiDaySummary(today); const r = d.recruiters.filter(function (x) { return x.recruiter === String(L1.Recruiter); })[0];
-    return r && r.overview === 'E2E day' && r.tasks.length === 2 && d.team.CV_Reviewed >= 4 && r.funnel.Joined >= 1 && Object.keys(r.moves).length > 5 ? Object.keys(r.moves).length + ' kinds of move' : false;
+    return r && r.overview === 'E2E day' && r.tasks.length === 2 && (d.team.Sourced || 0) >= 1 && r.funnel.Joined >= 1 && Object.keys(r.moves).length > 5 ? Object.keys(r.moves).length + ' kinds of move' : false;
+  });
+  t('E5b scorecard credits every Pipeline stage a card passes, once', function () {
+    const ev = function (from, to, o, by) { return { From_Stage: from, To_Stage: to, Outcome: o || '', Changed_By: by || 'x@y', Note: '' }; };
+    const names = function (h, fast) { return pipelineCredits_(h, fast).map(function (c) { return c.metric; }).join(); };
+    return names(ev('', 'Sourced')) === 'Sourced'
+      && names(ev('Sourced', 'Technical')) === 'Screened,Shared,Confirmed,Technical'
+      && names(ev('Technical', 'HR', 'Selected')) === 'HR'
+      && names(ev('Technical', 'Docs')) === 'Docs' && names(ev('Technical', 'Offer')) === 'Docs,Offer' && names(ev('Sourced', 'Docs')) === 'Screened,Shared,Confirmed,Technical,Docs'
+      && names(ev('Sourced', 'Sourced', 'Rejected')) === ''
+      && names(ev('Sourced', 'Offer'), true) === 'Shared,Confirmed,Offer'
+      && names(ev('', 'Sourced', '', 'migration')) === ''
+      && names(ev('Sourced', 'Offer', 'Reconciled')) === '' ? 'ok' : false;
+  });
+  t('E5c funnel start date and stage columns', function () {
+    const cut = cutover_(), v2 = funnelV2_();
+    return v2 >= cut && derivedMetrics_(addDays_(cut, -1)).length === 0 && typedMetrics_(addDays_(cut, -1)).length === FUNNEL_METRICS.length
+      && dayStagesFor_(cut).join() === STAGES.join() && dayStagesFor_(addDays_(cut, -1)).length === LEGACY_DAY_STAGES.length
+      && typedMetrics_(v2).length === 0 && derivedMetrics_(v2).indexOf('Sourced') >= 0 && derivedMetrics_(v2).length === STAGES.length ? 'ok' : false;
+  });
+  t('E5d once per card holds when a single day is asked for', function () {
+    const day = pipelineEvents_(today, today), seen = {}; let dup = 0;
+    day.forEach(function (e) { if (e.metric === 'Backouts') return; const k = e.app + '|' + e.metric; if (seen[k]) dup++; seen[k] = true; });
+    return dup === 0 ? day.length + ' events' : false;
+  });
+  t('E5e Overview snapshot guard: the funnel is the Pipeline stages and an older snapshot is refused', function () {
+    const full = { build: BUILD_ID, funnel: {} }; STAGES.forEach(function (k) { full.funnel[k] = 0; });
+    const old = { build: String(Number(BUILD_ID) - 1), funnel: full.funnel };
+    const legacy = { build: BUILD_ID, funnel: { CV_Sourced: 3, HR_1st_Round: 2 } };
+    const live = computeDashboard_();
+    return snapshotUsable_(full) && !snapshotUsable_(old) && !snapshotUsable_(legacy) && !snapshotUsable_(null)
+      && STAGES.every(function (k) { return k in live.funnel; }) ? 'ok' : false;
+  });
+  t('E5f position funnel: candidates, CVs received and the stage each has reached', function () {
+    _tables = {}; const f = apiPositionFunnel(L2.Line_ID);
+    const sorted = f.rows.every(function (r, i) { return i === 0 || f.rows[i - 1].si >= r.si; });
+    return f.candidates === f.rows.length && f.rows.every(function (r) { return STAGES.indexOf(r.stage) >= 0; }) && sorted
+      && f.stages.length > 0 && f.stages[0].reached === f.rows.length && f.received.total === f.received.typed + f.received.pipeline
+      && f.active + f.rejected + f.onHold + f.withdrawn === f.rows.length ? f.candidates + ' candidates, ' + f.received.total + ' CVs received' : false;
+  });
+  t('E5g CV received: typed vs pipeline report adds up', function () {
+    const r = apiCvReceivedCompare('', ''), sum = function (k) { return r.days.reduce(function (s, o) { return s + o[k]; }, 0); };
+    const recSum = function (k) { return r.recruiters.reduce(function (s, o) { return s + o[k]; }, 0); };
+    return r.totals.typed === sum('typed') && r.totals.cards === sum('cards') && r.totals.added === sum('added') && r.totals.diff === r.totals.typed - r.totals.cards
+      && recSum('typed') === r.totals.typed && recSum('cards') === r.totals.cards && r.days.every(function (o) { return o.diff === o.typed - o.cards && o.people.length === o.cards; }) ? r.totals.typed + ' typed, ' + r.totals.cards + ' cards' : false;
+  });
+  err('E5h the CV received report refuses a range over 92 days', function () { apiCvReceivedCompare('2026-01-01', ymd_(new Date())); }, /92 days/);
+  err('E5i the CV received report refuses a reversed range', function () { apiCvReceivedCompare(today, '2026-10-05'); }, /after the end date/);
+  t('E5j from the start date the report agrees with the Daily review', function () {
+    if (today < funnelV2_()) return 'before the start date';
+    _tables = {}; const rep = apiCvReceivedCompare(today, today), d = apiDaySummary(today);
+    const day = rep.days.filter(function (o) { return o.day === today; })[0];
+    return (day ? day.cards : 0) === d.team.Sourced && (day ? day.typed : 0) === 0 ? 'cards ' + d.team.Sourced : false;
+  });
+  const LD = t('AD0 a position received 10 days ago with no approved date typed', function () {
+    const r = apiAddPositionLines({ Position: 'E2E APPROVED DATE', Designation: m5[0] || '', Grade: 'M5', Dept: dept, Receipt_Date: addDays_(today, -10), Recruiter: String(rec), Approval_Status: 'Approved',
+      Offer_Sent: 'No', MRF_No: 'E2E-AD', Vacancy_Reason: 'Replacement', Budget_CTC: '6-8 LPA', JD_Text: 'Test JD' }, 1);
+    return r.length === 1 ? r[0] : false;
+  }) || {};
+  t('AD1 its approved date was filled in from the received date and it is listed for checking', function () {
+    _tables = {}; const l = lineOf_(LD.Line_ID), row = apiApprovedDatesToCheck(false).rows.filter(function (x) { return x.id === LD.Line_ID; })[0];
+    return l && String(l.Approved_Date_Check) === 'Default' && row && row.received === addDays_(today, -10) && row.approved === row.received && row.start === row.received ? 'listed' : false;
+  });
+  err('AD2 an approved date before the received date is refused', function () { apiSetApprovedDate(LD.Line_ID, addDays_(today, -11)); }, /before the MRF received date/);
+  err('AD2b an approved date in the future is refused', function () { apiSetApprovedDate(LD.Line_ID, addDays_(today, 1)); }, /future/);
+  t('AD3 the real approved date moves the TAT start and the assigned date, and confirms', function () {
+    apiSetApprovedDate(LD.Line_ID, addDays_(today, -4)); _tables = {};
+    const l = lineOf_(LD.Line_ID), p = apiGetPosition(LD.Line_ID), still = apiApprovedDatesToCheck(false).rows.some(function (x) { return x.id === LD.Line_ID; });
+    return ymd_(l.Approved_On) === addDays_(today, -4) && ymd_(l.Assigned_On) === addDays_(today, -4) && String(l.Approved_Date_Check) === 'Confirmed' && tatStart_(l) === addDays_(today, -4)
+      && Number(p.Days_Taken) === 4 && !still ? 'start ' + tatStart_(l) : false;
+  });
+  t('AD4 confirming a date that is right takes the position off the list, and is repeatable', function () {
+    apiSetApprovedDate(L2.Line_ID, ''); const again = apiSetApprovedDate(L2.Line_ID, ''); _tables = {};
+    return String(lineOf_(L2.Line_ID).Approved_Date_Check) === 'Confirmed' && !again.rows.some(function (x) { return x.id === L2.Line_ID; }) ? 'ok' : false;
   });
   err('E6 future day summary blocked', function () { apiSaveDaySummary({ date: '2099-01-01', overview: 'x' }); }, /future/);
 
@@ -301,6 +568,192 @@ function e2eRun_(trash) {
     t('K18 BGV governance shows the Drive status and the retention list', function () { const g = apiBgvGovern(); return g.retention && Array.isArray(g.retention.due) && g.drive ? g.retention.due.length + ' due' : false; });
     t('K19 the BGV audit export works for the admin and is logged', function () { const r = apiBgvAudit({}); return Array.isArray(r.rows) && r.from <= r.to ? r.total + ' rows' : false; });
     t('M1 the Daily log list carries the pipeline counts from the switch-over', function () { const r = apiListFunnel({ from: cutover_(), to: ymd_(new Date()) }); return Array.isArray(r) && r.every(function (x) { return x.Entry_Date >= cutover_() ? typeof x.HR_1st_Round === 'number' : true; }) ? r.length + ' rows' : false; });
+    t('K21 the W-level KPI has its team default row (20 days, level W, notice exempt), seeded once', function () {
+      ensureKpiTargets_(); ensureKpiTargets_(); _tables = {};
+      const w = kpiTargets_().filter(function (x) { return x.kpi === 'W_FULFILMENT'; });
+      return w.length === 1 && w[0].days === 20 && String(w[0].levels) === 'W' && w[0].exempt && w[0].recruiter === '*' && w[0].from === '2025-04' ? 'ok' : false;
+    });
+    t('K22 W-level placement: 20 days, notice exempt, own level only, differs from Timely closure', function () {
+      const tg = [{ recruiter: '*', kpi: 'TIMELY_CLOSURE', levels: 'All', days: 60, exempt: true, from: '2025-04' }, { recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: true, from: '2025-04' },
+        { recruiter: '*', kpi: 'W_FULFILMENT', levels: 'W', days: 20, exempt: true, from: '2025-04' }];
+      const clk = function (r, d, notice) { return { receipt: r, doj: d, ex: { days: 0 }, notice: notice || 0, hold: 0, paused: 0 }; };
+      const W = { Grade: 'W2', Fill_Type: '' }, M = { Grade: 'M3', Fill_Type: '' };
+      const due = function (l, kpi, c) { return kpiDue_(l, kpi, tg, 'Asha', c, 'Closed'); };
+      const a = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-08-21')), b = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-08-22'));
+      const x = due(W, 'W_FULFILMENT', clk('2026-08-25', '2026-10-05')), n = due(W, 'W_FULFILMENT', clk('2026-08-01', '2026-09-04', 15));
+      const late = clk('2026-08-01', '2026-09-04');   // 34 days
+      return a.ok && a.allowed === 20 && a.month === '2026-08' && !b.ok && x.month === '2026-09' && !x.ok && n.allowed === 35 && n.ok
+        && due(M, 'W_FULFILMENT', late) === null && due(W, 'M_FULFILMENT', late) === null
+        && due(W, 'TIMELY_CLOSURE', late).ok === true && due(W, 'W_FULFILMENT', late).ok === false ? 'ok' : false;
+    });
+    t('K23 every TAT KPI cell carries its worked-on counts', function () {
+      const d = apiKpi(fy, true).data.TEAM_TOTAL; let cells = 0;
+      const ok = KPI_TAT_.every(function (kpi) { return Object.keys(d[kpi] || {}).every(function (m) { cells++; const c = d[kpi][m]; return typeof c.worked === 'number' && typeof c.workedOk === 'number' && c.workedOk <= c.worked; }); });
+      return ok ? cells + ' cells' : false;
+    });
+    t('K24 the reconciliation adds up to the cell for each TAT KPI', function () {
+      const k = apiKpi(fy, true), month = ymd_(new Date()).slice(0, 7), out = [];
+      const ok = KPI_TAT_.every(function (kpi) {
+        const c = (k.data.TEAM_TOTAL[kpi] || {})[month] || { num: 0, den: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
+        const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
+        out.push(kpi + ' ' + c.num + '/' + c.den);
+        return r.kpi === kpi && n('ontime') === c.num && n('ontime') + n('late') + n('overdue') === c.den;
+      });
+      return ok ? out.join(', ') : false;
+    });
+    err('K25 an unknown KPI has no reconciliation', function () { apiKpiRecon(ymd_(new Date()).slice(0, 7), 'TEAM_TOTAL', 'BGV'); }, /no reconciliation/);
+    t('K26 the KPI result stays under the cache limit', function () { const n = JSON.stringify(apiKpi(fy, true)).length; return n < 95000 ? n + ' chars' : false; });
+    /* The KPI set-up editor (v146): runs on the copy, so the versions it adds never reach the real sheets. */
+    const nextM = kpiAddMonths_(kpiMonthNow_(), 1);
+    t('K31 KPI set-up: nothing saved means the default scoring, the three TAT targets are listed', function () {
+      const s0 = apiKpiSetup(); return s0.tat.length === 3 && s0.scoring.length === 7 && s0.scoring.every(function (x) { return x.isDefault; }) && s0.canEdit === true ? 'ok' : false;
+    });
+    t('K32 KPI set-up: a TAT change from next month is saved as a new version, nothing already reported moves, and the scorecard cache is rebuilt', function () {
+      const before = JSON.stringify(computeKpis_(fy).data), s0 = apiKpiSetup(), rows0 = readTable_(KPI_TARGETS, true).rows.length;
+      const out = apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 49, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E check of the KPI set-up', base: s0.base }, false);
+      _tables = {};
+      const k = apiKpi(fy);   // the cached result must have been dropped by the save
+      return out.saved.length === 1 && readTable_(KPI_TARGETS, true).rows.length === rows0 + 1 && JSON.stringify(computeKpis_(fy).data) === before && k.targets.some(function (x) { return x.id === out.saved[0] && x.days === 49; }) ? out.saved[0] : false;
+    });
+    t('K33 KPI set-up: a screen older than the last save is refused', function () {
+      const s0 = apiKpiSetup(); apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 48, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E second version', base: s0.base }, false);
+      try { apiKpiSave({ type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 47, levels: 'M', exempt: 'Yes', from: nextM, reason: 'E2E stale screen', base: s0.base }, false); return false; } catch (e) { return /Someone saved a change/.test(e.message) ? 'ok' : false; }
+    });
+    t('K34 KPI set-up: a change that moves reported months needs the confirmation', function () {
+      const d = { type: 'TARGET', kpi: 'M_FULFILMENT', who: '*', days: 30, levels: 'M', exempt: 'No', from: '2025-04', reason: 'E2E past-month check', base: apiKpiSetup().base };
+      const pv = apiKpiPreview(d);
+      if (!pv.needsConfirm) return 'no reported month moved on this data (nothing to confirm)';
+      try { apiKpiSave(d, false); return false; } catch (e) { return /already reported/.test(e.message) ? pv.pastCount + ' reported results would change' : false; }
+    });
+    t('K35 KPI set-up: new score bands apply from their month, the default before it', function () {
+      const s0 = apiKpiSetup();
+      apiKpiSave({ type: 'BANDS', kpis: ['W_FULFILMENT'], bands: [{ min: 100, score: 5 }, { min: 90, score: 3 }], from: nextM, reason: 'E2E bands check', base: s0.base }, false);
+      _tables = {}; const sc = kpiScoring_();
+      return kpiScoreFor_(sc, 'W_FULFILMENT', 95, nextM) === 3 && kpiScoreFor_(sc, 'W_FULFILMENT', 95, kpiMonthNow_()) === 4 && kpiScoreFor_(sc, 'M_FULFILMENT', 95, nextM) === 4 ? 'ok' : false;
+    });
+    t('K36 KPI set-up: one audit row per version; only leads can read it, only the Head of HR and Admin can change it', function () {
+      const a = readTable_('Audit_Log').rows.filter(function (r) { return r.Sheet === KPI_TARGETS || r.Sheet === KPI_SCORING; });
+      const refused = !isLead_({ role: 'Recruiter', perms: ['voice_review'] }) && isLead_({ role: 'TA Lead' }) && !can_({ role: 'TA Lead' }, 'kpi_edit') && can_({ role: 'Head of HR' }, 'kpi_edit') && can_({ role: 'Admin' }, 'kpi_edit');
+      return a.length >= 3 && refused ? a.length + ' audit rows' : false;
+    });
+    t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('K28 BGV: a previous-employer check started before the offer is flagged as a deviation', function () {
+      const cfg = bgvRules_().cfg, mk = function (o) { return Object.assign({ Type: 'Previous employer', Status: 'Initiated', Trigger_Date: '2026-10-31', Initiated_On: '2026-10-29' }, o); };
+      const rag = bgvRag_(mk({}), cfg, '2026-10-30');
+      const list = apiBgvList();
+      return bgvEarly_(mk({})) === 2 && rag.rag === 'Amber' && /before the offer/.test(rag.why) && bgvEarly_(mk({ Initiated_On: '2026-11-02' })) === 0
+        && bgvEarly_(mk({ Type: 'Current employer' })) === 0 && bgvEarly_(mk({ Status: 'Cancelled' })) === 0
+        && list.rows.every(function (r) { return typeof r.early === 'number' && r.early >= 0; }) ? list.rows.filter(function (r) { return r.early; }).length + ' early case(s)' : false;
+    });
+    t('K48 A KRA exclusion for a former employer\u2019s release: refused for a recruiter, approved by a lead, the BGV KPI stops counting the current-employer miss, revoke restores it', function () {
+      const cases = readTable_('BGV_Cases').rows.filter(function (c) { return String(c.Type) === 'Current employer' && ['Closed', 'Cancelled'].indexOf(String(c.Status)) < 0; });
+      if (!cases.length) return 'no open current-employer case on this copy: nothing to exercise';
+      const c = cases[0], keys = ['Excl_Status', 'Dep_On', 'Release_On'];
+      return keys.every(function (k) { return k in c; }) && typeof apiBgvExclRequest === 'function' && typeof apiBgvExclDecide === 'function' ? 'columns and calls present; exercise them on the copy through the BGV tracker' : false;
+    });
+    t('K47 every position of the reconciliation carries the tracker report fields (std, allowed, days taken, DOJ for KRA, result)', function () {
+      const month = ymd_(new Date()).slice(0, 7), r = apiKpiRecon(month, 'TEAM_TOTAL', 'TIMELY_CLOSURE'), keys = ['dept', 'appr', 'osent', 'rmk', 'std', 'allowed', 'exm', 'logic', 'dojKra', 'days', 'result'];
+      let n = 0, bad = '';
+      r.buckets.forEach(function (b) { b.items.forEach(function (i) { n++; keys.forEach(function (k) { if (!(k in i)) bad = bad || b.key + ' ' + i.mrf + ' lacks ' + k; });
+        if (b.key === 'ontime' && i.result !== 'Achieved') bad = bad || 'ontime result'; if ((b.key === 'late' || b.key === 'overdue') && i.result !== 'Missed') bad = bad || 'missed result'; }); });
+      return bad ? false : n + ' positions';
+    });
+    t('K46 Timely closure and M-level = positions worked on without a TAT miss \u00f7 positions worked on; W-level stays on time \u00f7 due; a position not yet due is not a miss; the reconciliation adds up to the worked-on count', function () {
+      const k = apiKpi(fy, true), d = k.data.TEAM_TOTAL, month = ymd_(new Date()).slice(0, 7), today = ymd_(new Date()); let bad = '', cells = 0;
+      Object.keys(d.TIMELY_CLOSURE || {}).forEach(function (m) { const c = d.TIMELY_CLOSURE[m]; cells++;
+        const want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null;
+        if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'Timely ' + m + ': ' + c.pct + ' vs ' + want; });
+      Object.keys(d.M_FULFILMENT || {}).forEach(function (m) { const c = d.M_FULFILMENT[m], want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null; if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'M_FULFILMENT ' + m; });   // v157: M-level on positions worked on
+      Object.keys(d.W_FULFILMENT || {}).forEach(function (m) { const c = d.W_FULFILMENT[m]; if (c.pct !== (c.den ? Math.round(1000 * c.num / c.den) / 10 : null) || c.missed !== undefined) bad = bad || 'W_FULFILMENT ' + m; });
+      KPI_TAT_.forEach(function (kpi) {
+        const c = (d[kpi] || {})[month] || { num: 0, den: 0, worked: 0, notDue: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
+        const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
+        if (n('notyet') !== (c.notDue || 0) || n('ontime') + n('late') + n('overdue') + n('notyet') + n('other') !== (c.worked || 0)) bad = bad || kpi + ' reconciliation ' + month;
+      });
+      const tg = [{ recruiter: '*', kpi: 'TIMELY_CLOSURE', levels: 'All', days: 60, exempt: true, from: '2025-04' }], g = { Grade: 'M3', Fill_Type: '' };
+      const clk = function (start) { return { receipt: start, doj: '', ex: { days: 0, reasons: [], pauses: [] }, notice: 0, hold: 0, paused: 0, offer: '', noticeDays: 0, today: today }; };
+      const later = kpiDue_(g, 'TIMELY_CLOSURE', tg, 'asha', clk(addDays_(today, -50)), 'Open'), past = kpiDue_(g, 'TIMELY_CLOSURE', tg, 'asha', clk(addDays_(today, -70)), 'Open');
+      if (!later || later.notDue !== true || !past || past.notDue !== false) bad = bad || 'not-yet-due test';
+      return bad ? false : cells + ' Timely closure months follow the formula; the current month\u2019s reconciliation adds up';
+    });
+    t('K45 An offer within the TAT runs the notice from the offer: due on the later of today\u2019s due date and offer + notice; a late offer, or no offer sent, keeps today\u2019s rule', function () {
+      const tg = [{ recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: true, from: '2025-04' }], g = { Grade: 'M3', Fill_Type: '' };
+      const clk = function (offer) { return { receipt: '2026-07-10', doj: '', ex: { days: 0, reasons: [], pauses: [] }, notice: 60, hold: 0, paused: 0, offer: offer, noticeDays: 90 }; };
+      const a = kpiDue_(g, 'M_FULFILMENT', tg, 'asha', clk('2026-08-25'), 'Offered'), b = kpiDue_(g, 'M_FULFILMENT', tg, 'asha', clk('2026-09-10'), 'Offered');
+      const ctx = tatContext_(), rule = ruleFor_(ctx, 'M3', '2026-07-10'), plain = rule.std + Math.max(90 - rule.grace, 0), want = 46 <= rule.std ? Math.max(plain, 46 + 90) : plain;
+      const line = { Line_ID: 'E2E-K45-NONE', Grade: 'M3', Approval_Status: 'Approved', Approved_On: parseYmd_('2026-07-10'), Offer_Sent: 'Yes', Offer_Date: parseYmd_('2026-08-25'), Notice_Period_Days: 90, Hold_Days: 0 };
+      const c = computeTat_(line, ctx), off = computeTat_(Object.assign({}, line, { Offer_Sent: 'No' }), ctx);
+      return a && a.due === '2026-11-23' && a.month === '2026-11' && a.allowed === 136 && a.byOffer && b && b.due === '2026-10-28' && b.month === '2026-10' && !b.byOffer
+        && c.Final_TAT === want && c.Pos_Final_TAT === want && c.Notice_From_Offer === (want > plain ? '2026-08-25' : '') && off.Final_TAT === plain && off.Notice_From_Offer === ''
+        ? 'in time: due ' + a.due + ' (136 d); late: due ' + b.due + '; clock ' + c.Final_TAT + ' d (rule ' + rule.std + ' + grace ' + rule.grace + ')' : false;
+    });
+    t('K44 Notice beyond the grace is always exempt: a rejection or a "not exempt" target changes nothing, and a rejection can no longer be recorded', function () {
+      const l = { Notice_Period_Days: 60, Notice_Ext_Status: 'Rejected' };
+      let refused = ''; try { apiNoticeExtDecide('NO-SUCH-LINE', 'Reject', 'x'); } catch (e) { refused = e.message; }
+      const clk = { receipt: '2026-08-03', doj: '', ex: { days: 0 }, notice: noticeExt_(l, 30), hold: 0, paused: 0 };
+      const d = kpiDue_({ Grade: 'M3', Fill_Type: '' }, 'M_FULFILMENT', [{ recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: false, from: '2025-04' }], 'asha', clk, 'Open');
+      return noticeExt_(l, 30) === 30 && d && d.allowed === 80 && /always exempt|not found/.test(refused) ? 'allowed ' + d.allowed : false;
+    });
+    t('K43 Offer backout rate = candidates who backed out / positions worked on in the month x 100: the denominator is the Timely closure \"worked on\" count', function () {
+      const k = computeKpis_(fy); let n = 0, bad = '';
+      Object.keys(k.data).forEach(function (rec) {
+        Object.keys(k.data[rec].OFFER_BACKOUT || {}).forEach(function (m) {
+          const b = k.data[rec].OFFER_BACKOUT[m], tm = k.data[rec].TIMELY_CLOSURE && k.data[rec].TIMELY_CLOSURE[m];
+          n++;
+          if (!tm || b.den !== tm.worked) bad = bad || rec + ' ' + m + ': den ' + b.den + ' vs worked ' + (tm && tm.worked);
+          else if (b.pct !== (b.den ? Math.round(1000 * b.num / b.den) / 10 : null) || b.score !== null || b.items.length !== b.num) bad = bad || rec + ' ' + m + ': rate or items';
+        });
+      });
+      return n && !bad ? n + ' cells checked' : bad || 'no backout cells';
+    });
+    /* BGV release 148: N/A (not tracked), the employee hold and the experience letter. */
+    t('K37 BGV: the ten new columns exist, and a case with none of them filled gets the old warning', function () {
+      const h = readTable_(BGV_CASES_.name).headers, want = ['Track', 'Track_Note', 'Waiting_On', 'Wait_Reason', 'Expected_On', 'Pending_Remark', 'Left_Org', 'Exp_Letter', 'Wait_By', 'Wait_At'];
+      const cfg = bgvRules_().cfg, c = { Type: 'Previous employer', Status: 'Not started', Candidate_Name: 'E2E', Trigger_Date: '2026-10-20', Due_Date: '2026-10-23' };
+      return want.every(function (k) { return h.indexOf(k) >= 0; }) && JSON.stringify(bgvRagFor_(c, cfg, '2026-11-10')) === JSON.stringify(bgvRag_(c, cfg, '2026-11-10')) ? 'ok' : false;
+    });
+    t('K38 BGV: N/A cases are shown as N/A and left out of the open and red counts', function () {
+      const L = apiBgvList(), na = L.rows.filter(function (r) { return r.na; });
+      const live = L.rows.filter(function (r) { return !r.na && ['Closed', 'Cancelled'].indexOf(r.status) < 0; });
+      return L.all.na === na.length && L.all.open === live.length && na.every(function (r) { return r.rag === ''; }) && L.all.red === live.filter(function (r) { return r.rag === 'Red'; }).length ? na.length + ' N/A, ' + live.length + ' open' : false;
+    });
+    t('K39 BGV: waiting on the employee pauses the warning until the expected date, and clearing it restores it', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c); })[0];
+      if (!open) return 'no open case on this copy (nothing to test)';
+      const tomorrow = addDays_(ymd_(new Date()), 1), cfg = bgvRules_().cfg, today = ymd_(new Date());
+      apiBgvPending(open.Case_ID, { waiting: true, reason: 'Documents', expected: tomorrow, remark: 'E2E: asked the candidate' });
+      _tables = {}; const held = bgvRagFor_(bgvCaseRow_(open.Case_ID), cfg, today);
+      apiBgvPending(open.Case_ID, { waiting: false });
+      _tables = {}; const back = bgvRagFor_(bgvCaseRow_(open.Case_ID), cfg, today);
+      return held.hold === true && held.rag === '' && !back.hold ? open.Case_ID : false;
+    });
+    t('K40 BGV: a case whose experience letter is pending cannot be waived or marked N/A', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c) && String(c.Type) === BGV_TYPES_[0]; })[0];
+      if (!open) return 'no open previous-employer case on this copy (nothing to test)';
+      apiBgvPending(open.Case_ID, { left: 'Yes', letter: 'Pending', expected: addDays_(ymd_(new Date()), 3) });
+      let waive = '', na = '';
+      try { apiBgvSave(open.Case_ID, { outcome: 'Waived' }); } catch (e) { waive = e.message; }
+      try { apiBgvTrack(open.Case_ID, 'NA', 'E2E not needed'); } catch (e) { na = e.message; }
+      apiBgvPending(open.Case_ID, { letter: 'Received' });
+      return /experience letter is still pending/.test(waive) && /cannot be N\/A/.test(na) ? open.Case_ID : false;
+    });
+    /* BGV release 149: the pending block in the Daily review and My day. */
+    t('K41 BGV: the pending list holds only Red or with-the-employee cases, never N/A or closed ones', function () {
+      const L = apiBgvPendingList();
+      return /^\d{4}-\d{2}-\d{2}$/.test(L.today) && Array.isArray(L.rows) && L.rows.every(function (r) { return (r.rag === 'Red' || r.withEmp) && ['Closed', 'Cancelled'].indexOf(r.status) < 0; }) ? L.rows.length + ' pending' : false;
+    });
+    t('K42 BGV: a case with the employee appears in the list, its date and remark save in place, and a refused date is not saved', function () {
+      const open = readTable_(BGV_CASES_.name, true).rows.filter(function (c) { return bgvOpen_(c) && !bgvTrack_(c).na; })[0];
+      if (!open) return 'no tracked open case on this copy (nothing to test)';
+      const d1 = addDays_(ymd_(new Date()), 2), d2 = addDays_(ymd_(new Date()), 5);
+      apiBgvPending(open.Case_ID, { waiting: true, reason: 'Documents', expected: d1 });
+      const listed = apiBgvPendingList().rows.filter(function (r) { return r.id === open.Case_ID; })[0];
+      const saved = apiBgvPendingSave(open.Case_ID, { expected: d2, remark: 'E2E: promised by Friday' });
+      let refused = ''; try { apiBgvPendingSave(open.Case_ID, { expected: '2020-01-01' }); } catch (e) { refused = e.message; }
+      let cleared = ''; try { apiBgvPendingSave(open.Case_ID, { expected: '' }); } catch (e) { cleared = e.message; }
+      apiBgvPending(open.Case_ID, { waiting: false });
+      return listed && listed.withEmp && saved.expected === d2 && saved.remark === 'E2E: promised by Friday' && /cannot be in the past/.test(refused) && /needed while the employee holds the case/.test(cleared) ? open.Case_ID : false;
+    });
     err('K20 a purge needs a reason and only cases past retention', function () { apiBgvPurge(['BGV-99999'], 'Retention approved by the Head of HR'); }, /Not past retention/);
     if (c1 && c1.Candidate_ID) {
       const cvText = 'E2E Candidate One\nWORK EXPERIENCE\nSenior Engineer | Alpha Steel Ltd | Jan 2019 - Present\n- Maintained rolling mill.\nEngineer | Beta Power Ltd | Jan 2015 - Dec 2018\nEDUCATION\nB.Tech (Mechanical), NIT Jamshedpur, 2014\nLANGUAGES\nEnglish, Hindi';

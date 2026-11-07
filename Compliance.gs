@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '38';
+const SCHEMA_VERSION = '46';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -13,56 +13,155 @@ const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / K
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
-  withLock_(function () {
-    if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
-    addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
-      'Tech_Panel', 'Final_Panel']);
-    seedPanelMembers_();
-    addColumns_(T.FUNNEL.name, ['CV_Reviewed']);
-    pipelineSchema_();
-    addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
-    try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); }
-    addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
-    tasksSchema_();
-    addColumns_(T.MRF.name, ['Parent_Line_ID', 'Replaced_By', 'Replaced_On', 'TAT_Start_From']);
-    addColumns_(T.APP.name, ['Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Backout_Reason']);
-    reconcileSchema_();
-    closureSchema_();
-    addColumns_(T.PANEL.name, ['To_Date', 'Kind']);
-    archiveSchema_();
-    poolSchema_();
-    parseSchema_();
-    usersSchema_();
-    tatSchema_();
-    jdmSchema_();
-    pdocSchema_();
-    scrSchema_();
-    gradeDesigMigrate_();
-    gradeDesigSchema_();
-    exemptSchema_();
-    ctcSchema_();
-    bgvSchema_();
-    profileSchema_();
-    orgSchema_();
-    try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); }
-    dayStatusSchema_();
-    addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
-      'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    addColumns_(T.CAND.name, ['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']);
-    addSheet_('Observations', ['Obs_ID', 'Obs_Date', 'Line_ID', 'MRF_No', 'Recruiter', 'Type', 'Description', 'Status',
-      'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    addSheet_('Audit_Checks', ['Audit_ID', 'Month', 'Entity', 'Record_ID', 'Label', 'Recruiter', 'Result', 'Error_Field', 'Critical',
-      'Remarks', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-    const s = readTable_('Settings', true);
-    if (!s.rows.some(function (r) { return r.Key === 'KPI_CAPTURE_FROM'; })) {
-      const next = new Date(); next.setDate(1); next.setMonth(next.getMonth() + 1);
-      s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + fmt_(next, TZ, 'yyyy-MM'),
-        'First month scored for psychometric, BGV, observation and audit KPIs']);
+  if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a while ago: wait before trying again
+  const t0 = Date.now(), doneKey = 'SCHEMA_DONE_' + SCHEMA_VERSION;
+  let done = []; try { done = JSON.parse(props.getProperty(doneKey) || '[]'); } catch (e) { done = []; }
+  const failed = {}; let n = 0, locked = false;
+  // Each step runs on its own and under the lock for that step only. A step that has succeeded is remembered and never run again for this
+  // version, so a retry repeats only the steps that failed (the whole upgrade is not re-run, and the lock is not held for it).
+  const step_ = function (name, fn) {
+    name += '#' + (++n);
+    if (locked || done.indexOf(name) >= 0) return;
+    try { withLock_(fn); done.push(name); props.setProperty(doneKey, JSON.stringify(done)); }
+    catch (e) {
+      const msg = String(e && e.message || e);
+      if (/Someone else is saving/.test(msg)) { locked = true; return; }   // somebody else is saving: not a failure of the step, try again on the next call
+      failed[name] = msg.slice(0, 300); console.error('Schema step ' + name + ': ' + msg); jobLog_('schema', name, e);
     }
-    props.setProperty('SCHEMA_V', SCHEMA_VERSION);
+  };
+    step_('addColumns_ Users', function () { addColumns_('Users', ['Official_Email']); });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
+        'Tech_Panel', 'Final_Panel']);
+    });
+    step_('seedPanelMembers_', function () {
+      seedPanelMembers_();
+    });
+    step_('addColumns_ T.FUNNEL.name', function () {
+      addColumns_(T.FUNNEL.name, ['CV_Reviewed']);
+    });
+    step_('pipelineSchema_', function () {
+      pipelineSchema_();
+    });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['JD_Confirmed_Date', 'SQ_Confirmed_Date']);
+    });
+    step_('jdMigrate_', function () { try { jdMigrate_(); } catch (e) { console.error('JD folder setup failed: ' + e); } });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['Approved_On', 'Assigned_On']);
+    });
+    step_('tasksSchema_', function () {
+      tasksSchema_();
+    });
+    step_('addColumns_ T.MRF.name', function () {
+      addColumns_(T.MRF.name, ['Parent_Line_ID', 'Replaced_By', 'Replaced_On', 'TAT_Start_From']);
+    });
+    step_('addColumns_ T.APP.name', function () {
+      addColumns_(T.APP.name, ['Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Backout_Reason']);
+    });
+    step_('reconcileSchema_', function () {
+      reconcileSchema_();
+    });
+    step_('closureSchema_', function () {
+      closureSchema_();
+    });
+    step_('addColumns_ T.PANEL.name', function () {
+      addColumns_(T.PANEL.name, ['To_Date', 'Kind']);
+    });
+    step_('archiveSchema_', function () {
+      archiveSchema_();
+    });
+    step_('poolSchema_', function () {
+      poolSchema_();
+    });
+    step_('parseSchema_', function () {
+      parseSchema_();
+    });
+    step_('usersSchema_', function () {
+      usersSchema_();
+    });
+    step_('tatSchema_', function () {
+      tatSchema_();
+    });
+    step_('jdmSchema_', function () {
+      jdmSchema_();
+    });
+    step_('pdocSchema_', function () {
+      pdocSchema_();
+    });
+    step_('scrSchema_', function () {
+      scrSchema_();
+    });
+    step_('gradeDesigMigrate_', function () {
+      gradeDesigMigrate_();
+    });
+    step_('gradeDesigSchema_', function () {
+      gradeDesigSchema_();
+    });
+    step_('exemptSchema_', function () {
+      exemptSchema_();
+    });
+    step_('ctcSchema_', function () {
+      ctcSchema_();
+    });
+    step_('bgvSchema_', function () {
+      bgvSchema_();
+    });
+    step_('profileSchema_', function () {
+      profileSchema_();
+    });
+    step_('voiceSchema_', function () {
+      voiceSchema_();
+    });
+    step_('fastTrackSchema_', function () {
+      fastTrackSchema_();
+    });
+    step_('orgSchema_', function () {
+      orgSchema_();
+    });
+    step_('bgvEnsureCases_', function () { try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); } });
+    step_('dayStatusSchema_', function () {
+      dayStatusSchema_();
+    });
+    step_('addSheet_ Daily_Summary', function () {
+      addSheet_('Daily_Summary', ['Summary_ID', 'Summary_Date', 'Recruiter', 'Overview', 'Tasks_JSON',
+        'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('addColumns_ T.CAND.name', function () {
+      addColumns_(T.CAND.name, ['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']);
+    });
+    step_('addSheet_ Observations', function () {
+      addSheet_('Observations', ['Obs_ID', 'Obs_Date', 'Line_ID', 'MRF_No', 'Recruiter', 'Type', 'Description', 'Status',
+        'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('addSheet_ Audit_Checks', function () {
+      addSheet_('Audit_Checks', ['Audit_ID', 'Month', 'Entity', 'Record_ID', 'Label', 'Recruiter', 'Result', 'Error_Field', 'Critical',
+        'Remarks', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
+    });
+    step_('Approved_Date_Check column', function () {
+      addColumns_(T.MRF.name, ['Approved_Date_Check']);
+      dropStale_(T.MRF.name);
+    });
+    step_('KPI_CAPTURE_FROM setting', function () {
+      const s = readTable_('Settings', true);
+      if (!s.rows.some(function (r) { return r.Key === 'KPI_CAPTURE_FROM'; })) {
+        const next = new Date(); next.setDate(1); next.setMonth(next.getMonth() + 1);
+        s.sheet.appendRow(['KPI_CAPTURE_FROM', "'" + fmt_(next, TZ, 'yyyy-MM'),
+          'First month scored for psychometric, BGV, observation and audit KPIs']);
+      }
+    });
+    const bad = Object.keys(failed);
+    props.setProperty('SCHEMA_LAST_MS', String(Date.now() - t0));
+    if (!bad.length && !locked) {
+      props.setProperty('SCHEMA_V', SCHEMA_VERSION);
+      ['SCHEMA_RETRY_AT', 'SCHEMA_ERR', 'SCHEMA_FAILS', doneKey].forEach(function (k) { props.deleteProperty(k); });
+    } else if (bad.length) {
+      const fails = Number(props.getProperty('SCHEMA_FAILS') || 0) + 1, wait = [10, 30, 60][Math.min(fails - 1, 2)];
+      props.setProperty('SCHEMA_FAILS', String(fails)); props.setProperty('SCHEMA_ERR', JSON.stringify(failed));
+      props.setProperty('SCHEMA_RETRY_AT', String(Date.now() + wait * 60000));
+    }
     dropTableCache_();
     _tables = {};
-  });
 }
 
 function addColumns_(name, cols) {
@@ -122,9 +221,12 @@ function apiSaveObservation(data) {
 
 /* ---------------- Monthly 20% audit ---------------- */
 
+/** The month key of an audit row as 'yyyy-MM'. Sheets can turn the text 2026-10 into a date when it is written as typed, so a Date is turned back into its month. */
+function auditMonth_(v) { return v instanceof Date ? fmt_(v, TZ, 'yyyy-MM') : String(v == null ? '' : v).trim(); }
+
 function apiAuditList(month) {
   currentUser_(); ensureSchema_();
-  return readTable_('Audit_Checks').rows.filter(function (r) { return String(r.Month) === month; })
+  return readTable_('Audit_Checks').rows.filter(function (r) { return auditMonth_(r.Month) === month; })
     .map(function (r) { const o = toClient_(r); delete o._row; return o; });
 }
 
@@ -133,7 +235,7 @@ function apiAuditGenerate(month) {
   const u = currentUser_(); ensureSchema_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can create the audit sample.');
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Pick a month.');
-  if (readTable_('Audit_Checks').rows.some(function (r) { return String(r.Month) === month; })) throw new Error('A sample for ' + month + ' already exists.');
+  if (readTable_('Audit_Checks').rows.some(function (r) { return auditMonth_(r.Month) === month; })) throw new Error('A sample for ' + month + ' already exists.');
   // Records a person added or edited that month (the one-time migration does not count).
   const touched = function (r) {
     const made = ymd_(r.Created_At).slice(0, 7) === month && String(r.Created_By) !== 'migration';
@@ -161,7 +263,9 @@ function apiAuditGenerate(month) {
         Remarks: '', Created_By: u.email, Created_At: now, Updated_By: '', Updated_At: '' }, p);
       return t.headers.map(function (h) { return o[h] === undefined ? '' : clean_(o[h]); });
     });
-    t.sheet.getRange(t.sheet.getLastRow() + 1, 1, rows.length, t.headers.length).setValues(rows);
+    const at = t.sheet.getLastRow() + 1, mc = t.headers.indexOf('Month');
+    if (mc >= 0) t.sheet.getRange(at, mc + 1, rows.length, 1).setNumberFormat('@');   // text, so 2026-10 stays 2026-10 and is not turned into a date
+    t.sheet.getRange(at, 1, rows.length, t.headers.length).setValues(rows);
     audit_(u, 'Audit_Checks', month, 'Create sample', 'rows', '', String(rows.length) + ' of ' + pool.length);
     markDashDirty_('Audit_Checks');
     dropStale_('Audit_Checks');
@@ -185,7 +289,7 @@ function apiAuditSave(data) {
 const DOC_FIELDS = {
   MRF: { BGV_Prev_Org_File: 'BGV_Prev', BGV_Current_Org_File: 'BGV_Current', JD_File: 'JD', MRF_Form_File: 'MRF_Form', Notice_Proof_File: 'Notice_Proof' },
   TEX: { Proof_File: 'Exemption_Proof' },
-  APP: { Docs_File: 'Joining_Docs', Offer_Letter_File: 'Offer_Letter' },
+  APP: { Docs_File: 'Joining_Docs', Offer_Letter_File: 'Offer_Letter', Dept_Confirm_File: 'Dept_Confirmation', Appointment_Letter_File: 'Appointment_Letter' },
   CAND: { Psychometric_File: 'Psychometric' },
   BGV: { Consent_File: 'BGV_Consent', Report_File: 'BGV_Report', Initiation_Proof_File: 'BGV_Initiation' }
 };
@@ -213,11 +317,15 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   const u = currentUser_(); ensureSchema_();
   const t = docTarget_(entity, id, field);
   if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or a TA Lead or the Head of HR can attach files to this position.');
-  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l)) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
+  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l) && !(can_(u, 'onboard') && isFast_(l))) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
   if (entity === 'TEX') {
     const l = lineOf_(t.rec.Line_ID);
     if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
     if (['Pending', 'Approved'].indexOf(String(t.rec.Status)) < 0) throw new Error('Proof can be attached only to a pending or approved exemption.');
+  }
+  if (entity === 'CAND') {
+    const l = t.rec.Line_ID ? lineOf_(t.rec.Line_ID) : null;
+    if (!(isLead_(u) || (l ? canEditLine_(u, l) : String(t.rec.Created_By || '').toLowerCase() === u.email))) throw new Error('Only the recruiter of this candidate\u2019s position, a TA Lead or the Head of HR can attach this file.');
   }
   if (entity === 'BGV') { bgvRequireWork_(u, t.rec); if (t.rec.Purged_On) throw new Error('This case was purged under the retention rule. Files cannot be added.'); }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
@@ -233,11 +341,23 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   return file.getUrl();
 }
 
+/** Who may open an attachment: joining papers and letters, exemption proof and BGV files are not open to every signed-in user. */
+function docReadGuard_(u, entity, rec, field) {
+  if (entity === 'BGV') { bgvRequireWork_(u, rec); return; }
+  if (entity === 'APP' || entity === 'TEX') {
+    const l = lineOf_(rec.Line_ID);
+    const ok = l && (canEditLine_(u, l) || (entity === 'APP' && can_(u, 'onboard') && isFast_(l)) || (entity === 'TEX' && can_(u, 'tat_exempt')));
+    if (!ok) throw new Error('You do not have access to this file. Only ' + (l ? l.Recruiter + ', ' : '') + 'a TA Lead or the Head of HR can open it.');
+    return;
+  }
+  if (entity === 'MRF' && /^BGV_/.test(field) && !(isLead_(u) || canEditLine_(u, rec))) throw new Error('BGV files are visible only to the position\u2019s recruiter, a TA Lead or the Head of HR.');
+}
+
 /** Returns an attachment as base64 for the in-app viewer. */
 function apiGetDoc(entity, id, field) {
   const u = currentUser_();
   const t = docTarget_(entity, id, field);
-  if (entity === 'BGV') bgvRequireWork_(u, t.rec);
+  docReadGuard_(u, entity, t.rec, field);
   const fid = cvFileId_(t.rec[field]);
   if (!fid) throw new Error('No file is attached here yet.');
   let file;

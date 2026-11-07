@@ -193,6 +193,7 @@ function apiReconcileRemove(appId, reason) {
   const why = clean_(String(reason || '')).trim() || 'Removed at the switch-over check';
   update_(T.APP, appId, { Status: 'Removed', Status_Reason: why.slice(0, 200), Risk: '' }, u);
   appendHistory_(app, app.Stage, app.Stage, 'Removed', why, u);
+  daySnapDropAll_();   // a removed card cancels its earlier credits, on earlier days too
   return apiReconcileList();
 }
 

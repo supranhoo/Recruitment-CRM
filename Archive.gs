@@ -51,7 +51,7 @@ function readColumns_(sh, names) {
 /** Slim index of the archive: enough for duplicate checks, search, names and pending CV moves. Cached per archive version. */
 function archiveIndex_() {
   if (_tables.__aidx) return _tables.__aidx;
-  const key = 'aidx_' + archiveVer_();
+  const key = 'aidx_' + dbTag_() + '_' + archiveVer_();
   const hit = cacheBigGet_(key);
   if (hit) return (_tables.__aidx = JSON.parse(hit));
   const sh = ss_().getSheetByName(CAND_ARCHIVE_);
@@ -76,6 +76,24 @@ function candNames_(ids) {
   const out = {}, want = {};
   ids.forEach(function (id) { want[id] = true; });
   readTable_(T.CAND.name).rows.forEach(function (c) { if (want[c.Candidate_ID]) out[c.Candidate_ID] = c; });
+  if (ids.some(function (id) { return !out[id]; })) {
+    archiveIndex_().forEach(function (a) { if (want[a.id] && !out[a.id]) out[a.id] = { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, _archived: true }; });
+  }
+  return out;
+}
+
+/**
+ * Like candNames_ for the pipeline board: the fields the board shows, taken from the candidate index when it is in the cache.
+ * With no index at hand it reads the sheet as before (a write to Candidates drops the index; a search builds it again), so a move
+ * that changes the candidate never pays for rebuilding it.
+ */
+function candNamesSlim_(ids) {
+  if (!ids.length) return {};
+  const idx = candIndexCached_();
+  if (!idx) return candNames_(ids);
+  const out = {}, want = {};
+  ids.forEach(function (id) { want[id] = true; });
+  idx.forEach(function (e) { if (want[e.id]) out[e.id] = e.o; });
   if (ids.some(function (id) { return !out[id]; })) {
     archiveIndex_().forEach(function (a) { if (want[a.id] && !out[a.id]) out[a.id] = { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, _archived: true }; });
   }
@@ -129,12 +147,12 @@ function archiveCandidates_(u, limit) {
           if (h === 'Archived_On') return now;
           if (h === 'Archive_Reason') return 'No activity since ' + ymd_(c.Last_Activity) + ' (' + days + '-day rule)';
           if (h === 'CV_Archived') return c.CV_File_URL ? '' : 'No CV';
-          return c[h] === undefined ? '' : c[h];
+          return c[h] === undefined ? '' : plainCell_(c[h]);   // text read back without its protective apostrophe is protected again, so it cannot become a formula
         });
       });
       ash.getRange(ash.getLastRow() + 1, 1, arows.length, aheads.length).setValues(arows);
     }
-    const out = keep.map(function (c) { return heads.map(function (h) { return c[h] === undefined ? '' : c[h]; }); });
+    const out = keep.map(function (c) { return heads.map(function (h) { return c[h] === undefined ? '' : plainCell_(c[h]); }); });
     const last = sh.getLastRow();
     if (out.length) sh.getRange(2, 1, out.length, n).setValues(out);
     if (last - 1 > out.length) sh.getRange(out.length + 2, 1, last - 1 - out.length, n).clearContent();
@@ -219,7 +237,7 @@ function restoreCandidate_(id, u) {
     const sh = sheet_(T.CAND.name), heads = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
     const now = new Date();
     o.Last_Activity = now; o.Updated_By = u.email; o.Updated_At = now;
-    sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+    sh.getRange(sh.getLastRow() + 1, 1, 1, heads.length).setValues([heads.map(function (h) { return o[h] === undefined ? '' : plainCell_(o[h]); })]);
     ash.deleteRow(i + 2);
     archiveBump_(); dropStale_(T.CAND.name);
     return o;
@@ -249,6 +267,82 @@ function ensureActiveCandidate_(id, u) {
 const CAND_SEARCH_FIELDS_ = ['Candidate_ID', 'Name', 'Position', 'Dept', 'Mobile', 'Email', 'Relevant_Experience', 'Current_Designation', 'Current_CTC',
   'Tech_Result', 'HR_Result', 'Sourced_By', 'CV_File_URL', 'Possible_Duplicate_Of', 'Line_ID', 'Education', 'Last_Activity',
   'Function_Area', 'Key_Skills', 'Total_Exp_Years', 'Current_Location', 'Expected_CTC', 'Notice_Days'];
+/* ---------- candidate index (Phase 2 speed work) ----------
+ * The Candidates sheet is too large for the table cache, so every search used to read all of it and build an object for every
+ * match before taking one page. The index keeps, per candidate, only what search, filters and the pipeline board need, in the script
+ * cache under the table's version stamp (every write to Candidates gives a new stamp, so a changed candidate is never served from an
+ * old index). If the cache is empty, evicted or too large, it is rebuilt from the sheet: slower, never different. */
+const CAND_INDEX_FIELDS_ = CAND_SEARCH_FIELDS_.concat(['Tech_Interview_By', 'HR_Interview_By']);
+const CAND_INDEX_MAX_CHARS_ = 4000000;
+const CAND_HAY_FIELDS_ = ['Name', 'Mobile', 'Email', 'Position', 'Candidate_ID', 'Current_Designation', 'Education', 'Dept', 'Key_Skills', 'Function_Area', 'Current_Location'];
+function candIndexEntry_(c) {
+  const o = {}; CAND_INDEX_FIELDS_.forEach(function (k) { o[k] = c[k]; });
+  const hay = CAND_HAY_FIELDS_.map(function (k) { return c[k]; }).join(' ').toLowerCase();
+  return { r: c._row, id: String(c.Candidate_ID), o: toClient_(o), h: hay, d: hay.replace(/\D/g, ''), x: expYears_(c), l: lpa_(c.Expected_CTC) };
+}
+function candIndexKey_() { return 'cidx_' + dbTag_() + '_' + tableStamps_([T.CAND.name])[0]; }
+/** The index from this run's memory or the cache, or null (it is not built here). */
+function candIndexCached_() {
+  if (_tables.__cidx) return _tables.__cidx;
+  const hit = cacheBigGet_(candIndexKey_());
+  if (!hit) return null;
+  try { return (_tables.__cidx = JSON.parse(hit)); } catch (e) { return null; }
+}
+function candIndex_() {
+  const have = candIndexCached_();
+  if (have) return have;
+  const key = candIndexKey_();   // read before the sheet, so a write during the build only makes the next call rebuild
+  const idx = readTable_(T.CAND.name).rows.map(candIndexEntry_);
+  const s = JSON.stringify(idx);
+  if (s.length < CAND_INDEX_MAX_CHARS_) cacheBigPut_(key, s, 1500);
+  return (_tables.__cidx = idx);
+}
+/** Candidate ids in a live pipeline (Active or On hold), kept in the cache under the Applications stamp. */
+function liveMap_() {
+  if (_tables.__live) return _tables.__live;
+  const key = 'live_' + dbTag_() + '_' + tableStamps_([T.APP.name])[0], hit = cacheBigGet_(key), live = {};
+  if (hit) { try { JSON.parse(hit).forEach(function (id) { live[id] = true; }); return (_tables.__live = live); } catch (e) { } }
+  const l = liveCands_();
+  cacheBigPut_(key, JSON.stringify(Object.keys(l)), 1500);
+  return (_tables.__live = l);
+}
+/** The words of a search must each match somewhere in `hay` (lower case), or, from 4 digits, in its digits only. */
+function candWordsMatch_(words, hay, digits) {
+  return words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && digits.indexOf(d) >= 0); });
+}
+/**
+ * The matching rows of a search over an index (and the archive index), as {id, make()} so only the page asked for is built.
+ * Pure: takes the indexes and the live map, so it can be tested against the full scan.
+ */
+function candSearchHits_(f, idx, arch, live) {
+  const words = String(f.q || '').toLowerCase().split(/\s+/).filter(String), profile = poolFiltering_(f), hits = [];
+  if (f.archived !== 'only') {
+    idx.forEach(function (e) {
+      const o = e.o;
+      if (f.line && o.Line_ID !== f.line) return;
+      if (profile && !poolMatchCore_(o, e.x, function () { return e.l; }, f, live)) return;
+      if (f.hr && o.HR_Result !== f.hr) return;
+      if (f.src && o.Sourced_By !== f.src) return;
+      if (f.dup && !o.Possible_Duplicate_Of) return;
+      if (f.cv && !o.CV_File_URL) return;
+      if (words.length && !candWordsMatch_(words, e.h, e.d)) return;
+      hits.push({ id: e.id, make: function () { const co = {}; CAND_SEARCH_FIELDS_.forEach(function (k) { co[k] = o[k]; }); co._exp = e.x; co._inPipeline = live[o.Candidate_ID] ? 'Yes' : ''; return co; } });
+    });
+  }
+  if (f.archived === 'include' || f.archived === 'only') {
+    arch.forEach(function (a) {
+      if (f.line || f.dup || profile) return;
+      if (f.hr && a.hr !== f.hr) return;
+      if (f.src && a.src !== f.src) return;
+      if (f.cv && !a.cv) return;
+      if (words.length && !match_(words, [a.name, a.mobile, a.email, a.position, a.id, a.designation, a.dept].join(' '))) return;
+      hits.push({ id: a.id, make: function () { return { Candidate_ID: a.id, Name: a.name, Position: a.position, Dept: a.dept, Mobile: a.mobile, Email: a.email, Relevant_Experience: a.exp,
+        Current_Designation: a.designation, HR_Result: a.hr, Sourced_By: a.src, CV_File_URL: a.cv, Last_Activity: a.last, Archived_On: a.on, _archived: 'Yes' }; } });
+    });
+  }
+  return hits;
+}
+function match_(words, hay) { hay = hay.toLowerCase(); return candWordsMatch_(words, hay, hay.replace(/\D/g, '')); }
 /**
  * Server-side candidate search, one page at a time. f = { q, hr, src, dup, cv, line, archived: 'no'|'include'|'only', page, size }.
  * Every word typed must match somewhere (name, mobile, email, position, ID, designation, education, department).
@@ -257,34 +351,8 @@ function apiSearchCandidates(f) {
   currentUser_(); ensureSchema_();
   f = f || {};
   const size = Math.min(Math.max(Number(f.size) || 50, 1), 200), page = Math.max(0, Number(f.page) || 0);
-  const words = String(f.q || '').toLowerCase().split(/\s+/).filter(String);
-  const match = function (hay) { hay = hay.toLowerCase(); return words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && hay.replace(/\D/g, '').indexOf(d) >= 0); }); };
-  const out = [], live = liveCands_(), profile = poolFiltering_(f);
-  if (f.archived !== 'only') {
-    readTable_(T.CAND.name).rows.forEach(function (c) {
-      if (f.line && c.Line_ID !== f.line) return;
-      if (profile && !poolMatch_(c, f, live)) return;
-      if (f.hr && c.HR_Result !== f.hr) return;
-      if (f.src && c.Sourced_By !== f.src) return;
-      if (f.dup && !c.Possible_Duplicate_Of) return;
-      if (f.cv && !c.CV_File_URL) return;
-      if (words.length && !match([c.Name, c.Mobile, c.Email, c.Position, c.Candidate_ID, c.Current_Designation, c.Education, c.Dept, c.Key_Skills, c.Function_Area, c.Current_Location].join(' '))) return;
-      const o = {}; CAND_SEARCH_FIELDS_.forEach(function (k) { o[k] = c[k]; });
-      const co = toClient_(o); co._exp = expYears_(c); co._inPipeline = live[c.Candidate_ID] ? 'Yes' : '';
-      out.push(co);
-    });
-  }
-  if (f.archived === 'include' || f.archived === 'only') {
-    archiveIndex_().forEach(function (a) {
-      if (f.line || f.dup || profile) return;
-      if (f.hr && a.hr !== f.hr) return;
-      if (f.src && a.src !== f.src) return;
-      if (f.cv && !a.cv) return;
-      if (words.length && !match([a.name, a.mobile, a.email, a.position, a.id, a.designation, a.dept].join(' '))) return;
-      out.push({ Candidate_ID: a.id, Name: a.name, Position: a.position, Dept: a.dept, Mobile: a.mobile, Email: a.email, Relevant_Experience: a.exp,
-        Current_Designation: a.designation, HR_Result: a.hr, Sourced_By: a.src, CV_File_URL: a.cv, Last_Activity: a.last, Archived_On: a.on, _archived: 'Yes' });
-    });
-  }
-  out.sort(function (a, b) { return String(b.Candidate_ID).localeCompare(String(a.Candidate_ID)); });
-  return { total: out.length, page: page, size: size, rows: out.slice(page * size, (page + 1) * size) };
+  const idx = f.archived === 'only' ? [] : candIndex_(), arch = (f.archived === 'include' || f.archived === 'only') ? archiveIndex_() : [];
+  const hits = candSearchHits_(f, idx, arch, liveMap_());
+  hits.sort(function (a, b) { return String(b.id).localeCompare(String(a.id)); });
+  return { total: hits.length, page: page, size: size, rows: hits.slice(page * size, (page + 1) * size).map(function (h) { return h.make(); }) };
 }

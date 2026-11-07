@@ -7,6 +7,9 @@ function ss_() {
   return _ss;
 }
 
+/** A short tag of the database file in use, so a cached copy made from the test copy of the database is never served for the real one. */
+function dbTag_() { return String(_ss ? _ss.getId() : DB_SPREADSHEET_ID).slice(-8); }   // no need to open the file just to name a cache key
+
 function sheet_(name) {
   const sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('The database has no sheet named "' + name + '". Check the DB file.');
@@ -14,9 +17,9 @@ function sheet_(name) {
 }
 
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
-const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users'];
+const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users', 'BGV_Rules'];
 const TABLE_CACHE_SECONDS_ = 600;
-function tableCacheKey_(name) { return 'tbl3_' + name; }
+function tableCacheKey_(name) { return 'tbl3_' + dbTag_() + '_' + name; }   // tagged by database file: the test copy's tables never reach the real app
 function dropTableCache_(name) {
   try { CacheService.getScriptCache().removeAll(name ? [tableCacheKey_(name)] : CACHED_TABLES_.map(tableCacheKey_)); } catch (e) { }
 }
@@ -185,15 +188,21 @@ function parseYmd_(s) {
   if (s instanceof Date) return s;
   const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) throw new Error('Invalid date "' + s + '". Use the date picker.');
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) throw new Error('Invalid date "' + s + '". That day does not exist in the calendar.');
+  return d;
 }
 
 /** Blocks formula injection: text starting with = + @ is stored as plain text. */
 function clean_(v) {
   if (typeof v !== 'string') return v;
   v = v.trim();
-  return /^[=+@]/.test(v) ? "'" + v : v;
+  return FORMULA_START_.test(v) ? "'" + v : v;
 }
+/** Text a spreadsheet would run as a formula: starts with = + @, a minus before a letter, bracket or $, or a tab / carriage return. */
+const FORMULA_START_ = /^(?:[=+@\t\r]|-(?=[A-Za-z(@$]))/;
+/** Last line of defence for every write: any string that would be read as a formula is stored as plain text. */
+function plainCell_(v) { return typeof v === 'string' && FORMULA_START_.test(v) ? "'" + v : v; }
 
 /**
  * Next ID for a table. IDs are never reused: besides the rows now in the sheet, the highest number ever
@@ -256,14 +265,19 @@ function bumpStamp_(name) {
 /** Forgets in-memory and cached copies of a table after a write. */
 function dropStale_(name) {
   bumpStamp_(name);
+  if (name === T.CAND.name) _tables.__cidx = null;   // derived views of a table are dropped with it
+  if (name === T.APP.name) _tables.__live = null;
   Object.keys(_tables).forEach(function (k) { if (k === name || k.indexOf(name + '|') === 0) _tables[k] = null; });
   if (CACHED_TABLES_.indexOf(name) >= 0) dropTableCache_(name);
 }
 
+var _lockDepth_ = 0;
 function withLock_(fn) {
+  if (_lockDepth_ > 0) return fn();   // already inside the lock in this run: do not take it twice
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Someone else is saving right now. Try again in a few seconds.');
-  try { return fn(); } finally { lock.releaseLock(); }
+  _lockDepth_++;
+  try { return fn(); } finally { _lockDepth_--; lock.releaseLock(); }
 }
 
 /** Normalises client input: only editable fields, dates parsed, text cleaned. */
@@ -286,7 +300,7 @@ function insert_(def, obj, user) {
     obj[def.id] = nextId_(def, t.rows);
     if (t.headers.indexOf('Created_By') >= 0) { obj.Created_By = user.email; obj.Created_At = now; }
     if (t.headers.indexOf('Updated_By') >= 0) { obj.Updated_By = user.email; obj.Updated_At = now; }
-    const row = jdmRow_(def.name, t.headers.map(function (h) { return obj[h] === undefined ? '' : obj[h]; }));
+    const row = jdmRow_(def.name, t.headers.map(function (h) { return obj[h] === undefined ? '' : plainCell_(obj[h]); }));
     t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
     audit_(user, def.name, obj[def.id], 'Create', '', '', '');
     markDashDirty_(def.name);
@@ -310,9 +324,9 @@ function update_(def, id, patch, user, guard) {
     });
     if (!changes.length) return rec;
     if (t.headers.indexOf('Updated_By') >= 0) { rec.Updated_By = user.email; rec.Updated_At = new Date(); }
-    const row = jdmRow_(def.name, t.headers.map(function (h) { return rec[h] === undefined ? '' : rec[h]; }));
+    const row = jdmRow_(def.name, t.headers.map(function (h) { return rec[h] === undefined ? '' : plainCell_(rec[h]); }));
     t.sheet.getRange(rec._row, 1, 1, row.length).setValues([row]);
-    changes.forEach(function (c) { audit_(user, def.name, id, 'Update', c[0], c[1], c[2]); });
+    auditMany_(user, def.name, id, 'Update', changes);
     if (typeof daySnapTouch_ === 'function') daySnapTouch_(def.name, changes, null, rec);
     markDashDirty_(def.name);
     dropStale_(def.name);
@@ -324,6 +338,14 @@ function audit_(user, sheetName, id, action, field, oldV, newV) {
   const sh = sheet_('Audit_Log');
   sh.getRange(sh.getLastRow() + 1, 1, 1, 8)
     .setValues([[new Date(), user.email, sheetName, id, action, field, clean_(oldV), clean_(newV)]]);
+}
+
+/** Writes one audit row per changed field in a single call (audit_ once per field cost one sheet write each). */
+function auditMany_(user, sheetName, id, action, changes) {
+  if (!changes.length) return;
+  const sh = sheet_('Audit_Log'), now = new Date();
+  const rows = changes.map(function (c) { return [now, user.email, sheetName, id, action, c[0], clean_(c[1]), clean_(c[2])]; });
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
 }
 
 function settings_() {

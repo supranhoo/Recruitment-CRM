@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Document version** | 1.20 (v82 Organogram plan editor recorded, 7 Oct 2026; older unreleased entries in §14 not yet given version numbers) |
-| **Describes app version** | **v82 Organogram plan editor** (Apps Script deployment version 82, 7 Oct 2026; v81 was Organogram entries) |
-| **Database schema version** | **38** (Script Property `SCHEMA_V`) |
+| **Document version** | 1.19 (brought up to date with deployment version 99, 12 Oct 2026) |
+| **Describes app version** | **v99** (Apps Script deployment version 99, 12 Oct 2026) |
+| **Database schema version** | **43** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -58,6 +58,8 @@ The BFCL Recruitment CRM replaces the Excel "MRF Tracker / CV Tracker" workbook 
 |---|---|
 | Apps Script project | Script ID `122O8qTkAJrxOf9VFA6ETHArMe-t3w3wnMB0eZQD9cazv2u9zO28I6xNI`, owned by `ankitchoudharymba@gmail.com` |
 | Live web app (fixed URL, never changes between versions) | `https://script.google.com/macros/s/AKfycbySIs5CLOQUp32R_roFHW3wlSlYe0cHah_-sNyJHPWLjxUTfI30RrmOD8PKQekX3s9xeg/exec` |
+| Deployed version | **99** (12 Oct 2026). Releases are `clasp push -f` then `clasp deploy -i <deployment id> -V <next version>`; rollback is the same command with the previous version number |
+| Voice agent (Sarvam) | Agent app `Conversatio-85617fe5-386e` ("BFCL HR Screening"); calls through `apps.sarvam.ai`, results come back through the separate webhook receiver (`docs/voice-webhook`, §8.7). API key only in Script Property `VOICE_API_KEY` |
 | Test deployment (HEAD, used before each publish) | `https://script.google.com/macros/s/AKfycbzoKHKHmTjgU5l2XK8XCXaiFNHp-sDzA3XmdZ_QsRSM/dev` |
 | Database | Google Sheet "BFCL Recruitment CRM - Database" `1MY4Zpvb7TROiqj_fkbsYCP-gNZaRJAwldenhGC7UyVQ` (ID also held in Script Property `DB_ID`) |
 | CV folder | Drive folder "BFCL Recruitment CRM - CVs" (Setting `CV_FOLDER_ID`); sub-folders **JD** (`JD_FOLDER_ID`), **Archive** (`CV_ARCHIVE_FOLDER_ID`), "Position documents", "Psychometric reports", "Joining documents" |
@@ -81,7 +83,7 @@ The BFCL Recruitment CRM replaces the Excel "MRF Tracker / CV Tracker" workbook 
 
 ### 3.2 Roles
 
-Four roles (constant `ROLE_LIST`): **Admin, Head of HR, TA Lead, Recruiter**. Older or informal values in the Users sheet are normalised by `normRole_`: `Head`, `Head HR`, `HR Head`, `Head of HR` → Head of HR; `TA Lead`, `Lead TA`, `TL`, `Lead` → TA Lead; `Admin`, `Administrator` → Admin; anything else → Recruiter.
+Five roles (constant `ROLE_LIST`): **Admin, Head of HR, TA Lead, Recruiter, Onboarding**. Onboarding is a narrow role for the team that confirms hiring and onboards fast-track (W and T level) joiners (§8.8); it holds only the `onboard` permission. Older or informal values in the Users sheet are normalised by `normRole_`: `Head`, `Head HR`, `HR Head`, `Head of HR` → Head of HR; `TA Lead`, `Lead TA`, `TL`, `Lead` → TA Lead; `Admin`, `Administrator` → Admin; anything else → Recruiter.
 
 Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.gs; ADR-021):
 
@@ -99,6 +101,10 @@ Permissions are **named** and mapped to roles in one place (`PERMS_` in Config.g
 | `bgv_decide` | Decide on a BGV discrepancy or unverified result (§11.8) | – | – | ✓ | ✓ |
 | `correct_data` | Correct a joining date already recorded (`apiCorrectJoiningDate`, §9) | – | – | ✓ | ✓ |
 | `org_manage` | Import the manpower report; edit the organogram structure, heads, HODs, the department mapping and grade notes (§11.9) | – | – | ✓ | ✓ |
+| `tat_exempt` | Approve, reject, grant and revoke TAT exemptions; verify or reject notice extensions (§7.4, ADR-039) | – | – | ✓ | ✓ |
+| `voice_review` | See a voice call's result and rate, edit and complete the screening from it (§8.7): a recruiter for own positions, leads for all. Does not place calls | ✓ (own) | ✓ | ✓ | ✓ |
+| `voice_agent` | Set up the voice agent (Admin → Voice agent), place and fetch calls (§8.7). Never grantable | – | – | – | ✓ |
+| `onboard` | Confirm the hiring, record the joining and complete onboarding of any fast-track position, and nothing else (§8.8). Held by the Onboarding role | – | – | – | – |
 | `ctc_use` | Use the CTC calculator (§11.7). The `ctc_*` permissions other than `ctc_rules` can be given to other roles in CTC calculator → Access (Role_Access sheet, ADR-041); the table shows the launch defaults | – | – | – | ✓ |
 | `ctc_rules` | Change and activate CTC rule versions | – | – | – | ✓ |
 | `ctc_view_all` | See everyone's CTC calculations | – | – | – | ✓ |
@@ -161,6 +167,12 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 | `Tat.gs` (file_5) | TAT levels, rules lookup (`tatContext_`, `tatRulesMap_`, `ruleFor_`), `positionStatus_`, `tatStart_`/`posStart_`, `tatClock_`, `computeTat_`, `storedTat_`, `orgTat_`, `daysBetween_` |
 | `Grades.gs` | Grades and designations (schema 27): `M_Designations`, `checkDesignation_`, `lineTitle_`, Admin → Grades & designations, migration |
 | `Org.gs` | Organogram (schema 36): `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`; `apiOrganogram`, `apiOrgImport`, `apiOrgAdmin`, `apiOrgSaveStructure`, `apiOrgSaveMap`; pure helpers `orgKey_`, `orgCategory_`, `orgRollup_`, `orgReadReport_` |
+| `VoiceScreen.gs` | Voice screening call (schemas 38–39; §8.7): settings, question plan (`voicePlan_`, `voiceDeskDraft_`), `apiVoiceStartScreening`, results (`voiceIngest_`, `apiVoiceFetchResult`, `apiVoiceCallDetail`), answer parsing and normalising, suggested ratings, review save (`apiVoiceReviewSave`), `voiceSchema_` self-healing columns |
+| `FastTrack.gs` | Fast-track hiring route for W and T levels (schema 40; §8.8): route by grade, stage skipping, department-confirmation and W document-pack gates, Onboarding role, `paperException` |
+| `Timeline.gs` | Stage tabs on the candidate card for leads (v145; ADR-057): `apiAppTimeline`, read-only, lead-only; whitelisted facts and changes per step from the card, screening, interviews, candidate interview fields, `Stage_History` and `Audit_Log` |
+| `KpiAdmin.gs` | Admin set-up of the KPI scorecard (v146; ADR-058): `apiKpiSetup`, `apiKpiPreview`, `apiKpiSave` (new dated versions of the TAT targets, score bands, count thresholds and the scoring start; permission `kpi_edit`) |
+| `Exemptions.gs` | TAT exemptions and notice-extension verification (schema 28; ADR-039) |
+| `docs/voice-webhook/` | Separate tiny Apps Script project (deployed "Anyone") that receives Sarvam's call results and appends them to `Voice_Inbox` (ADR-048); not part of the main project |
 | `CvProfile.gs` | CV profile (schema 35): `cvExtractProfile_`, `cvDerive_`, `apiGetProfile`, `apiBuildProfile`, `apiSaveProfile`, `apiProfileExport` |
 | `Bgv.gs` `BgvGov.gs` | BGV tracker (schema 34; governance: Drive folders, retention purge, audit export; efficiency: `apiBgvImport`, `bgvJoinGuard_`, email templates; monitoring: `bgvTasks_`, `bgvSummary_`, `apiBgvReports`, `bgvWeekly_`, `bgvLateCases_`): cases, checks, log, vendors, rules; `bgvEnsureCases_` (automatic cases and sweep), `bgvRag_`, `apiBgv*` |
 | `Ctc.gs` | CTC calculator (schemas 29–31; access and approval: `ctcGrants_`, `apiCtcAccess*`, `apiCtcSubmit`, `apiCtcReview`): `CTC_Rules` versions, the shared engine `ctcEngine_` (embedded in Index.html by `ctcEngineScript_`), V1 seed `ctcSeedConfig_`, `apiCtcRules`, `apiCtcCalc`, saved calculations and letters (`CTC_Calcs`, `apiCtcSave/Issue/Discard/List/Get/Version`, folder "CTC letters"), rules editing (`apiCtcDraftNew/DraftSave/DraftDiscard/Activate/Retire`, `ctcCheck_`, `ctcDiff_`) |
@@ -182,13 +194,13 @@ Server checks: `can_(u, perm)`, `isLead_(u) = can_(u,'lead')`, `requireAdmin_(u)
 
 | Layer | Mechanism |
 |---|---|
-| Overview | Never computed on page load. Reads a **snapshot** (script cache `dash_v1`, then `Dash_Snapshot` sheet). Rebuilt by **Refresh** button, by the 30-minute trigger when `DASH_DIRTY_AT` is newer than the snapshot, and nightly. Saves only mark it dirty. |
+| Overview | Never computed on page load. Reads a **snapshot** (script cache `dash_b<BUILD_ID>`, then `Dash_Snapshot` sheet). A snapshot is used only if it carries this release's build number and every Pipeline stage in its funnel (`snapshotUsable_`); otherwise it is rebuilt on the first open (v128). Rebuilt by **Refresh** button, by the 30-minute trigger when `DASH_DIRTY_AT` is newer than the snapshot, and nightly. Saves only mark it dirty. |
 | Small tables | `CACHED_TABLES_` = Settings, M_Grades, M_Designations, TAT_Rules, M_Recruiters, M_Lists, M_Departments, KPI_Targets, M_Panel_Members, Users — script cache 10 minutes (`tbl3_<name>`), dropped on every app write to that table. Sheets under 1,000 rows are read in one trip. |
 | Growing tables | `readTableFrom_(name, dateField, from)` reads only the tail from the first row on/after a date (Daily_Funnel, Audit_Log, Stage_History, Candidates). |
 | Dates | `fmt_`/`ymd_` compute IST with a fixed +5:30 offset (≈400× faster than `Utilities.formatDate`, identical output); any other zone or pattern falls back to Google's formatter. |
 | Payload | Big lists are sent **packed** as `{cols, rows}` (≈ ⅓ size) and only list columns; full records load when opened. After a save, only the changed row is refreshed (`apiGetPosition`). |
 | Version check ("ETag") | Each table has a **version stamp** bumped on every write (`bumpStamp_`, cache TTL 1 h). `apiFetch(fn, args, known)` returns `{same:true}` when the stamps (and the period: per day / per hour) are unchanged. Covered: Positions (MRF, M_Grades, Settings, Users; per day), Candidates, Daily log (per day), Pipeline board (Applications, Stage_History, Followups, Candidates, MRF, Job_Posts, Interviews, M_Panel_Members; per hour). Client copies are kept **in memory only**. |
-| Daily review (past days) | Pre-computed per day (`daysnap2_<ver>_<date>`, up to 6 h), invalidated precisely by writes touching that day; reassignment/team changes clear all days; today is always live. The 30-minute job pre-builds yesterday. |
+| Daily review (past days) | Pre-computed per day (`daysnap_b<BUILD_ID>_<ver>_<date>`, up to 6 h; the release number is part of the key, so a release never serves older cached days), invalidated precisely by writes touching that day; reassignment/team changes clear all days; today is always live. The 30-minute job pre-builds yesterday. |
 | Tasks | Computed from data, cached until underlying data changes or 10 minutes; state reconciled in the background every 30 minutes. |
 | KPIs | Cached per financial year; refreshed after data changes or on request. |
 | Archive index | Slim candidate index (ID, name, mobile, email, …) cached in chunks per archive version, used for duplicate checks, names and search. |
@@ -254,6 +266,9 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Observations** | `Obs_ID` (OBS-) | Process-adherence findings: Obs_Date, Line_ID, MRF_No, Recruiter, Type, Description, Status. |
 | **Audit_Checks** | `Audit_ID` (AUD-) | Monthly 20 % sample: Month, Entity, Record_ID, Label, Recruiter, Result (Pending/Correct/Error), Error_Field, Critical, Remarks. |
 | **TAT_Rules** | `Rule_ID` (TR-) | Version_ID, Effective_From, Level, Standard_Days, Grace_Days, Risk_Pct, Status (Active/Superseded), Note, Created_By/At. |
+| **MRF / Applications (fast-track columns)** | MRF: Hiring_Route (blank = by grade / Fast-track / Standard). Applications: Dept_Confirm_On, Dept_Confirm_By, Dept_Confirm_File, Appointment_Date, Appointment_Letter_File | Schema 40 (ADR-047) |
+| **Voice_Calls** | Call_ID (VCL-), App_ID, Candidate_ID, Line_ID, Phone_Last4, Status, Status_Note, Provider_Call_ID, Questions_Version, Started_By/At, Completed_At, Transcript, Answers_JSON, Draft_Applied, Outcome, Duration_Sec, Interaction_ID, Final_Vars_JSON, Updated_By/At | Schema 38 (ADR-045); result columns added by `voiceSchema_` (ADR-048). Admin only |
+| **Voice_Inbox** | Received_At, Attempt_ID, Event_Key, Payload, Processed_At, Result | Written only by the separate webhook receiver (`docs/voice-webhook`); read by `voiceIngest_`. ADR-048. Admin only |
 | **Candidate_Profiles** | Candidate_ID (key), Profile_JSON, Source, Parsed_On, Reviewed_By, Reviewed_On, Updated_By, Updated_At | Schema 35 (ADR-044). One row per candidate; JSON holds the facts, checks are calculated on read |
 | **CV_Parse_Log** | `Log_ID` | Candidate_ID, File_Name, Parsed_JSON, Saved_JSON, Chars, By, At (parser pilot accuracy). |
 | **Audit_Log** | — | Timestamp, User, Sheet, Record_ID, Action, Field, Old_Value, New_Value. Append-only change history. |
@@ -281,7 +296,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **M_Recruiters** | Recruiter, Email, Active | Recruiter dropdown, kept in sync by Users |
 | **M_Grades** | Grade, Designations, Band, Standard_TAT_Days, Active | 17 levels; Standard_TAT_Days mirrors the TAT rule in force **today** (kept in sync; no longer the source of truth). From schema 27, **Designations is a read-only summary** of the grade's active rows in M_Designations; Band and Active are edited in Admin → Grades & designations (ADR-038) |
 | **TAT_Exemptions** | Exemption_ID (TEX-), Line_ID, MRF_No, Type (Days / Pause), Days, From_Date, To_Date, Reason, Remark, Proof_File, Applies_Recruiter, Applies_Position, Status (Pending / Approved / Rejected / Withdrawn / Revoked), Requested_By/On, Decided_By/On, Decision_Note | Schema 28 (ADR-039). Applies_* are copied from the reason when decided |
-| **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause) |
+| **M_Exemption_Reasons** | Reason, Default_Type, Applies_Recruiter, Applies_Position, Proof_Required, Max_Days, Active, Note | Schema 28. Seeded: Department / HOD delay; Candidate notice buy-out / DOJ shift by company; Niche / scarce skill, re-advertised (position TAT only); Budget, grade or MRF change mid-way (Pause); from schema 42 also Delay in MRF Evidence and Other, if any (both Days, extend the recruiter TAT and KPI and the position TAT, proof required). A reason added in a release is appended once to an existing sheet by name; an existing row (edited, deactivated or added by hand) is never changed |
 | **M_Designations** | Designation_ID (DSG-), Designation, Grade, Active, Note, Created/Updated | Schema 27. One row per designation per grade (M6 → Engineer, Senior Engineer, Officer, Senior Officer). Unique per grade; deactivated, never deleted |
 | **CTC_Rules** | Version_ID (CTC-V1…), Effective_From, Status (Draft / Active / Retired / Discarded), Config_JSON, Reason, Remark, Change_Summary, Created_By/At, Updated_By/At, Activated_By/At | Schema 29 (ADR-040). One row per version, never overwritten. V1 is seeded from the "CTC Calculator" sheet of New_CTC_Structure.xlsx. The version in force on a day is the Active one with the latest Effective_From on or before it |
 | **CTC_Calcs** | Calc_ID (CTC-00001…), Candidate_ID, Line_ID (schema 32, optional links), Status (Draft / Pending approval / Issued / Superseded / Discarded), Submitted_By/At, Decided_By/At, Decision_Note (schema 31), Name, Designation, Grade, Basis, Target, Total_CTC, Gross, Net, Rule_Version, Inputs_JSON, Result_JSON, Language (en / hi / both), Letter_File, Rerun_Of, Superseded_By, Issued_By/At, Created/Updated | Schema 30. Worked out again on the server when saved. A Draft can be changed by its maker; Issued is locked; a re-run is a new record and issuing it marks the earlier one Superseded. Letters are PDFs in the Drive folder "CTC letters" (setting CTC_FOLDER_ID) |
@@ -289,6 +304,7 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **BGV_Cases** | Case_ID (BGV-), Type (Previous employer / Current employer), Line_ID, MRF_No, App_ID, Candidate_ID, Candidate_Name, Position, Grade, Dept, Recruiter (owner), Trigger_Date (offer / joining), Due_Date (start by), Result_Due, Consent_On, Consent_File, Vendor_ID, Vendor_Ref, Initiated_On, Initiation_Proof_File, Status, Outcome, Report_On, Report_File, Decision, Decision_By/On/Note, Closed_On, Remarks, Legacy, Rules_Version | Schema 33 (ADR-042) |
 | **BGV_Checks** | Check_ID (BGC-), Case_ID, Check_Type, Subject, Period, Status, Finding, Verified_On | Schema 33 |
 | **BGV_Cases** extra | Purged_On, Purged_By | Schema 34 (ADR-043); set by a retention purge |
+| **BGV_Cases** pending | Track, Track_Note, Waiting_On, Wait_Reason, Expected_On, Pending_Remark, Left_Org, Exp_Letter, Wait_By, Wait_At | Schema 44 (ADR-060); blank = as before. Track: blank (automatic) / NA / Tracked (a lead's override). Waiting_On: Employee. Settings key `BGV_NA_BEFORE` (default 2026-11-05) |
 | **BGV_Log** | Log_ID (BGL-), Case_ID, At, By, Kind, Old_Status, New_Status, Note | Schema 33. The timeline |
 | **BGV_Vendors** | Vendor_ID (VND-), Name, Contact_Person, Email, Phone, Checks_Offered, Std_TAT_Days, Active, Contract_End, Note | Schema 33 |
 | **BGV_Rules** | Version_ID (BGR-V1…), Effective_From, Status, Config_JSON, Reason, Remark | Schema 33. Versioned like TAT and CTC rules; V1 = Policy 9.1.1 and the agreed BGV plan |
@@ -298,12 +314,13 @@ All tables are sheets in the database file; row 1 holds headers; columns are add
 | **Org_Dept_Map** | CRM_Dept, Org_Dept, Mapped_By, Note | Schema 36. One row per existing CRM department (M_Departments / MRF.Dept) mapped to a new department; MRF lines keep their old names |
 | **Org_Manpower** | Org_Dept, Grade, Approved_HC, Existing_HC, As_On, Batch_ID | Schema 36. Headcount snapshot, one row per department and grade; replaced whole by each import |
 | **Org_Import_Log** | Batch_ID, As_On, File, Rows, Approved, Existing, Imported_By, Imported_At, Note | Schema 36. One row per import |
-| **Org_Plan_Revisions** | Rev_ID (`ORV-`), Rev_No, Status (Draft / Active / Superseded), Reason, Approved_By, Effective_On, Source (Report import / App edit / Excel upload / Restored), Base_Rev, Total_Approved, Seats_Changed, Created/Updated/Activated By/At | Schema 38. One row per revision of the approved (budgeted) manpower plan; at most one Active and one Draft |
-| **Org_Plan** | Row_ID, Rev_ID, Org_Dept, Grade, Approved_HC | Schema 38. The full set of non-zero department × grade rows of each revision, so any revision can be read, compared or restored on its own |
+| **Org_Plan_Revisions** | Rev_ID (`ORV-`), Rev_No, Status (Draft / Active / Superseded), Reason, Approved_By, Effective_On, Source (Report import / App edit / Excel upload / Restored), Base_Rev, Total_Approved, Seats_Changed, Created/Updated/Activated By/At | Schema 46. One row per revision of the approved (budgeted) manpower plan; at most one Active and one Draft |
+| **Org_Plan** | Row_ID, Rev_ID, Org_Dept, Grade, Approved_HC | Schema 46. The full set of non-zero department × grade rows of each revision, so any revision can be read, compared or restored on its own |
 | **Org_Grade_Notes** | Note_ID (`ONT-`), Org_Dept, From_Grade, To_Grade, Seats, Reason, Approved_By, Review_On, Status, Created/Updated By/At | Schema 37. One active note per department, approved grade and grade it is filled at. Upgrades keep a reason, approver and review date; downgrades need none |
 | **M_Lists** | List, Value | Dropdown values (Approval_Status, Offer_Sent, Interview_Result, CV_Box, Source_Channel, …) |
 | **M_Panel_Members** | Panel_ID (PM-), Name, Aliases, Designation, Department, Email, Roles, Active, Note | Seeded with 68 people from the CV Tracker's interviewer names; aliases merge spelling variants |
-| **KPI_Targets** | Recruiter, KPI, Levels, TAT_Days, Notice_Exemption, Effective_From, Note | Recruiter `*` = team default (Timely closure 60 days all levels; M fulfilment 50 days M) |
+| **KPI_Targets** | Recruiter, KPI, Levels, TAT_Days, Notice_Exemption, Effective_From, Note, **Version_ID, Active, Reason, Saved_By, Saved_At** (v146) | Recruiter `*` = team default (Timely closure 60 days all levels; M fulfilment 50 days M; W fulfilment 20 days W). Changes from Admin → KPI targets append a row (`KT-0001`…); `Active = No` ends a recruiter's override. Rows are never edited or deleted |
+| **KPI_Scoring** | Version_ID, KPI, Kind (PERCENT / COUNT / CAPTURE), Rules_JSON, Effective_From, Reason, Saved_By, Saved_At | Created by the first score-rule save (`KS-0001`…). No rows = the defaults in `Kpi.gs` (today's scoring). CAPTURE rows only log a change of the scoring start (`KPI_CAPTURE_FROM` stays in Settings) |
 | **Settings** | Key, Value, Note | §12.2 |
 | **Dash_Snapshot** | — | Serialised Overview snapshot |
 | **Import_Report / Import_Exceptions** | — | One-time migration record (13 checks; 71 exceptions) |
@@ -398,7 +415,7 @@ Evaluated in this order:
 
 - Required: Position, Grade, Dept, MRF receipt date. **Designation** (schema 27, `checkDesignation_`): the form lists only the active designations of the grade picked; a **new** position must pick one when its grade has any; a value must belong to the grade (the line's existing value is kept if it was later deactivated or the grade's list changed); existing positions without one can still be saved. The grade dropdown shows grade and band only.
 - A multi-position MRF is added as N identical lines (tracker keeps one row per resource).
-- **Dates** (`assignDates_`, ADR-013): when Approval status is Approved and the approved date is blank, MRF approved on defaults to MRF received on; Position assigned on defaults to MRF approved on. Neither may be in the future; approved ≥ received; assigned ≥ approved. **Recruiters can set these dates only while blank**; after that only `lead` users can change them. **Reassigning** a position to another recruiter restarts the recruiter clock: Assigned_On becomes today, unless a `lead` user deliberately sets a different assigned date in the same save; the change history keeps the original.
+- **Dates** (`assignDates_`, ADR-013): when Approval status is Approved and the approved date is blank, MRF approved on defaults to MRF received on; Position assigned on defaults to MRF approved on. Neither may be in the future; approved ≥ received; assigned ≥ approved. **Recruiters can set these dates only while blank**; after that only `lead` users can change them. **Reassigning** a position to another recruiter restarts the recruiter clock: Assigned_On becomes today, unless a `lead` user deliberately sets a different assigned date in the same save; the change history keeps the original. **The TAT starts from the MRF approved date, not the date the MRF was received** (v136): the recruiter clock uses the position assigned date, which defaults to the approved date, so a wrong approved date means a wrong TAT. `MRF.Approved_Date_Check` records how the approved date was set: `Default` (filled in from the received date), `Confirmed` (a real date was typed, or a lead confirmed it) or blank (older positions). Leads open Positions, "Check MRF approved dates", to see approved positions whose approved date equals the received date and is not confirmed (open and offered ones; closed ones on request; replacements are skipped because they carry the original start), then enter the real date or confirm it. Saving moves the assigned date with it when the two were the same day (or the assigned date would fall before it), recalculates the stored TAT and the dashboards, and is audited. The KPI drill-down column is "TAT start" and says which date it is (MRF approved; position assigned, with the approved date; MRF received because the approved date is missing; or carried from the original MRF).
 - **JD / screening-question confirmation dates** (`checkConfirmDates_`): received ≤ JD confirmed ≤ SQ confirmed, none in the future; SQ date needs the JD date first and needs questions.
 - Status-date rules: No Vacancy needs No_Vacancy_Date; Not Needed / On Hold need Not_Needed_Date; Actual DOJ requires Offer sent = Yes.
 - **Ownership:** only the assigned recruiter or a `lead` user can edit (§3.2).
@@ -475,10 +492,15 @@ Policy 20.1: closure by grade from **MRF approval to joining date, excluding the
 
 ```
 rule        = ruleFor_(grade, start)
-notice      = max(Notice_Period_Days − rule.grace, 0)        // only days above the grace; 0 if Notice_Ext_Status = Rejected
+notice      = max(Notice_Period_Days − rule.grace, 0)        // only days above the grace; always applied (v151: a rejection and the KPI target's notice switch no longer change it)
 extra       = Σ approved TAT exemption days for this clock    // Type Days; Applies_Recruiter (recruiter clock) / Applies_Position (position clock)
-exemption   = notice + extra                                  // stored Exemption_Days (recruiter clock)
-allowed     = rule.std + exemption                            // Final_TAT
+allowed     = rule.std + extra + notice                       // today's rule (v151)
+offer       = Offer_Date if Offer_Sent = Yes, else none       // tatOffer_
+if offer ≤ start + rule.std + extra + Hold_Days + paused      // offered within the TAT (v152, tatAllowed_)
+  allowed   = max(allowed, (offer − start) + Notice_Period_Days − Hold_Days − paused)
+                                                              // the full notice runs from the offer: due on the later of the two dates
+exemption   = allowed − rule.std                              // stored Exemption_Days (recruiter clock)
+                                                              // Final_TAT = allowed
 end         = Actual_DOJ
               ‖ No_Vacancy_Date            (status No Vacancy)
               ‖ Not_Needed_Date            (status Not Needed / On Hold)
@@ -491,7 +513,7 @@ result      = Open/Offered : days > allowed → Overdue; days ≥ risk × allowe
               otherwise    : days > allowed → Missed; else Achieved
 ```
 
-Calendar days (decision 26 Sep); notice adds only days above the grace; on-hold days excluded. Stored results are refreshed on every position save, nightly, on TAT rule save, and by Admin → Tools → Recalculate TAT (Admin).
+Calendar days (decision 26 Sep); notice adds only days above the grace; on-hold days excluded. **An offer sent within the TAT runs the full notice from the offer (v152, ADR-064):** the clock falls due on the later of today's due date and the offer date + the notice period (example: a 50-day TAT, a 60-day notice, offered on day 40: due on day 100 instead of day 80). The offer deadline is the TAT without the notice (start + standard + approved exemption days + on-hold and paused days); a late offer, or no offer sent, keeps the rule above, so no position gets less time than before. The same rule (`tatAllowed_`) sets the three TAT KPIs and the position screen's live readout, which then says "offered …, within the TAT, so the N-day notice runs from the offer". Stored results are refreshed on every position save, nightly, on TAT rule save, and by Admin → Tools → Recalculate TAT (Admin).
 
 **Known impact of the W1–W3 correction (v46, measured on live-like data):** 36 W1–W3 positions; 11 change result — 10 closed positions Achieved → Missed, 1 open On track → Overdue. Reversible via TAT rules (set 50 for every position, then 20 from a chosen date).
 
@@ -522,6 +544,24 @@ Server-side, paged search. Every typed word must match somewhere (name, mobile, 
 - Profile fields: Function_Area (fixed list, e.g. Production / Operations, Mechanical Maintenance, Electrical Maintenance, Instrumentation & Automation, …), Key_Skills, Total_Exp_Years (or first number in the legacy experience text), Current_Location, Expected_CTC (parsed to LPA from "8 LPA", "65000 per month", …), Notice_Days.
 - **"Find candidates for this position"** (`apiSuggestForLine`) scores pool candidates: function matches the department's function **+3**; shared title/skill words **+2 each (max +4)** (stop-words ignored); experience vs the grade minimum from Policy Appendix F (degree: M1 25, M2 20, M3 15, M4 10, M5 6, M6 4, M7 2 years; 12th/ITI: M3 20, M4 16, M5 12, M6 12, M7 10) **+2** if met, **+1** if ≥ 75 %, **−1** if below; notice ≤ 30 days **+1**. Needs a function or title match and a score ≥ 2; ranked by score then recency; each result lists its reasons. One click adds to the pipeline.
 
+### 8.7 Voice screening call (`VoiceScreen.gs`; ADR-045, 048, 049, 050; schemas 38–39; Admin places calls, recruiters review)
+
+**Current state (v99).** The paragraphs below were written when the call was a scaffold; where they say a part is "not written", read this block first.
+- **Working:** placing a call (Sarvam outbound API), the question plan, results coming back through the webhook receiver (or fetched by attempt id), the call-plan desk, a follow-up call for questions still missing, the review table with suggested ratings, and a recruiter completing the screening from the result (`voice_review`).
+- **Question plan** (`voicePlan_`, `apiVoicePlanDraft`, `voiceDeskDraft_`): the Admin opens a call-plan desk on the card: the standard facts first, then the position's role questions, location/notice/pay last; wording and which questions to ask are editable; a warning shows above 12 questions or 8 minutes. The plan is stored on the call (`Plan_JSON`).
+- **Agent variables:** `candidate_name`, `role_applied`, `role_questions` (all numbered questions; the questions variable name is a setting), `call_mode` (`full` or `follow_up`), `question_criteria` (read after the call only). Outputs: `call_summary`, `call_disposition` (completed / not_interested / callback_requested / incomplete_screening / wrong_number), `screening_answers` (one Q-line per answer, English, digits), `screening_ratings` (Q1: Meets / Partly / Does not meet / Unclear with a reason; agent version 6 and later, `VOICE_RATINGS_FROM_`; list-only prompt from version 5, `VOICE_LISTONLY_FROM_`). A call with role questions and no questions variable set is refused.
+- **Result and review:** `voiceAnswersFromVars_` and `voiceParseAnswers_` turn the agent's text into answers (Hindi digits and words, dictionary-style lines, aliases); `voiceCombined_` is the single definition of "answered", used by the card, the desk and the dialog so the counts agree. The review dialog is editable: the recruiter changes answers, accepts or edits the suggested rating, and may complete the screening; it saves through the normal screening save (`apiSaveScreening`), so scoring is unchanged. The agent only suggests; the recruiter decides.
+- **Permissions:** `voice_agent` (Admin only): settings, place and fetch calls. `voice_review` (recruiter for own positions; TA Lead, Head of HR and Admin for all): see, rate, edit, complete.
+- **Parked by the business (not built):** language switching (English for M1–M3 and Hindi otherwise, per-profile start language), a short question set for W/T levels, profile packs, the provider's Do Not Disturb list API (`voiceDndCheck_` still a stub; the check can be switched off for tests), accuracy feedback on the suggested ratings. Needs one more real call on agent version 6 to confirm post-call `screening_ratings` (the provider's simulated chats do not run the post-call step).
+
+- **Settings** (Admin → **Voice agent**; permission `voice_agent`): allow calls, agent id, connection id, calling number, organisation and workspace id, Do Not Disturb check (on), API key (Script Property `VOICE_API_KEY`; the page shows only "set, ends …1234"; the key is never returned, logged or stored in Settings). Changes are audited by name, never by value.
+- **On a pipeline card** (Admin, position has final questions, card active): **Preview the call** shows who would be called (last 4 digits), what the agent is told (first name, position, company, the questions with type and what is needed, knock-outs marked), the Do Not Disturb rule and what still blocks a call. **Place the call** runs the checks (settings, valid 10-digit mobile, active card, final questions, no call already in progress for this card in the last 30 minutes, Do Not Disturb), logs the call and calls the provider.
+- **Call log** (`Voice_Calls`: id, card, candidate, last 4 digits only, status Starting / Started / Completed / Failed / Blocked (Do Not Disturb) / Cancelled, note, provider call id, questions version, who and when, transcript, answers, whether a draft was written). Transcripts and answers are written directly, never through the change log.
+- **Result** (`apiVoiceApplyResult`): a completed call writes the answers into a **draft** screening (through the normal screening save, with a note to check every answer); never completes it, never overwrites a completed screening, and is not used if the questions changed after the call started.
+- **The call is connected** (`voicePlaceCall_`): `POST https://apps.sarvam.ai/api/outbounds/v1/orgs/{org}/workspaces/{workspace}/outbounds` with header `X-API-Key`, body exactly as the provider's own example: `app_config` (agent id as `app_id`, `app_version`, `app_type: agent`, `connection_config` with the connection id and the calling number, `agent_variables`, optional `app_overrides` with the opening line and entry state), `user_config.user_phone_number` as `+91` + the 10 digits, and `webhook_config` (our call id as `lead_id`) when a webhook address is set. The known ids are the settings defaults (agent `Conversatio-85617fe5-386e` version 1, its connection and calling number); the API key is entered by the Admin. A refusal or network error is recorded as Failed with the key scrubbed from the message. The response's id field name was not in the example, so the first of `id`, `outbound_id`, `call_id`, `uuid` is kept and, if none, the start of the response is kept as a note.
+- **Agent variables:** only `candidate_name` (first name) and `role_applied` are sent. `gender`, `candidate_location` and `resume_highlights` (variables the agent defines) are **not** sent. The confirmed questions are sent only if the Admin names the agent variable that receives them (setting); otherwise the agent uses its own questions. `call_disposition`, `call_summary` and `screening_answers` are the agent's outputs.
+- **Still not written:** (1) the **Do Not Disturb check** (`voiceDndCheck_`, the provider's DND list API): while it is required and not written, no call is placed (the Admin can switch it off for a test, with a warning); (2) **results coming back** (`voiceResultsWritten_`): the provider sends them to a webhook address (a separate public https address is needed: this web app requires sign-in and cannot receive them) or they are fetched afterwards; `apiVoiceApplyResult` is ready to take them. Calling out needs the script permission `script.external_request` (added to `appsscript.json`), so every user approves the app once after this deploy.
+
 ### 8.6 CV profile (`CvProfile.gs`; ADR-044; schema 35)
 
 - **Where:** candidate card → **CV profile** (existing candidates with a CV: *Build the profile from the saved CV*; new candidates and the bulk upload store it when the candidate is saved). Candidates page → **Export profiles** (CSV: name, current role, experience, location, skills, current employer, education, certifications, pipeline status, reading confidence, risks, reviewed).
@@ -541,7 +581,19 @@ Server-side, paged search. Every typed word must match somewhere (name, mobile, 
 - **Pilot measurement:** parsed vs saved values are logged per candidate (`CV_Parse_Log`); Admin → Tools → **CV parser accuracy** shows per field how often the value was kept, corrected or missed. Target: 30–50 real CVs before deciding whether any AI option is needed. Benchmark at v42: 43/43 fields correct on 8 test CVs in the browser; 52/52 on the sample suite.
 - **"Show the text that was read"** helps diagnose misses (missing text = OCR/format issue; present text = parser pattern gap).
 
+### 8.8 Fast-track hiring route (`FastTrack.gs`; ADR-047; schema 40)
+- **Who:** positions at fast-track levels (default W1–W5 and T levels; Admin → Hiring routes) or set by hand on the position form (Head of HR / TA Lead). Everything else is the standard route.
+- **Steps:** CV received → Sent to department → Department confirmed (written) → Hiring confirmed → Joined → Onboarded. The other stages are skipped, not removed (history note lists them), so reports and KPIs are unchanged. KPI: a Suitable department decision counts as shortlisted, interview and selected.
+- **Gates:** the department's decision, name and date are recorded at Confirmed; the hiring cannot be confirmed (Offer) without the department's written confirmation file; Onboarded needs the W document pack (Aadhaar, PAN, family details, spouse and children Aadhaar for ESIC, photographs, basic education, identity proof, birth proof) verified, or an approved exception. Offer letter is optional; the appointment letter date and file are recorded at Joined.
+- **Onboarding role** (`onboard` permission): may confirm the hiring, record the joining and complete onboarding of any fast-track position, and nothing else. Create users with role "Onboarding".
+- **To-dos:** JD, questions, CV sharing, interview and offer-acceptance to-dos are not raised for fast-track positions.
+- Later phases: referral slip / department form PDF, walk-in "Hire now", Onboarding to-dos, fast-track time-to-hire reports.
+
 ## 9. Candidate pipeline
+
+### 9.0 Finding a position or a candidate on the Pipeline page (v114)
+- Above the board: a **Search** box, filters **Recruiter** (leads only; a recruiter sees only their own positions), **Division**, **Department** (limited to the chosen division; choosing a department also sets its division), **Status** (Open and offered by default, All, Open, Offered, Closed, Replaced, On hold / not needed / no vacancy) and **Grade band** (M / W / Trainees), a count ("23 of 241"), **Clear filters**, and **Previous / Next** buttons that step through the filtered positions. The position that is open always stays in the list. The filters (not the search text) are remembered in the browser. Division comes from the department list (`M_Departments`).
+- The search words (all must match) are looked for in MRF number, position, designation, department, division, recruiter, grade, Line id and status. From 2 characters the box also lists up to 15 **candidates** whose name, candidate id or mobile digits (4 or more) match (`apiPipelineFind`): name, id, last 4 digits of the mobile, MRF, position, department, recruiter, stage and status; one click opens that position with the candidate's card open. A lead searches every position, anyone else only the positions where they are the recruiter.
 
 ### 9.1 Model (ADR-015)
 
@@ -555,9 +607,9 @@ One **candidate** (person) → one **application card per position** (`Applicati
 | 5 | CV received | `Sourced` | CV received | — (card created) |
 | 5 | Screening by recruiter | `Screened` | Screened by recruiter | Answers to the position's screening questions |
 | 6 | Share with department | `Shared` | Shared with department | — (starts the 24 h HOD-feedback clock) |
-| 7 | Post-confirmation | `Confirmed` | Dept confirmed for interview | — |
+| 7 | Post-confirmation | `Confirmed` | Dept confirmed for interview | The department's **decision** (Suitable / Not suitable / Hold), **who in the department** confirmed and the **date** (v145, as on the fast-track route): saved on the card (`Dept_Confirm_By`, `Dept_Confirm_On`); the result is the history outcome. *Not suitable* → card Rejected; *Hold* → card On hold. Cards confirmed before v145 keep only the history note. |
 | 7 | Technical interview | `Technical` | Technical interview | Interview date and result (panel optional). Result *Reject…* → card Rejected; *Hold…* → card On hold |
-| 8 | HR interview | `HR` | HR interview | Same as Technical |
+| 8 | HR interview (**optional**, v135) | `HR` | HR interview | Same as Technical, but held only when needed. The recruiter discusses with the candidate while the documents are verified, so a card at Technical normally goes straight to Documents verified; an HR interview is recorded with the smaller "Record an HR interview (optional)" button. A card that skips it is shown "not held" on the stage track and is not counted at HR in the funnel |
 | 9 | Document verification | `Docs` | Documents verified | Joining checklist sections A–H each *Verified* or *NA*, **or** an approved exception recorded (Policy 9.3; outcome logged "Conditional: …") |
 | 10 | Offer | `Offer` | Offer released | Offer letter date (CTC and expected joining optional). Writes Offer_Sent = Yes, Offer_Date, EDOJ, Candidate_ID to the position → status **Offered** |
 | 11 | Joining status check / fail-safe | `Prejoin` | Pre-joining follow-up | Offer acceptance date; risk set to Green |
@@ -580,7 +632,7 @@ Active · Rejected · On hold · Withdrawn · Removed (switch-over/"linked in er
 
 ### 9.5 Pre-joining fail-safe (`apiAddFollowup`)
 
-Check-ins record date, mode, response, **risk (Green / Amber / Red)** and the next check-in date. Alerts: HOD feedback overdue (card at *Shared* > 24 h), joiners at risk (Amber/Red), follow-ups due today (and Pre-joining cards with no next date). These show on the Overview, in the weekly email and as to-dos.
+Check-ins record date, mode, response, **risk (Green / Amber / Red)** and the next check-in date. Alerts: HOD feedback overdue (card at *Shared* > 24 h; fast-track cards are included and read "Department's written confirmation (fast-track)" with a Fast-track tag, since that paper is what the fast-track route waits for), joiners at risk (Amber/Red), follow-ups due today (and Pre-joining cards with no next date). These show on the Overview, in the weekly email and as to-dos.
 
 ### 9.6 Backout and replacement MRF — Policy 9.5 (ADR-015)
 
@@ -590,6 +642,8 @@ Withdrawing a card at **Offer or Pre-joining** is a **backout**:
 3. A **replacement MRF** is created: MRF number `J00039` → `J00039-R1` → `J00039-R2` …; copies requirement fields (position, grade, department, recruiter, JD, questions, panel, budget, approval), `Parent_Line_ID` = original, Vacancy_Reason = Replacement, Approval = Approved, and **`TAT_Start_From` = the original's start**, so TAT continues across any number of backouts.
 4. Other Active/On-hold cards (backups) move to the replacement with a history note; their scheduled interviews and candidate links move too.
 5. A to-do "Replacement MRF: move the next candidate forward" is raised.
+
+**Reinstating a candidate who backed out (v107; `apiReinstateBackout`; Head of HR and Admin, permission `withdraw_offer`; ADR-051).** When a candidate who backed out confirms they will join, the backout is reversed on the **same MRF** (button "Candidate will join after all" on the replaced position's board). It needs a reason (who confirmed, when, how). A **new expected joining date** replaces the one on the position and the card (not before the offer date, not in the past); if none is given the date on record is kept, and a new one is required when that date has passed. It is refused while the replacement MRF has a live offer holder or a joining, was itself replaced, or the candidate meanwhile holds an offer on another position. Then, under one lock: the live cards on the replacement move back to the original MRF with their interviews; the replacement is closed as "Created in error" (a lead can restore it); the original position stops being Replaced and is Offered again with this candidate and the new date (Backout_Date cleared, so the KPI no longer counts the backout; the offer still counts); the card is Active again at its stage with Risk Amber and a check-in due in two days; BGV cases are re-checked. The history keeps both "Backout" and "Backout reversed". TAT keeps counting from the original start. A retry after an interruption finishes the remaining steps.
 
 Effects: the vacancy is counted once (Replaced excluded from open counts; the closure counts when the replacement closes); backout rate counts named backout events. **Offer withdrawn by the company** (via Close without hiring) is *not* a backout.
 
@@ -614,9 +668,12 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 ### 10.1 Daily log (`Daily_Funnel`)
 
 - Per position per day: CVs sourced, CVs reviewed, HR 1st round, shared with dept, shortlisted by dept, interviews done, selected (whole numbers ≥ 0), HOD feedback, remarks. At least one count or a remark. Date not in the future.
-- **From the switch-over date only CVs sourced and CVs reviewed are typed**; the other columns are counted from candidate moves (ADR-015).
+- **From the switch-over date the Daily review, the Overview funnel and the Daily log list show the Pipeline's own stages as their columns (CV received, Screened, Shared with dept, Dept confirmed, Technical interview, HR interview, Documents verified, Offer released, Pre-joining, Joined, Onboarded), counted from candidate moves (ADR-015, ADR-016).** CV received is the typed CVs sourced until the funnel start date (`PIPELINE_FUNNEL_V2`, default 1 Nov 2026, never before the switch-over) and is counted from the pipeline after it, so from then the Daily log carries only remarks and the department feedback (at least one of them is required). Typed CVs reviewed has no Pipeline stage and is no longer a funnel column (the number stays in the sheet). Days before the switch-over keep the typed columns, shown in their own table ("Before 5 Oct, typed"). Setting the funnel start date to a far-future date makes CV received typed again; nothing is deleted or rewritten.
+- **One entry per position and day (v112):** saving an entry for a position and day that already has one updates that entry with the numbers sent (it never adds a second). A recruiter cannot change an entry that someone else logged (the message names who); a lead can. Admin → Data checks lists entries logged twice for one position and day, and a lead can remove the identical copies (counts zeroed, marked "[duplicate removed …]", audited; nothing is deleted); copies with different numbers are left for a person to decide.
 - **Edit window (v21):** recruiters can edit only entries **they** logged, **on the day they saved them**; locked from midnight. `lead` users can always correct.
+- **Log activity is a day grid:** a Recruiter picker (My positions by default, each colleague, Not assigned, All recruiters) and a Date at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks; **Save** per row or **Save all changes**. An entry counts for the position's recruiter even when a lead types it (`Created_By` records who typed it).
 - A "Today's tasks" strip shows the recruiter's open/critical counts and next 3 tasks.
+- **One place to log (v120):** the position side panel has no Daily log tab any more (Details and Candidates only). Its button "Daily log of this position" opens the Daily log page filtered to that position (from its receipt date, at most 180 days back, to today). The page's History has a **Position** filter: with a position chosen it shows the six totals and every recruiter's entries for it (`apiListFunnel` with `lineId`); "All positions" returns to the recruiter view. **My day** uses the same day grid (fixed to the signed-in recruiter and the day being viewed) instead of the old single-entry form; the edit drawer (`dailyFormHtml`) remains the one form for changing an earlier entry.
 
 ### 10.2 My day and day notes (`Daily_Summary`)
 
@@ -626,7 +683,10 @@ My day (every user) shows today's activity tiles, the to-do list (top 7, critica
 
 Per recruiter for a chosen date: funnel counts (typed and, from the switch-over, **derived from moves with the named candidates behind each number**), offers, joinings, candidates added, app changes made, day note, task activity (done / chased / snoozed) and **Missed** tasks, plus positions closed without a hire.
 
-Scorecard derivation (`pipelineEvents_`, from `PIPELINE_CUTOVER`): HR 1st round = moves to Screened; Shared = moves to Shared; Shortlisted = moves to Confirmed; Interviews done = Technical/HR recorded; Selected = selected results; Offers = moves to Offer; Joined = moves to Joined; backouts = backout events; credited to the **position's recruiter**. Cards removed as *linked in error* (or at the switch-over clean-up) count for nothing. A backward move by a lead never counts and **cancels the earlier forward moves it undid**, even on earlier days (v35).
+Scorecard derivation (`pipelineEvents_` / `pipelineCredits_`, from `PIPELINE_CUTOVER`): **each column is a Pipeline stage; a card passing a stage credits it, every stage a card passes is credited, and each stage counts once per card** (on the day it was first passed). A card that jumps from Sourced to Technical therefore also counts at Screened, Shared and Dept confirmed. Technical and HR interview are separate columns. On a fast-track position only the fast-track stages count (Sourced, Shared, Confirmed, Offer, Joined, Onboarded). Backouts are counted separately. Credits go to the **position's recruiter** (the same rule in the moves list). Excluded: records made by the migration, outcomes Reconciled / Moved / Unlinked / Removed, the card created only at the switch-over check, and cards removed as *linked in error* (or at the switch-over clean-up). A backward move by a lead never counts and **cancels the credits for the stages it went back past**, even on earlier days (v35); advancing again credits them again. History is read from the switch-over date so "once per card" holds for a single day's view. Interview results and the joining date on the candidate form of a candidate linked to a position are locked for recruiters after the switch-over; a lead can correct them. "Not suitable" on the find-candidates list creates the card and rejects it in one step, so a CV that was looked at and discarded still counts as CV received. The Overview funnel counts from the switch-over only.
+
+### 10.3a Position funnel (Positions → open a position → **Funnel** tab, v129)
+Per position: **CVs received** (the Daily-log CVs sourced typed before the funnel start date plus the cards created from it, shown with that split), **candidates in the pipeline**, still active, and not progressing (rejected / on hold / withdrawn). A bar per stage of the position's route (standard, or fast-track stages only) shows how many candidates reached that stage or went beyond it, with how many are at it now. Below it each candidate is listed with the stage reached (the stage a card holds, which a rejected, held or withdrawn card keeps), status and reason, date in stage, date added, and the Tech and HR results; a row opens the candidate. Read-only; `apiPositionFunnel`, tested by E2E E5f. When more candidates are on the pipeline than CVs were logged, a note says so.
 
 ### 10.4 To-do engine (`Tasks.gs`, ADR-012)
 
@@ -653,7 +713,7 @@ Scorecard derivation (`pipelineEvents_`, from `PIPELINE_CUTOVER`): HR 1st round 
 | confirm_attendance | Confirm interview attendance | 0 | — | | Day before the interview |
 | reschedule | Reschedule the interview | 0 | 0 | ✓ | Panel member unavailable |
 | record_result | Record the interview result | 0 | 48 | ✓ | App. A step 6: decision within 48 h |
-| psychometric | Psychometric (Mettl) test | 0 | — | ✓ | 8.7.1: Manager and above, before the final interview |
+| psychometric | Psychometric (Mettl) test | 0 | — | ✓ | 8.7.1: Manager and above, before documents are verified (the HR interview is optional, v135) |
 | release_offer | Release the offer | 24 | 72 | ✓ | App. A step 7: offer within 72 h of finalisation |
 | bgv | Start background verification | 0 | 72 | ✓ | 9.1.1: BGV within 3 days of the offer (Manager+) |
 | offer_acceptance | Chase offer acceptance | 72 | — | | 9.1.2: acceptance within 3 days |
@@ -674,6 +734,10 @@ Scorecard derivation (`pipelineEvents_`, from `PIPELINE_CUTOVER`): HR 1st round 
 
 **HOD contacts** (Admin → HOD contacts; `M_Departments.HOD_Name/HOD_Email`, lead-editable, email validated) address the pre-written messages.
 
+**The (i) on a to-do (v115).** Each to-do, and each item in the Missed list of the Daily review / My day summary, has a small (i). Hover, keyboard focus or a tap shows the latest 5 actions on it, newest first: chased, snoozed or done, with who, when and the note (`taskNotes_`, from `Task_Actions`, last 60 days; on a Missed item only what had been entered before the end of the reviewed day). With none it says "No comments entered yet." "I've chased" and "Done" now open an optional one-line note (200 characters) before they are recorded; the snooze reason is still required.
+
+**Monthly summary of missed to-dos (v117; `apiMonthMissed`).** Daily review → **Month** (TA Lead, Head of HR, Admin): one table, recruiters in rows, for a chosen month (default the last completed month; up to 24 months back). **Definition:** a to-do is *missed in a month* when its rule counts (`missed: true`), it became critical in that month (IST) and it was not completed before it became critical; each to-do counts once, however many days it stayed missed. BGV start rules (`bgv`, `bgv_join`) keep the daily rule: not missed when the start date entered on the position is on or before the day it became critical. Columns: Missed; Still open at month end; Closed late; Average days late (to completion, or to the end of the month, or to now in the running month); Chased (sum of chases); the most-missed kinds; change against the month before (▲ worse, ▼ better). A recruiter's name opens the list of their missed to-dos (with the (i) notes); two CSV downloads (table, details). To-dos that became critical earlier and were still open on the 1st are noted as carried over and count in their own month. Every recruiter sees only their own figures in **My day** ("My missed to-dos this month"). Source: the `Tasks` sheet kept by `reconcileTasks_` every 30 minutes, so a to-do the system never saw is not counted; the recruiter is the one on the to-do when it was last updated.
+
 ### 10.5 Interview scheduling (`apiScheduleInterview`, `apiInterviewAction`)
 
 From a pipeline card: round (Technical/HR), date, time, duration, mode (**Teams** or **In person**), location, panel (≥ 1). Refused if the time is more than an hour in the past or any panel member is logged unavailable (conflict text lists who and why). The recruiter then opens a pre-filled **Teams meeting / Outlook invite** from their own account (the app cannot see Teams replies). Actions: **Confirm** attendance; **Panel unavailable** (who + reason → automatic Panel_Unavailability entry + Reschedule task); **Cancel**. Closing a position cancels its scheduled interviews.
@@ -690,15 +754,17 @@ Financial-year grid (April–March), team or per recruiter, value + score (0–5
 
 | KPI | Definition | Score |
 |---|---|---|
-| **Timely closure of vacant positions** | Positions **filled in the month** (Closed, DOJ in month) within the recruiter's target days (KPI_Targets; default 60, all levels) + notice exemption (days above `NOTICE_GRACE_DAYS`, unless rejected) + approved recruiter exemptions, with on-hold and approved paused days not counted (schema 28) ÷ positions filled in the month; measured on the **recruiter clock** | 5 ≥100 %, 4 ≥95, 3 ≥90, 2 ≥85, 1 ≥80, else 0 |
-| **Fulfilment of M-level positions within TAT** | M-level positions **targeted** in the month (due = start + target days (default 50) + exemption, or filled that month) that were filled within TAT ÷ targeted; months up to the current one | same bands |
-| **Offer backout rate** | Backouts in the month ÷ offers made in the month | % only (scoring bands not yet given) |
+| **Timely closure of vacant positions** | **(Positions worked on in the month − positions that missed the TAT in the month) ÷ positions worked on × 100** (v153, owner decision; before: on time ÷ due). Worked on = any level, not filled internally, Open, Offered or Closed, recruiter clock started by the month end and not joined before the month began. A position is **due** on its recruiter-clock start + target days (KPI_Targets; default 60, all levels) + notice exemption (days above the TAT rule's grace, 30 by default, always since v151; when the offer went out within the TAT the full notice runs from the offer if that gives more time, v152) + approved recruiter exemptions + hold / approved paused days. A **miss** = it fell due in the month and joined after its due date or has not joined; it counts once, in that month (a position still open in later months is worked on there but not missed again). In the current month a position **not yet due** (not joined, due date today or later) is not counted until it joins or its due date passes (v153). The cell shows "90/95" (worked on without a miss / worked on) and "5 missed · 53 of 58 due on time"; the reconciliation lists every position worked on (v123, v124, v153) | 5 ≥100 %, 4 ≥95 %, 3 ≥90 %, 2 ≥85 %, 1 ≥80 %, else 0 |
+| **Fulfilment of M-level positions within TAT** | **(Positions worked on in the month − positions that missed the TAT in the month) ÷ positions worked on × 100** (v157, the same basis as Timely closure; before: on time ÷ due), with the same due dates, misses and not-yet-due rule as Timely closure, for **M-level positions only** (grades M1–M7) against their own target (default 50 days, notice beyond 30 days exempt). A position counts in the month it joined if that is on or before the month it fell due, else in its due month; a position not yet due in the current month is not counted yet (v153). "N of M worked on" and the reconciliation as Timely closure (v130) | same bands |
+| **Fulfilment of W-level positions within TAT** (v130) | The same as M-level (on time ÷ due) for **W-level positions only** (grades W1–W5), target 20 days (policy 20.1), notice beyond 30 days exempt, counted from Apr 2025 | same bands |
+| **Offer backout rate** | (Candidates who backed out in the month ÷ **positions worked on** in the month) × 100 (v150). A backout counts in the month of its backout date, for the position's recruiter. Positions worked on = the same count as the "N of M worked on" line of Timely closure (recruiter clock started by the month end, not joined before the month began; Open, Offered or Closed, not filled internally). Before v150: backouts ÷ offers made in the month | % only, not scored (lower is better) |
 | **Mettl psychometric test** | Shortlisted **Manager+** candidates in the month without a completed or waived test | 0 → 5, 1 → 3, >1 → 0 |
 | **MRF & assessment process adherence** | Observations logged against the recruiter in the month | 0→5, 1→4, 2→3, 3→2, 4→1, >4→0 |
 | **Background verification compliance** | New hires (Closed, DOJ in month) where BGV is required (BGV_Required = Yes, or Auto and Manager+) **missing** previous-employer BGV **initiated within 3 days after the offer** (Policy 9.1.1), or current-employer BGV **started within 2 days of joining** (pending until the deadline passes) | 0 → 5, 1 → 2, >1 → 0 |
 | **Recruitment & CV tracker accuracy** | Errors in the month's 20 % audit sample | 0 → 5, else 0 |
 
-- **Targets:** `KPI_Targets` rows with Recruiter `*` are team defaults; a named recruiter's row overrides from its Effective_From month; Levels = All, M, W or T.
+- **Targets:** `KPI_Targets` rows with Recruiter `*` are team defaults; a named recruiter's row overrides from its Effective_From month; Levels = All, M, W or T (a grade prefix). One list (`KPI_TAT_`) drives the three TAT KPIs, so they score, show "worked on" and reconcile the same way. A position is placed by each KPI's own target, so an M-level or W-level position counts in Timely closure (60 days) **and** in its level KPI, and can be on time in one and late in the other. When a release adds a TAT KPI, its default row is appended once to an existing `KPI_Targets` sheet (never edits a row), at the first scorecard open.
+- **Editable set-up (v146, Admin → KPI targets, ADR-058):** the TAT targets (days, levels, notice exemption, team or one recruiter), the score bands of the three percentage KPIs, the count thresholds of the four compliance KPIs and the scoring start can be changed by the Head of HR and the admin (`kpi_edit`); TA Leads can look. Every change is a new version from a chosen month with a reason (10+ characters); the newest version that has started wins, a later row wins a tie, `Active = No` returns a recruiter to the team target. Each month's cell is scored by the rules of that month. A position is counted in its due month but takes the target of the month it joined (or started), so a change can also move earlier months: the preview measures exactly which results change, and a change that moves a month already reported needs a ticked confirmation (checked again on the server). Scorecard texts (subtitles, legend, "5 for 0, 3 for 1…", notice grace days) are generated from the saved rules and read exactly as before while the defaults apply.
 - **Manager & above** = grades M1–M4; without a grade, judged from designation (Manager, AGM, DGM, GM, VP, President, Head, Director; excluding Assistant/Deputy/Junior Manager).
 - The four **compliance KPIs** are scored only from **`KPI_CAPTURE_FROM`** (currently 2026-10). Every tracked month gets a cell for every active recruiter, so "0 misses" shows as a full score. Team rows sum numerators and denominators.
 
@@ -777,9 +843,11 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 
 ### 11.8 BGV tracker (`Bgv.gs`; ADR-042)
 
-**What it is.** A page (Daily work → **BGV tracker**) for background verification of new hires. Each hire in scope has up to two cases: **Previous employer** (the earlier employers; start within 3 days after the offer, Policy 9.1.1; report needed 2 days before joining, 1 day when the offer is less than 5 days before joining) and **Current employer** (the employer the candidate is leaving, checked only after joining; start within 2 days of joining). **The position's recruiter owns the cases**; there is no separate BGV team. TA Leads, the Head of HR and Admin see and update every case; the Head of HR / Admin (`bgv_decide`) decide on discrepancies; the Admin changes the rules; leads maintain the vendors.
+**What it is.** A page (Daily work → **BGV tracker**) for background verification of new hires. Each hire in scope has up to two cases: **Previous employer** (the earlier employers; start within 3 days after the offer, Policy 9.1.1. **A check started before the offer is flagged as a deviation** (v132): Amber “Started n days before the offer” in the tracker, a note and “n d before the offer” under the Started date, and a CSV column; a Red for another reason keeps its own text. The BGV compliance KPI is unchanged and still judges “started on or before offer + 3 days” as compliant. Report needed 2 days before joining, 1 day when the offer is less than 5 days before joining) and **Current employer** (the employer the candidate is leaving, checked only after joining; start within 2 days of joining). **The position's recruiter owns the cases**; there is no separate BGV team. TA Leads, the Head of HR and Admin see and update every case; the Head of HR / Admin (`bgv_decide`) decide on discrepancies; the Admin changes the rules; leads maintain the vendors.
 
 **Scope** (rule): Manager and above (M1–M4), plus positions flagged "BGV required: Yes"; "No" excludes. Internal fills are not in scope. Cases open **automatically** when a card moves to Offer (previous employer) or Joined (current employer), when a position is saved, and in a sweep that runs when the tracker opens (at most every 10 minutes) and once at upgrade. The sweep also follows a change of recruiter on the position and **cancels** open cases when the candidate backs out (never-started cases also when BGV is no longer required).
+
+**N/A, the employee hold and the experience letter (v148, ADR-060).** (1) **N/A = not tracked:** an open case with no linked candidate that is carried over from the old tracker, or was triggered before `BGV_NA_BEFORE`, shows **N/A** (the stored status is unchanged): no warning, no to-do, not in the Red/Amber/Open counts, the Overview strip, the reports or the weekly e-mail (it has its own count and filter). A case from the cut-over date on with no linked candidate stays tracked (Red) as a data problem. A lead can set N/A or Tracked on any case with a reason, or return it to automatic; a case that is pending with the employee is never N/A. (2) **With the employee:** the owner or a lead marks a case *waiting on the employee* with a reason (Consent / Documents / Experience letter / Other), a required expected date and a remark. The tracker shows "With the employee"; until the expected date no warning runs and the consent, chase, report and review to-dos are paused; when the date passes the case is Red ("expected by X, not received"). The BGV KPI is unchanged. Counts and filter "Pending with" (Recruiter / Employee / Vendor) show who holds each case. (3) **Experience letter:** on a previous-employer case *Candidate has left the organisation = Yes* with *Experience letter = Pending* (date expected required) is pending with the employee, never N/A, and cannot be waived directly; closing it as Waived needs a lead and a written reason (10+ characters). All changes are in the case timeline (kind Candidate) and the audit log.
 
 **Statuses:** Not started → Awaiting consent → Initiated → In progress ↔ Insufficiency → Report received → Under review → Closed (or Cancelled; a closed case is reopened by a lead). Rules enforced: starting needs the **consent date** (signed form attached under Documents) and a **vendor** (or "Direct"); a report needs its date (not before the start); closing needs an **outcome** (Clear, Minor discrepancy, Major discrepancy, Unable to verify, Waived) and every check resolved; a discrepancy or unverified result also needs the **Head of HR's decision** (Previous employer: Proceed with the offer / Hold the offer / Withdraw the offer; Current employer: No action / Warning / Review of employment / Terminate employment, with a reason), recorded once the report is in; waiving is for leads. Every step is written to the case's **timeline** (BGV_Log) with notes, chasers, calls and emails.
 
@@ -811,7 +879,7 @@ Audit_Log newest first (max 300 rows per view) with filters; every field change 
 ### 11.9 Organogram (`Org.gs`; `org_manage` to import and edit, everyone signed in can view; ADR-045)
 Approved against existing manpower by division, department and grade, with the division head and HOD, joined to the positions the CRM already tracks. Reports → Organogram.
 - **Structure:** company → group (earlier division name) → division (head) → department (HOD). 16 divisions and 59 departments, loaded from the HR sheets (schema 36 seed). Grades: M1–M7 = M (management), W1–W5 = W (workmen and supervisory), T = trainee (`orgCategory_`).
-- **Approved plan (schema 38, ADR-047):** the approved (budgeted) headcount is no longer taken from the report. It is kept by Head of HR and Admin as dated revisions (`Org_Plan_Revisions`, `Org_Plan`) in Admin → Org structure → Manpower plan: an editable grid of departments by the 13 grades (grouped by division, with subtotals, Existing and Net), or Excel download and upload. Saving makes a **draft**; **Review and activate** shows the changes by division and cell and needs a reason (5+ characters), who approved and an effective date; the old revision becomes Superseded and the Organogram reads the new one. Activation is refused if the plan in force changed after the draft was started (reload). History lists every revision with its diff and *Restore as draft*. Warnings, never blockers: plan below people in post, a department cut to 0, a move over 25%. Everyone signed in sees "Plan: revision N, effective …" on the screen; the drawer of a department gives editors *Edit plan for this department*.
+- **Approved plan (schema 46, ADR-070):** the approved (budgeted) headcount is no longer taken from the report. It is kept by Head of HR and Admin as dated revisions (`Org_Plan_Revisions`, `Org_Plan`) in Admin → Org structure → Manpower plan: an editable grid of departments by the 13 grades (grouped by division, with subtotals, Existing and Net), or Excel download and upload. Saving makes a **draft**; **Review and activate** shows the changes by division and cell and needs a reason (5+ characters), who approved and an effective date; the old revision becomes Superseded and the Organogram reads the new one. Activation is refused if the plan in force changed after the draft was started (reload). History lists every revision with its diff and *Restore as draft*. Warnings, never blockers: plan below people in post, a department cut to 0, a move over 25%. Everyone signed in sees "Plan: revision N, effective …" on the screen; the drawer of a department gives editors *Edit plan for this department*.
 - **Headcount:** from the *Approved vs Existing Manpower* report, imported in Admin → Org structure → Import (the file is read in the browser; the server checks every row; nothing is saved until Apply). The old department name in the file is mapped to a new department through `Org_Dept_Map`; the file's own "New Department Name" is only compared (a difference is a warning, the mapping wins). Each import replaces the snapshot and shows its "as on" date.
 - **Per grade, before grade cover:** gross vacancy = max(0, approved − existing), gross excess = max(0, existing − approved). Net vacant = approved − existing (the report's own figure). Totals reconcile to the file.
 - **Grade cover (ADR-046):** within one department and one pay band (Senior management M1–M3, Middle management M4–M5, Officers and engineers M6–M7, Trainee T, Supervisory W1–W2, Workmen W3–W5), seats filled above approved are matched to vacant seats, nearest grade first (`orgNetting_`). A matched seat is **covered by another grade**: it is not vacant and not over-strength, and it never asks for an MRF. What is left is **truly vacant** and **true over-strength**; residual vacancy − residual excess always equals approved − existing. Only residuals use warning colours; covered seats show a neutral grey-blue ↔ marker. On Report_4: gross 617 vacant and 302 excess become 410 vacant and 95 over-strength, 207 seats covered (31 filled at a higher grade, 26 at a lower).
@@ -821,7 +889,7 @@ Approved against existing manpower by division, department and grade, with the d
 - **Screen:** KPI row; division, search, status and category filters; tabs *Organogram* (a connected chart: company, group, division with its head, department with its HOD, as people cards with fill bars; Top-down or Left to right; zoom, fit, drag to pan; expand or collapse divisions; click a group or division to focus that branch, with a breadcrumb back; click a department for its grades and open positions), *By department* (sortable, CSV) and *Grade matrix*.
 - **Admin:** import with preview; divisions and departments (head, HOD, e-mail, division, active, add); mapping with suggestions (`jdmSuggestDept_`). Names are not renamed (headcount and the mapping are keyed by name): add a new department instead.
 - HODs here are kept separately from `M_Departments.HOD_Name/Email`, which drive task messages, until HR decides to merge them.
-- **Re-import (ADR-047):** a new import refreshes **Existing** headcount only. The report's own approved numbers stay in `Org_Manpower` as "report approved" for comparison; the import dialog shows how many cells differ from the plan in force, and the plan screen offers *Draft from the report's numbers* (`apiOrgPlanRestore('report')`); it is never applied automatically. With no plan yet, the first import creates revision 1 from the report; the schema step does the same for an existing import.
+- **Re-import (ADR-070):** a new import refreshes **Existing** headcount only. The report's own approved numbers stay in `Org_Manpower` as "report approved" for comparison; the import dialog shows how many cells differ from the plan in force, and the plan screen offers *Draft from the report's numbers* (`apiOrgPlanRestore('report')`); it is never applied automatically. With no plan yet, the first import creates revision 1 from the report; the schema step does the same for an existing import.
 - Tests: E2E group O1–O32 (§12.5), plus a local harness of the pure functions.
 
 ## 12. Administration, settings, jobs and operations
@@ -834,6 +902,8 @@ Approved against existing manpower by division, department and grade, with the d
 | Change history | lead | §11.6 |
 | Tools | lead (system actions Admin) | Back up now; Recalculate TAT (Admin); weekly email test/on/off; archive status and **Archive now**; CV parser accuracy; database/folder links |
 | HOD contacts | lead | Department → HOD name/email |
+| Hiring routes | lead | Which grades/levels use the fast-track route (default W1–W5 and T; §8.8) |
+| Voice agent | `voice_agent` (Admin) | Allow calls, agent id and version, connection id, calling number, organisation and workspace id, questions variable, Do Not Disturb check, API key (write-only), call log (§8.7) |
 | Task rules | lead | Due/critical hours and on/off per rule |
 | TAT exemptions | lead (act: `tat_exempt` = Head of HR, Admin) | Awaiting the Head of HR (oldest first, Approve / Reject), notice extensions to review (Verify / Reject), register with filters and CSV, reasons editor (add, deactivate; no rename) |
 | Grades & designations | lead | Grades: band, active, add a grade (code + starting TAT days). Designations: add, rename (carried to every position of that grade using the old name), move to another grade (only while unused), deactivate, note. Short forms are expanded on save (Sr → Senior, Engr → Engineer, SE → Senior Engineer). All changes audited (`apiGradeSetup`, `apiSaveGradeSetup`) |
@@ -847,6 +917,7 @@ Approved against existing manpower by division, department and grade, with the d
 | Key | Default / current | Meaning |
 |---|---|---|
 | `PIPELINE_CUTOVER` | 2026-10-05 | Switch-over date: pipeline-only offers/joinings/backouts; scorecard from moves |
+| `PIPELINE_FUNNEL_V2` | 2026-11-01 | First day CV received (Sourced) is counted from the pipeline instead of typed (never before `PIPELINE_CUTOVER`); a far-future date reverts to typed |
 | `NOTICE_GRACE_DAYS` | 30 | Default notice grace (TAT rules carry their own per level) |
 | `TAT_AT_RISK_PCT` | 0.8 | Default at-risk threshold (TAT rules carry their own) |
 | `KPI_CAPTURE_FROM` | '2026-10 | First month scored for psychometric, BGV, observation and audit KPIs |
@@ -862,7 +933,9 @@ Settings are cached up to 10 minutes; Admin → Tools → Recalculate TAT applie
 
 ### 12.3 Script Properties
 
-`DB_ID`, `SCHEMA_V`, `IDMAX_<table>`, `DASH_DIRTY_AT`, `ARCHIVE_VER`, version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`).
+Stored as Script Properties (not in the sheet): `DB_ID`, `SCHEMA_V` (schema version reached), `SCHEMA_RETRY_AT` (set for 10 minutes after a failed schema step), `IDMAX_<table>` (highest ID ever issued, so IDs are never reused), `DASH_DIRTY_AT` and `KPI_DIRTY_AT` (data changed since the last snapshot), `ARCHIVE_VER`, `ARCHIVE_LAST_RUN`, `ARCHIVE_LAST_RESULT`, `LAST_BACKUP`, `LAST_BACKUP_AT`, `WEEKLY_TRIGGER_BY`, `WEEKLY_LAST_SENT`, `BGV_SWEEP_AT`, `JDM_VERSION`, `JDM_IMPORT`, `VOICE_API_KEY` (the Sarvam key; write-only from the Admin page), and the job-health keys `JOB_LOG` (last 20 failed job steps), `JOB_OK_nightly` and `JOB_OK_refresh` (last finished run) and `JOB_MAIL_<job>_<step>` (the day an Admin was last e-mailed about that step). The webhook receiver (`docs/voice-webhook`) keeps its own properties (the secret checked against `?key=` and the database id). Only version stamps and snapshots live in CacheService (`ver_<table>`, `dash_v1`, `daysnap2_…`, `tbl3_…`, `users_v1`). `VOICE_LISTONLY_FROM_` and `VOICE_RATINGS_FROM_` are code constants for agent versions, not properties.
+
+**Scheduled jobs** (installed by `installTriggers`, run under the Admin's account): nightly at 01:00 (schema, backup with a check that the copy opens and has every sheet and position, BGV folders, TAT recalculation, snapshot) and every 30 minutes (schema, to-dos, candidate archive, voice results, daily-review pre-build, snapshot when data changed). Each step runs on its own: a failing step is recorded, the others still run, and the Admins are e-mailed once a day per failing step. Admin → Tools shows the last finished run of each job, whether the triggers exist, whether the last backup is older than 36 hours, and the recent failures.
 
 ### 12.4 Backups
 
@@ -877,6 +950,9 @@ Settings are cached up to 10 minutes; Admin → Tools → Recalculate TAT applie
 5. Try on the **test deployment** where relevant, then **Deploy → Manage deployments → Edit → New version → Deploy** on the fixed deployment (URL never changes).
 6. Update the local "live" baselines and the source zip; update this document (§14).
 7. **Propagation caution (v25 incident):** for a short time after a release Google may serve a page built against the previous version's function list. New server functions must be tolerated as missing by the page, or introduced a release before the page calls them.
+- **New refusal rules (gates):** before release, list the live records the rule would refuse (for example fast-track cards at Offer without a recorded department decision) and decide what happens to them; a rule that blocks existing live work is changed or comes with a way through it (lesson from the v105 fast-track gate).
+- **Release number:** set `BUILD_ID` in Config.gs to the version about to be deployed (the next number after the last `clasp deploy`) before `clasp push`. It is shown in the rail footer tooltip and on Admin → Tools, and the page compares its own copy with the server's: when they differ a banner asks the user to reload. Use it to answer "which version am I looking at?".
+- **After each release:** Admin → Tools → Run the speed check; compare with the last numbers (SSOT §4.4) and check that the database upgrade says Finished.
 
 ### 12.6 Test assets
 
@@ -943,13 +1019,24 @@ Context: J00039 — candidate A backed out, B got an offer; the position form ha
 - A **switch-over date** (`PIPELINE_CUTOVER`, 5 Oct 2026) after which the rules apply; a one-time **Switch-over check** reconciles open/offered positions; closed history stays as legacy.
 Consequences: figures can't disagree and every number is traceable to named candidates; recruiters' routine changes (training needed); vacancies counted once; backouts visibly consume TAT.
 
+**ADR-016 — One funnel: the Daily review is the Pipeline's own stages, fed by pipeline events only**
+Context: the Daily review mixed typed Daily_Funnel counts and pipeline moves, under names that differed from the Pipeline board (Sourced / HR 1st round / Shortlisted by dept / Interviews / Selected). A card that skipped stages was counted only where it landed, and the funnel and the "Candidate moves" list credited different recruiters. The user: *"If the candidate is landing anywhere in the pipeline, that data should get reflected in the daily review"* and *"all the funnel headers should be similar to the Pipeline"*. Decisions:
+- From the switch-over the funnel columns are the 11 Pipeline stages with the Pipeline's names; every stage a card passes is credited once per card; fast-track cards count only their route's stages.
+- CV received is typed until `PIPELINE_FUNNEL_V2`, then counted from the pipeline. Earlier days are not rewritten; days before the switch-over keep the typed columns in their own table.
+- CVs reviewed and Selected are not Pipeline stages and are no longer columns (typed CVs reviewed stays in the sheet; selection is the technical interview result, or the HR interview result when one is held).
+- Interview results and the joining date cannot be typed on the candidate form for a candidate in a pipeline (recruiters), so every count has a move behind it.
+- One recruiter credit rule for the funnel and the moves list; every number opens the candidates behind it.
+Consequences: one funnel, one vocabulary, every number traceable to named candidates; counts rise where cards skip stages (intended); a CV rejected without a card is visible only if the recruiter uses "Not suitable".
+Lesson (v127 Overview blank): a result that is saved between page loads (Overview snapshot, KPI cache, Day review snapshot) must carry the release number and be checked for the shape the page reads; a release that changes the shape would otherwise show zeros until the next data change. Tested by E2E E5e and a stale-snapshot browser case.
+Open items: a lead's edits of the position's offer, joining and backout fields still do not write a card move; interview dates on the candidate form are still editable; Overview funnel ignores days before the switch-over; typed-vs-derived comparison for 5–30 Oct to run before the funnel start date.
+
 **ADR-016 — IDs are never reused** (26 Sep)
 Context: a test candidate row deleted directly in the sheet freed CAN-01088, which was reissued to a new person; an old card then showed the wrong name on J00039. Decision: remember the highest ID ever issued per table (Script Property, seeded from the audit log) and always issue above it. Consequences: deleting rows can no longer re-link history. Rows should still never be deleted in the sheet.
 
 **ADR-017 — Close without hiring; On hold pauses TAT; company withdrawal is not a backout** (26 Sep)
 Context: positions closed by departments stayed Open because the only route was changing Approval status. Decisions: an explicit *Close without hiring* action with outcome, date, reason, requested-by and candidate handling; after switch-over, status changes only through it; **On hold pauses TAT** (hold days excluded on resume — user's choice over restart or new MRF); a live offer can be withdrawn only by Head of HR/Admin and is recorded as *Offer withdrawn by the company*, not a backout. Consequences: every closure has a reason; TAT fair to recruiters; backout rate not polluted.
 
-**ADR-047 — The approved manpower plan is kept as dated revisions, separate from the imported headcount** (7 Oct, user decisions)
+**ADR-070 — The approved manpower plan is kept as dated revisions, separate from the imported headcount** (7 Oct, user decisions)
 Context: the approved numbers lived in `Org_Manpower` and every import replaced them, so HR could not maintain the budgeted plan in the app and a re-import would erase any change.
 Decision: `Org_Plan_Revisions` and `Org_Plan` hold the plan (full copy per revision; one Active, one Draft). Existing headcount stays an imported snapshot. Editors are Head of HR and Admin (`org_manage`). Every change is a revision with reason, approver and effective date; activation is conflict-checked against the revision the draft started from. Detail is approved headcount by department and grade only; no cost or monthly phasing yet.
 Consequences: a re-import never changes the plan; differences are reported and a draft can be started from the report. Each revision adds about 320 rows (an archive can follow if needed). Plan edits change grade cover and may close or open substitutions; notes that no longer apply are listed for closing, as before.
@@ -959,10 +1046,35 @@ Context: HR often fills a vacancy by hiring in a neighbouring grade. Per grade t
 Decision: cover is computed inside one department and one pay band, nearest grade first, and only the residual vacancy and excess use warning colours. Substitutions are shown neutrally, listed in a Grade mix monitor, and an upgrade keeps a one-line note with approver and review date (Head of HR, Admin). Monitoring is count-based; a budget CTC per grade table is left for later.
 Consequences: the vacancy figures drop against the per-grade view while net vacancy (315) is unchanged; bands are a constant (`ORG_BANDS_`); notes must be reviewed by date; a hire in a covered grade is flagged as "check before hiring".
 
+**ADR-050 — The recruiter chooses the questions before each call; the agent asks only the numbered list it is sent; a recruiter's click may complete the screening from a call** (10 Oct, user decisions)
+Context: with a fixed standard section in the agent and a cap on role questions, a position with 17 or 18 confirmed questions got a few of them, and recruiters would have had to re-ask by phone. A call result that only a recruiter can re-read adds work instead of removing it.
+Decision: from agent version 5 the agent has no questions of its own. The call-plan desk lists every confirmed question with a tick box, order, spoken wording and a time estimate (warning above 12 questions or 8 minutes); the CRM sends exactly the ticked questions, numbered, and the answers come back as Q1..Qn. Unticked questions stay on the recruiter's list. ADR-045 is relaxed: a call result may complete the screening only after a recruiter confirms it (next steps: ratings from the agent's post-call step, one-click confirm). First languages: M1 to M3 start in English, others in Hindi; the agent follows a candidate who switches language (language settings, per-call start language, or one agent per starting language).
+Consequences: the cap on role questions no longer applies to version 5 and later; versions 4 and earlier keep the old behaviour; fatigue is handled by the warning and by one polite offer to finish when a candidate must leave.
+
+**ADR-049 — The voice agent asks standard questions itself and the position's role-specific questions from the CRM; the CRM reads the agent's own answer lines** (10 Oct, user decision)
+Context: the agent's prompt had the questions and the role ("HR Executive") written in, so every call asked HR questions; a call for another role was marked not qualified on them. The agent already extracts answers after each call into output variables.
+Decision: the prompt keeps a standard set (education, total and relevant experience, current role, current and expected CTC, notice, location and relocation) and takes the role questions from a variable. The CRM sends the position's confirmed questions that are not standard topics, numbered, in priority order up to a limit (default 6), never with the required answer, pass mark or knock-out flag; the exact plan is saved on the call. `screening_answers` comes back as LABEL: answer lines (standard labels, Q1, Q2…); the CRM matches them to the confirmed questions, normalises numbers, days and yes / no, scores them with the existing scorer and shows them in a review table. The agent reports what happened on the call, not suitability.
+Consequences: wording is not guaranteed (only the greeting is spoken verbatim), so coverage is checked after the call and unasked questions are left for the recruiter; this workspace allows a single prompt state only; unreadable answers are shown for the recruiter to rate, never guessed.
+
+**ADR-048 — Voice call results come back through a separate webhook receiver that can only write one inbox sheet** (10 Oct, user decision)
+Context: the provider POSTs each call's result (attempt_id, status, duration, interaction_id, final agent variables, transcript, our metadata) to a public address; the CRM web app is sign-in only and must not be opened to the public.
+Decision: a separate tiny Apps Script project (`docs/voice-webhook`, deployed "Anyone") checks a secret in the address and appends one row to `Voice_Inbox`; the CRM matches rows to calls (our `call_id` in the webhook metadata, else the `attempt_id`) and records outcome, length, transcript and the agent's variables; answers fill a DRAFT screening only for variables named like a question id. Repeated deliveries are ignored.
+Consequences: whoever holds the address can post a result, so the secret is rotated by changing the property; transcripts are personal data and stay Admin-only; the provider documents no signature, so the secret in the address is the only check.
+
+**ADR-047 — Blue-collar (W, T) hiring uses a fast-track route that skips stages rather than removing them** (9 Oct, user decisions)
+Context: for helpers and ITI trainees the multi-stage process is slow; the real process is call, send to the department, written confirmation, hiring confirmation by the onboarding team, onboarding.
+Decision: reuse the 11 stages and skip the unneeded ones on fast-track positions; gate the hiring on the department's written confirmation file; short W document pack; new Onboarding role limited to the last three stages; levels configurable.
+Consequences: reports, history and KPIs keep working; the fast-track time-to-hire needs its own definition (later phase).
+
 **ADR-045 — The organogram is a separate structure mapped to the existing departments; headcount is an imported snapshot** (7 Oct, user decisions)
 Context: HR defined a new structure (16 divisions, 59 departments, grades M / W / T, division heads and HODs) and an Approved vs Existing Manpower report, while positions and candidates carry the earlier 85 department names.
 Decision: keep `M_Departments` and `MRF` untouched; add `Org_*` sheets and a mapping from each CRM department to a new one. Existing manpower is imported from the HR report as a dated snapshot (replace on each import), not typed in; open positions are joined live through the mapping. Everyone signed in can view; `org_manage` (Head of HR, Admin) imports and edits.
 Consequences: no migration of positions; a department missing from the mapping blocks the import and shows as a warning; the snapshot ages until the next import; HODs on the organogram are not yet synchronised with the HOD contacts used for task messages.
+
+**ADR-045 (voice; the number was used twice, the organogram one is above and is cited as ADR-045 in §11.9) — A voice agent places the first screening call; admin-only while it is tested; the CRM never completes the screening from a call** (8 Oct, user decision)
+Context: the first screening is a phone call asking the position's confirmed questions. A voice-AI service can place it. Calling candidates sends their first name and number to an outside service (Policy §19, DPDP).
+Decision: permission `voice_agent` (Admin only, never grantable); instant outbound, one call at a time, from a button on a pipeline card; the Do Not Disturb list is checked before every call and a number on it is never called; the agent is told the candidate's first name, the position, the company and the confirmed questions only (no CV, salary or other details); the API key lives in Script Properties and is never sent to a browser or written to the change log; answers come back as a **draft** screening for the recruiter to check, never a completed one and never over a completed one.
+Consequences: scaffold first, then the call itself (written from the provider's own request example, the documentation host being blocked in the build session); the Do Not Disturb check and the return of results wait for their API details. Calling out needs the script's external-request permission, which makes every user re-approve the app once. How results arrive (a message from the provider, or fetched afterwards) decides whether a separate public web address is needed. Gender, location and resume highlights are not sent to the agent.
 
 **ADR-044 — A rule-based CV profile (history, checks, skills with evidence) is kept per candidate; protected characteristics are never read** (5 Oct, user decision "start with A")
 Context: the parser filled 13 form fields only. Recruiters also need the employer-by-employer history, education, certifications, languages, links, and checks for gaps and short stays, in a form that can go to Excel. An AI service was assessed again and not chosen (ADR-018; Policy §19 and DPDP).
@@ -978,7 +1090,7 @@ Context: 2,000–5,000 CVs expected in months; the Candidates page downloaded ev
 **ADR-020 — Daily-log edits only on the day saved** (25 Sep)
 Decision: recruiters edit their own entries only on the day they saved them; leads correct later. Consequences: stable daily figures; corrections are visible and attributable.
 
-**ADR-021 — Four roles with named permissions; no user deletion; automatic access** (26 Sep)
+**ADR-021 — Four roles (a fifth, Onboarding, was added with ADR-047) with named permissions; no user deletion; automatic access** (26 Sep)
 Decision: Admin, Head of HR, TA Lead, Recruiter; ~60 role checks replaced with named permissions mapped in one place (`PERMS_`), tested per role; Admin → Users with automatic sharing/unsharing of the database and CV folder, guards (self, last Admin, unique and non-renamable recruiter names, reassignment on deactivation) and full audit. TA Lead edits all positions (user decision). Consequences: least privilege; role changes take effect immediately; access no longer depends on running a script by hand.
 
 **ADR-022 — Two TAT clocks** (26 Sep)
@@ -1049,20 +1161,112 @@ Decision: each save creates a new version in `JDM_Drafts` with the composed cont
 **ADR-029 — Release safety** (ongoing)
 Decision: every patch is checksum-verified before and after; unchanged files are verified too; each release passes the full suites and a 48-step browser click-through twice; the served page is compared with the source; new server functions are introduced tolerant of Google's propagation window (v25 lesson). Consequences: 46 releases without data loss; one rolled-back release (v25).
 
+**ADR-051 — A backout can be reversed by the Head of HR or Admin while the replacement MRF has no offer** (16 Oct)
+Context: candidates sometimes confirm they will join after backing out; a backout closes the MRF as Replaced and raises a replacement, so the card could not be restored. Decision: a reinstatement on the same MRF, allowed only when the replacement holds no offer or joining; the replacement is removed and its cards move back; the history keeps both events and the KPI no longer counts the reversed backout. Consequence: if the replacement already has an offer, the Head of HR must resolve that first.
+
+**ADR-069 — A BGV held up by the former employer's release is excluded from the KRA and monitored** (5 Nov, v158)
+Context: a former employer releases the data (experience letter) 40 to 45 days after the employee leaves; the employee joins meanwhile, so the current-employer BGV, due within 2 days of joining, cannot be started and counted as a miss against the recruiter (Oct 26: two misses). The owner decided it must not affect the KRA but must be watched closely, approved by a TA Lead or the Head of HR, and must escalate (not count again) when the 45 days pass without the letter.
+Decision: (1) New `BGV_Cases` columns (schema 45): `Dep_On`, `Release_On`, `Excl_Status` (Requested, Approved, Rejected, Ended), `Excl_Note`, `Excl_Req_By/At`, `Excl_By/At`. (2) `apiBgvExclRequest` (case owner or lead; current-employer case, open, employee joined, departure not in the future, release 30 to 90 days after it, default 45; remark of 10+ characters) and `apiBgvExclDecide` (lead only: Approve, Reject, Revoke; reject and revoke need a reason); each writes the timeline and audit. (3) `bgvExcl_`: approved exclusion of an open current-employer case; `bgvHold_` treats it as a hold until `Release_On`, so the tracker shows "Excluded from KRA", the warning is grey until the date and Red after it, the pending block lists it and the weekly e-mail counts it. (4) The BGV KPI does not judge the current-employer start of a position whose current-employer case has an approved exclusion (the previous-employer test still counts); the exclusion stands until a lead revokes it, so a check started late after the release is not a miss; the drill-down lists it as excluded with the expected date. (5) New to-do `bgv_release` for the recruiter from 5 days before `Release_On`, critical once it has passed; the other BGV to-dos of the case stay quiet. (6) Admin check "BGV excluded from the KRA past its release date" and the weekly e-mail line.
+Consequences: reported BGV months change only where a lead approves an exclusion. An exclusion can hide a real miss, so it needs a lead's approval, a reason and an expected date, escalates when overdue and is visible in the drill-down and the data check. Rollback: redeploy the previous version; the new columns are ignored by older code.
+
+**ADR-068 — M-level fulfilment on positions worked on** (5 Nov, v157)
+Context: after Timely closure moved to (worked on − missed) ÷ worked on (ADR-065) the owner confirmed it worked and asked for the same logic for M-level fulfilment.
+Decision: `KPI_WORKED_BASIS_` = Timely closure and M-level; `finish()` computes their % on positions worked on and returns `missed`; the screen, e-mail and preview already key on `missed`. W-level stays on joined on time ÷ due. Worked on, missed and not-yet-due mean the same as in ADR-065.
+Consequences: every reported month of M-level and its score changes (it rises where positions were worked on without being due); a miss counts once, in its due month. Rollback: redeploy the previous version.
+
+**ADR-067 — No proof is required for a notice beyond the grace** (5 Nov, v156)
+Context: since v151 the notice beyond 30 days is always exempt and cannot be rejected, but saving a position with such a notice still demanded a proof document, and an Admin check listed positions without one. A user asked why an "exemption" was being requested: none is, the extension is automatic.
+Decision: (1) `apiSavePosition` no longer refuses a notice beyond the grace without proof; a changed notice still clears the Head of HR's check. (2) The proof upload stays, as optional; Verify no longer needs a file. (3) The Admin check "Notice beyond the grace without proof" is removed. (4) New Admin check "Expected joining later than offer + notice" (offered position whose expected joining date is more than 14 days after offer date + notice days), which catches a wrong notice or date.
+Consequences: nothing stored changes; a wrong notice value is now caught by the new check and the optional verification. Rollback: redeploy the previous version.
+
+**ADR-066 — A joined position keeps its TAT start; a replacement inherits the original's exemptions** (5 Nov, v154)
+Context: the independent review of the October Timely closure found two ways a position's allowed time could be wrong. (1) Changing the recruiter on a position that had already joined reset its assigned date to today, after the joining date, so days taken became 0 and it counted on time. (2) A replacement after a backout keeps the original TAT start (policy 9.5) but approved exemptions are stored per Line_ID, so it lost the original's exemptions and could fall due too early. Owner chose to fix both.
+Decision: (1) `assignDates_` leaves Assigned_On unchanged when the position has a joining date; the position form says so. The existing data check "Joining date before offer, MRF or assigned date" already lists any position whose assigned date is after its joining date. (2) `exemptIndex_` gives each replacement the approved exemptions of its Parent_Line_ID chain (days and pauses, both clocks); the original is Replaced and not counted, so nothing is counted twice. Pending requests are not carried over.
+Consequences: reported months can change for replacements whose original had approved exemptions (they get more time). Nothing stored changes. Rollback: redeploy the previous version.
+
+**ADR-065 — Timely closure on positions worked on; a position not yet due is not a miss** (5 Nov, v153)
+Context: the live scorecard showed Timely closure for October as 91.4% (53 on time of 58 due) with "53 of 95 worked on". The owner said it should be 94.73%, which is (95 − 5) ÷ 95: of the 95 positions worked on in October, 5 missed the TAT. The rule since v123 was on time ÷ due; v124 had listed the worked-on basis as an option not taken. While checking, the current month was found to count positions that are not yet due as misses (November 12/22, M-level 3/12, W-level 5/12), against the documented rule that only overdue positions are misses.
+Decision: (1) Timely closure % = (worked on − missed) ÷ worked on × 100, where missed = due − on time (`finish()` in `computeKpis_`); num and den keep meaning on time and due, so the reconciliation and every reader of them still hold; the cell carries `missed`. Owner: Timely closure only; M-level and W-level stay on time ÷ due. (2) `kpiDue_` marks a placement `notDue` when nobody has joined and its due date is today or later; it is left out of num and den, kept in the worked-on count, and listed in the drill-down and a new reconciliation bucket "Not yet due" (all three TAT KPIs). (3) The reconciliation places a position that can count exactly as the scorecard does (`kpiWorkedIn_` and `kpiDue_`), so its rows add up to the worked-on count. (4) The KPI result cache also keys on today's date. (5) The screen, the weekly e-mail and the KPI targets preview show Timely closure as "94.7% (90/95 worked on)".
+Consequences: every reported month of Timely closure and its score changes (it rises wherever positions were worked on without being due). A position that missed counts as a miss once, in its due month; a position still open after its due month counts as worked on without a miss in later months, as the owner's figure implies. The current month of all three TAT KPIs leaves out positions not yet due. Rollback: redeploy the previous version; nothing stored changes.
+
+**ADR-064 — An offer within the TAT runs the notice from the offer** (5 Nov, v152)
+Context: the M-level drill for October listed positions the recruiters said should not fall in October: positions offered well within the TAT whose candidates were serving a notice. Today's rule adds only the notice beyond the 30-day grace to the allowed days and counts the time from the TAT start, so an in-time offer with a long notice could still fall due before the candidate could join. The owner decided: (1) keep the month placement (a position counts in the month it falls due, or the month it joins if that is earlier); (2) judge by joining, with the notice clock running from the offer; (3) keep the TAT start order; (4) a replacement after a backout keeps the original start (policy 9.5).
+Decision: (1) One pure rule, `tatAllowed_` (Tat.gs), used by both TAT clocks (`tatClock_`), the three TAT KPIs (`kpiDue_`, so also "worked on" and the reconciliation) and the client copy `tatAllowed` used by the position readout. (2) Offer deadline = TAT start + target days + approved exemption days + on-hold and paused days. An offer sent (`Offer_Sent = Yes`) on or before it makes the due date the later of today's due date and the offer date + the full `Notice_Period_Days`; otherwise today's due date. Allowed days = due − start − on-hold − paused; days taken and the result are worked out as before. (3) The rule never gives less time than today's, so no position becomes late because of it; at most it adds the grace (30 days) to today's due date for a notice above the grace, or the notice itself for a shorter one. (4) The drill-down and the position readout state the reason; `computeTat_` also returns `Notice_From_Offer` / `Pos_Notice_From_Offer` (the offer date when the rule applied). (5) Nothing stored changes shape; the stored TAT columns follow on the next save and the nightly recalculation, and the KPI cache is keyed by the build number.
+Consequences: reported months change for positions offered within the TAT whose notice runs past today's due date: they move to a later month (or to their joining month) and an in-time join is now on time. An offer date entered too early would give extra time; the reason text makes it visible and the offer date is already validated. Rollback: redeploy the previous version; nothing stored is changed.
+
+**ADR-063 — A notice beyond the grace is always exempt** (5 Nov, v151)
+Context: a notice period beyond the 30-day grace is added to the allowed days (a 60-day notice adds 30: M-level 50 → 80), so the TAT is not affected by it. Two things could still switch that off: the Head of HR's "Reject extension" (the notice then counted against the recruiter) and the "Notice exemption: No" column of a KPI target row. The owner's rule: notice periods beyond 30 days are exempt and the turnaround time is unaffected, with no exceptions, for the recruiter TAT, the position TAT and all three TAT KPIs, and recalculated from the beginning.
+Decision: (1) `noticeExt_` returns notice minus the grace (never below 0) whatever the status; the client's live TAT readout uses the same rule. (2) `kpiTargets_` reports every target as notice-exempt and `kpiDue_` always adds the notice; the sheet column is no longer read and the KPI targets screen has no switch (it says notice is always exempt). (3) `apiNoticeExtDecide` accepts Verify (needs the proof) and Reset (clears an old rejection) and refuses Reject; the screens show an old rejection as "no effect" with a button to clear it. (4) The Admin data check "Notice beyond the grace without proof" now also lists positions whose notice had been rejected. (5) Nothing stored is changed: the TAT and KPI figures are calculated live, so every reported month is recalculated at once (the KPI and day caches are keyed by the build number).
+Consequences: figures change only for positions whose notice was rejected, or whose target row said not exempt; with the default data (all targets Yes, nothing rejected) nothing moves. The grace itself stays per TAT rule level (30 by default, TAT rules screen); this change does not alter it. Rollback: redeploy the previous version; the stored rejections and the sheet column are intact.
+
+**ADR-062 — Offer backout rate: backouts ÷ positions worked on in the month** (5 Nov, v150)
+Context: the KPI divided the backouts of a month by the offers made in the same month, which compares two different groups of positions and swings with how many offers happen to fall in the month. The owner's formula is (candidates who backed out ÷ positions worked in the month) × 100, and confirmed that the denominator is positions (not CVs), that a backout belongs to the month of its date and the position's recruiter, and that earlier months use the same definition.
+Decision: the denominator is the existing, tested "positions worked on in the month" count (`kpiWorkedIn_`; the figure shown under Timely closure and reconcilable by hand with "Where are all the positions of this month?"), counted once per workable position and month in the same pass; the numerator is unchanged; the offers-made count is removed. The drill-down lists the backouts and states the denominator, with a button to the positions worked on. Still not scored.
+Consequences: the figures of every month from Apr 2025 change (the KPI is not scored, so no score moves). The rate is smaller than before because the denominator is larger. A backout in a month with no position worked on shows the count and no rate. A backout is on a position that becomes Replaced, which is not counted as worked on today; the replacement position carries the vacancy. No schema change; the KPI cache is keyed by the build number, so no old figure is served. Rollback: redeploy the previous version.
+
+**ADR-061 — A "BGV pending" block in the Daily review and My day, with the remark and expected date edited in place** (4 Nov, v149)
+Context: the recruiter's Daily review showed nothing about BGV, and the only remark path (`Daily_Funnel.Remarks`) is per position per day, not per case; there was no expected date on a case.
+Decision: (1) `apiBgvPendingList` returns the cases that need attention **now** (tracked, open, Red or held by the employee, including a missing experience letter): a recruiter gets their own, a TA Lead, the Head of HR and the admin get everyone's. It is read live and **not** part of the day snapshot, so a past day shows today's state and says so ("as of today"). (2) `apiBgvPendingSave` saves only the expected date and the remark (the owner or a lead), through the same writer as the case dialog (`bgvPendingApply_`): validated (a past date is refused, 300 characters), written to the case, the timeline (kind Candidate) and the audit; any other field sent is ignored. While the employee holds the case (waiting, or a pending letter) the date cannot be cleared. (3) The block is a table under the to-do in each recruiter's Daily review card and under the to-do in My day (hidden when nothing is pending), one call for all cards. (4) The Daily log, the funnel and `apiSaveFunnel` are not changed. An expected date on a case that is not held by the employee is information only; the warning pauses only when the case is marked Waiting on the employee.
+Consequences: no schema change beyond v148. A past-day review shows today's pending cases, not those of that day. Rollback: redeploy the previous version.
+
+**ADR-060 — BGV: N/A for older records, pending with the employee, experience letter** (4 Nov, v148)
+Context: every BGV warning, count and to-do was booked to the position's recruiter, although the case is often waiting for the candidate; older records with no linked candidate (49 Red cases on one screen) had no way to say that nothing is known; and a candidate who had left an organisation without an experience letter could only be waived or left to look like a recruiter delay.
+Decision: (1) Add ten optional columns to `BGV_Cases` (schema 44) and one Settings date `BGV_NA_BEFORE`; nothing stored is changed, blank means "as before". (2) One function per question, outside the code the unit tests extract: `bgvTrack_` (N/A or tracked), `bgvHold_` (is the employee holding it), `bgvRagFor_` (the warning the person sees; with none of the new fields it returns exactly `bgvRag_`), `bgvWith_` (who holds the case). Every reader that used `bgvRag_` (tracker, Overview strip, reports, weekly e-mail, data check, to-dos) now uses `bgvRagFor_`. (3) `apiBgvPending` (owner or lead: waiting, left the organisation, experience letter, expected date, remark) and `apiBgvTrack` (leads) are the only writers; both log to the timeline and the audit. (4) The BGV KPI and the case statuses are not touched. (5) The pause ends by itself on the expected date, so a hold cannot hide a case.
+Consequences: on release every existing unlinked case older than the cut-over becomes N/A (move `BGV_NA_BEFORE` earlier to keep more tracked); linking a candidate later opens a new tracked case rather than reviving the N/A one. Position-level to-dos ("Start background verification") are quiet for lines whose case is N/A or held. The Daily review block with remark and expected date follows in v149. Rollback: redeploy the previous version; the new columns and Settings key are ignored by older code.
+
+**ADR-059 — Screens that update late must not fail when the screen has changed; errors say where they happened** (4 Nov, v147)
+Context: an Admin opened a Closed position, opened the TAT exemption form and picked a reason; the page showed "Something went wrong on this page: Uncaught TypeError: Cannot set properties of null (setting 'innerHTML')", with no line. The message is a synchronous error, so it came from an event or callback, not from an awaited call. The reason handler itself was not at fault. Reproduced here: (1) when the position re-read made at open returned a changed row, the drawer was rebuilt and the open exemption form (its fields and what was typed) was wiped, because only the position form counted as "typed in"; (2) when the Positions refresh event arrived and the table or filter row was not on the page, `renderChips` threw exactly this message. The exact path that produced the owner's banner was not observed (the stub server cannot recreate production timing); the mechanism and the class of defect are proven.
+Decision: (1) A drawer is not rebuilt under an open exemption form. (2) Every screen writer that looks up an element by id and writes `innerHTML` or `textContent` (68 places) now goes through `late('#id')`, which returns the element or a throwaway one and notes it once in the console; nothing changes while the element exists. (3) `readout()` returns when the drawer is not on the page. (4) The error banner adds the page version and the first stack frame (function:line:column), and the full stack goes to the console, so a screenshot names the line. (5) A release check (README) greps for any unguarded writer; the browser test `p10stale` (drawer open with a typed exemption form while a changed row, a background refresh and a view change arrive) is part of the release run.
+Consequences: a skipped update is silent on screen (one console line), so a screen can show slightly old content until its next refresh instead of failing loudly; the banner now makes any remaining error traceable. No data or server change. Rollback: redeploy the previous version.
+
+**ADR-058 — The KPI set-up is editable in the app, as dated versions that never overwrite** (3 Nov, v146)
+Context: the targets behind the KPI scorecard lived only in the `KPI_Targets` sheet (three TAT rows), the score bands and count thresholds were fixed in code, and nothing recorded who changed a target or why. The Head of HR and the admin wanted to check and update them. A change to a target can rewrite results already reported, and a position is counted in its due month but takes the target of its join month, so "from this month" can also move earlier months.
+Decision: (1) An Admin tab "KPI targets" (lead: look; `kpi_edit` = Head of HR and Admin: change). (2) Every change is appended as a version with a reason: TAT rows to `KPI_Targets` (new columns Version_ID, Active, Reason, Saved_By, Saved_At), score rules to the new `KPI_Scoring` sheet; nothing is edited or deleted; `Active = No` ends a recruiter override; the scoring start (`KPI_CAPTURE_FROM`) is changed through the same flow and logged. No saved score version means today's rules in code, so there is no migration and rollback is to ignore the sheet. (3) Scoring is read per month (`kpiScoreFor_`), so earlier months keep the rules that applied then. (4) `apiKpiPreview` lays the draft over the saved rows for one call and returns the whole-team and per-recruiter cells that change, measured by recalculating the scorecard; `apiKpiSave` measures again, refuses when a reported (earlier) month would change without a confirmation, refuses a stale screen (a stamp of the saved set-up), refuses a change that changes nothing, validates every value (days 1–365, levels All/M/W/T, bands 1–6 with unique percentages and never a higher score for a lower percentage, count steps likewise, months from 2025-04 to 12 months ahead) and writes the rows, one audit row per version, drops the table cache and marks the scorecard cache dirty under one lock. (5) The scorecard's own texts are generated from the saved rules.
+Consequences: the weekly e-mail picks the new rules up on its own (it calls the same calculation). A recruiter override still replaces the team target completely, including its levels (existing behaviour, stated on the screen). Offer backout stays unscored. New KPIs and renaming KPIs still need code. Rollback: redeploy the previous version; the extra columns and the sheet are ignored by older code.
+
+**ADR-057 — Stage tabs on the candidate card: where each step was updated, for leads** (3 Nov, v145)
+Context: the Administrator, the Head of HR and the TA Lead (permission `lead`) wanted to check where a candidate's CV review, sharing, department confirmation and technical review were updated, without reading the whole card or the Admin change history. The data is spread over the card, the screening, the interviews, the candidate's interview fields, `Stage_History` (every move and status change) and `Audit_Log` (one row per changed field, keyed by each record's own id). The standard-route Department confirmed step recorded only a free-text note.
+Decision: (1) A read-only, lead-only `apiAppTimeline(appId)` (`Timeline.gs`) reads the card, its screening, interviews, the candidate row and the card's history, and the change history from the day the card was created (`readTableFrom_`), filtered to the four record ids of that card. Only whitelisted fields are returned per tab, so a CTC, contact or other edit on the same candidate never appears; `Answers_JSON` edits come back as per-question changes; stage and status changes come from `Stage_History` only (shown once); at most 500 audit rows are used and the screen says so. Times are formatted on the server. It writes nothing. (2) The card dialog shows, for leads only, a tab strip under the stage track (Work, CV review, Shared with dept, Dept confirmation, Technical review, All activity; the fast-track route shows only the tabs it has, named as its stages) and the stage track items become buttons that select the same tabs. The selected tab survives redraws of the card; the timeline is read once per card when a tab is first opened, kept for the session, dropped after a write, and read again with Refresh; a failed read shows its error with Try again. Recruiters see the card unchanged. (3) The Department confirmed step on the standard route now asks for the decision, the department person and the date, with the same checks and effects as the fast-track step (`deptConfirmFields_`, shared by both routes): Not suitable rejects the card, Hold puts it on hold, the result is the history outcome, the person and date are saved on the card. (4) The tabs say plainly what is not recorded: the e-mail itself, an interview result as a separate record, the department person on cards confirmed before v145, and edits made straight in Google Sheets.
+Consequences: no schema change (the department columns already exist on every database where the fast-track route ran; `fastTrackSchema_` adds them otherwise). Daily review counting is unchanged: a Confirmed move still credits "Shortlisted" whatever the result, on both routes, so a *Not suitable* decision is counted as a department confirmation; whether it should be counted is an owner decision, not made here. Interview confirm, cancel and unavailable have no history row; the tabs show them from the change history. Rollback: redeploy the previous version; the department fields stay on the cards.
+
+**ADR-056 — Fixes from the six fresh-context reviews: writes follow checks, protected text stays protected, notices are never lost** (2 Nov, v141)
+Context: six independent reviewers, each with no knowledge of the project, read the code in separate areas. Each finding was re-read in the code before it was accepted; findings that are owner decisions (the sheet and Drive access design, who may read the change history, upload and restore permissions, the CSV formula guard, the Word-viewer sanitising, reconcile and reactivation rules, trigger duplication) are not part of this change and stay open in section 15.
+Decision: (1) A confirmation shown just before its dialog closes or is redrawn is moved to the next open dialog or the page, so it is always seen; Escape cancels the dialog on top, not the drawer under it. (2) A saved value that is no longer in a dropdown's list (a closed position, a recruiter who left) is still offered and selected, so saving a form does not blank it. (3) A page waiting to save (My day note, Daily-log rows) saves what was typed for the day it was typed on, a refresh never redraws under unsaved grid rows, and saving one grid row leaves the other unsaved rows alone. (4) Rows returned by a write are kept on top of any whole-list check that began before the write; a check after a save never joins a request already on its way; a read that began before a write cannot be remembered or drawn over a newer board. (5) A move back is written only after every check has passed. (6) A backout re-reads the position inside the lock and, if the replacement already exists, returns it instead of raising a second one. (7) Whole-sheet rewrites (archive, restore, BGV purge) protect text that starts with a formula character again, as every other write does. (8) A waived psychometric test closes its to-do. (9) The audit sample's month is read as the same month whether Sheets kept the text or made it a date, and new rows are written as text. (10) Small cached tables, the archive index and the CTC grants are keyed by database file, and `e2eTest` brings the real database up to date before it works on the copy, so the test never leaks into or leaves behind the real app. (11) BGV rule versions are numbered from a fresh read inside the lock.
+Consequences: no data is migrated. An interrupted replacement after a backout still cannot be finished by a retry (needs a design). The first run of `e2eTest` after this release also checks the real database schema.
+
+**ADR-055 — A smooth finish: short, calm motion that never delays or hides content** (2 Nov, v140)
+Context: after phases 1 and 2 pages draw at once and update in place, but they still appeared abruptly: no page entrance, the drawer slid while its backdrop popped, dialogs appeared instantly, and a background refresh rebuilt the whole page (losing the scroll position) and changed figures without any cue.
+Decision: (1) A page fades and rises a few pixels in about 0.15 s when it is opened by navigation, and not when it is redrawn in the background. (2) The drawer's backdrop fades with the drawer's slide (0.22 s) and is hidden once it has faded, so it cannot block clicks. (3) A dialog opens with a 0.14 s fade; closing stays instant, so focus return, Escape and every existing `close()` flow are unchanged. (4) After a background redraw only the figures whose value changed move: tiles and funnel counts count from the old to the new value in about 0.4 s and end on the exact new value, and funnel bars change width; unchanged figures are not touched, and anything that is not a plain number or percentage changes at once. (5) A background redraw puts the screen back as it was: scroll position and the focused control. (6) Everything is off when the person's system asks for reduced motion, in CSS (`prefers-reduced-motion`) and in the script (`matchMedia`): the backdrop appears and goes at once and figures jump to their new value.
+Consequences: motion is cosmetic only. Nothing waits for an animation, no figure is ever shown that is not the server's value, and the only new state is the scrim's `on` class.
+
+**ADR-054 — Server reads: a version-stamped candidate index, a remembered history number, whole-result caches** (1 Nov, v138)
+Context: the Candidates sheet is too large for the table cache, so every search read all of it, built an object for every match and only then took one page; the pipeline board and a candidate's drawer did the same; every move read the whole Stage_History sheet to find the next number; each changed field of a record was its own audit write; the KPI result was never cached once it passed 95,000 characters.
+Decision: (1) `candIndex_` keeps one slim entry per candidate (row number, the fields search, filters and the board show, a lower-case search text and its digits, years of experience, expected CTC in lakh) in the script cache under the Candidates version stamp and the database file's tag, so a write gives a new stamp and a copy of the database never feeds the real one. A missing, evicted or oversize index is rebuilt from the sheet: slower, never different. Search filters and sorts the index and builds only the page asked for; the "in a pipeline" map is cached under the Applications stamp. The board (`apiPipeline`) takes candidate names from the index only when it is already in the cache, and a candidate's drawer reads one row by its row number with an id check, so a move that changes a candidate never pays to rebuild it. (2) The next Stage_History number is the highest remembered (script property) or on the last row, whichever is higher; the sheet is scanned only to seed the memory. (3) A record's changed fields are audited in one write. (4) The KPI result is stored in pieces, so it is cached at any size. (5) BGV rules join the small cached tables; the fast-track columns are checked once per run; the Overview dashboard reads only the last 30 days of the Daily log. (6) The list stamps of the funnel and the board now include the tables they also read (Candidates, Settings, Users).
+Consequences: the first search after any candidate write builds the index (about one full read, as before) and later searches do not read the sheet. The index and the history number are checked by tests that run the old and new code side by side.
+Not done, on purpose: the Overview alerts and to-do count caches, a slimmer position list, and row-targeted writes in `update_`. They need the real timings from the speed check to show they are worth the risk.
+
+**ADR-053 — Pages show what they already know, then check the server; writes show only what the server returns** (1 Nov, v137)
+Context: most waiting was avoidable. Every repeat visit waited for a server round trip even when the page held the data; almost every call made the next screen download the whole Positions list again; a pipeline move waited for a second request before repainting; switching position rebuilt the page; many saves reopened the whole page.
+Decision: (1) A remembered result lives in the page's memory for the session only (nothing is saved in the browser). A page calls `viewData` with a key: it draws the last result at once, asks the server in the background and redraws only if the answer differs; a result under 3 seconds old is not asked for again; a local filter (recruiter in Daily review and KPI, tab in BGV) asks for nothing. A small "Updated hh:mm" line shows when the figures were read, and "newer figures are available" replaces a redraw when the person is typing. (2) Any call that is not in the fixed read-only list clears every remembered result and makes the Positions list check the server, so a function missing from the list only costs a check. (3) After a move, status change or joining-date change the server returns the board and the updated position row; the page repaints at once and patches its list from the row. If the row is missing it asks once in the background. (4) Switching position, Previous / Next and Refresh change only the board area: the last board seen for a position is drawn at once and revalidated; neighbouring positions are fetched when the browser is idle. (5) Position and candidate saves update the row in place. (6) Decisions are not shown from memory: a BGV case, an exemption request and an offer are read from the server when opened, and BGV actions reload the list from the server. (7) The Overview snapshot keeps its 30-minute rule and its "Updated" time.
+Consequences: the screen can show figures up to one visit old for about a second; they are labelled. Timings of what people feel (first rows on screen, drawer data shown, move to visible change) are kept in memory and shown in Admin, Tools, "Speed in this browser"; `apiSpeedCheck` also times the search, Overview, KPI and unchanged-answer paths so releases can be compared.
+
+**ADR-052 — W-level fulfilment KPI; "worked on" and reconciliation for every TAT KPI** (31 Oct)
+Context: Timely closure alone showed "N of M worked on" and the position reconciliation; the M-level KPI scored the same way but had neither, and there was no W-level KPI although policy 20.1 gives W levels 20 days. The user asked for the same functionality on M-level and a W-level fulfilment KPI. Decisions (owner answers): W-level 20 days with notice beyond 30 days exempt; same 0–5 bands; counted from Apr 2025; worked on and reconciliation for all three. Mechanism: one list of TAT KPIs drives placement, worked on, totals and reconciliation; the W-level target is a `KPI_Targets` default row appended once to an existing sheet. Consequences: M and W positions count in Timely closure and in their level KPI by design; M-level cells with positions worked on but none due now show a dash with the worked-on line.
+
 ## 14. Changelog
 
-All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded.
+All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" while they were being built are all part of deployment version 99 or earlier (the individual version numbers after v62 were not written down); nothing in this changelog is waiting to be deployed.
 
 ### 2026-10-07
 
-**v83 — ready to deploy — Joining date correction** (no schema change; `Pipeline.gs`, `Config.gs`, `App.html`, `E2E.gs`; §3, §9)
+**Unreleased — Joining date correction** (no schema change; `Pipeline.gs`, `Config.gs`, `App.html`, `E2E.gs`; §3, §9)
 - Head of HR and Admin can correct a joining date a recruiter recorded wrongly, without moving the card back: new permission `correct_data`, `apiCorrectJoiningDate`, drawer block *Joining date wrong?*. All three stored copies of the date change together, TAT is recalculated, and history and audit keep the old date and reason. The drawer shows "Joined on <date>".
 - Tests: E2E D25a–D25e; local checks for permissions, validation, the three writes, history and the month notice.
 
-**v82 — ready to deploy — Organogram plan editor** (schema 38; `Org.gs`, `App.html`, `Styles.html`, `E2E.gs`; ADR-047; §11.9)
+**Unreleased — Organogram plan editor** (schema 46; `Org.gs`, `App.html`, `Styles.html`, `E2E.gs`; ADR-070; §11.9)
 - Head of HR and Admin can update the approved (budgeted) manpower plan in Admin → Org structure → Manpower plan: grid by department and grade, Excel download and upload, review and activate with reason, approver and effective date, history with diffs and restore as draft.
 - Every change is a dated revision (`Org_Plan_Revisions`, `Org_Plan`). On first load revision 1 is created from the imported approved numbers, so the Organogram figures do not change.
-- A re-import now refreshes existing headcount only and keeps the plan; the import dialog shows the plan comparison. `apiOrganogram` returns the plan label shown under the screen title. `SCHEMA_VERSION` 38.
+- A re-import now refreshes existing headcount only and keeps the plan; the import dialog shows the plan comparison. `apiOrganogram` returns the plan label shown under the screen title. `SCHEMA_VERSION` 46.
 - Tests: E2E group O23–O32 (O8 and O16 updated for the new import rule); local checks reproduce Report_4 unchanged (2,510 / 2,195 / 315; 410 vacant, 95 over-strength, 207 covered).
 
 **v81 — deployed 7 Oct — Organogram entries** (schema 36 and 37; new Org.gs; ADR-045, ADR-046; §11.9)
@@ -1076,75 +1280,444 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
-**Unreleased — Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
+**Deploys wait for approval** (no code change; 2 Nov 2026)
+- Owner decision: a merge to `main` no longer goes live on its own. `.github/workflows/deploy.yml` now has two jobs: `check` (syntax gate, no secrets) and `deploy`, which uses the GitHub Environment `production` and waits for a required reviewer before `clasp push`, `clasp deploy -i` and the pull-and-compare verification. The Google login (`CLASPRC_JSON`) and `APPS_SCRIPT_DEPLOYMENT_ID` live in that environment, so only an approved run can read them. Setup, approval and reject steps are in the README (Releasing).
+
+**Deploy workflow: the approval rewrite lost three fixes** (no code change; 3 Nov 2026)
+- Release 144 was merged but its deploy failed at `clasp push` with `EISDIR`: the approval workflow (job check, then job deploy waiting for approval in the `production` environment) had been written from a copy older than the 2 Nov fixes, so it pointed `clasp_config_auth` at a folder, compared `.gs` with `.gs` after a pull that returns `.js`, and read the deployment list once, before Apps Script updated it. All three are back, and job check now fails if any is missing, so an older copy cannot be merged again unnoticed. The approval gate is unchanged. A re-run of the failed run would reuse the broken file; a new run on `main` is started instead.
+
+**A BGV held up by a former employer's release can be excluded from the KRA and is monitored** (schema 45; v158; 5 Nov 2026)
+- In the BGV case (current-employer check) the recruiter fills "Former employer's release": the date the employee left, the date the data is expected (default 45 days later; 40 to 45 days is the usual release) and what is pending. A TA Lead or the Head of HR approves, rejects or later revokes it. Until approved the case counts as before.
+- Approved: the current-employer start is not counted against the recruiter's BGV KPI (the previous-employer check still is), the case shows "Excluded from KRA" and is grey until the expected date, then Red; the recruiter gets a to-do from 5 days before the date, critical once it has passed; the weekly e-mail and Admin data check list excluded cases past their date; the BGV drill-down names them. The case stays open and the BGV is still to be done.
+- After the 45 days without the letter the position stays excluded but escalates (owner choice). It ends only when a lead revokes it.
+- Tested: Node `bgvexcl` (request and decision rules, hold, warning, quiet map, to-dos, weekly counts, data check), `kbgvexcl` (the October example is a miss before approval and not after; previous-employer miss still counts; revoke restores it; no change without an exclusion), browser `p18bgvexcl`, all earlier suites; `e2eTest` K48 added (checks the columns and calls only), not run (needs a database copy).
+- The two October misses are not changed by the release: each case needs its request and a lead's approval.
+
+**M-level fulfilment is now based on the positions worked on, like Timely closure** (no schema change; v157; 5 Nov 2026)
+- Owner: the same logic as Timely closure for "Fulfilment of M-level positions within TAT": **(positions worked on − missed) ÷ positions worked on**. W-level is unchanged (joined on time ÷ due). Example from the 5 Nov figures: Oct 15 on time of 20 due, 45 worked on, gives 88.9% (was 75%). **Reported months are recalculated.**
+- The cell reads "88.9% · 40/45 · 5 missed · 15 of 20 due on time"; the M-level subtitle, the drill-down, the legend and the reconciliation hint state the formula.
+- Tested: Node `ktimely` (M-level cells follow the formula, W-level unchanged, settled months otherwise identical), the earlier comparison suites, browser `p16timely`, `kpitest`, `p9kpiadmin`; `e2eTest` K46 extended, not run.
+
+**No proof is needed for a notice beyond 30 days; a new data check for expected joining vs notice** (no schema change; v156; 5 Nov 2026)
+- The notice beyond the grace is exempt automatically (nobody requests it): saving a position no longer asks for a proof, the upload is optional and the Head of HR can verify without a file. The Admin check "Notice beyond the grace without proof" is removed. The separate "Request or grant exemption" feature (department delay and similar reasons) is unchanged.
+- New Admin check **Expected joining later than offer + notice**: an offered position whose expected joining date is more than 14 days after offer date + notice days (example: offer 30 Jul 2026, notice 63, expected joining 10 Dec 2026, 70 days later).
+- Tested: Node `k156` (the check lists only the example; the old check is gone; the save asks for no proof and still resets the verification), `nxharness` updated, all earlier suites; `e2eTest` X5 changed to expect success, not run (needs a database copy).
+
+**The KPI reconciliation downloads as an Excel workbook with the tracker's columns** (no schema change; v155; 5 Nov 2026)
+- In the dialog "Where are all the positions of this month?" (Timely closure, M-level and W-level) the new button **Download Excel (2 sheets)** saves a workbook: **Positions** (the list as before) and **Tracker report**, which carries the tracker's columns in its order (MRF No., Review Month, MRF Receipt date, Position, Level, Dept, Recruiter, No.of positions/Resource, Approved, No vanacy / Not needed marked date, Offer sent, Offer letter date, EDOJ as per Offer, DOJ for KRA, Actual DOJ, Position Status, Position closed on, Notice Period, Backout, Final Remark, Standard TAT, Exemption days, Final allowed TAT, TAT logic, Days taken, TAT achieved/Missed), then Where it sits, Due by, TAT start and Counted in. Every position of the dialog is a row. The old Download CSV is unchanged.
+- The TAT numbers are the app's, so they tie to the scorecard: Standard TAT = the KPI target; Final allowed TAT and Due by as the scorecard counted them (notice beyond the grace, or the notice from an in-time offer, v152, and approved exemptions); Exemption days = allowed − standard; TAT logic = where the clock started ("Assigned to DOJ", "MRF approved to DOJ", "MRF received to DOJ", "Original MRF start to DOJ"). **They can differ from the tracker**, which counts from the MRF receipt date.
+- **DOJ for KRA** = the actual joining date, else the last day of the review month (today in the current month); Days taken run to it, less on-hold and paused days. TAT achieved/Missed: Achieved (on time), Missed (late or overdue), Pending (not yet due), Counted in another month, Not counted.
+- If the Excel library cannot be loaded, the tracker report is saved as a CSV with a notice. No KPI figure, bucket or score changes.
+- Tested: Node `krecon155` (buckets and counts identical to v154; every field; days, allowed and Achieved / Missed equal the scorecard's for 200+ positions; M-level and W-level), browser `p17recon` (two sheets, header order, values, real dates formatted d-mmm-yy, remark with commas, quotes and line break in one cell, old CSV unchanged, library-blocked fallback), all earlier suites; `e2eTest` not run (needs a database copy).
+
+**A joined position keeps its TAT start; a replacement inherits the original's exemptions** (no schema change; v154; 5 Nov 2026)
+- Changing the recruiter on a position that has already joined no longer restarts its TAT clock (it used to start after the joining date and count on time). Open positions behave as before.
+- A replacement after a backout now also gets the original position's approved exemptions (days and pauses), so it no longer falls due earlier than the original. **Reported months can change** for such replacements.
+- Left as is by the owner's choice: scores use the rounded percentage.
+- Tested: Node `k154` (8 checks: reassigning a joined position keeps the start for a lead and a recruiter, an open one restarts, exemptions reach a replacement and a replacement of a replacement, not unrelated positions or pending requests), all earlier KPI, exemption and position suites.
+
+**Timely closure is now based on the positions worked on; a position not yet due is not a miss** (no schema change; v153; 5 Nov 2026)
+- Owner: October's Timely closure should be 94.73% = (95 worked on − 5 missed) ÷ 95. New formula, Timely closure only: **(positions worked on in the month − positions that missed the TAT in the month) ÷ positions worked on × 100**. M-level and W-level stay joined on time ÷ due.
+- From the 5 Nov figures, Timely closure becomes: Apr 100, May 98.0, Jun 100, Jul 100, Aug 96.8, Sep 97.8, Oct 94.7 (was 100, 97.3, 100, 100, 92, 94.1, 91.4); scores change where a band is crossed (Aug 3 → 4, Sep 4 → 5). **Reported months are recalculated.**
+- Fixed: in the current month, a position due later in the month that has not joined counted as a miss (November showed 12/22). It is now "not yet due": not counted until it joins or its due date passes, still worked on, listed in the drill-down and in the reconciliation's new "Not yet due" row. Applies to all three TAT KPIs.
+- The cell reads "94.7% · 90/95 · 5 missed · 53 of 58 due on time"; the drill-down shows both figures and the formula; the reconciliation now adds up exactly to the worked-on count; the weekly e-mail and the KPI targets preview show "94.7% (90/95 worked on)". The KPI result is recalculated each new day.
+- A position that misses counts once, in its due month; one still open after that counts as worked on without a miss in later months (this is what 94.73% implies).
+- Tested: Node `ktimely` (22 checks: every Timely closure cell follows the formula and the scores; M-level and W-level unchanged; settled months identical to v152 apart from the Timely closure %; the October example 95/58/53 gives 94.7, v152 91.4; the current month leaves out positions not yet due, on the due date a join is on time, a month later they are misses; the reconciliation adds up to due, not yet due and worked on, also with stale dates, where v152 did not; team totals; the weekly e-mail, the preview and the daily cache), browser `p16timely` (15 checks), all earlier suites (comparisons with earlier releases now look at settled months and at Timely closure's counts); `e2eTest` K46 added, not run (needs a database copy).
+
+**An offer within the TAT runs the notice from the offer** (no schema change; v152; 5 Nov 2026)
+- Owner rules after the October M-level check: keep the month placement; judge by joining, with the notice clock running from the offer; keep the TAT start order; a replacement keeps the original start.
+- New: if the offer went out on or before the offer deadline (TAT start + target + approved exemption days + on-hold and paused days), the position is due on the later of today's due date and the offer date + its notice period. Example: MRF approved 10 Jul, M-level 50 days, 90-day notice, offered 25 Aug: due 23 Nov (136 days) instead of 28 Oct (110 days), so it is no longer counted in October. A late offer, or no offer sent, keeps today's rule; no position gets less time.
+- Applies to the recruiter TAT, the position TAT, Timely closure and the M-level and W-level KPIs, for every month: **reported months are recalculated** where an in-time offer's notice runs past today's due date.
+- The KPI drill-down shows why: "offered 25 Aug within the TAT: 90 d notice from the offer" (and "+60 d notice" where only the notice beyond the grace applies). The position readout shows "offered 25 Aug 2026, within the TAT (50 standard), so the 90-day notice runs from the offer = 136 d". The scorecard legend states the rule.
+- Docs: some dashes, arrows and quotation marks in this file and the README showed as escape codes (from earlier edits); they now show as characters.
+- Tested: Node `koffer` (39 checks: the rule's cases and a 50,000-input property test that it never gives less time; both clocks against v151 on 6,000 positions, identical with no offer sent, never less time and no worse result with one; the readout's copy equals the server on all of them; the KPI unchanged without offers and, with offers, never earlier, reconciliation intact, worked-on unchanged; the October patterns: offered in time moves to November, offered late stays late in October, replacement keeps its start), browser `p15offer` (10 checks), all earlier Node and browser suites; `e2eTest` K45 added, not run (needs a database copy).
+
+**Notice beyond 30 days is always exempt from the TAT** (no schema change; v151; 5 Nov 2026)
+- Owner rule: notice periods beyond 30 days are exempt and the turnaround time is unaffected. A 60-day notice adds 30 days to the allowed time (M-level 50 → 80, Timely closure 60 → 90, W-level 20 → 50).
+- This was already automatic. Two things could still switch it off and no longer can: the Head of HR's "Reject extension" (removed; Verify stays; an old rejection is shown as having no effect and can be cleared) and the "Notice exemption: No" setting of a KPI target (ignored; the KPI targets screen no longer shows it).
+- Applies to the recruiter TAT, the position TAT and Timely closure, M-level and W-level fulfilment, for every month: **the figures of reported months are recalculated** (only positions whose notice had been rejected, or whose target said not exempt, change).
+- The Admin data check "Notice beyond the grace without proof" also lists positions with an old rejection.
+- Tested: Node `knotice` (8 checks: unchanged when nothing was rejected; a rejected notice now adds notice − 30; a "not exempt" target gives the same figures as "exempt"; the 60-day example 80 allowed, due 22 Oct for a 3 Aug start; 38 days adds 8; the old code did the opposite) and `nxharness` (7 checks on the decision API and `noticeExt_`), browser `p14notice` (6 checks), the updated unit, regression and editor tests, all earlier suites; `e2eTest` K44 added, not run (needs a database copy).
+
+**Offer backout rate now = backouts ÷ positions worked on in the month × 100** (no schema change; v150; 5 Nov 2026)
+- Owner formula: (candidates who backed out ÷ positions worked in the month) × 100. The KPI used to divide by the offers made in the month.
+- The denominator is the positions-worked-on count already shown under Timely closure ("29 of 63 worked on"), so it can be checked with that row's reconciliation. The backout is counted in the month of its date against the position's recruiter, as before. The drill-down lists the backouts, states the denominator and has a button to the positions worked on. Still not scored.
+- **Figures of reported months change** (Apr to Oct): the KPI is not scored, so no score moves. Expect lower rates than before.
+- Tested: Node `kbackout` (9 checks: denominator equals the Timely closure worked count for every recruiter and month, numerator, rate, team total, offers no longer matter, old code fails, other KPIs identical), the old-versus-new regression for the other KPIs, browser `p13backout` (8 checks), all earlier suites; `e2eTest` K43 added, not run (needs a database copy).
+
+**Daily review and My day: "BGV pending" with the expected date and remark edited in place** (no schema change; v149; 4 Nov 2026)
+- Each recruiter's card in the Daily review (and My day, under the to-do) now lists the BGV cases that need attention: past a limit, or with the employee (including a missing experience letter), with who holds each, the reason, an **Expected by** date and a **Remark** the recruiter can change and Save in place. Leads see every recruiter's cases in that recruiter's card. The list is as of today, whichever day is on screen.
+- The date and remark go onto the case, its timeline and the audit log; a past date is refused; while the employee holds a case its date cannot be cleared. The Daily log, the funnel and the existing remarks are unchanged.
+- Tested: Node harness `bgvpend` (82 checks in all, 15 new for the list and the save), browser `p12pend` (15 checks), all earlier suites; `e2eTest` K41 and K42 added, not run (they need a database copy).
+
+**BGV tracker: N/A for older records, pending with the employee, experience letter** (schema 44, new columns; v148; 4 Nov 2026)
+- Older BGV records with no linked candidate (carried over, or triggered before 5 Nov 2026) now show **N/A**: no Red warning, no to-do, not counted (own count and filter "N/A, not tracked"). A lead can mark any case N/A or Tracked, with a reason.
+- The recruiter can mark a case **Waiting on the employee** (consent, documents, experience letter, other) with the date it is expected and a remark. It shows as "With the employee"; the warning and the chase to-dos pause until that date and the case turns Red again if nothing has come. New counts and a "Pending with" filter (Recruiter, Employee, Vendor). The BGV KPI is unchanged.
+- Previous-employer cases record "candidate has left the organisation" and "experience letter pending/received": left without a letter is pending, never N/A, and cannot be waived without a lead's written reason.
+- Weekly e-mail and reports show the cases with the employee and the N/A cases apart from the Red count.
+- Tested: Node harness `bgvpend` (67 checks on the N/A rule, the hold, every validation, the counts, to-dos and reports; cases with none of the new fields get exactly the old warning), the existing BGV harness and browser test unchanged, new browser run `p11bgv` (21 checks); `e2eTest` cases K37 to K40 added; not run (they need a database copy). The Daily review block with remark and expected date is release 149.
+
+**Error "Cannot set properties of null (setting 'innerHTML')" on the position drawer: the drawer no longer rebuilds under an open exemption form, late screen writers are guarded, the banner names the line** (no schema change; v147; 4 Nov 2026)
+- Report: Admin, Positions, a Closed position, TAT exemptions, "Request or grant exemption", a reason picked: a red "Something went wrong on this page" banner.
+- Cause (see ADR-059): screen code that runs after a timer, an event or a server answer wrote into elements by id without checking they were still on the page, and a drawer re-read could rebuild the drawer while the exemption form was being filled. Reproduced both: the open form lost its fields, and the Positions refresh threw this exact message when its table was gone.
+- Fixed: the drawer is not rebuilt while the exemption form is open; 68 late writers are guarded (`late()`); `readout()` skips when the drawer is gone; the banner now ends with the page version and function:line:column (full stack in the console, F12).
+- Tested: browser `p10stale` (8 checks; three fail on the old code: the wiped form, the removed-table error and the banner detail), all earlier suites. Not observed: the owner's exact path.
+- If it happens again: send the banner text (it now names the line) and what was clicked just before.
+
+**KPI targets, score bands and count thresholds editable in Admin** (no schema change; new sheet and columns created on first use; v146; 3 Nov 2026)
+- Need: the Head of HR and the admin wanted to check and update the KPI/KRA set-up. Until now the three TAT targets could only be edited in the `KPI_Targets` sheet, the score bands and count thresholds were fixed in code, and nothing recorded who changed what.
+- New Admin tab **KPI targets**: the TAT targets per KPI (team target, recruiter overrides, what starts later), the score bands of Timely closure, M-level and W-level, the count thresholds of psychometric, BGV, MRF adherence and tracker accuracy, the month compliance scoring starts, and the change history (when, who, what, from which month, reason). TA Leads can look; the Head of HR and the admin can change.
+- A change is **Preview impact**, then **Save as a new version**: the preview lists every result (whole team and each recruiter) that changes, before and after; Save is enabled only for exactly what was previewed; a change that moves a month already reported needs a ticked confirmation (and the server checks it again). Nothing is overwritten; each change needs a reason of 10+ characters and starts from a month you pick (a recruiter override can be ended from a month).
+- Each month is scored by the rules of that month. The scorecard's subtitles and legend are generated from the saved rules and read exactly as before while the defaults apply (the number of notice grace days now comes from the setting instead of the fixed 30).
+- Tested: Node harness `kadmin` (86 checks: defaults identical to the old scoring for every 0.1% and every count, permissions, every validation refusal, dated versions, override end, stale screen, confirmation rule, preview equals the saved result cell for cell, failed preview leaves nothing, audit, history) and the old-versus-new regression on 700 generated positions (identical cells); browser run (42 checks: view-only and edit modes, preview-before-save, confirmation, errors keep the form, each editor's payload, history filter, scorecard text old and new, narrow screen); all earlier suites. `e2eTest` cases K31 to K36 added; not run (they need a database copy).
+
+**Stage tabs on the candidate card, for leads; the department's decision recorded on the standard route** (no schema change; v145; 3 Nov 2026)
+- Need: the Administrator, the Head of HR and the TA Lead asked to see, on a candidate's card, where the CV review, the sharing with the department, the department confirmation and the technical review were updated.
+- Under the stage track a lead now sees tabs: Work (the card as before), CV review, Shared with dept, Dept confirmation, Technical review and All activity. Each tab lists the facts (who, when, the values) and the changes newest first, with the old and new value; the stage names in the track are clickable and open the same tabs. The fast-track route shows only the tabs it has. Recruiters see no change. The timeline is read when a tab is first opened (one call per card), has a Refresh button and shows its error with Try again. Behind it: new read-only `apiAppTimeline` (`Timeline.gs`), whitelisted fields only, bounded by the card's creation date and 500 audit rows.
+- The Department confirmed step on the standard route now asks for the department's decision (Suitable, Not suitable, Hold), who in the department confirmed and the date, like the fast-track step; Not suitable rejects the card and Hold puts it on hold. Cards confirmed earlier keep their note, and the tab says the person was not recorded. Daily review counting is unchanged (ADR-057 notes the open question).
+- Tested: Node harnesses (33 checks on the timeline: lead only, whitelist, answer differences, bounded read, nothing written; 15 on the Confirmed step, which the old code fails), browser run (29 checks: tabs for leads only, lazy single read, track click, redraw, keyboard, errors, narrow screen, the Confirmed form, fast-track tabs), all earlier suites. `e2eTest` cases D6a, D6 and D10x added; not run (they need a database copy).
+
+**Funnel tables fit a 1280 px screen** (no schema change; v144; 3 Nov 2026)
+- Report: the "CVs by position" table (Daily review, My day) and the Daily log table needed 1,854 px whatever the screen, so on a 720p laptop (960 px available) almost half of it was off screen. Cause: each stage column was as wide as its header ("Technical interview" 156 px, "Documents verified" 157 px), 11 stage columns took about 1,280 px for numbers that need about 40 px.
+- Stage columns are now 52 px wide (the three-digit number pills fit), with short headers (CVs, Screened, Shared, Confirmed, Tech, HR, Docs, Offer, Pre-join, Joined, Onboard); the full stage name is the header's tooltip and its accessible label. In the Daily review table the Department sits under the position name instead of in its own column. The team funnel tiles are narrower so all 11 stay on one row.
+- The left menu now starts slim on screens narrower than 1,400 px (it was 1,100 px) when the person has not chosen; a saved choice always wins. Page padding is smaller between 861 and 1,399 px. Below 1,100 px the table scrolls sideways and the position column stays in view.
+- Measured with three-digit numbers, a long department and long remarks: with the default menu both tables fit with no sideways scroll at 1280, 1366, 1536 and 1920 wide. With the menu forced open at 1280 the Daily review table still fits (984 of 984 px) and the Daily log table, which also has Date, Recruiter and Edit columns, needs about 60 px more than is available and scrolls a little. Tests: 26 browser checks; two older tests now read the full stage name from the header tooltip.
+
+**Move a candidate to another position of the same MRF** (no schema change; v143; 2 Nov 2026)
+- Need: one MRF can open several positions (several lines sharing the MRF number). When one position's candidates are all rejected and another has good candidates, a card can now move across without being added again from the start.
+- In the card dialog, "Move to another position of <MRF>" lists the open or offered positions of the same MRF; a reason is required. The card keeps its stage, status, "days in stage" and history; its interviews, check-ins, screening and voice calls follow it; the candidate's linked position follows if it pointed at the source; the card takes the target position's recruiter, so its to-dos pass to them. One history row (outcome Moved) records from, to and the reason; the funnel and Daily review ignore that outcome, and each earlier stage keeps its credit to the position where it happened, so nothing counts twice.
+- Rules: cards before Offer only (offer and joining dates live on the position, so Offer and later cannot move yet: record the backout); active or on-hold cards; the target must be open or offered, on the same hiring route, and must not already hold a card for the candidate; a TA Lead, the Head of HR or the admin can always move a card, a recruiter only when they own both positions. All checks run before the first write; the writes are ordered (related records, candidate, card, history) so a failed move can be repeated, and a repeated call for a card already there does nothing. Positions keep their own TAT clocks, JD, questions and posts.
+- Tests: 25 Node cases (checks, order of writes, retry, permissions), 8 browser checks, E2E Z6 (to run in the editor).
+
+**BGV to-dos take a comment** (no schema change; v142; 2 Nov 2026)
+- Report: the (i) on a BGV to-do said "No comments entered yet" and there was no way to add one: BGV to-dos have no "I've chased" or Done button (they close when the step is recorded in the BGV tracker), only Open and Snooze, and the case's own Timeline note box is far down the case window.
+- A BGV to-do now has an **Add a note** button (3 to 200 characters, required). The note shows in the (i) at once and, for a to-do tied to a BGV case, is also saved on the case Timeline when the person may work that case. A note does not snooze, chase or close the to-do. Notes typed straight on the Timeline do not show in the (i). Tests: 10 Node cases (old code has no such action), 11 browser checks, E2E Z5.
+
+**Bug fixes from the fresh-context reviews** (no schema change; v141; 2 Nov 2026)
+- Confirmations no longer vanish when their dialog closes; Escape no longer closes the drawer under a dialog; a candidate on a closed position keeps its linked position when saved (and no dropdown blanks a saved value that is missing from its list); My day saves a note for the day it was typed on; saving one Daily-log row keeps the other unsaved rows and a refresh does not redraw under them; leaving Candidates mid-search raises no error; a position row from a write survives a list check that began before it; a slow read cannot draw an older board over a newer one; a candidate drawer closed while loading stays closed.
+- Server: archive, restore and the BGV purge keep text that starts with `=`, `+`, `@` or `-` protected; a move back writes nothing until its checks pass; a double-submitted backout returns the replacement already made; a waived psychometric test closes its to-do; the monthly audit sample is found again by its month; BGV rule versions cannot be numbered twice; the test copy's small tables and caches never reach the real app.
+- Tests: Node server tests that run the old and new code side by side (archive rewrite, move back, backout, audit month, psychometric, BGV rules) with the old code failing each; 17 browser checks; all earlier suites; E2E Z1, Z3, Z4 (to run in the editor).
+- Left open (owner decisions or needs a design): sheet and Drive access for every user, the change history readable by TA Leads (CTC values), upload and restore permissions, CSV formula guard, Word-viewer sanitising, reconcile and reactivation checks, interrupted-replacement recovery, duplicate triggers from a second admin, fast-track department decision gate.
+
+**Speed and smoothness, phase 3: the smooth finish** (no schema change; v140; 2 Nov 2026)
+- Page entrance, drawer and backdrop that fade together, dialog open fade, and changed figures (tiles, funnel counts and bars) that ease to their new value after a background refresh; unchanged figures stay still; the scroll position and focused control are kept; all of it off for reduced motion (ADR-055).
+- Deploy workflow: the final "Verify what is live" step now waits up to 2 minutes for Apps Script to list the new version (it read the old one too early on the release 139 run, which was live but showed red).
+- Release 139 went live from GitHub on 2 Nov 2026 (the speed phases, notices above dialogs and the deploy workflow).
+- Tests: figure-easing cases in the Node data-layer harness (34 in all); browser checks for the entrance, backdrop fade in and out, dialog fade, the changed tile counting through in-between values and ending exactly, unchanged tiles untouched, scroll and heading position kept, entrance not replayed, reduced motion off for all of it, no sideways scroll at 390 px; all earlier suites pass.
+
+**Release 139 joins the two lines of work** (no schema change; 1 Nov 2026)
+- Speed phases 1 and 2 (built and deployed by hand as v137 and v138) and the notices-above-dialogs fix with the GitHub deploy workflow (built on `main` and also numbered v137, never live) are merged. Both used the number 137, so the merged release is 139; Phase 3 becomes 140. Nothing else changed in the merge.
+
+**Speed and smoothness, phase 2: fewer sheet reads on the server** (no schema change; v138; 1 Nov 2026)
+- Candidate search filters and sorts a cached slim index instead of reading the whole Candidates sheet, and builds only the 50 rows it returns; opening a candidate reads one row; the pipeline board takes names from the index when it is cached (ADR-054).
+- A pipeline move no longer reads the whole Stage_History sheet for the next number, and a record update writes its audit rows in one call. The KPI result is cached at any size. BGV rules are cached with the small tables; the Overview dashboard reads the last 30 days of the Daily log only; the funnel and board version stamps include every table they read.
+- Admin, Tools, speed check: times the candidate index built from the sheet and read from the cache.
+- Tests: 600 generated searches (every filter, archive options, paging) return exactly what the old full scan returned, and deliberately broken copies of the new code are caught; the board fields equal the sheet's; six history-number cases; E2E C1 to C4, H1, K27 (to run in the editor).
+- Left for later, pending the real timings: Overview alerts and to-do count caches, slimmer position list payload, row-targeted writes.
+
+**Speed and smoothness, phase 1: measure, repeat visits, in-place updates** (no schema change; v137; 1 Nov 2026)
+- Repeat visits to Overview, My day, Daily review, KPI, BGV and Candidates draw the last result at once and refresh it in the background, with an "Updated hh:mm" line (ADR-053). Daily review and KPI recruiter filters and BGV tabs use the data already on the page. Read-only calls no longer make the next screen download the Positions list again; any other call still does.
+- Pipeline: a move, a status change and a joining-date change repaint from the board the server returns, which now includes the updated position row, so the second `apiGetPosition` request is gone. Switching position, Previous / Next and Refresh redraw only the board area; the filters are drawn before the board arrives; the to-do panel is asked for in the background after a change, not on every redraw; Close without hiring, Resume and Reinstate no longer reload the whole page or the whole position list.
+- Candidates: the search starts at once, the position list loads beside it, pages are remembered per filter, opening a candidate asks for the candidate and the position list together, and saving updates the row in place. Position save updates the table in place and no longer reads the Overview.
+- Measuring: Admin, Tools has "Speed in this browser" (count, median, slowest, first visit and repeat visit); `apiFetch` returns the server time; `apiSpeedCheck` also times the candidate search, Overview figures, to-do counts, alerts, KPI and the unchanged-answer path.
+- Not yet done: the Phase 2 server work (search index, move path, board build, alerts and KPI caches) and Phase 3 motion; patching a single BGV row after an action (the list is reloaded from the server instead).
+- Tests: Node data-layer harness (25 cases) plus all earlier harnesses; browser checks for repeat visits (content in under 40 ms against an 800 ms server delay), move without a position request, board-only switching, local filters, in-place saves, typing not overwritten; E2E P1 to P4.
+
+**Releases deploy from GitHub** (no code change; 1 Nov 2026)
+- v137 was merged but not live because the clasp login lived in a cloud session's container and a new session starts without it. Owner decision: the merge to `main` is the release. `.github/workflows/deploy.yml` runs a syntax gate, `clasp push -f`, `clasp deploy -i` on the existing deployment, and verifies (pull and compare, deployment shows `v<BUILD_ID>`). The Google login is the repository secret `CLASPRC_JSON`, the deployment ID the variable `APPS_SCRIPT_DEPLOYMENT_ID`; setup and re-run steps are in the README (Releasing). This replaces “keep the clasp login in the cloud session” in the standing rule; the manual `clasp` commands remain as a fallback.
+
+**Notices (errors and confirmations) show above pop-up dialogs** (no schema change; built as v137 on `main`, ships in v139; 1 Nov 2026)
+- Report: every error or confirmation landed behind the page. RCA: `toast()` wrote to one `#toast` element in the page (z-index 30), but the app's modal `<dialog>`s (opened with `showModal()`) are in the browser's top layer, which no z-index can beat, so any notice raised while a dialog was open was drawn under it (drawers, z-index 20, were not affected). 5-Why: hidden behind the dialog → page element vs top layer → one shared element built before dialogs were used → dialogs added later without re-checking the notice → no rule or test that a notice is visible from every screen.
+- Fix: `toast()` parks the notice inside the top-most open dialog and returns it to the page when it hides; the element is recreated if a dialog redraw removed it. Errors stay while the pointer is over them. Rule: every notice goes through `toast()`, never a second element. Tests: 4 real-browser checks (no dialog, modal dialog, redraw of the dialog, after close) and a control showing the old behaviour is hidden; add the check to the release checklist.
+
+**TAT counts from the MRF approved date** (schema 43; v136; 1 Nov 2026)
+- Report: the KPI drill-down column "MRF date" showed the date the position's TAT starts from, which for several M-level positions was the MRF received date (J000135: 19 Sep, due 8 Nov). The start the system uses is the position assigned date, which defaults to the MRF approved date, which defaults to the received date when nobody types it. Owner decisions: the TAT counts from the MRF approved date (the approved MRF arrives with the JD); list the positions whose approved date was only defaulted so a lead can correct them.
+- The start rule itself already followed the approved date. What changes: the drill-down says "TAT start" and which date it is; a lead-only list "Check MRF approved dates" corrects or confirms the dates (new column `Approved_Date_Check`); a real approved date typed on the form marks the position confirmed. Positions without a real date keep counting from the received date until a lead corrects them, so KPI numbers change only when a date is corrected. Tests: 18 Node cases for the list and the date rules, 6 for the KPI fields, 14 browser checks, E2E AD0 to AD4.
+
+**The HR interview is optional** (no schema change; v135; 1 Nov 2026)
+- Request: the HR interview after the technical interview is an extra step; the recruiter discusses with the candidate while verifying documents, so make it optional. Owner decisions: optional for every grade; "Move to Documents verified" is the main button at Technical with a smaller "Record an HR interview (optional)"; the Manager-and-above psychometric test is due before Documents verified (still a to-do, not a block).
+- A card at Technical goes to Documents verified without an HR move. The funnel counts HR only for the move into it, so skipped cards no longer add to the HR column, the Overview funnel or the interviews figure (past days are recomputed, so older jumps over HR also stop counting). A card at Technical no longer gets a "schedule the HR / final interview" to-do (it keeps its to-dos if an HR interview is scheduled) and gets "Verify documents and release the offer (an HR interview is optional)" once its technical result is Selected. The stage track shows HR "not held", the position Funnel tab counts "reached HR" only for candidates who had one, and the interview round is labelled optional. The policy panel matrix says "Final (if required)" for lower grades; nothing enforces it. Tests: 21 Node cases, 10 browser checks, E2E D10a to D10d and E5b.
+
+**CV received: typed vs pipeline report** (no schema change; v134; 1 Nov 2026)
+- From 1 Nov 2026 (`PIPELINE_FUNNEL_V2`) CV received counts the cards created (candidates added to a position) instead of the number typed, so the figure can drop where CVs were received but not added as candidates. A read-only report shows how much: Daily review (leads) → "CV received: typed vs pipeline" gives, for a date range of at most 92 days (default: from 5 Oct to today), the typed CVs, the cards created, their difference and the candidates added in the app, per day and per recruiter, with the candidates behind each day's pipeline number and a CSV. Nothing is written; typing is shown as closed from the start date.
+- Rollback of the switch itself needs no release: set `PIPELINE_FUNNEL_V2` in Settings to a far-future date. Tests: 14 Node cases, 9 browser checks, E2E E5g to E5j.
+
+**Remarks at Documents verified, shown in the Daily review and the Daily log** (no schema change; v133; 31 Oct 2026)
+- Request: a remarks column after Documents verified that also reflects in the daily log. The Documents verified step now has a **Remarks** box (what is pending, the exception, follow-ups): optional when every section is verified, **required (5+ characters) when a section is not verified** (conditional approval, Policy 9.3). It is saved on the card's history note.
+- It shows in the Daily review (the position row's Remarks as "Documents verified, <candidate>: <remarks>", and in the list behind the Documents verified number next to the outcome) and in the Daily log list (the Remarks column of the day's row, and the same candidate list). Only a move made at the Documents verified step carries it; a card that jumps past that stage does not borrow another step's note, and after a lead's correction only the new remarks count. Tests: 7 Node cases, 4 browser checks, E2E D11b, D12b.
+
+**BGV started before the offer is flagged** (no schema change; v132; 31 Oct 2026)
+- Report: a previous-employer check (BGV-00053) had started on 15 Sep, before the offer on 31 Oct, while Policy 9.1.1 starts it within 3 days after the offer. Owner decision: flag it as a deviation; leave the BGV KPI as it is.
+- The tracker shows Amber "Started n days before the offer" (a Red such as the vendor turnaround still takes precedence and keeps its text), "n d before the offer" under Started in the list and the case, a note in the case, and a CSV column. Previous-employer cases only; cancelled cases are not flagged. Tests: 17 Node cases, 11 browser checks, E2E K28.
+
+**Two more TAT exemption reasons** (schema 42; v131; 31 Oct 2026)
+- Report: the request dropdown showed four reasons; "Delay in MRF Evidence" and "Other, if any" were wanted. RCA: the list is read from the `M_Exemption_Reasons` sheet, which is seeded only when empty, and the two reasons were never in the code or the live sheet (no earlier change of ours added them).
+- Both reasons: extra days, recruiter TAT and KPI and position TAT, proof required, no cap; the Head of HR still decides each request. The schema step appends them once to the live sheet by name and never edits a row, so one an admin already added or deactivated is left alone. Tests: 11 migration cases in Node, 8 browser checks, E2E X7 to X11.
+
+**W-level fulfilment KPI, and worked on + reconciliation for the M-level KPI** (no schema change; v130; 31 Oct 2026)
+- New KPI "Fulfilment of W-level positions within TAT" (20 days, W1–W5, notice beyond 30 days exempt, from Apr 2025, same bands). The M-level and W-level cells show "N of M worked on"; clicking any of the three KPIs offers "Where are all the positions of this month?" (a reconciliation per KPI that adds up to the cell; positions of other levels are left out of M and W). The legend says a W or M position also counts in Timely closure. The weekly email shows a dash, not "null%", for a cell with nothing due.
+- The W-level default row is appended to the live `KPI_Targets` sheet at the first scorecard open (additive; delete the row to undo). Timely closure and M-level numbers are unchanged (checked against the old code on 700 generated positions). Tests: 37 unit and 14 comparison cases in Node, 12 browser cases, E2E A5 (8 KPIs) and K21–K26.
+
+**Task "Open" no longer reloads the page you are on** (no schema change; v125; 28 Oct 2026)
+- Report: on a position's Pipeline page, Open on “Chase the department: Screening questions v2 reply” redirected to itself. RCA: JD / question to-dos (`dept_reply`, `revise_doc`, `share_jd`, `share_questions`) opened `{type: 'pipeline'}`, and the same task list is shown on that Pipeline page, so `go('pipeline')` rebuilt the same screen. 5-Why: reload of the current page → coarse target → chosen when to-dos lived only on My day/Overview → list reused on the position page without re-checking targets → no rule that an Open target must differ from the current screen.
+- Fix: those tasks now open `docflow` (JD & screening questions, where the department's reply and changes are recorded): in place when the Pipeline page of that position is showing, else navigate to it and open it. `taskTarget` decides in place vs navigate for docflow, pipeline and card targets; tasks cached before this release are mapped by rule. Rule for new to-dos: an Open target must open something other than the screen it is shown on.
+
+**Timely closure shows how many positions were worked on** (no schema change; v124; 27 Oct 2026)
+- User report after v123: September stayed 32/35 against about 100 positions worked on. The score keeps the due-month rule (an open position still inside its TAT is not a miss; scoring it as one would put every month under the 80% floor). Each Timely closure cell now carries a second line “N of M worked on”: M = positions worked on in the month (clock started by month end and not joined before month start; Open, Offered or Closed; not internal; with a target), N = those that joined in that month within the allowed days. Team cells sum the recruiters. KPI cache key `kpi4_`. The reconciliation dialog still accounts for every position. Option not taken: switching the score itself to the worked-on basis (would need new scoring bands, a Head of HR decision).
+
+**Timely closure counts every position due in the month** (no schema change; v123; 27 Oct 2026)
+- Rule change decided by the user after the v122 reconciliation: Timely closure = positions filled on time ÷ all positions that came due. A position (Open, Offered or Closed; not an internal fill; with a recruiter-clock start and a Timely closure target) counts in the month it joined if that is on or before the month it fell due (MRF/assigned date + target days + notice beyond grace + approved exemption days + hold and paused days), otherwise in its due month. On time = joined within the allowed days. Late fills and unfilled overdue positions are therefore misses in their due month; months after today are not counted. Same placement as M-level fulfilment (shared `kpiDue_`).
+- **Past months change** (Apr–Oct 26 recompute from the data; the KPI cache key is now `kpi3_`). The month dialog shows Due by / Joined / Allowed / Result, and “Where are all the positions of this month?” (`kpiRecon_`) lists: on time, filled late, overdue and not joined (these three are the cell), counted in another month, no start date, no target, internal, closed without hire, replaced or removed.
+
+**KPI reconciliation: where every position of a month sits** (no schema change; v122; 27 Oct 2026)
+- RCA (user report: Timely closure Sep 26 showed 32/35 while about 100 positions were worked on): the KPI population is **positions that joined in the month** (status Closed, start date, matching KPI target); positions still Open or Offered, closed without a hire, replaced or filled internally are not in it by design, but nothing on screen said so and the month list showed only the counted 35. 5-Why: narrower population than people count → unit only in a footnote → no list of what is outside → designed for scoring, not audit → no reconciliation requirement.
+- CAPA: the Timely closure month dialog has **“Where are all the positions of this month?”** (`apiKpiRecon`, `kpiRecon_`): every position worked on in the month in one of counted / joined but no start date / joined but no KPI target / joining date set but offer not marked sent / filled internally / open or offered at month end / closed without a hire / replaced or removed, with counts, lists and CSV. New Data check “Joined positions the KPI cannot count” (16 checks). Scores are unchanged.
+
+**Official email separate from the sign-in account** (schema 41; v121; 26 Oct 2026)
+- `Users.Email` stays the Google sign-in and the only key for access, sharing and audit. A new optional `Users.Official_Email` (Admin → Users → "Official email") is where correspondence goes. `mailTo_(row)` returns the official address if it is valid, else the sign-in account; every sender uses it: the Monday weekly summary (each active TA Lead, Head of HR and Admin, plus any extras in `Settings.WEEKLY_SUMMARY_TO`, de-duplicated), the summary test (to the caller's official address) and job-failure alerts to Admins. An invalid official address is refused on save. `M_Recruiters.Email` still holds the sign-in account. Rule for any future mail: resolve the address with `mailTo_` / `mailOfLogin_`, never use `Users.Email` directly.
+
+**One Daily log: removed from the position side panel** (no schema change; v120; 26 Oct 2026)
+- The side panel's Daily log tab and the My day single-entry form duplicated the Daily log page and were hard for recruiters to use. The tab is gone; a button opens the Daily log page filtered to the position, whose History gained a Position filter with totals. My day now shows the same day grid as the Daily log page. Same `apiSaveFunnel` and sheet throughout, so no data changes.
+
+**Speed: the 30-minute to-do reconcile no longer holds the shared lock while it computes** (no schema change; v119; 26 Oct 2026)
+- `reconcileTasks_` worked out the to-do list (about ten sheets) inside the shared lock, so everybody's saves waited for it. It now computes first and takes the lock only to write the changes.
+
+**Speed, release A: database upgrade retries, speed check, Pipeline draws first** (no schema change; v118; 26 Oct 2026)
+- Finding: the Pipeline page was slow every time; the job log showed a failing step of the database upgrade ("schema"). Since v104 a failed step left the upgrade unfinished and every 10 minutes one request re-ran all ~35 steps inside the shared lock, which also blocked everyone's saves.
+- The upgrade now remembers the steps that succeeded (`SCHEMA_DONE_<version>`) and a retry runs only the failed ones, each under the lock on its own; the wait between automatic tries grows 10, 30, 60 minutes; a busy lock is not counted as a failure. Admin → Tools → **Speed and health check** shows the failing steps with their messages and has **Retry the database upgrade now**.
+- Admin → Tools → **Run the speed check** times the sheet reads, the positions list, a pipeline board, the to-do list (first and cached), and says whether the shared lock is free (read-only, Admin only).
+- The Pipeline page asks for the board of the remembered position while the positions list is still loading, and draws the board without waiting for the to-do panel.
+
+**Monthly summary of missed to-dos, recruiter by recruiter** (no schema change; v117; 26 Oct 2026)
+- Daily review gets a Day | Month switch; the Month view and the recruiter's own My day panel are described in §10.4. New `apiMonthMissed`.
+
+**Pipeline alerts: fast-track cards in "Waiting for department"** (no schema change; v116; 26 Oct 2026)
+- Fast-track cards waiting at "Sent to department" for more than 24 h stay in the alert (the department's written confirmation is the gate before the hiring is confirmed, and the chase to-do for it is kept), but they now read "Department's written confirmation (fast-track)" instead of "feedback on the shared CV" and carry a Fast-track tag. Checked: before this change nothing in the alert told fast-track from standard cards.
+
+**To-dos: an (i) showing the notes entered** (no schema change; v115; 26 Oct 2026)
+- Notes entered when a to-do is chased, snoozed or done are now visible from an (i) on the to-do lists and on the Missed list of the Daily review. An optional note can be typed when chasing or completing. See §10.4.
+
+**Pipeline: search and filters for the position list** (no schema change; v114; 26 Oct 2026)
+- Search, Recruiter, Division, Department, Status and Grade-band filters, Previous / Next, remembered filters and a candidate-name search on the Candidate pipeline page. New `apiPipelineFind`. See §9.0.
+
+**Release number visible in the app** (no schema change; v113; 24 Oct 2026)
+- `BUILD_ID` is shown in the rail footer tooltip and on Admin → Tools (page and server), and a banner asks for a reload when the page was served from another release than the server it talks to.
+
+**Daily log: the same entry appeared twice** (no schema change; 24 Oct 2026)
+- Cause: a new entry was always inserted, with no check for an existing one for the same position and day; a second click, a slow reply, a stale list, a second tab or a lead and a recruiter typing the same row each created another copy, and the counts of both were added up (3 CVs showed as 6). The grid's Save did not remember the new entry's id.
+- Fix: one entry per position and day (a second save updates the first, under the lock); the grid and the Log form remember the id after saving; Admin → Data checks lists duplicates ("Daily log entries logged twice…") and leads can remove the identical copies. E2E A6 now expects 15 data checks.
+- Behaviour change: a second save for the same position and day replaces the numbers instead of adding another entry.
+
+**Fast-track: confirming the hiring blocked for a card added at a later stage** (no schema change; 24 Oct 2026)
+- Audit batch 5 (v105) refused "Confirm the hiring" unless the Department confirmed step had saved the department's decision date. A candidate added to a fast-track position at a later stage (the card was created from the candidate record at HR interview, with the department's written confirmation attached) never went through that step, so the hiring could not be confirmed. The gate now accepts either the saved decision, or a card that is already past the Department confirmed step with the department's written confirmation attached (the history notes that the date was not recorded). A card before that step, or without the paper, is still refused.
+- RCA (5 whys): the user saw the refusal; because the new rule required `Dept_Confirm_On`; because the rule assumed every fast-track card passes the Confirmed step; because cards can also be created at a later stage from the candidate record (`ensureApp_`, `stageFromCandidate_`) and by a lead's move; because the rule was written from the audit finding and tested on synthetic cards only, without counting how many live cards would fail it before release. CAPA: corrected gate (above); a test for a later-stage card with the paper; before a new gate ships, run it against the live cards and list who would be blocked (see §12.5 step on gates).
+
+**Screening: a rating on a question with no readable answer is kept** (no schema change; 17 Oct 2026)
+- A number or yes / no question whose answer was missing or unreadable could be given a rating on screen, but the server dropped it when saving (it kept a manual rating only where an automatic one existed), so completing the screening failed with "Rate every … (1 left)". The rating the recruiter chooses is now kept in that case too (stored as the recruiter's rating). Found with the message that now names the question; the test reproduces the old failure and passes with the fix.
+
+**Voice review: "Rate every … (1 left)" after every row was rated** (no schema change; 17 Oct 2026)
+- The screening is scored on its own saved questions, while the voice review shows the questions the call used. When those differ (the questions were edited after the call, or the saved draft was made on another version), a rated row could be dropped and the save failed with "1 left". Saving from the voice review now compares the two: it restarts the screening on the current questions when they match the call's, and otherwise says that the questions changed (and to use Continue screening).
+- The "Rate every eligibility and role-fit answer" message now names the questions still unrated.
+
+**Reinstating a backout: expected joining date and BGV** (no schema change; 16 Oct 2026)
+- The expected joining date is optional in the dialog: a new date replaces the one on the position and the card; with none given the date on record is kept, but only if it is still ahead (a past date is refused). The dialog shows the date on record.
+- A candidate who now holds an offer on another position cannot be reinstated until that is settled.
+- BGV: the cases cancelled by the backout stay cancelled and new cases are timed from the day the candidate was reinstated, instead of from the original offer date (which would have made them overdue at once).
+
+**Reinstate a candidate who backed out** (no schema change; ADR-051; 16 Oct 2026)
+- New `apiReinstatePreview` / `apiReinstateBackout` and a "Candidate will join after all" button on a replaced position's board (Head of HR, Admin). See §9.6.
+
+**Audit batch 6: going back a stage, error handler, tests and the error appendix** (no schema change; 16 Oct 2026)
+- Moving a card back (lead): going back before Joined clears the joining date on the position, the candidate and the card; going back before Offer clears Offer sent, offer date, expected joining date and the selected candidate on the position and the dates on the card, so no report keeps counting the hire or the offer.
+- Anything that fails in the browser without being caught now shows a message (once per 5 seconds) instead of failing silently.
+- E2E checks added for formula-safe text, calendar-valid dates, the fast-track Offer gate and the editor-only guard.
+- §17 now lists the refusal messages of the voice, fast-track, exemptions, BGV, BGV governance, organogram, CV profile, grades, departments, JD Master and KPI code.
+
+**Audit batch 5: security hardening** (no schema change; 16 Oct 2026)
+- Every cell written through the app is checked: text that a spreadsheet would run as a formula (starts with = + @, a tab or carriage return, or a minus before a letter, bracket or $) is stored as plain text. The webhook receiver does the same.
+- Attaching a candidate to a position needs the right to edit that position. A job post can be changed only from the position it belongs to.
+- Position form: the BGV dates and remarks of an existing position can no longer be written through it (the BGV tracker keeps them).
+- Fast-track: the hiring cannot be confirmed (Offer) before the department's decision has been recorded.
+- Voice results: processing runs under the lock, and a result that arrives before our call record carries the provider's id is kept for an hour instead of being discarded as "No matching call".
+- Profile links are kept only as http(s) addresses.
+- Not changed (needs a business decision): any signed-in user can still edit any candidate record; the Onboarding role still sees the whole pipeline; unknown role text in the Users sheet still counts as Recruiter.
+
+**Audit batch 4: scheduled jobs and schema safety** (no schema change; 16 Oct 2026)
+- Each step of the nightly and 30-minute jobs runs on its own; failures are logged (Admin → Tools) and the Admins are e-mailed once a day per failing step. Admin → Tools also shows the last run of each job, missing triggers and an old backup.
+- The nightly backup checks that the copy opens, has every sheet and the same number of positions.
+- The 30-minute job processes voice results that arrived (before, only when someone opened a voice screen).
+- Schema upgrade steps run on their own: one failing step is logged and retried after 10 minutes instead of stopping the app; the schema version is recorded only when every step succeeded.
+- `apiSaveAppDetails` (unused, and able to bypass stage checks) was removed.
+
+**Audit batch 3: integrity of backouts, dates, closures and screens** (no schema change; 16 Oct 2026)
+- A backout runs under one lock, and a retry after an interruption finishes the replacement without writing the withdrawal twice.
+- Dates: the offer letter date, acceptance date and joining date cannot be in the future; acceptance and joining cannot be before the offer date; a day that does not exist (30 Feb) is refused instead of rolling into March.
+- The replacement MRF no longer inherits the earlier candidate's notice period, proof or extension.
+- Close without hiring: candidates moved to another position take their scheduled interviews and candidate link with them (their interview is no longer cancelled), and a candidate saved against a replaced or removed position no longer gets a card there.
+- The Joiners-at-risk list, the Overview alerts and card to-dos follow the position's recruiter, not the copy on the card.
+- The KPI uses the notice grace of the TAT rule, as the TAT screens do. Positions closed without a hire (Not Needed, No Vacancy, On Hold) get no Achieved or Missed result.
+- Lists and to-dos refresh when the data they use changes (documents, screenings, departments, rules, BGV, exemptions, pipeline moves).
+
+**Audit batch 2: pipeline integrity** (no schema change; 16 Oct 2026)
+- Stage history rows are written under the lock (`appendHistory_`), so two moves in one second cannot share a row or an ID. `withLock_` no longer takes the lock twice in one run.
+- Saving a position computes its stored TAT from the whole record (hold days, exemptions, replacement start), not only the fields on the form.
+- A card cannot be Rejected at Offer or Pre-joining (record a backout instead), and nothing but a lead's move back changes a card that has Joined.
+- **Expected joining date** can be changed on an Offer or Pre-joining card (`apiSetEdoj`): updates the position and the card together and writes a history line. The date cannot be before the offer date.
+- Only a lead can change a position's recruiter, also through a direct call.
+
+**Audit batch 1: editor-only functions and attachments locked down** (no schema change; 16 Oct 2026)
+- `setup`, `shareWithTeam`, `installTriggers`, `nightlyJob`, `refreshDashboardJob`, `weeklySummaryJob` and `e2eTest` are reachable from a browser; each now requires the database owner or an Admin when called by a signed-in user (`requireEditorOrAdmin_`); the editor and triggers are unaffected.
+- Opening an attachment (`apiGetDoc`): joining papers, offer, appointment and department-confirmation files need the position's recruiter, a lead, or (fast-track) the Onboarding role; exemption proof needs the recruiter, a lead or `tat_exempt`; legacy BGV files on a position need the recruiter or a lead. Uploading a candidate's psychometric file needs the position's recruiter or a lead.
+
+**Joiners at risk: expected joining date follows the position** (no schema change; 16 Oct 2026)
+- The Overview alert and the pipeline alert read the card's own copy of the expected joining date before the position's, and editing the date on the position never reached the card, so a mistyped or stale date (for example 11 Jul instead of 7 Nov) kept showing Red "has passed". The position's date is now authoritative (the card copy is only a fallback), and changing it on the position also updates the Offer / Pre-joining card of that position.
+
+**Fast-track: confirming the hiring when the department paper is missing** (no schema change)
+- The "Confirm the hiring" step needs the department's written confirmation, but the file field was only on the earlier step and under Papers, lower on the card, so a recruiter who had uploaded other papers could not move the card and could not see why. The Offer form now shows the missing paper as its own required field at the top (uploaded first, then the move is made), with a clear message.
+- A TA Lead or the Head of HR can instead record a reason for a candidate the department confirmed before the paper step existed (stored in the stage history). A recruiter cannot.
+
+**Voice agent: suggested ratings for descriptive answers** (no schema change; ADR-050; agent version 6, `VOICE_RATINGS_FROM_`)
+- Numbers and yes / no are rated by the scorer; descriptive answers (qualification, hands-on experience, a difficult problem) have no formula. From agent version 6 the CRM sends `question_criteria` (what each numbered question requires, a good answer, a worry, knock-out; practical questions left out) and the agent's post-call step returns `screening_ratings` (Q1: Meets / Partly / Does not meet / Unclear, with a short reason). The live bot's prompt does not use the criteria variable, so it cannot coach the candidate. The result window preselects the suggestion, marks it "suggested: check it" with the reason, and counts them; a recruiter still confirms every rating. If the post-call step does not return ratings, nothing is suggested and the recruiter rates as before (fallback if needed: an AI step in the CRM, which needs the owner's approval because it sends transcript text to an AI service).
+- "The whole experience is relevant" now reads as the same number of years as the total.
+
+**Voice result review: edit, rate, complete; one count; who can see it** (no schema change; ADR-050)
+- The result window is now a working screen: what the candidate said can be edited, each answer rated (Meets / Partly / Does not meet; numbers and yes / no are rated automatically), then **Save to the screening draft** or **Confirm and complete the screening** (needs every eligibility and role-fit question rated; moves the candidate to Screened). `apiVoiceReviewSave` writes through `apiSaveScreening`; earlier draft answers are kept. A screening already completed is not overwritten.
+- **Who:** new permission `voice_review` (Recruiter for own positions, TA Lead, Head of HR, Admin for all). It shows the result section on the card and allows rating and completing; **placing calls, settings and fetching results stay Admin only** (`voice_agent`). A webhook result for a position the signed-in user may not handle stays in the inbox until someone who may handles it. Role matrix updated.
+- **One definition of "answered"** for the card, the call-plan desk and the result window (`voiceCombined_`): a question counts when some call gave a usable answer; an unclear yes / no (for example "देख सकते हैं") stays open and is asked again; an unreadable number counts as answered and is flagged for the recruiter to correct. The call length is shown in whole seconds.
+
+**Call-plan desk layout fix** (no schema change; `App.html`, `Styles.html`)
+- The wording boxes were one-line inputs a few characters wide and the Time cell broke its row. The wording is now a full-width box that grows to the whole question, the table has fixed column widths and a sticky header, and on a phone each question stacks (tick and wording, then order and time).
+
+**Voice agent: call-plan desk** (no schema change; ADR-050)
+- New desk before a call (`apiVoicePlanDraft`, `voicePlanDesk` in App.html): every confirmed question with a tick box, up / down order, editable spoken wording, time per question and a total with a warning above 12 questions or 8 minutes; presets All, Knock-outs and must-haves, Only unanswered, None. A follow-up (earlier result exists) starts with the unanswered ticked. "Check the plan" shows what the bot is sent and any problem.
+- From agent version 5 (`VOICE_LISTONLY_FROM_`) the CRM sends exactly the ticked questions, numbered, through the questions variable; answers are matched by Q number. Older versions keep the earlier behaviour (standard questions in the agent, role questions limited by "Most role questions per call").
+- Agent version 5: no fixed standard section, answers as Q lines, one polite offer to finish quickly when a candidate must leave, then respect a second refusal.
+
+**Voice agent: follow-up call for the questions still missing** (no schema change; ADR-049)
+- New "Ask the remaining questions" (and "Preview the follow-up") on a card whose last call has a result: the plan is every question with no usable answer from any call, in priority order (up to 10), sent through the questions variable with `call_mode = follow_up`; the agent skips its standard questions and asks only those. Answers from all calls are combined per question (latest wins); the draft screening keeps answers already in it (earlier calls or typed by the recruiter) and only fills the empty ones. The card shows "n of m questions still without an answer".
+- Agent version 3 (frozen) holds the matching prompt: finish-the-list check before closing, a clear yes / no, the missing half of a two-part question, `call_mode`, and English digit answer lines. Tested with simulated chats in full and follow-up modes before it was frozen.
+
+**Voice agent: no half-empty calls, readable answers, coverage** (no schema change; ADR-049)
+- A real call is refused when the position has role-specific questions and no questions variable is set (Admin > Voice agent); the preview says so. The call row records which variable carried the questions; the result shows "NOT sent to the bot" when none did, and "Covered x of y" from the CRM's own count (the agent's disposition is only a hint).
+- The agent's answers are also read when returned as one dictionary-style string, and Hindi digits and number words (साल, महीने, दिन, पंद्रह, बीस…) are turned into numbers; an unclear yes / no ("देख सकते हैं") stays unrated for the recruiter. Transcripts fetched from the provider use the English text first.
+
+**Voice agent: question plan and review table** (no schema change; Voice_Calls.Plan_JSON added by `voiceSchema_`; ADR-049)
+- Call plan: standard topics are not sent again; the position's other confirmed questions are sent as a numbered list in priority order up to "Most role questions per call" (Admin, default 6) through the questions variable. The required answer and knock-out flag are not sent (this also fixes the earlier text that included "needed"). The preview shows how each question is asked; the plan is saved on the call.
+- Results: the agent's `screening_answers` lines are parsed (also the first version's lines), matched to questions, normalised (notice to days, experience to years, yes / no), scored with `sqScore_`, and shown in a review table with the agent's own summary and disposition as hints. Unreadable answers are left for the recruiter.
+
+**Voice call results come back** (no schema bump; `voiceSchema_` adds columns and `Voice_Inbox`; ADR-048)
+- The call response's `attempt_id` is stored; our call id is sent in the webhook metadata. New `docs/voice-webhook` (receiver project and set-up steps). `voiceIngest_` records outcome, duration, transcript and the agent's variables on the call; a variable named like a question id fills a draft screening. New `apiVoiceCallDetail`; the card shows outcome and length, "View the result" and "Fetch the result". **Fetch by attempt id** (`apiVoiceFetchResult`) recovers a call whose webhook never arrived from the provider's Analytics service: `GET /analytics/v1/{org}/{workspace}/{app}/attempts` (start/end datetime required, `filter_conditions` on `attempt_id`) gives the interaction id, then `/transcripts/{interaction_id}`; the attempt id is also read from an earlier call's saved response note.
+
+**Daily log: the day's grid replaces the form** (no schema change)
+- The Log activity form is replaced by a grid: Recruiter picker and Date (today) at the top, then one row per active position with CVs sourced, CVs reviewed, Feedback from dept and Remarks typed in the row. Today's existing entry is shown in the row; a row is saved with **Save**, or all changed rows with **Save all changes** (an existing entry is updated, a new one created). Pipeline counts for the day are shown under the position. Past entries are locked as before. For dates before 5 Oct the grid also shows the typed pipeline columns.
+- The history below stays for date ranges; its Edit opens the entry for its own position.
+
+**Daily log: recruiter picker inside Log activity** (no schema change)
+- A Recruiter picker sits at the top of the Log activity form: "My positions" by default (a recruiter with none of their own starts on All recruiters), each colleague, Not assigned, or All recruiters (positions grouped by recruiter). The Position list follows it, with a count, and is pre-selected when there is only one.
+- The history below follows the same picker (the separate Recruiter filter at the bottom is removed; From and To stay). After saving, the recruiter and position stay selected.
+- **An entry counts for the position's recruiter** when a lead or colleague types it (`apiSaveFunnel`); `Created_By` still records who typed it.
+
+**Fast-track hiring for W and T levels** (schema 40; new `FastTrack.gs`; ADR-047; §8.8)
+- New route per position (by grade or set by hand), Hiring routes admin tab, Onboarding role, department written-confirmation gate, W document pack, to-do suppression. `SCHEMA_VERSION` 40. Tests: E2E A15; local 40-case harness.
+
+**Organogram grade cover** (schema 37; Org.gs; ADR-046; §11.9)
+- A seat filled at another grade of the same band, in the same department, is covered, not vacant and not excess. Key figures now show truly vacant, covered by another grade, true over-strength, and truly vacant with no MRF; the net vacant figure stays beside them. Covered seats use a neutral marker; only residuals use warning colours.
+- New Grade mix tab (substitutions with direction, grade steps, note status and review date, CSV); department drawer lists the substitutions; Admin → Org structure → Grade notes.
+- New sheet `Org_Grade_Notes`; new APIs `apiOrgSaveNote`, `apiOrgCloseNote` (`org_manage`). `SCHEMA_VERSION` 37.
+- Tests: E2E O16–O22; local checks reproduce Report_4 (410 vacant, 95 over-strength, 207 covered, net 315).
+
+**Organogram** (schema 36; new Org.gs; ADR-045; §11.9)
+- New Reports → Organogram: approved against existing manpower by division, department and grade (M, W, T), division heads and HODs, open MRFs and vacant seats with no MRF. Tree, by-department table and grade matrix, CSV, department drawer with open positions.
+- New Admin → Org structure (`org_manage`, Head of HR and Admin): import the manpower report (checked first, replaces the snapshot), edit divisions, departments and HODs, map the existing CRM departments to the new ones.
+- New sheets `Org_Divisions`, `Org_Departments`, `Org_Dept_Map`, `Org_Manpower`, `Org_Import_Log`, seeded with 16 divisions, 59 departments and a 71-row mapping from the HR sheets (Report_4, HR HOD list). New permission `org_manage`. `SCHEMA_VERSION` 36.
+- Tests: E2E group O1–O15; local checks reproduce the report totals (Approved 2,510, Existing 2,195, net vacant 315).
+
+**Voice agent form fixes** (no schema change)
+- The webhook box showed `https: <div class=` : a literal `//` inside the page script is mangled by Apps Script's page handling (the reason the CDN addresses are written `https:\/\/`). Written the same way. The two tick boxes were stretched to the full width of their column (`.field input{width:100%}`) and pushed their text to the right; check boxes inside a field are now their natural size. **Rule: never write `//` inside App.html script text; write `\/\/` or build it from `String.fromCharCode(47, 47)`.**
+
+**Voice call section always visible to the Admin** (no schema change)
+- The Voice screening call section on a pipeline card was hidden when the position had no confirmed screening questions, so the Admin could not tell why it was missing. It now shows on every active card for the Admin; without confirmed questions it says so and names the steps to finish (JD final, Questions final in JD Master) instead of the buttons.
+
+**Voice agent page: "no sheet named Voice_Calls" fixed** (schema 39)
+- The Admin → Voice agent page failed with *The database has no sheet named "Voice_Calls"*: the schema step that creates it did not run (the stored schema number was already at or above the code's, most likely because another build with the same number had been deployed to the same script). The voice functions now create the call-log sheet themselves when it is missing (as the CV profile sheet already did), and the schema number is raised to 39 so the step runs once everywhere. **Rule for new sheets:** create them from a `xxxSchema_()` called both from `ensureSchema_` and from the first read, so a skipped schema step cannot break a page; and when several builds are deployed to one script, give each a different schema number.
+
+**Voice screening call, the call itself** (no schema change; §8.7)
+- The outbound call is written to the provider's request example (agent id and version, connection, calling number, candidate first name and position as variables, optional opening line, entry state, questions variable and webhook), with the exact request shown in the preview. Gender, location and resume highlights are not sent. The known agent, connection and number are the defaults. Saving the settings now validates everything before writing anything (a bad value no longer leaves half the settings changed). `script.external_request` added to `appsscript.json`: **every user re-approves the app once**. Do Not Disturb check and results are still to be connected; with Do Not Disturb required, no call is placed yet.
+- Tests: 53 server cases (the request URL, header and body, id parsing, refusal and network errors with the key scrubbed, optional settings, validation before writes), browser run of the settings and preview.
+
+**Voice screening call, scaffold** (schema 38; new `VoiceScreen.gs`; ADR-045; §8.7; Admin only)
+- Admin → Voice agent settings, an Admin-only Preview / Place the call on pipeline cards, the Do Not Disturb rule, the brief, the call log, and draft screening answers from a result. The provider connection (Do Not Disturb check and the call itself) is not written yet, so no call can be placed.
+- Tests: 39 server cases (permissions, settings, key never exposed, preview, every refusal, Do Not Disturb, logging, results, draft rules), browser run of the settings page and the preview, E2E V1.
+
+**Daily log: saving CVs sourced / reviewed fixed** (no schema change; a regression of "Daily log shows the pipeline counts")
 - Editing a Daily log entry from the switch-over date was refused with "HR 1st round, shared … counted from the candidate pipeline": the list now carries the pipeline counts, the Edit form filled its hidden pipeline fields with them, and the server refused them. Now the form never carries those fields (cleared when shown, cleared when the date moves past the switch-over, and sent as 0), and the server **drops** them for entries from the switch-over date instead of refusing (a stale page cannot be blocked either). Entries before the switch-over save as before. Tests: 6 more server cases (23), browser run of the edit form and a date change.
 
-**Unreleased — Daily log shows the pipeline counts** (no schema change)
+**Daily log shows the pipeline counts** (no schema change)
 - From the switch-over date (`PIPELINE_CUTOVER`, 5 Oct) the Daily log list, My day entries and a position's activity history had blank HR R1, Shared, Shortlisted, Interviews and Selected columns, because those are counted from Pipeline moves and the list showed only typed entries. `apiListFunnel` now adds the pipeline counts per day, position and recruiter (credited to the position's recruiter, backward moves by a lead cancel as in the KPI), onto the typed entry of the same day or as a "Pipeline" row of its own; old typed values in those columns are ignored from that date, so nothing is counted twice; days before the switch-over are unchanged. Counts are buttons that list the candidates behind them. Tests: 17 server cases, browser run, E2E M1.
 
-**Unreleased — Screening dialog redesign** (no schema or server change; scoring unchanged)
+**Screening dialog redesign** (no schema or server change; scoring unchanged)
 - Cause of the broken look: the CTC calculator's `.seg` class overrode the screening rating buttons (they became a 2×2 grid). The screening now has its own `.scr-seg`; its answer boxes share the app's input style.
 - Compact row (question, knock-out / must pill, "Needed", answer and Meets / Partly / Gap side by side, 5 rows per screen instead of 3 on a 1366×768 laptop); fixed header and footer with the questions filling the rest; the result names the knock-outs not met (click to jump); counts of Met / Partly / Gap / Unrated; section chips with "to rate" counts; **Next unrated**; the reason for each automatic rating ("3, needed 4+ → Gap"), "Changed by you (auto: Gap) · Undo"; Complete screening is stopped with a clear message that jumps to the first unrated question; keyboard: arrows or 1 / 2 / 3 on a rating; radio-group semantics; full-screen on phones.
 - Tests: browser run at 1366, 1500, 1920, 1024 and 390 px (before and after screenshots), keyboard, undo, jump, blocked and successful completion; found and fixed a lost first click caused by the header being rebuilt on blur.
 
-**Unreleased — CV profile, fixes from the first real CV** (no schema change)
+**CV profile, fixes from the first real CV** (no schema change)
 - A company name with "Pvt. Ltd." was read as a sentence, so the employer under the role line was lost; a degree with an institute and dates (even with no Education heading) was read as a job; "Bachelor/Batchelor/Master of Science / Commerce / Arts / Business" are now recognised as degrees (also for the Education field); generic tools and skill sentences ("basic MS Office") are no longer listed as certificates; when the CV states far more experience than the dated jobs add up to, the warning says earlier jobs may not have been read and names the first dated job. After a build, **Show the text that was read** lets the recruiter see what the parser saw. Tests: 58 parser cases.
 
-**Unreleased — CV profile, phase A1** (schema 35; new `CvProfile.gs`; ADR-044; §8.6)
+**CV profile, phase A1** (schema 35; new `CvProfile.gs`; ADR-044; §8.6)
 - Employment timeline, education, certifications, languages, links, achievements, skills matrix with evidence, industry exposure; checks for gaps, short stays, overlaps and stated-versus-counted experience; reading confidence; facts-only summary; review and correct; Excel-ready export. No AI service; no date of birth, gender, marital status, religion, nationality or photograph is read.
 - Tests: 52 parser cases on seven CV layouts (one-line, three-line, labelled, sentence, year-only, no history, OCR duplicates), 20 server cases (build, review, replace, validation, sanitising, export), browser run (build, edit, save, export; 1500 px and 390 px), E2E L1–L4.
 
-**Unreleased — BGV tracker, phase 4: governance** (schema 34; new `BgvGov.gs`; ADR-043; §11.8)
+**BGV tracker, phase 4: governance** (schema 34; new `BgvGov.gs`; ADR-043; §11.8)
 - Restricted Drive folders per recruiter (nightly and on demand), retention list and Admin "Purge now", file-view logging and the audit export; Governance tab on the tracker.
 - Tests: 51 server cases (folders, access, moves, removal of a user, due rules, purge incl. a file that cannot be deleted, scrubbed change log, export), browser run of the tab (Admin and lead views, 1500 px and 390 px), E2E K18–K20.
 
-**Unreleased — BGV tracker, phase 3: efficiency** (no schema change; §11.8)
+**BGV tracker, phase 3: efficiency** (no schema change; §11.8)
 - Vendor spreadsheet import (dry run, then apply), email templates with a company name and placeholders (Rules tab), Email… in the case, and a confirmation when a card is moved to Joined with the previous-employer BGV still open.
 - Tests: 93 server cases (dates, statuses, check names, dry-run and apply import, template and rules save, join guard), browser run (paste, CSV and xlsx import, mapping, dry run, apply with skip, email dialog, Rules editors, 1500 px and 390 px), E2E K15–K17.
 
-**Unreleased — BGV tracker, phase 2: monitoring** (no schema change; §11.8)
+**BGV tracker, phase 2: monitoring** (no schema change; §11.8)
 - To-dos (consent, chaser, report before joining, review) that open the case; Overview strip and tracker tile for results to decide and cases past a limit; Reports tab (recruiter scorecard, type, month, vendor scorecard, departments, discrepancies, CSV); weekly email line; data check (14); KPI scorecard reads the BGV cases with identical scoring and treats a waived case as not a miss.
 - Tests: 66 server cases (to-dos, summary, reports, weekly, data check), KPI parity test (identical scoring from fields and from cases, waived, cancelled), browser run of the Overview links, decision filter, Reports and task opening; E2E K10–K14.
 
-**Unreleased — BGV tracker, phase 1: foundation** (schema 33; new `Bgv.gs`; ADR-042; §11.8)
+**BGV tracker, phase 1: foundation** (schema 33; new `Bgv.gs`; ADR-042; §11.8)
 - BGV tracker page (My BGV / All cases / Vendors / Rules), case drawer (next step with consent, vendor and report rules, checks, outcome and the Head of HR's decision, documents, timeline), cases opened automatically at Offer and Joined and carried over from the position fields, status lines on the pipeline card, candidate and position, read-only BGV fields on the position form with the start dates mirrored.
 - New permission `bgv_decide` (Head of HR, Admin); sheets BGV_Cases, BGV_Checks, BGV_Log, BGV_Vendors, BGV_Rules; attachments entity BGV.
 - Tests: 49 server cases (scope, due dates, carry-over, permissions, status rules, decision flow, rules), browser run of the tracker, E2E K1–K9.
 
-**Unreleased — CTC calculator: link to a candidate or position** (schema 32)
+**CTC calculator: link to a candidate or position** (schema 32)
 - Linked-to search in the calculator; CTC block on the pipeline card, candidate profile and position drawer (ctc_use only) with Calculate CTC and Attach; name and current/expected CTC filled from the candidate when clear; For column, search and CSV; remove link. `apiCtcFor`, `apiCtcLink`; E2E I12g–I12i; 57 server cases.
 
-**Unreleased — CTC calculator, phase 4: access, preview and approval** (schema 31; ADR-041)
+**CTC calculator, phase 4: access, preview and approval** (schema 31; ADR-041)
 - Access tab (Admin): five permissions by role with reasons and history; no-codes and no-letters roles; Preview as a role; optional approval of letters (submit, approve and issue, return with a note, withdraw); letter footer shows who prepared and approved; re-run link kept when a re-run draft is edited.
 - `Role_Access` sheet; `CTC_Calcs` gains Submitted_By/At, Decided_By/At, Decision_Note; setting CTC_APPROVAL; `effectivePerms_`, `ctcGrants_`; `apiCtcAccess`, `apiCtcAccessSave`, `apiCtcSubmit`, `apiCtcReview`. Tests: 43 server cases (roles, enforcement, approval flow, outdated rules), browser run of the Access tab, preview, submit, return and approve; E2E I12b–I12f.
 
-**Unreleased — CTC calculator: hike on current pay**
+**CTC calculator: hike on current pay**
 - Candidate's current CTC / Gross / Net and ask (monthly or yearly); target by a hike % on CTC, Gross, Net or CTC and Net; hike comparison panel with like-for-like and every-combination hikes for the offer and the ask; use the ask as the target; saved with the calculation; E2E I12a.
 
-**Unreleased — CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
+**CTC calculator, phase 3: rules editor** (schema 30, with phase 2; §11.7)
 - Rules tab (Admin): draft version copied from the rules in force; edit items, amounts, percentages, caps, conditions, slabs, choices, allowances (add/remove), letter and terms; live problems; save; test bench with item-level changes; put in force from today or a later date with reason and remark; scheduled versions shown and cancellable; automatic change summary stored with each version.
 - `apiCtcDraftNew`, `apiCtcDraftSave`, `apiCtcDraftDiscard`, `apiCtcActivate`, `apiCtcRetire`; `ctcCheck_`, `ctcDiff_`. Tests: 16 server cases, browser run of the editor, E2E I13–I17.
 
-**Unreleased — CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 30: adds `CTC_Calcs` and Updated_By/At on `CTC_Rules`; §11.7)
+**CTC calculator, phase 2: letters, saved calculations and re-runs** (schema 30: adds `CTC_Calcs` and Updated_By/At on `CTC_Rules`; §11.7)
 - Save draft, Letter preview (English / Hindi / both), Issue (PDF kept in Drive "CTC letters", record locked), PDF and PNG downloads for issued letters, Saved calculations tab with search, CSV, re-run with before/now comparison, superseding, discard.
 - `CTC_Calcs` sheet; `apiCtcSave`, `apiCtcIssue`, `apiCtcDiscard`, `apiCtcList`, `apiCtcGet`, `apiCtcVersion`; `letter` block in the rules (company, headings, signatory).
 - Tests: 20 server cases (drafts, ownership, locking, PDF check, supersede, outdated rules, discard, roles), full browser flow including a real PDF and PNG, E2E I8–I12.
 
-**Unreleased — CTC calculator, phase 1** (schema 29; new `Ctc.gs`; ADR-040; §11.7)
+**CTC calculator, phase 1** (schema 29; new `Ctc.gs`; ADR-040; §11.7)
 - **CTC calculator page** (Daily work; `ctc_use`, Admin only): target on Total CTC / Gross CTC / Gross / Net, optional Name, Grade and Designation, structure choices and allowances, live result with status, tiles, grouped monthly/yearly structure, reasons for nil items, negative Other-allowances warning, CSV, version history.
 - **CTC_Rules** sheet seeded with V1 from the "CTC Calculator" sheet (reason "Initial setup"). `apiCtcRules`, `apiCtcCalc`. New permissions `ctc_use`, `ctc_rules`, `ctc_view_all` (Admin); Roles matrix updated.
 - Tests: workbook sample on all four bases, 20,000 random structures against a cell-by-cell transcription of the sheet, solver against brute force, API access by role, browser checks at 1500 px and 390 px; E2E I1–I7.
 
-**Unreleased — TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
+**TAT exemptions approved by the Head of HR** (schema 28; new `Exemptions.gs`; ADR-039)
 - **Request** (position drawer → TAT exemptions; the position's recruiter or a lead): extra days or a paused date range (ended, not overlapping another pause), reason, remark, proof (required when the reason says so; `apiUploadDoc` entity `TEX`). **Decide** (`tat_exempt`: Head of HR, Admin): approve (proof enforced), reject or revoke with a note, or grant directly. Withdraw while pending. All audited.
 - **Effect**: approved days add to Final_TAT and approved pauses come off Days_Taken for the clocks the reason names (recruiter clock + KPI and/or position clock); a paused day already on hold counts once. Drawer readout shows e.g. "50 standard + 15 notice + 10 exemption = 75 d · 6 d paused"; positions list shows an "Exempt" badge.
-- **Notice extension**: a notice above the grace needs "Notice period proof" attached when it is entered or changed; the Head of HR can verify or reject it (rejected = not counted). New data check "Notice beyond the grace without proof" (13 checks).
+- **Notice extension**: a notice above the grace needs "Notice period proof" attached when it is entered or changed; the Head of HR can verify it against the proof. **v151: it can no longer be rejected**; a notice beyond the grace is always exempt and never affects the TAT (a rejection recorded earlier is kept for the record and has no effect; it can be cleared). New data check "Notice beyond the grace without proof" (13 checks).
 - **KPI**: Timely closure and M-level fulfilment now exclude on-hold and approved paused days and add approved recruiter exemptions; the drill-down shows them with reasons.
 - **Lock**: a closed position's exemptions can be changed until 5 days after the end of its closing month; then only the admin.
 - Admin → **TAT exemptions** tab; Overview to-do strip and weekly email show exemptions awaiting the Head of HR; Roles matrix updated. The Daily_Funnel `Exemption_Days` column is legacy (from the tracker) and unused.
 - Tests: calculation cases (notice kept/rejected, per-clock days, pauses clipped and not double-counted with holds, month lock), approval API cases as recruiter / other recruiter / Head of HR / Admin, KPI cases, browser checks of the drawer section and Admin tab; E2E X1–X6.
 
-**Unreleased — Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
+**Reports → Dept delays: department bottlenecks measured** (no schema change; new `Departments.gs`)
 - New page (all users; leads see every department, a recruiter their own positions), period last 30 / 90 / 180 days or custom, from records already kept:
   - **CV feedback time**: a card's time at "Shared with department" (Stage_History) until the department confirms or the card is rejected, put on hold or withdrawn; average, median, number over the 24 h policy (Appendix A step 3); CVs waiting now with the oldest.
   - **JD / screening-question validation**: each version's shared date to the department's reply (Position_Docs); average reply, versions awaiting now.
@@ -1154,7 +1727,7 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
   - Click a department to filter its positions; click a position to open it; Download CSV on every table.
 - Limits: sharing logged only as daily counts (not by moving cards) cannot be timed; migrated history rows are skipped as their share time is unknown.
 - E2E: D19b checks the report's shape.
-**Unreleased — More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
+**More on one screen: wider pop-ups, drawers and pipeline board** (no schema change; `App.html`, `Styles.html`)
 Measured in a browser harness at 1780×900 (1366×768 in brackets), before → after:
 - Candidate card (Pipeline): 1000 px wide, 1.78 screens tall → up to 1680 px (97% of the screen), **1.12** screens (2.10 → 1.71). Three columns: next step and joining follow-ups | interviews and other actions | screening, documents, offer, onboarding and history. Short form fields sit two to a row.
 - Position drawer (and every side drawer): 1000 → up to 1320 px wide; a long form's sections sit side by side in two columns and each section's fields flow into two or more columns: 3.77 → **2.22** screens (4.48 → 2.64).
@@ -1162,7 +1735,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 - Wide pop-ups (JD & questions, JD picker, close position, job posts) 1000 → 1280 px; screening 1040 → 1320 px; share with department 720 → 920 px; screening-questions view and editor, add-a-candidate search and panel-member form 520 → 860 px.
 - Overview at 1366 px: the right column no longer pushes the page 118 px sideways (grid items could not shrink below their table width).
 
-**Unreleased — Overview pipeline alerts: full details and honest risk** (no schema change)
+**Overview pipeline alerts: full details and honest risk** (no schema change)
 - *Joiners at risk* no longer depends only on a risk picked at a check-in: it also lists joiners whose expected joining date has passed with no joining recorded (Red), whose offer is not accepted 7 days after the letter (`OFFER_ACCEPT_RISK_DAYS_`, Amber), and whose joining is recorded on the position while the card was not moved to Joined (Amber). Each item says why. The box states how many joiners have never been checked on (risk not known).
 - `pipelineAlerts_` returns every item with its detail: candidate and mobile, position, MRF, grade, department, recruiter, stage and since when, offer / acceptance / expected joining dates, last check-in (date, mode, risk, response, note, by) and number of check-ins, next check-in, what is pending and for how many days; HOD for department feedback. Sorted longest pending first.
 - Overview: box titles and "View all N" open a pop-up with the three lists as tabs, recruiter filter and search, an ageing summary (never checked in / no next check-in / overdue / due today; Red / Amber; waiting over 3 days), "Open card" to the candidate in the Pipeline, and Download CSV.
@@ -1171,7 +1744,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 
 ### 2026-09-29
 
-**Unreleased — UI speed and stability** (no schema change)
+**UI speed and stability** (no schema change)
 - Screens no longer re-ask the server for the positions list on every menu click: the list in memory is shown at once and checked in the background (at most every 15 s, or on the next screen after any server action); if it changed, the list is swapped and the Positions screen redraws. After a save the next load still waits for the server as before. The list is prefetched 1.5 s after the first page, and simultaneous requests share one call.
 - A position drawer opened from memory re-reads that position: untouched, it redraws with the newer values; once typed in, it warns so a colleague's change is not overwritten.
 - Overview: to-do counts and pipeline alerts are requested together with the dashboard, and their space is reserved, so the page no longer jumps (layout shift 0.18 → 0 in the browser harness). Daily log reserves its tasks strip; the switch-over banner and a position's open tasks are drawn from the last answer on later visits.
@@ -1382,7 +1955,7 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 **v1 — 23 Sep — Phase 1 MVP ("v1 - Phase 1 MVP"):** database imported from the Excel tracker (348 MRF lines, 1,087 candidates, ≈4,230 daily-log rows, panel unavailability; import report and exceptions); positions with TAT calculation and status; daily funnel log; candidates; panel availability; Overview; Users-sheet access; CV folder; nightly TAT refresh. Deployed executing as the visiting user.
 
 ### Schema versions (recorded)
-38 Org_Plan_Revisions, Org_Plan (organogram plan editor, v82 Organogram plan editor) · 37 Org_Grade_Notes (organogram grade cover, v81 Organogram entries) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (v81 Organogram entries) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
+46 Org_Plan_Revisions, Org_Plan (organogram plan editor) · 40 fast-track hiring: MRF.Hiring_Route, Applications dept-confirmation and appointment columns · 39 Voice_Calls sheet repaired by the self-healing `voiceSchema_` · 38 Voice_Calls (voice screening scaffold) · 37 Org_Grade_Notes (organogram grade cover, unreleased) · 36 Organogram: Org_Divisions, Org_Departments, Org_Dept_Map, Org_Manpower, Org_Import_Log (unreleased) · 33 BGV tracker (unreleased) · 32 CTC_Calcs Candidate_ID, Line_ID (CTC link) · 31 Role_Access, CTC_Calcs approval columns, setting CTC_APPROVAL (CTC access and approval, unreleased) · 30 CTC_Calcs, CTC_Rules Updated_By/At (CTC letters and rules editor, unreleased) · 29 CTC_Rules (CTC calculator) · 16 archive (v37) · 17 talent pool (v38) · 18 CV parse log (v39) · 19 Users audit columns (v45) · 20 TAT_Rules (v46). Earlier steps are listed in §4.8.
 
 ## 15. Open items, known risks and roadmap
 
@@ -1407,6 +1980,10 @@ Measured in a browser harness at 1780×900 (1366×768 in brackets), before → a
 25 joinings on days other than Monday/Thursday; 20 missing/invalid mobiles; 23 duplicate groups; test records ("AGM - TA_TEST" position, test candidate) to remove through the app.
 
 ### 15.4 Planned features (roadmap)
+- **Supabase migration (planned, not started).** Move the database from Google Sheets to Supabase Postgres in phases: schema and parity checker, outbox dual-write (sheets stay the source while Supabase is verified), resumable backfill, browser-direct reads with short-lived JWTs and row-level security for sub-200 ms lists, then cut over after a soak period of about two weeks. Drive keeps the files. The `service_role` key stays server-side only. Waiting on the business: project and region (nearest existing projects are Tokyo and Singapore; none in Mumbai), approval of browser-direct reads, soak length, approval to host candidate personal data there, data volumes, and the go-ahead to start Phase 0/1.
+- **Voice agent, parked items:** see the end of the current-state block in §8.7.
+- **Fast-track later phases:** see §8.8.
+- **JD matching (A2)** and the missing jobs for one candidate (needs the CV text) are parked.
 - **JD engine phases 3–5** (phase 2, the JD Maker, delivered in v49 except suggested screening questions and standard workman profiles by trade × level): (3) JD Check — upload/paste the department's JD, statement matching against the library, gap report (missing / conflict / weaker / duplicate / new / relevance), merged proposed JD; (4) HOD confirmation loop — pre-written Teams/Outlook message, per-item decisions, versioned confirmed JD, *JD confirmed on*, to-do rule; (5) learning loop — new confirmed items to a proposals queue with duplicate check and approval into the library. Open decisions: standard workman profiles (trade × level, per Appendix F) to seed the library; confirmation strictness (block pipeline or critical to-do; recommended: sourcing may start, with a critical to-do). Decided: BFCL Word JD template (compact, no employee acceptance box; M5+ acceptance to be tracked in the CRM).
 - **Phase 4 — stage timings per band** (W/T same as M initially), wired into the to-do and Missed rules (Appendix A per band).
 - **Positions month filter** (From/To + choice of date field).
@@ -1740,3 +2317,219 @@ Generated mechanically from the v46 source: every message the server can show a 
 ### Import (editor only) (`Import.gs`)
 
 - A database was already imported (Script Properties → DB_ID). Delete that property first to import again.
+
+### Added in v105: the files written after v46 (generated from the source)
+
+Messages that begin a sentence and then name a record or a value are shown with the fixed part only. A message is raised only when the action is refused; nothing is changed when it appears.
+
+### Voice screening call (`VoiceScreen.gs`)
+
+- You can see a voice result only for your own positions (a TA Lead or the Head of HR sees all).
+- Only the CRM admin can use the voice agent while it is being tested.
+- The calling number must be 8 to 15 digits, with an optional leading +.
+- The agent version must be a whole number from 1 to 9999.
+- The opening line is limited to 300 characters.
+- The entry state name is limited to 80 characters.
+- The questions variable name may use letters, digits and _ only, and must not start with a digit.
+- The webhook address must start with https:// .
+- The API key does not look right. Paste it exactly as the provider shows it.
+- The most role-specific questions per call must be a whole number from 1 to 10.
+- Tick at least one question to ask.
+- This position has no final screening questions yet. Confirm them in JD & questions first.
+- This candidate is
+- The candidate has no valid 10-digit mobile number on file.
+- The final screening questions are empty.
+- The question desk needs agent version
+- There is no earlier call with a result for this candidate, so there is nothing to follow up. Place a normal call first.
+- Every question already has an answer from the earlier call or calls. There is nothing left to ask.
+- The call was not placed:
+- This number is on the Do Not Disturb list. No call was placed.
+- The call could not be placed:
+- The Do Not Disturb check is not connected yet.
+- The API key is not set.
+- Could not reach the voice provider (
+- The provider refused the call (HTTP
+- This call already has its result.
+- The provider refused the request (HTTP
+- This call has no provider attempt id, so its result cannot be fetched.
+- The provider has no record of that call for the days searched. Check the agent id in the settings, and that the call is not older than the provider keeps its records.
+- The screening was already completed. Reopen it from the pipeline card (Continue screening) to change it.
+
+### Fast-track route (`FastTrack.gs`)
+
+- Record the department’s decision: Suitable, Not suitable or Hold.
+- Add the name of the person in the department who confirmed.
+- Add the date of the department’s confirmation.
+- The confirmation date cannot be in the future.
+- Record the department’s decision first (the Department confirmed step): the hiring cannot be confirmed before the department has said the candidate is suitable.
+- Attach the department’s written confirmation first (the field above “Confirm the hiring”). The hiring is confirmed only on that paper; a TA Lead or the Head of HR can record a reason instead for a candidate confirmed before this step existed.
+- The date the hiring was confirmed cannot be in the future.
+- The appointment letter date cannot be in the future.
+- Joining documents not verified:
+- Only the Head of HR or the admin can change which levels use the fast-track route.
+
+### TAT exemptions (`Exemptions.gs`)
+
+- This position closed and its KPI month is locked (changes were allowed until
+- Only the Head of HR or the admin can decide TAT exemptions.
+- Pick a reason from the list.
+- Write a remark explaining the exemption.
+- Enter the extra days as a whole number (1 or more).
+- Enter the pause from and to dates.
+- The pause cannot end before it starts.
+- A pause can be requested once it has ended (the to date cannot be in the future).
+- The pause is before the TAT started (
+- These dates overlap exemption
+- The position of this exemption was not found.
+- This request is already
+- Give a reason for rejecting.
+- The reason "
+- Choose Approve or Reject.
+- Only a pending request can be withdrawn.
+- Only an approved exemption can be revoked.
+- Give a reason for revoking.
+- Choose Verify or Reject.
+- Give a reason for rejecting the notice extension.
+- Attach the notice proof before verifying.
+- Only a TA Lead, the Head of HR or the admin can see the exemption register.
+- A reason cannot be blank.
+- Max days for "
+- A reason cannot be renamed (past exemptions refer to it). Deactivate it and add a new one.
+
+### BGV tracker (`Bgv.gs`)
+
+- This case is
+- Choose a vendor from the list.
+- Unknown outcome.
+- Only a TA Lead or the Head of HR can waive a BGV case.
+- Only a TA Lead or the Head of HR can reopen a closed case.
+- Record the candidate’s consent date first. Nothing is checked without consent.
+- Choose the vendor (or "Direct" if BFCL verifies without one).
+- Add at least one check before starting.
+- This case has no start date yet.
+- The report date cannot be before the start date.
+- Record the outcome first.
+- This result needs the Head of HR’s decision before the case can be closed.
+- Give the reason for cancelling.
+- Unknown kind of entry.
+- Write the note.
+- Choose one of the checks:
+- Unknown check status.
+- Describe what was found.
+- That check was not found.
+- Only the Head of HR or the admin can decide on a BGV discrepancy.
+- A decision is recorded once the report is in (status Report received or Under review).
+- Only a discrepancy or an unverified result needs a decision. Record the outcome first.
+- Choose one of the decisions.
+- Write the reason for the decision (at least 10 characters).
+- Only a TA Lead, the Head of HR or the admin can change the BGV vendors.
+- Enter the vendor’s name.
+- Standard turnaround must be 1 to 60 days.
+- Enter a valid email address.
+- A vendor named
+- Company name for the emails: 2 to 60 characters.
+- Pick the date the new rules take effect.
+- The rules can take effect from today or a later date, not the past.
+- Choose the reason for the change.
+- Write a remark of at least 10 characters: what changed and why.
+- Nothing changed.
+- Only a TA Lead, the Head of HR or the admin can see the BGV reports.
+- The start of the period is after its end.
+- The file has no rows to import.
+- Import up to 120 rows at a time (this file has
+- No case number or vendor reference on this row.
+- The reference matches
+- No case has this number or vendor reference.
+- This case belongs to
+- This case has not been started yet. Start it first (consent and vendor).
+- BGV open: The previous-employer background verification (
+
+### BGV governance (`BgvGov.gs`)
+
+- The restricted BGV folder is not ready for
+- Only a TA Lead, the Head of HR or the admin can open BGV governance.
+- Select the cases to purge.
+- Purge up to 40 cases at a time.
+- Give the reason or approval reference (at least 10 characters).
+- Not past retention (or already purged):
+- Only the Head of HR or the admin can export the BGV audit trail.
+- Choose valid dates.
+- The start date is after its end.
+- Export up to one year at a time.
+
+### Organogram (`Org.gs`)
+
+- Only the Head of HR or the admin can import the manpower report.
+- The file has more than
+- Only the Head of HR or the admin can change the organisation structure.
+- Keep the head name for
+- Keep the HOD name for
+- Check the email for
+- Pick a division for
+- Only the Head of HR or the admin can add grade notes.
+- Pick a department from the organogram.
+- Grades must be from the list (M1 to M7, T, W1 to W5).
+- The approved grade and the grade it is filled at are the same.
+- A grade can only cover for another grade in the same band (
+- Seats must be a whole number, 1 or more.
+- Keep the reason under 300 characters.
+- Write a reason for filling a
+- Enter who approved the higher grade.
+- Pick a review date for the higher grade.
+- Only the Head of HR or the admin can close grade notes.
+- Only the Head of HR or the admin can change the department mapping.
+
+### CV profile (`CvProfile.gs`)
+
+- This profile is too large to store. Remove some of the long text.
+- This profile was reviewed by
+- No text could be read from this CV, so no profile was built.
+
+### Grades and designations (`Grades.gs`)
+
+- Pick the designation for this
+- Only a TA Lead, the Head of HR or the admin can see grade settings.
+- Only a TA Lead, the Head of HR or the admin can change grades and designations.
+- Keep the band for
+- A grade code is a letter followed by up to four letters or digits, for example M8.
+- Enter the standard TAT days for
+- A designation cannot be blank
+- Pick a grade for "
+
+### Departments report (`Departments.gs`)
+
+- The start date is after the end date.
+
+### JD Master (`JdMaster.gs`)
+
+- Only the admin can import the JD library.
+- This file is not the BFCL Master JD Library: the sheet
+- This import was replaced or has expired. Start again.
+- Another admin started a different import. Start again.
+- Only a TA Lead, the Head of HR or the admin can change the JD library.
+- Unknown confirmation.
+- Nothing to confirm.
+- The designation cannot be empty.
+- Pick a BFCL grade.
+- Pick a department from the Skill Competency Framework.
+- Minimum experience must be a number of years from 0 to 40.
+- The Recruitment Policy (Appendix F) sets at least
+- Status must be Active, Variant or Retired.
+- Say which job profile this is a variant of.
+- Pick the competency department before confirming it.
+- The Skill Competency Framework has no
+- That item was not found. Reload the job profile.
+- Keep it under 600 characters.
+- Unknown status.
+- This job profile already has that
+- Pick the skill type.
+- Pick the KRA category.
+- Write the responsibility category.
+- Keep category names under 120 characters.
+- Write the responsibility.
+- Keep responsibilities under 600 characters.
+- This job profile already has that responsibility (
+- Responsibility
+- The JD library has not been imported yet (JD Master).
+- Set the position’s grade before creating its JD.
+- Library profile

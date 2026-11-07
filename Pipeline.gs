@@ -39,15 +39,28 @@ function stageFromCandidate_(c) {
 }
 
 function appendHistory_(app, from, to, outcome, note, u) {
-  const t = readTable_(T.HIST.name, true);
   let n = 0;
-  t.rows.forEach(function (r) { const m = String(r.Hist_ID).match(/(\d+)$/); if (m) n = Math.max(n, +m[1]); });
+  withLock_(function () {   // the next number and the row are written together, so two moves in one second cannot share a row
+  /* The history sheet only ever grows, so the next number needs no read of it: the highest number issued is remembered
+     (seeded from the sheet once) and the last row is checked in case another path added a higher one. */
+  const sh = sheet_(T.HIST.name), lc = sh.getLastColumn(), last = sh.getLastRow(), props = PropertiesService.getScriptProperties();
+  const headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(String);
+  n = histNextBase_(props.getProperty('IDMAX_Stage_History'), last > 1 && headers.indexOf('Hist_ID') >= 0 ? sh.getRange(last, headers.indexOf('Hist_ID') + 1).getValue() : '', function () {
+    let m = 0; readTable_(T.HIST.name, true).rows.forEach(function (r) { const k = String(r.Hist_ID).match(/(\d+)$/); if (k) m = Math.max(m, +k[1]); }); return m;
+  });
   const o = { Hist_ID: 'SH-' + String(n + 1).padStart(6, '0'), App_ID: app.App_ID, Candidate_ID: app.Candidate_ID, Line_ID: app.Line_ID,
     Recruiter: app.Recruiter, From_Stage: from, To_Stage: to, Outcome: outcome || '', Note: clean_(String(note || '').slice(0, 1000)),
     Changed_By: u.email, Changed_At: new Date() };
-  t.sheet.getRange(t.sheet.getLastRow() + 1, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
+  sh.getRange(last + 1, 1, 1, headers.length).setValues([headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
-  PropertiesService.getScriptProperties().setProperty('KPI_DIRTY_AT', String(Date.now()));
+  const now = String(Date.now());   // a move changes the Overview counts and the KPIs
+  props.setProperties({ KPI_DIRTY_AT: now, DASH_DIRTY_AT: now, IDMAX_Stage_History: String(n + 1) });
+  });
+}
+/** The highest history number in use: the remembered one, or the last row's, whichever is higher; the full scan runs only when nothing is remembered. */
+function histNextBase_(remembered, lastRowId, scan) {
+  const kept = Number(remembered || 0), m = String(lastRowId || '').match(/(\d+)$/), lastN = m ? +m[1] : 0;
+  return kept ? Math.max(kept, lastN) : Math.max(lastN, scan());
 }
 
 /** Creates the application for a candidate linked to a position, if there is none yet. */
@@ -55,7 +68,7 @@ function ensureApp_(cand, u) {
   const t = readTable_(T.APP.name, true);
   if (t.rows.some(function (a) { return a.Candidate_ID === cand.Candidate_ID && a.Line_ID === cand.Line_ID; })) return null;
   const line = lineOf_(cand.Line_ID);
-  if (!line) return null;
+  if (!line || ['Replaced', 'Removed'].indexOf(positionStatus_(line)) >= 0) return null;   // no cards on a position that was replaced or removed
   const stage = stageFromCandidate_(cand);
   const rejected = /reject/i.test(txt_(cand.HR_Result) || txt_(cand.Tech_Result));
   const app = insert_(T.APP, { Candidate_ID: cand.Candidate_ID, Line_ID: cand.Line_ID, MRF_No: line.MRF_No, Recruiter: line.Recruiter,
@@ -84,7 +97,7 @@ function apiPipeline(lineId) {
   if (!line) throw new Error('Pick a position.');
   const onLine = {}, lineCands = [];
   readTable_(T.APP.name).rows.forEach(function (a) { if (a.Line_ID === lineId) { onLine[a.App_ID] = true; lineCands.push(a.Candidate_ID); } });
-  const cands = candNames_(lineCands);
+  const cands = candNamesSlim_(lineCands);
   const hist = {};
   readTable_(T.HIST.name).rows.forEach(function (h) {
     if (!onLine[h.App_ID]) return;
@@ -115,7 +128,48 @@ function apiPipeline(lineId) {
   if (line.Replaced_By && byId[line.Replaced_By]) l.replacedByMrf = String(byId[line.Replaced_By].MRF_No || line.Replaced_By);
   if (line.Parent_Line_ID && byId[line.Parent_Line_ID]) l.parentMrf = String(byId[line.Parent_Line_ID].MRF_No || line.Parent_Line_ID);
   const qs = sqTexts_(line.Screening_Questions);
-  return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: DOC_SECTIONS, now: Date.now(), interviews: interviewsFor_(lineId) };
+  return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: isFast_(line) ? FAST_DOC_SECTIONS_ : DOC_SECTIONS, route: routeOf_(line), fastStages: FAST_STAGES_, now: Date.now(), interviews: interviewsFor_(lineId) };
+}
+
+/**
+ * One position's funnel: the CVs received, the candidates on the position's pipeline, and the stage each has reached.
+ * A card keeps the stage it stood at when it was rejected, put on hold or withdrawn, so its stage is the furthest it got
+ * (a lead's correction moves it back and the stage follows). CVs received follows the Daily review's CV received column:
+ * the Daily-log CVs sourced typed before the funnel start date, plus the cards created from it.
+ */
+function apiPositionFunnel(lineId) {
+  const u = currentUser_(); ensureSchema_();
+  const line = lineOf_(lineId);
+  if (!line) throw new Error('Position ' + lineId + ' was not found.');
+  const fast = isFast_(line), route = fast ? FAST_STAGES_.slice() : STAGES.slice();
+  const apps = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === lineId && String(a.Status) !== 'Removed'; });
+  const cands = candNames_(apps.map(function (a) { return a.Candidate_ID; }));
+  const rows = apps.map(function (a) {
+    const c = cands[a.Candidate_ID] || {};
+    return { app: String(a.App_ID), id: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
+      stage: String(a.Stage), si: STAGES.indexOf(String(a.Stage)), status: String(a.Status || 'Active'), reason: String(a.Status_Reason || ''),
+      since: ymd_(a.Stage_Since), added: ymd_(a.Created_At), tech: String(c.Tech_Result || ''), hr: String(c.HR_Result || '') };
+  }).sort(function (a, b) { return (b.si - a.si) || a.name.localeCompare(b.name); });
+  const stages = route.map(function (st) {
+    const i = STAGES.indexOf(st);
+    // The HR interview is optional: it is "reached" only by a candidate who had one (an HR result, or a card standing at HR).
+    return { stage: st, reached: rows.filter(function (r) { return r.si >= i && (st !== 'HR' || !!r.hr || r.stage === 'HR'); }).length,
+      at: rows.filter(function (r) { return r.stage === st && r.status === 'Active'; }).length };
+  });
+  const v2 = funnelV2_(), today = ymd_(new Date());
+  let typed = 0;
+  readTable_(T.FUNNEL.name).rows.forEach(function (f) {
+    if (f.Line_ID !== lineId) return;
+    const d = ymd_(f.Entry_Date);
+    if (d && d < v2) typed += Number(f.CV_Sourced) || 0;
+  });
+  let derived = 0;
+  if (today >= v2) pipelineEvents_(v2, today).forEach(function (ev) { if (ev.line === lineId && ev.metric === 'Sourced') derived++; });
+  const count = function (st) { return rows.filter(function (r) { return r.status === st; }).length; };
+  return { line: { id: lineId, mrf: String(line.MRF_No || ''), position: String(line.Position || ''), route: fast ? 'Fast-track' : 'Standard' },
+    received: { total: typed + derived, typed: typed, pipeline: derived, from: v2 },
+    candidates: rows.length, active: count('Active'), rejected: count('Rejected'), onHold: count('On hold'), withdrawn: count('Withdrawn'),
+    stages: stages, rows: rows };
 }
 
 function apiAddToPipeline(candidateId, lineId) {
@@ -130,17 +184,78 @@ function apiAddToPipeline(candidateId, lineId) {
   return appClient_(created);
 }
 
+/** The MRF a position belongs to, as a key that ignores case and spaces ('' when it has none). Positions of one MRF share it. */
+function mrfKey_(l) { return String((l && l.MRF_No) || '').trim().toUpperCase(); }
+
+/**
+ * Moves a candidate's card to another position of the SAME MRF, keeping its stage, status and history. Used when one MRF has
+ * several open positions and a candidate fits another one better (for example the first position's candidates were all rejected).
+ * Only cards before the Offer stage move: from Offer on, the offer and joining fields live on the position. A lead can always move
+ * a card; a recruiter only when they own both positions. Every check runs before the first write, the writes are in an order that
+ * can safely be repeated (related records first, the card last), and a second call for a card that is already there does nothing.
+ */
+function apiMoveToLine(appId, toLineId, reason) {
+  const u = currentUser_(); ensureSchema_();
+  reason = clean_(String(reason || '')).trim();
+  if (reason.length < 3) throw new Error('Give a short reason for the move.');
+  const toId = String(toLineId || '').trim();
+  if (!toId) throw new Error('Pick the position to move to.');
+  return withLock_(function () {
+    const app = appOf_(appId);
+    if (String(app.Line_ID) === toId) return boardAfterWrite_(toId);   // already there: a repeated click or a retry
+    const lines = readTable_(T.MRF.name, true).rows;
+    const from = lines.filter(function (l) { return l.Line_ID === app.Line_ID; })[0], to = lines.filter(function (l) { return l.Line_ID === toId; })[0];
+    if (!from) throw new Error('The card’s position was not found.');
+    if (!to) throw new Error('The position to move to was not found.');
+    if (!mrfKey_(from) || mrfKey_(from) !== mrfKey_(to)) throw new Error('A card can move only to another position of the same MRF (' + (from.MRF_No || 'this one') + ').');
+    if (!(isLead_(u) || (canEditLine_(u, from) && canEditLine_(u, to)))) throw new Error('Moving a card between positions needs a TA Lead or the Head of HR unless you are the recruiter of both positions (' + (from.Recruiter || 'not assigned') + ' and ' + (to.Recruiter || 'not assigned') + ').');
+    if (['Active', 'On hold'].indexOf(String(app.Status)) < 0) throw new Error('This card is ' + String(app.Status).toLowerCase() + '. Reactivate it first, then move it.');
+    if (STAGES.indexOf(String(app.Stage)) >= STAGES.indexOf('Offer')) throw new Error('A card at Offer or later cannot be moved to another position yet, because the offer and joining dates sit on the position. Record the backout, or ask a TA Lead.');
+    requireNotReplaced_(from);
+    requireActiveLine_(to);
+    if (routeOf_(from) !== routeOf_(to)) throw new Error('The two positions use different hiring routes (' + routeOf_(from) + ' and ' + routeOf_(to) + '), so their stages differ.');
+    const dup = readTable_(T.APP.name, true).rows.filter(function (a) { return a.Candidate_ID === app.Candidate_ID && a.Line_ID === toId; })[0];
+    if (dup) throw new Error('This candidate already has a card (' + String(dup.Status).toLowerCase() + ') in ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + '.');
+    // Every check has passed. Related records first, then the candidate, then the card, then the history: a retry repeats safely.
+    const sameApp = function (def) {
+      if (!ss_().getSheetByName(def.name)) return [];
+      return readTable_(def.name, true).rows.filter(function (r) { return String(r.App_ID) === String(app.App_ID) && String(r.Line_ID) !== toId; });
+    };
+    sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId }, u); });
+    sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId }, u); });
+    sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId }, u); });
+    if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId }, u); });
+    const cand = readTable_(T.CAND.name, true).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
+    if (cand && String(cand.Line_ID) === String(from.Line_ID)) update_(T.CAND, app.Candidate_ID, { Line_ID: toId }, u);
+    update_(T.APP, app.App_ID, { Line_ID: toId, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, u);
+    appendHistory_(Object.assign({}, app, { Line_ID: toId, Recruiter: to.Recruiter }), String(app.Stage), String(app.Stage), 'Moved',
+      'Moved from ' + (from.MRF_No || from.Line_ID) + ' · ' + from.Position + ' (' + (from.Recruiter || 'not assigned') + ') to ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + ' (' + (to.Recruiter || 'not assigned') + '): ' + reason, u);
+    bgvTouchLine_(from.Line_ID); bgvTouchLine_(toId);
+    const out = boardAfterWrite_(from.Line_ID);   // the board the person is looking at: the card is gone from it
+    out.movedTo = { line: toId, mrf: String(to.MRF_No || ''), position: String(to.Position || '') };
+    return out;
+  });
+}
+
 /**
  * Moves an application to a stage. data carries the stage's details:
  * Screened {answers}, Technical/HR {date, by, result}, Docs {docs, exception}, Offer {offerDate, edoj, ctc},
  * Prejoin {acceptedOn}, Joined {doj}, Onboarded {onboard}; every stage accepts {note}.
  */
+/** The board of a position after a write, with the position's own row (as the Positions list has it) so the page can update its list without a second request. */
+function boardAfterWrite_(lineId) {
+  const board = apiPipeline(lineId);
+  board.position = positionRow_(lineId);
+  return board;
+}
+
 function apiMoveStage(appId, toStage, data) {
   const u = currentUser_(); ensureSchema_();
   data = data || {};
   if (STAGES.indexOf(toStage) < 0) throw new Error('Unknown stage.');
   const app = appOf_(appId);
-  const line = requireLineEdit_(u, app.Line_ID);
+  const line0 = lineOf_(app.Line_ID);
+  const line = canOnboardMove_(u, line0, toStage) ? line0 : requireLineEdit_(u, app.Line_ID);   // the Onboarding team may move fast-track cards to Hiring confirmed, Joined and Onboarded
   requireActiveLine_(line);
   if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them first.');
   const from = String(app.Stage), fi = STAGES.indexOf(from), ti = STAGES.indexOf(toStage);
@@ -151,7 +266,27 @@ function apiMoveStage(appId, toStage, data) {
   if (ti <= fi && !isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can move a candidate back to an earlier stage.');
   if (ti < fi) daySnapDropAll_();
   const patch = { Stage: toStage, Stage_Since: new Date() };
+  const backWrites = [];   // what a move back undoes on the position and the candidate: written only after every check below has passed
+  if (ti < fi) {   // moving back undoes what the later stages recorded on the position and the candidate, so nothing still counts the joining or the offer
+    if (fi >= STAGES.indexOf('Joined') && ti < STAGES.indexOf('Joined')) {
+      backWrites.push(function () { update_(T.MRF, line.Line_ID, { Actual_DOJ: '' }, u); update_(T.CAND, app.Candidate_ID, { DOJ: '' }, u); });
+      patch.Actual_DOJ = '';
+    }
+    if (fi >= STAGES.indexOf('Offer') && ti < STAGES.indexOf('Offer')) {
+      const mp = { Offer_Sent: 'No', Offer_Date: '', EDOJ: '' };
+      if (String(line.Candidate_ID || '') === String(app.Candidate_ID)) mp.Candidate_ID = '';
+      backWrites.push(function () { update_(T.MRF, line.Line_ID, mp, u); });
+      patch.Offer_Date = ''; patch.EDOJ = ''; patch.Offer_Accepted_On = '';
+    }
+  }
   let outcome = '';
+  let fastOut = null;
+  if (ti > fi && isFast_(line)) { fastTrackSchema_(); fastOut = fastMove_(u, app, line, toStage, data); }   // fast-track route: its own checks and fields
+  else if (ti > fi && toStage === 'Confirmed') {   // standard route: the department's decision is recorded as fields (result, who, date), not only as a note
+    fastTrackSchema_();
+    const dc = deptConfirmFields_(data);
+    fastOut = { patch: dc.patch, outcome: dc.outcome, note: '' };
+  }
   if (toStage === 'Screened') {
     const scr = scrOf_(appId);
     if (!data._fromScreening && sqFinalFor_(app.Line_ID) && !(scr && String(scr.Status) === 'Complete')) throw new Error('Record the screening first (candidate \u2192 Screening): this position has final screening questions.');
@@ -170,11 +305,13 @@ function apiMoveStage(appId, toStage, data) {
     const docs = data.docs || {};
     const open = DOC_SECTIONS.filter(function (s) { return ['Verified', 'NA'].indexOf(docs[s[0]]) < 0; });
     if (open.length && !String(data.exception || '').trim()) throw new Error('Sections ' + open.map(function (s) { return s[0]; }).join(', ') + ' are not verified. Verify them or record the approved exception (Policy 9.3).');
+    if (open.length && String(data.note || '').trim().length < 5) throw new Error('Write the remarks: what is pending and who approved the exception. They show in the Daily review and the Daily log.');
     patch.Docs_JSON = JSON.stringify(docs);
     if (open.length) outcome = 'Conditional: ' + String(data.exception).slice(0, 200);
   }
   if (toStage === 'Offer') {
     if (!data.offerDate) throw new Error('Add the offer letter date.');
+    if (ymd_(parseYmd_(data.offerDate)) > ymd_(new Date())) throw new Error('The offer letter date cannot be in the future.');
     patch.Offer_CTC = clean_(String(data.ctc || ''));
     patch.Offer_Date = parseYmd_(data.offerDate);
     patch.EDOJ = data.edoj ? parseYmd_(data.edoj) : (line.EDOJ || '');
@@ -183,11 +320,17 @@ function apiMoveStage(appId, toStage, data) {
   }
   if (toStage === 'Prejoin') {
     if (!data.acceptedOn) throw new Error('Add the date the candidate accepted the offer.');
+    if (ymd_(parseYmd_(data.acceptedOn)) > ymd_(new Date())) throw new Error('The acceptance date cannot be in the future.');
+    const offD = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (offD && ymd_(parseYmd_(data.acceptedOn)) < offD) throw new Error('The acceptance date cannot be before the offer date (' + offD + ').');
     patch.Offer_Accepted_On = parseYmd_(data.acceptedOn);
     patch.Risk = 'Green';
   }
   if (toStage === 'Joined') {
     if (!data.doj) throw new Error('Add the actual joining date.');
+    if (ymd_(parseYmd_(data.doj)) > ymd_(new Date())) throw new Error('The actual joining date cannot be in the future. Record the joining on the day the candidate joins.');
+    const offJ = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (offJ && ymd_(parseYmd_(data.doj)) < offJ) throw new Error('The joining date cannot be before the offer date (' + offJ + ').');
     bgvJoinGuard_(app, data);
     update_(T.CAND, app.Candidate_ID, { DOJ: parseYmd_(data.doj) }, u);
     patch.Actual_DOJ = parseYmd_(data.doj);
@@ -200,10 +343,25 @@ function apiMoveStage(appId, toStage, data) {
     if (!ob.induction || !ob.buddy) throw new Error('Record the induction date and the buddy assigned.');
     patch.Onboard_JSON = JSON.stringify(ob);
   }
+  if (fastOut) { Object.keys(fastOut.patch).forEach(function (k) { patch[k] = fastOut.patch[k]; }); if (fastOut.outcome) outcome = fastOut.outcome; }
+  backWrites.forEach(function (w) { w(); });   // every check has passed: now the move back is written
   update_(T.APP, appId, patch, u);
-  appendHistory_(app, from, toStage, outcome, data.note, u);
-  if (toStage === 'Offer' || toStage === 'Joined') bgvTouchLine_(app.Line_ID);
-  return apiPipeline(app.Line_ID);
+  appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
+  if (toStage === 'Offer' || toStage === 'Joined' || ti < fi) bgvTouchLine_(app.Line_ID);
+  return boardAfterWrite_(app.Line_ID);
+}
+
+
+/**
+ * A CV looked at and found not suitable for a position: the card is created at Sourced and rejected in one step, so the day
+ * counts it as sourced and reviewed (a CV that was never carded would not show in the Daily review at all).
+ */
+function apiRejectCv(candidateId, lineId, reason) {
+  const u = currentUser_(); ensureSchema_();
+  if (!String(reason || '').trim()) throw new Error('Give a short reason.');
+  const app = apiAddToPipeline(candidateId, lineId);
+  apiSetAppStatus(app.App_ID, 'Rejected', reason, '');
+  return app;
 }
 
 /**
@@ -236,7 +394,7 @@ function apiCorrectJoiningDate(appId, newDoj, reason) {
   appendHistory_(app, String(app.Stage), String(app.Stage), 'Date corrected', 'Joining date ' + (old || 'blank') + ' to ' + newDoj + ': ' + why, u);
   daySnapDropAll_();
   bgvTouchLine_(app.Line_ID);
-  const out = apiPipeline(app.Line_ID), warnings = [];
+  const out = boardAfterWrite_(app.Line_ID), warnings = [];
   if (old && old.slice(0, 7) !== String(newDoj).slice(0, 7)) warnings.push('The joining moved to another month, so the monthly joined counts and KPIs change.');
   out.warnings = warnings;
   return out;
@@ -257,6 +415,8 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
     if (holder) throw new Error(holder + ' already holds the offer for this position, so this candidate cannot be reactivated at the offer stage.');
   }
   const backout = status === 'Withdrawn' && ['Offer', 'Prejoin'].indexOf(stage) >= 0;
+  if (status !== 'Active' && STAGES.indexOf(stage) >= STAGES.indexOf('Joined')) throw new Error('This candidate has already joined. Ask a TA Lead or the Head of HR to move the card back first if the joining was recorded in error.');
+  if (status === 'Rejected' && ['Offer', 'Prejoin'].indexOf(stage) >= 0) throw new Error('A candidate who holds an offer cannot be rejected here. If they backed out, use \u201cRecord backout\u201d, which closes the MRF and raises the replacement.');
   const patch = { Status: status, Status_Reason: clean_(String(reason || '')), Risk: status === 'Active' ? app.Risk : '' };
   let when = null;
   if (backout) {
@@ -266,16 +426,79 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
     if (app.Offer_Date && ymd_(when) < ymd_(app.Offer_Date)) throw new Error('The backout date cannot be before this candidate\u2019s offer date (' + ymd_(app.Offer_Date) + ').');
     patch.Backout_Date = when; patch.Backout_Reason = clean_(String(reason || ''));
   }
-  update_(T.APP, appId, patch, u);
-  appendHistory_(app, stage, stage, backout ? 'Backout' : status, reason, u);
-  if (backout) bgvTouchLine_(app.Line_ID);
-  if (backout) {
-    const repl = createReplacement_(line, app, when, String(reason || ''), u);
+  if (!backout) {
+    update_(T.APP, appId, patch, u);
+    appendHistory_(app, stage, stage, status, reason, u);
+    return boardAfterWrite_(app.Line_ID);
+  }
+  // One backout is one piece of work: under one lock, and a retry after an interruption finishes the replacement
+  // without writing the withdrawal and its history a second time.
+  return withLock_(function () {
+    const fresh = appOf_(appId), done = String(fresh.Status) === 'Withdrawn' && !!ymd_(fresh.Backout_Date);
+    /* The position is read again inside the lock: a call that waited for the lock while another one finished the backout finds the replacement already there and returns it. */
+    const lineNow = readTable_(T.MRF.name, true).rows.filter(function (l) { return l.Line_ID === line.Line_ID; })[0] || line;
+    if (done && lineNow.Replaced_By) {
+      const existing = readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === lineNow.Replaced_By; })[0];
+      const out0 = apiPipeline(lineNow.Replaced_By);
+      out0.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: lineNow.Replaced_By, toMrf: String(existing ? existing.MRF_No : lineNow.Replaced_By), moved: 0 };
+      return out0;
+    }
+    if (!done) {
+      update_(T.APP, appId, patch, u);
+      appendHistory_(app, stage, stage, 'Backout', reason, u);
+      bgvTouchLine_(app.Line_ID);
+    }
+    const when2 = done ? parseYmd_(ymd_(fresh.Backout_Date)) : when;
+    const repl = createReplacement_(lineNow, fresh, when2, String(reason || fresh.Backout_Reason || ''), u);
     const out = apiPipeline(repl.Line_ID);
     out.replacement = { from: line.Line_ID, fromMrf: String(line.MRF_No || line.Line_ID), to: repl.Line_ID, toMrf: String(repl.MRF_No), moved: repl._moved };
     return out;
-  }
-  return apiPipeline(app.Line_ID);
+  });
+}
+
+/** Changes the expected joining date of an offered or pre-joining candidate (position and card together); the recruiter of the position or a lead. */
+function apiSetEdoj(appId, date) {
+  const u = currentUser_(); ensureSchema_();
+  const app = appOf_(appId);
+  const line = requireLineEdit_(u, app.Line_ID);
+  requireNotReplaced_(line);
+  if (String(app.Status) !== 'Active' || ['Offer', 'Prejoin'].indexOf(String(app.Stage)) < 0) throw new Error('The expected joining date can be changed only while the candidate is at Offer or Pre-joining.');
+  const d = parseYmd_(date);
+  if (!d || isNaN(d)) throw new Error('Pick the new expected joining date.');
+  const off = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+  if (off && ymd_(d) < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+  const was = ymd_(line.EDOJ) || ymd_(app.EDOJ);
+  update_(T.MRF, line.Line_ID, { EDOJ: d }, u);
+  update_(T.APP, appId, { EDOJ: d }, u);
+  appendHistory_(app, String(app.Stage), String(app.Stage), 'Expected joining changed', (was ? was + ' to ' : 'set to ') + ymd_(d), u);
+  return boardAfterWrite_(app.Line_ID);
+}
+
+/**
+ * Finds a candidate by name, candidate id or mobile digits (4 or more) among the pipeline cards the user may see: a lead sees every
+ * position, anyone else only the positions where they are the recruiter. For the Pipeline page's search box. Returns at most 15,
+ * active cards first and then the most recently moved; only the last 4 digits of the mobile leave the server.
+ */
+function apiPipelineFind(q) {
+  const u = currentUser_(); ensureSchema_();
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(String).slice(0, 5);
+  if (!words.length || words.join('').length < 2) return [];
+  const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
+  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
+  const lead = isLead_(u), me = String(u.recruiter || '').trim().toLowerCase(), out = [];
+  readTable_(T.APP.name).rows.forEach(function (a) {
+    const c = cands[a.Candidate_ID], l = lines[a.Line_ID];
+    if (!c || !l || positionStatus_(l) === 'Removed') return;
+    if (!lead && String(l.Recruiter || '').trim().toLowerCase() !== me) return;
+    const hay = (String(c.Name || '') + ' ' + String(c.Candidate_ID || '')).toLowerCase(), mob = String(c.Mobile || '').replace(/\D/g, '');
+    const ok = words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && mob.indexOf(d) >= 0); });
+    if (!ok) return;
+    out.push({ name: String(c.Name || ''), cand: String(c.Candidate_ID), last4: mob.slice(-4), stage: STAGE_NAMES[String(a.Stage)] || String(a.Stage), status: String(a.Status),
+      mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), recruiter: String(l.Recruiter || ''), line: String(l.Line_ID), app: String(a.App_ID),
+      at: a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0 });
+  });
+  out.sort(function (x, y) { return ((y.status === 'Active') - (x.status === 'Active')) || (y.at - x.at); });
+  return out.slice(0, 15).map(function (o) { delete o.at; return o; });
 }
 
 /** Name of the candidate who holds the live offer on a position (at offer, pre-joining, joined or onboarded), if any. */
@@ -312,6 +535,7 @@ function createReplacement_(line, app, when, reason, u) {
   const skip = ['Line_ID', 'MRF_No', 'Offer_Sent', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'Candidate_ID', 'Replaced_By', 'Replaced_On',
     'Parent_Line_ID', 'TAT_Start_From', 'No_Vacancy_Date', 'Not_Needed_Date', 'Remarks', 'Position_Status', 'Standard_TAT', 'Exemption_Days', 'Final_TAT',
     'TAT_End_Date', 'Days_Taken', 'TAT_Result', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks', 'BGV_Prev_Org_File', 'BGV_Current_Org_File',
+    'Notice_Period_Days', 'Notice_Proof_File', 'Notice_Ext_Status', 'Notice_Ext_Note', 'Notice_Ext_By', 'Notice_Ext_On',
     'Created_By', 'Created_At', 'Updated_By', 'Updated_At', 'Reconciled_On', 'Reconciled_By', 'Reconcile_Note'];
   const obj = {};
   t.headers.forEach(function (h) { if (skip.indexOf(h) < 0 && line[h] !== undefined) obj[h] = line[h]; });
@@ -340,18 +564,100 @@ function createReplacement_(line, app, when, reason, u) {
   return repl;
 }
 
-/** Saves checklist-type details without moving the stage (documents, onboarding, screening answers). */
-function apiSaveAppDetails(appId, data) {
-  const u = currentUser_(); ensureSchema_();
-  const app = appOf_(appId);
-  requireLineEdit_(u, app.Line_ID);
-  const patch = {};
-  if (data.docs) patch.Docs_JSON = JSON.stringify(data.docs);
-  if (data.onboard) patch.Onboard_JSON = JSON.stringify(data.onboard);
-  if (data.answers) patch.Screening_JSON = JSON.stringify(data.answers);
-  if (data.ctc !== undefined) patch.Offer_CTC = clean_(String(data.ctc));
-  update_(T.APP, appId, patch, u);
-  return apiPipeline(app.Line_ID);
+
+/* ---------------- A candidate who backed out confirms they will join (Head of HR, Admin) ---------------- */
+
+/** What stands in the way of reinstating a backed-out card, and which live cards would move back from the replacement MRF. */
+function reinstateInfo_(app) {
+  const line = lineOf_(app.Line_ID), blockers = [];
+  const cand = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
+  const out = { line: line, repl: null, move: [], blockers: blockers, candName: cand ? String(cand.Name) : String(app.Candidate_ID), resume: false };
+  if (!line) { blockers.push('The position was not found.'); return out; }
+  if (String(app.Status) !== 'Withdrawn' || !ymd_(app.Backout_Date) || ['Offer', 'Prejoin'].indexOf(String(app.Stage)) < 0) {
+    blockers.push('This card is not a backout at Offer or Pre-joining, so there is nothing to reverse.'); return out;
+  }
+  if (!String(line.Replaced_By || '').trim()) { out.resume = true; }   // the position is already open again (an interrupted reinstatement): finish it
+  else {
+    const repl = lineOf_(line.Replaced_By);
+    if (!repl) { blockers.push('The replacement MRF was not found.'); return out; }
+    out.repl = repl;
+    const mrf = String(repl.MRF_No || repl.Line_ID);
+    const holder = liveOfferHolder_(repl.Line_ID, '');
+    if (holder) blockers.push(holder + ' already holds the offer on ' + mrf + '. Record that backout first, or ask the Head of HR to decide which candidate keeps the position.');
+    if (repl.Actual_DOJ) blockers.push('A candidate has already joined on ' + mrf + ', so it cannot be removed.');
+    if (String(repl.Replaced_By || '').trim()) blockers.push(mrf + ' was itself replaced after another backout.');
+    out.move = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === repl.Line_ID && ['Active', 'On hold'].indexOf(String(a.Status)) >= 0; });
+  }
+  const other = liveOfferHolder_(line.Line_ID, app.App_ID);
+  if (other) blockers.push(other + ' already holds the offer on ' + String(line.MRF_No || line.Line_ID) + '.');
+  readTable_(T.APP.name).rows.forEach(function (a) {   // the same person may meanwhile have accepted an offer somewhere else
+    if (a.Candidate_ID !== app.Candidate_ID || a.App_ID === app.App_ID || String(a.Status) !== 'Active' || STAGES.indexOf(String(a.Stage)) < STAGES.indexOf('Offer')) return;
+    const ol = lineOf_(a.Line_ID);
+    blockers.push(out.candName + ' now holds an offer on ' + (ol ? String(ol.MRF_No || ol.Line_ID) : a.Line_ID) + '. Settle that first.');
+  });
+  if (positionStatus_(Object.assign({}, line, { Replaced_By: '' })) === 'Removed') blockers.push('This position was removed. Restore it first.');
+  return out;
+}
+
+function requireReinstater_(u) {
+  if (!can_(u, 'withdraw_offer')) throw new Error('Only the Head of HR or the admin can reinstate a candidate who backed out.');
+}
+
+/** For the confirmation dialog: whether the reinstatement is possible and what it will do. */
+function apiReinstatePreview(appId) {
+  const u = currentUser_(); ensureSchema_(); requireReinstater_(u);
+  const info = reinstateInfo_(appOf_(appId));
+  return { allowed: info.blockers.length === 0, blockers: info.blockers, candidate: info.candName,
+    mrf: info.line ? String(info.line.MRF_No || info.line.Line_ID) : '', replMrf: info.repl ? String(info.repl.MRF_No || info.repl.Line_ID) : '', moveCount: info.move.length,
+    offerDate: ymd_((appOf_(appId)).Offer_Date) || (info.line ? ymd_(info.line.Offer_Date) : ''),
+    edoj: info.line ? (ymd_(info.line.EDOJ) || ymd_(appOf_(appId).EDOJ)) : '', today: ymd_(new Date()) };
+}
+
+/**
+ * The candidate who backed out confirms they will join: the card becomes Active again on the same MRF, the replacement MRF is
+ * removed (its live cards move back) and the position is open again as Offered. The earlier backout stays in the history. Under
+ * one lock; a retry after an interruption finishes the remaining steps.
+ */
+function apiReinstateBackout(appId, d) {
+  const u = currentUser_(); ensureSchema_(); requireReinstater_(u);
+  d = d || {};
+  const reason = clean_(String(d.reason || '')).trim();
+  if (!reason) throw new Error('Add the reason: who confirmed, when and how.');
+  const given = d.edoj ? ymd_(parseYmd_(d.edoj)) : '';
+  return withLock_(function () {
+    const app = appOf_(appId);
+    const first = lineOf_(app.Line_ID);
+    if (String(app.Status) === 'Active' && first && !String(first.Replaced_By || '').trim() && !ymd_(app.Backout_Date)) return apiPipeline(app.Line_ID);   // already done
+    const info = reinstateInfo_(app);
+    if (info.blockers.length) throw new Error(info.blockers[0]);
+    const line = info.line, off = ymd_(app.Offer_Date) || ymd_(line.Offer_Date);
+    if (given && off && given < off) throw new Error('The expected joining date cannot be before the offer date (' + off + ').');
+    // A new date replaces the one on record; with none given the one on record stays, but only if it is still ahead.
+    const prior = ymd_(line.EDOJ) || ymd_(app.EDOJ), use = given || prior, todayS = ymd_(new Date());
+    if (!use || use < todayS) throw new Error(given ? 'The expected joining date cannot be in the past.' : 'Add the new expected joining date: ' + (prior ? 'the earlier one (' + prior + ') has already passed.' : 'none is recorded.'));
+    const edoj = parseYmd_(use);
+    ensureActiveCandidate_(app.Candidate_ID, u);
+    const mrf = String(line.MRF_No || line.Line_ID), stage = String(app.Stage);
+    if (info.repl) {
+      info.move.forEach(function (a) {   // the reverse of createReplacement_: live cards, their interviews and the candidate link go back
+        update_(T.APP, a.App_ID, { Line_ID: line.Line_ID, MRF_No: line.MRF_No, Recruiter: line.Recruiter }, u);
+        appendHistory_(Object.assign({}, a, { Line_ID: line.Line_ID }), a.Stage, a.Stage, 'Moved', 'Moved back to ' + mrf + ' because the backout was reversed', u);
+        readTable_(T.INT.name, true).rows.forEach(function (i) { if (i.App_ID === a.App_ID && i.Status === 'Scheduled') update_(T.INT, i.Interview_ID, { Line_ID: line.Line_ID }, u); });
+        const cc = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === a.Candidate_ID; })[0];
+        if (cc && cc.Line_ID === info.repl.Line_ID) update_(T.CAND, a.Candidate_ID, { Line_ID: line.Line_ID }, u);
+      });
+      const rp = { Approval_Status: 'Created in error', Closure_Reason: ('Backout reversed: ' + info.candName + ' will join ' + mrf).slice(0, 300) };
+      update_(T.MRF, info.repl.Line_ID, Object.assign(rp, storedTat_(computeTat_(Object.assign({}, info.repl, rp), tatContext_()))), u);
+    }
+    const lp = { Replaced_By: '', Replaced_On: '', Backout_Date: '', Candidate_ID: app.Candidate_ID, Offer_Sent: 'Yes', EDOJ: edoj };
+    update_(T.MRF, line.Line_ID, Object.assign(lp, storedTat_(computeTat_(Object.assign({}, line, lp), tatContext_()))), u);
+    update_(T.APP, appId, { Status: 'Active', Status_Reason: '', Backout_Date: '', Backout_Reason: '', EDOJ: edoj, Risk: 'Amber',
+      Next_Followup: parseYmd_(ymd_(new Date(Date.now() + 2 * 86400000))) }, u);
+    appendHistory_(app, stage, stage, 'Backout reversed', reason, u);
+    bgvTouchLine_(line.Line_ID);
+    daySnapDropAll_();
+    return apiPipeline(line.Line_ID);
+  });
 }
 
 /** Pre-joining fail-safe: logs a check-in with the candidate and sets the risk and next check-in. */
@@ -401,6 +707,11 @@ function apiSaveScreeningQuestions(lineId, questions, confirmedOn) {
 function apiSaveJobPost(data) {
   const u = currentUser_(); ensureSchema_();
   const line = requireLineEdit_(u, data.Line_ID);
+  if (data.Post_ID) {   // the post being changed must belong to the position the caller may edit
+    const ex = readTable_(T.POST.name).rows.filter(function (r) { return String(r.Post_ID) === String(data.Post_ID); })[0];
+    if (!ex) throw new Error('That job post was not found.');
+    if (String(ex.Line_ID) !== String(data.Line_ID)) throw new Error('That job post belongs to another position.');
+  }
   const patch = prepare_(T.POST, data);
   if (!patch.Channel || !patch.Posted_On) throw new Error('Channel and posting date are required.');
   if (patch.Post_Type === 'Internal (IJP)' && patch.Closes_On && daysBetween_(ymd_(patch.Posted_On), ymd_(patch.Closes_On)) < 21) {
@@ -457,21 +768,22 @@ function pipelineAlerts_(onlyRecruiter) {
   STAGES.forEach(function (s) { out.counts[s] = 0; });
   readTable_(T.APP.name).rows.forEach(function (a) {
     if (String(a.Status) !== 'Active') return;
-    if (onlyRecruiter && String(a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
+    if (onlyRecruiter && String((lines[a.Line_ID] || {}).Recruiter || a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
     out.counts[a.Stage] = (out.counts[a.Stage] || 0) + 1;
     const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {}, st = String(a.Stage);
     const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0, fu = fus[a.App_ID] || { n: 0, last: null };
-    const edoj = ymd_(a.EDOJ) || ymd_(l.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
+    const edoj = ymd_(l.EDOJ) || ymd_(a.EDOJ), offer = ymd_(a.Offer_Date) || ymd_(l.Offer_Date), accepted = ymd_(a.Offer_Accepted_On);
     const brief = { app: a.App_ID, line: a.Line_ID, cand: String(a.Candidate_ID), name: String(c.Name || a.Candidate_ID), mobile: String(c.Mobile || ''),
       position: String(l.Position || ''), mrf: String(l.MRF_No || a.MRF_No || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''),
-      recruiter: String(a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
+      recruiter: String(l.Recruiter || a.Recruiter), stage: st, stageName: STAGE_NAMES[st] || st, since: since ? ymd_(new Date(since)) : '',
       daysInStage: since ? Math.floor((now - since) / DAY) : null, risk: String(a.Risk || ''), next: ymd_(a.Next_Followup),
       offer: offer, accepted: accepted, edoj: edoj, edojIn: edoj ? -daysFrom(edoj) : null, fuCount: fu.n, last: fu.last };
     if (brief.last) delete brief.last.at;
     if (st === 'Shared' && since && now - since > 24 * 3600000) {
       const h = hods[String(l.Dept || '').trim()] || {};
-      out.hodOverdue.push(Object.assign({}, brief, { hours: Math.round((now - since) / 3600000), hod: String(h.name || ''), hodEmail: String(h.email || ''),
-        pending: 'Department feedback on the shared CV' + (h.name ? ' from ' + h.name : '') }));
+      const fast = !!l.Line_ID && isFast_(l);   // fast-track: the department's written confirmation is what is awaited
+      out.hodOverdue.push(Object.assign({}, brief, { hours: Math.round((now - since) / 3600000), hod: String(h.name || ''), hodEmail: String(h.email || ''), fast: fast,
+        pending: (fast ? 'Department\u2019s written confirmation (fast-track)' : 'Department feedback on the shared CV') + (h.name ? ' from ' + h.name : '') }));
     }
     if (['Offer', 'Prejoin'].indexOf(st) < 0) return;
     if (!fu.n) out.unassessed++;
@@ -500,10 +812,11 @@ function apiPipelineAlerts() {
 
 /** Candidate moves per recruiter on a date, from Stage_History (used by the daily review). */
 function pipelineMoves_(date) {
-  const out = {};
+  const out = {}, lines = {};
+  readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
   readTableFrom_(T.HIST.name, 'Changed_At', date).rows.forEach(function (h) {
     if (ymd_(h.Changed_At) !== date || String(h.Changed_By) === 'migration') return;
-    const r = String(h.Recruiter || 'Unassigned').trim();
+    const r = String((lines[h.Line_ID] || {}).Recruiter || h.Recruiter || 'Unassigned').trim();   // same credit as the scorecard (pipelineEvents_)
     const o = out[r] = out[r] || {};
     const key = h.From_Stage === h.To_Stage ? String(h.Outcome || 'Status change') : String(h.To_Stage);
     o[key] = (o[key] || 0) + 1;
@@ -916,10 +1229,13 @@ function apiSaveScreening(appId, d) {
     const x = (d.answers || {})[it.id] || {};
     const a = clean_(String(x.a == null ? '' : x.a)).slice(0, 500), r = ['M', 'P', 'G'].indexOf(x.r) >= 0 ? x.r : '';
     const auto = sqAuto_(it, a);
-    answers[it.id] = { a: a, r: it.sec === 'P' ? '' : (x.o && r ? r : (auto || (it.type === 'text' ? r : ''))), o: !!(x.o && r && auto && r !== auto) };
+    answers[it.id] = { a: a, r: it.sec === 'P' ? '' : (x.o && r ? r : (auto || (it.type === 'text' ? r : ''))), o: !!(x.o && r && r !== auto) };   // a rating given by the recruiter over the automatic one, or where the answer cannot be read or was not given
   });
   const res = sqScore_(items, answers);
-  if (d.complete && !res.complete) throw new Error('Rate every eligibility and role-fit answer before completing (' + (res.total - res.rated) + ' left).');
+  if (d.complete && !res.complete) {
+    const open = items.filter(function (it) { return it.sec !== 'P' && !(res.ratings || {})[it.id]; }).map(function (it) { return '\u201c' + String(it.q || it.id).slice(0, 70) + '\u201d'; });
+    throw new Error('Rate every eligibility and role-fit answer before completing (' + (res.total - res.rated) + ' left): ' + open.slice(0, 3).join('; ') + (open.length > 3 ? '; \u2026' : '') + '.');
+  }
   const st = pdocState_(app.Line_ID);
   const patch = { Line_ID: String(app.Line_ID), Candidate_ID: String(app.Candidate_ID), MRF_No: String(line.MRF_No || ''), Position: String(line.Position), SQ_Doc_ID: sqDoc, SQ_Version: sqVer,
     JD_Version: st.jdFinal ? st.jdFinalVersion : '', Items_JSON: JSON.stringify(items), Answers_JSON: JSON.stringify(answers), Note: clean_(String(d.note || '')).slice(0, 1000),

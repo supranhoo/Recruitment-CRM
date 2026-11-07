@@ -8,7 +8,12 @@ function backupDb_() {
   const it = base.getFoldersByName('BFCL Recruitment CRM - Backups');
   const folder = it.hasNext() ? it.next() : base.createFolder('BFCL Recruitment CRM - Backups');
   const name = 'DB backup ' + fmt_(new Date(), TZ, 'yyyy-MM-dd HH:mm');
-  file.makeCopy(name, folder);
+  const copy = file.makeCopy(name, folder);
+  // Prove the copy opens and has every sheet and the same number of positions before it counts as a backup.
+  const src = ss_(), chk = SpreadsheetApp.openById(copy.getId());
+  if (chk.getSheets().length !== src.getSheets().length) throw new Error('The backup copy has ' + chk.getSheets().length + ' sheets, the database has ' + src.getSheets().length + '.');
+  const mrfS = src.getSheetByName(T.MRF.name), mrfC = chk.getSheetByName(T.MRF.name);
+  if (!mrfC || mrfC.getLastRow() !== mrfS.getLastRow()) throw new Error('The backup copy has a different number of positions from the database.');
   const keep = Number(settings_().BACKUP_KEEP_DAYS) || 14;
   const cutoff = Date.now() - keep * 86400000;
   const files = folder.getFiles();
@@ -19,6 +24,7 @@ function backupDb_() {
     if (f.getDateCreated().getTime() < cutoff) { f.setTrashed(true); removed++; } else kept++;
   }
   PropertiesService.getScriptProperties().setProperty('LAST_BACKUP', name);
+  PropertiesService.getScriptProperties().setProperty('LAST_BACKUP_AT', new Date().toISOString());
   return { name: name, kept: kept, removed: removed, folder: folder.getUrl() };
 }
 
@@ -30,8 +36,102 @@ function apiBackupNow() {
 function apiAdminInfo() {
   const u = currentUser_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can open this page.');
-  return { lastBackup: PropertiesService.getScriptProperties().getProperty('LAST_BACKUP') || '' };
+  const props = PropertiesService.getScriptProperties();
+  let errors = []; try { errors = JSON.parse(props.getProperty('JOB_LOG') || '[]'); } catch (e) { errors = []; }
+  const bk = props.getProperty('LAST_BACKUP_AT') || '';
+  const triggers = ScriptApp.getProjectTriggers().map(function (t) { return String(t.getHandlerFunction()); });
+  return { lastBackup: props.getProperty('LAST_BACKUP') || '',
+    backupStale: !bk || Date.now() - new Date(bk).getTime() > 36 * 3600000,
+    jobs: { nightly: props.getProperty('JOB_OK_nightly') || '', refresh: props.getProperty('JOB_OK_refresh') || '' },
+    triggers: { nightly: triggers.indexOf('nightlyJob') >= 0, refresh: triggers.indexOf('refreshDashboardJob') >= 0, weekly: triggers.indexOf('weeklySummaryJob') >= 0 },
+    errors: errors.slice(0, 10) };
 }
+
+/* ---------------- Speed and health check (Admin) ---------------- */
+
+function schemaState_() {
+  const props = PropertiesService.getScriptProperties();
+  let err = {}, done = []; try { err = JSON.parse(props.getProperty('SCHEMA_ERR') || '{}'); } catch (e) { err = {}; }
+  try { done = JSON.parse(props.getProperty('SCHEMA_DONE_' + SCHEMA_VERSION) || '[]'); } catch (e) { done = []; }
+  const retry = Number(props.getProperty('SCHEMA_RETRY_AT') || 0);
+  return { version: props.getProperty('SCHEMA_V') || '', target: SCHEMA_VERSION, complete: Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION), failures: Number(props.getProperty('SCHEMA_FAILS') || 0),
+    nextTry: retry > Date.now() ? new Date(retry).toISOString() : '', steps: done.length, errors: Object.keys(err).map(function (k) { return { step: k, message: String(err[k]) }; }),
+    lastMs: Number(props.getProperty('SCHEMA_LAST_MS') || 0) };
+}
+
+/** Times, on the server, the calls behind the slow pages, plus the schema state and whether the shared lock is free. Read-only. Admin only. */
+function apiSpeedCheck() {
+  requireAdmin_(currentUser_());
+  const rows = [];
+  const time = function (what, fn) {
+    const t0 = Date.now(); let note = '';
+    try { note = fn() || ''; } catch (e) { note = 'ERROR: ' + String(e && e.message || e).slice(0, 160); }
+    rows.push({ what: what, ms: Date.now() - t0, note: String(note) });
+  };
+  [T.MRF, T.APP, T.HIST, T.FU, T.SCR, T.PDOC, T.POST, T.INT, T.CAND, T.TACT, T.TASK].forEach(function (d) {
+    time('Read the sheet ' + d.name + ' (from the sheet, no cache)', function () { _tables = {}; const t = readTable_(d.name, true); return t.rows.length + ' rows, ' + t.headers.length + ' columns'; });
+  });
+  _tables = {};
+  time('Positions list (apiListPositions)', function () { return apiListPositions().length + ' positions'; });
+  _tables = {};
+  const first = readTable_(T.MRF.name).rows.filter(function (l) { return ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; })[0];
+  if (first) time('Pipeline board of ' + String(first.MRF_No || first.Line_ID) + ' (apiPipeline)', function () { _tables = {}; return apiPipeline(first.Line_ID).apps.length + ' cards'; });
+  _tables = {};
+  time('Candidate index: built from the sheet (no cache)', function () { const r = readTable_(T.CAND.name, true).rows.map(candIndexEntry_); return r.length + ' entries, ' + JSON.stringify(r).length + ' characters'; });
+  _tables = {};
+  time('Candidate index: read from the cache', function () { const i = candIndexCached_(); return i ? i.length + ' entries' : 'not in the cache yet (the next search builds it)'; });
+  _tables = {};
+  /* The calls behind the screens people wait for most, timed alone so a release can be compared with the one before. */
+  _tables = {};
+  time('Candidates, first page of the search (apiSearchCandidates)', function () { const r = apiSearchCandidates({ q: '', page: 0, size: 50, archived: 'no' }); return r.total + ' candidates, ' + r.rows.length + ' returned'; });
+  time('Candidates, search for a name (apiSearchCandidates)', function () { const r = apiSearchCandidates({ q: 'a', page: 0, size: 50, archived: 'no' }); return r.total + ' matches'; });
+  _tables = {};
+  time('Overview figures (apiDashboard, from its snapshot when current)', function () { const d = apiDashboard(); return 'built ' + String(d.builtAt || ''); });
+  time('Overview to-do counts (apiTaskSummary)', function () { const x = apiTaskSummary(); return x.due + ' due'; });
+  time('Overview alerts (apiPipelineAlerts)', function () { const x = apiPipelineAlerts(); return (x.hod || []).length + ' waiting, ' + (x.risk || []).length + ' at risk, ' + (x.due || []).length + ' follow-ups'; });
+  time('KPI scorecard (apiKpi)', function () { const k = apiKpi(null, false); return JSON.stringify(k).length + ' characters in the result'; });
+  time('Version check with nothing changed (apiFetch, the {same:true} path)', function () {
+    const a = apiFetch('apiListPositions', [], ''); const b = apiFetch('apiListPositions', [], a.v);
+    return b.same ? 'unchanged answer in ' + b.ms + ' ms' : 'ERROR: the second call returned data';
+  });
+  _tables = {};
+  time('To-do list, first call (allTasks_)', function () { return allTasks_().length + ' to-dos'; });
+  time('To-do list, second call (should come from the cache)', function () { return allTasks_().length + ' to-dos'; });
+  let free = false; try { const lk = LockService.getScriptLock(); free = lk.tryLock(0); if (free) lk.releaseLock(); } catch (e) { }
+  return { at: new Date().toISOString(), build: BUILD_ID, rows: rows, schema: schemaState_(), lockFree: free };
+}
+
+/** Runs the schema upgrade again now (only the steps that have not succeeded) and returns its state. Admin only. */
+function apiSchemaRetry() {
+  requireAdmin_(currentUser_());
+  PropertiesService.getScriptProperties().deleteProperty('SCHEMA_RETRY_AT');
+  const t0 = Date.now(); ensureSchema_();
+  const s = schemaState_(); s.tookMs = Date.now() - t0; return s;
+}
+
+/* ---------------- Scheduled-job health ---------------- */
+
+/** Records a failed step of a scheduled job (last 20 kept) and e-mails the Admins once per job step per day. Never throws. */
+function jobLog_(job, step, err) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let log = []; try { log = JSON.parse(props.getProperty('JOB_LOG') || '[]'); } catch (e) { log = []; }
+    const msg = String(err && err.message || err).slice(0, 300);
+    log.unshift({ at: new Date().toISOString(), job: job, step: step, msg: msg });
+    props.setProperty('JOB_LOG', JSON.stringify(log.slice(0, 20)));
+    const day = ymd_(new Date()), key = 'JOB_MAIL_' + job + '_' + step;
+    if (props.getProperty(key) === day) return;
+    props.setProperty(key, day);
+    const to = readTable_('Users').rows.filter(function (r) { return normRole_(r.Role) === ROLES.ADMIN && String(r.Active || 'Yes') !== 'No' && mailTo_(r); }).map(mailTo_).filter(function (e, i, all) { return all.indexOf(e) === i; });
+    if (to.length) MailApp.sendEmail(to.join(','), 'BFCL Recruitment CRM: ' + job + ' job step failed (' + step + ')',
+      'The ' + job + ' job step "' + step + '" failed at ' + fmt_(new Date(), TZ, 'd MMM yyyy HH:mm') + ' IST.\n\n' + msg + '\n\nOpen Admin \u2192 Tools to see the recent failures. This e-mail is sent once a day per failing step.');
+  } catch (e) { console.error('jobLog_: ' + e); }
+}
+/** Runs one step of a scheduled job so a failure in it does not stop the rest, and is recorded. */
+function runStep_(job, step, fn) {
+  try { return fn(); } catch (e) { console.error(job + ' / ' + step + ': ' + e); jobLog_(job, step, e); return undefined; }
+}
+function jobDone_(job) { try { PropertiesService.getScriptProperties().setProperty('JOB_OK_' + job, new Date().toISOString()); } catch (e) { } }
 
 /** Change history from Audit_Log, newest first (max 300 rows). */
 function apiAuditLog(f) {
@@ -72,8 +172,13 @@ function dataChecks_() {
   const c5 = add('mobile', 'Candidates with a missing or invalid mobile number', 'Mobile should be 10 digits.', 'CAND');
   const c6 = add('dup', 'Candidates sharing a mobile number or email', 'Probably the same person entered twice.', 'CAND');
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
-  const c8 = add('notice_proof', 'Notice beyond the grace without proof', 'Notice over 30 days extends the TAT automatically; attach the notice proof or ask the Head of HR to review it (Admin \u2192 TAT exemptions).', 'MRF');
-  const nctx = tatContext_();
+  const c8 = add('notice_edoj', 'Expected joining later than offer + notice', 'The expected joining date is more than 14 days after the offer date plus the notice period: the notice or the date is probably wrong.', 'MRF');
+  const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
+  const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
+  try {
+    const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
+    funnelDuplicates_().forEach(function (g) { g.extra.forEach(function (e) { const l = lm[e.Line_ID] || {}; c9.items.push({ id: e.Entry_ID, label: String(l.MRF_No || e.Line_ID) + ' \u00b7 ' + String(l.Position || '') + ' (' + String(e.Recruiter || '') + ') \u00b7 ' + ymd_(e.Entry_Date), detail: (funnelSame_(g.keep, e) ? 'Identical to ' : 'Different numbers from ') + g.keep.Entry_ID }); }); });
+  } catch (e) { }
   const weekday = function (ymd) { const p = ymd.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay(); };
   readTable_(T.MRF.name).rows.forEach(function (l) {
     if (positionStatus_(l) === 'Removed') return;
@@ -83,10 +188,13 @@ function dataChecks_() {
     const offer = ymd_(l.Offer_Date), doj = ymd_(l.Actual_DOJ), rec = ymd_(l.Receipt_Date);
     if (String(l.Offer_Sent).toUpperCase() === 'YES' && !offer) c2.items.push({ id: l.Line_ID, label: label, detail: 'Offer sent = Yes' });
     const asg = ymd_(l.Assigned_On);
+    if (doj && positionStatus_(l) === 'Open') c10.items.push({ id: l.Line_ID, label: label, detail: 'Joining date ' + doj + ' but Offer sent is not Yes' });
+    else if (doj && !tatStart_(l)) c10.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' but no start date' });
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
-    if (String(l.Notice_Ext_Status || '') !== 'Rejected' && !l.Notice_Proof_File && ['Open', 'Offered', 'On Hold'].indexOf(positionStatus_(l)) >= 0) {
-      const g = ruleFor_(nctx, l.Grade, tatStart_(l)).grace, n = Number(l.Notice_Period_Days) || 0;
-      if (n > g) c8.items.push({ id: l.Line_ID, label: label, detail: 'Notice ' + n + ' days adds ' + (n - g) + ' days to the TAT' });
+    const nd = Number(l.Notice_Period_Days) || 0, edoj = ymd_(l.EDOJ);
+    if (positionStatus_(l) === 'Offered' && offer && nd > 0 && edoj) {
+      const lim = addDays_(offer, nd), late = daysBetween_(lim, edoj);
+      if (late > 14) c8.items.push({ id: l.Line_ID, label: label, detail: 'Offer ' + offer + ' + ' + nd + ' days notice = ' + lim + ', but expected joining is ' + edoj + ' (' + late + ' days later): check the notice period or the date' });
     }
     if (doj) { const w = weekday(doj); if (w !== 1 && w !== 4) c4.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][w] + ')' }); }
   });
@@ -114,6 +222,8 @@ function dataChecks_() {
   });
   const bl = add('bgv_late', 'BGV not started past the start-by date', 'The recruiter owns the case: open the BGV tracker, start it, or record why it is not needed.', 'MRF');
   try { bgvLateCases_().forEach(function (x) { bl.items.push(x); }); } catch (e) { }
+  const bx = add('bgv_excl_over', 'BGV excluded from the KRA past its release date', 'The former employer\u2019s data was expected by now: chase it, or revoke the exclusion in the BGV tracker.', 'MRF');
+  try { bgvExclOverdue_().forEach(function (x) { bx.items.push(x); }); } catch (e) { }
   return checks.map(function (c) { c.count = c.items.length; c.items = c.items.slice(0, 200); return c; });
 }
 
@@ -130,8 +240,8 @@ function setSetting_(key, value, note) {
 function summaryRecipients_() {
   const extra = String(settings_().WEEKLY_SUMMARY_TO || '').split(/[,;\s]+/).filter(function (e) { return /@/.test(e); });
   const leads = readTable_('Users').rows.filter(function (r) {
-    return String(r.Active || 'Yes') !== 'No' && (PERMS_[normRole_(r.Role)] || []).indexOf('lead') >= 0 && /@/.test(String(r.Email));
-  }).map(function (r) { return String(r.Email).trim().toLowerCase(); });
+    return String(r.Active || 'Yes') !== 'No' && (PERMS_[normRole_(r.Role)] || []).indexOf('lead') >= 0 && mailTo_(r);
+  }).map(mailTo_);
   return leads.concat(extra).filter(function (e, i, all) { return all.indexOf(e) === i; });
 }
 
@@ -155,11 +265,13 @@ function apiSetWeekly(on) {
 
 function apiSendSummaryTest() {
   const u = currentUser_(); requireAdmin_(u);
-  sendSummary_([u.email], true);
-  return 'Sent to ' + u.email;
+  const to = mailOfLogin_(u.email);
+  sendSummary_([to], true);
+  return 'Sent to ' + to;
 }
 
 function weeklySummaryJob() {
+  requireEditorOrAdmin_();
   if (String(settings_().WEEKLY_SUMMARY || 'Off') !== 'On') return;
   const to = summaryRecipients_();
   if (to.length) sendSummary_(to, false);
@@ -196,7 +308,7 @@ function sendSummary_(to, test) {
     const c = team[key] && team[key][month];
     const def = k.defs[key];
     let val = def.count && month < k.captureFrom ? 'Scored from ' + k.captureFrom : '\u2014';
-    if (c) val = def.count ? (c.pending ? c.pending + ' to check' : c.num + ' ' + def.unit) : c.pct + '% (' + c.num + '/' + c.den + ')';
+    if (c) val = def.count ? (c.pending ? c.pending + ' to check' : c.num + ' ' + def.unit) : (c.pct == null ? '\u2014' : c.missed != null ? c.pct + '% (' + (c.worked - c.missed) + '/' + c.worked + ' worked on)' : c.pct + '% (' + c.num + '/' + c.den + ')');
     const sc = c && c.score != null ? c.score + ' / 5' : '';
     return '<tr><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(def.name) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(val) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2;font-weight:600">' + sc + '</td></tr>';
   };
@@ -215,7 +327,7 @@ function sendSummary_(to, test) {
     + '<h3 style="margin:0 0 6px">Positions past TAT' + (overdue.length > 15 ? ' (15 of ' + overdue.length + ')' : '') + '</h3>'
     + (overdue.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + rowsOverdue + '</table>' : '<p>None \u2014 every open position is within TAT.</p>')
     + '<h3 style="margin:0 0 6px">Pipeline alerts</h3><p style="margin:0 0 6px">' + pa.hodOverdue.length + ' candidates waiting more than 24 hours for department feedback \u00b7 ' + pa.atRisk.length + ' joiners at risk \u00b7 ' + pa.dueToday.length + ' joining follow-ups due' + (pa.unassessed ? ' \u00b7 ' + pa.unassessed + ' joiners never checked on' : '') + '</p>'
-    + (bgvW && (bgvW.open || bgvW.decide) ? '<p style="margin:0 0 16px"><b>Background verification:</b> ' + bgvW.open + ' open case' + (bgvW.open === 1 ? '' : 's') + ' \u00b7 <span style="color:' + (bgvW.red ? '#D9480F' : '#18222F') + '">' + bgvW.red + ' past a limit</span> \u00b7 ' + bgvW.decide + ' awaiting the Head of HR\u2019s decision'
+    + (bgvW && (bgvW.open || bgvW.decide) ? '<p style="margin:0 0 16px"><b>Background verification:</b> ' + bgvW.open + ' open case' + (bgvW.open === 1 ? '' : 's') + ' \u00b7 <span style="color:' + (bgvW.red ? '#D9480F' : '#18222F') + '">' + bgvW.red + ' past a limit</span> \u00b7 ' + bgvW.decide + ' awaiting the Head of HR\u2019s decision' + (bgvW.withEmp ? ' \u00b7 ' + bgvW.withEmp + ' with the employee (not counted as past a limit)' : '') + (bgvW.excl ? ' \u00b7 <span style="color:' + (bgvW.exclOver ? '#D9480F' : '#18222F') + '">' + bgvW.excl + ' excluded from the KRA awaiting a former employer\u2019s release' + (bgvW.exclOver ? ' (' + bgvW.exclOver + ' past the expected date)' : '') + '</span>' : '') + (bgvW.na ? ' \u00b7 ' + bgvW.na + ' older records not tracked (N/A)' : '')
       + (bgvW.byRecruiter.length ? '<br><span style="color:#8793A3;font-size:13px">Past a limit: ' + bgvW.byRecruiter.map(function (x) { return esc(x.recruiter) + ' ' + x.red; }).join(' \u00b7 ') + '</span>' : '') + ' (BGV tracker).</p>' : '')
     + (texPending ? '<p style="margin:0 0 16px"><b>' + texPending + ' TAT exemption' + (texPending === 1 ? '' : 's') + ' awaiting the Head of HR\u2019s decision</b> (Admin \u2192 TAT exemptions).</p>' : '')
     + (pa.atRisk.length ? '<table cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:18px;font-size:14px">' + pa.atRisk.slice(0, 15).map(function (x) {

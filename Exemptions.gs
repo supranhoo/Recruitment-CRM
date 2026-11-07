@@ -4,7 +4,7 @@
  * rejects it, and can grant one directly or revoke it later. The reason decides what an approved exemption changes:
  * the recruiter clock and the KPI score (Applies_Recruiter) and/or the position clock (Applies_Position). Those flags
  * are copied from the reason when the exemption is decided, so a later change to the reason never rewrites the past.
- * The notice-period extension stays automatic but needs proof; the Head of HR can verify or reject it.
+ * The notice-period extension is automatic and always applies (v151); proof is optional (v156) and the Head of HR can verify it.
  * Exemptions for a closed position can be requested, decided or revoked until TEX_LOCK_DAYS_ after the end of the
  * month in which it closed (the month its KPI falls in); after that only the admin can change them.
  */
@@ -18,7 +18,16 @@ const TEXR_SEED_ = [
   ['Department / HOD delay', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'Department feedback, JD or questions validation or interview slots took longer than the policy norms'],
   ['Candidate notice buy-out / DOJ shift by company', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The company moved the joining date or the notice buy-out was not approved'],
   ['Niche / scarce skill, re-advertised', 'Days', 'No', 'Yes', 'No', '', 'Yes', 'Extends the position TAT only; the recruiter KPI is unchanged'],
-  ['Budget, grade or MRF change mid-way', 'Pause', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The clock is paused while the MRF was being changed']];
+  ['Budget, grade or MRF change mid-way', 'Pause', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The clock is paused while the MRF was being changed'],
+  ['Delay in MRF Evidence', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'The MRF approval or its supporting evidence reached the recruiter late; attach the mail or note that shows the date'],
+  ['Other, if any', 'Days', 'Yes', 'Yes', 'Yes', '', 'Yes', 'A reason not in the list. Proof and a clear remark are required; the Head of HR decides each request']];
+/** Reasons added after the first release. An existing sheet gets them once, by name (never edited, reordered or re-added if an admin changed or deactivated them). */
+const TEXR_ADDED_ = ['Delay in MRF Evidence', 'Other, if any'];
+/** The seed rows of TEXR_ADDED_ whose reason is not in the sheet yet (name compared trimmed, any case). `have` is a list of the reasons in the sheet. */
+function exemptReasonsMissing_(have) {
+  const names = {}; have.forEach(function (n) { names[String(n).replace(/\s+/g, ' ').trim().toLowerCase()] = true; });
+  return TEXR_SEED_.filter(function (r) { return TEXR_ADDED_.indexOf(r[0]) >= 0 && !names[String(r[0]).replace(/\s+/g, ' ').trim().toLowerCase()]; });
+}
 const TEX_LOCK_DAYS_ = 5;
 const TEX_OPEN_ = ['Open', 'Offered', 'On Hold'];
 
@@ -27,6 +36,10 @@ function exemptSchema_() {
   const fresh = !ss_().getSheetByName(TEXR_SHEET_);
   addSheet_(TEXR_SHEET_, TEXR_COLS_);
   if (fresh || readTable_(TEXR_SHEET_, true).rows.length === 0) sheet_(TEXR_SHEET_).getRange(2, 1, TEXR_SEED_.length, TEXR_COLS_.length).setValues(TEXR_SEED_);
+  else {   // an existing list gets the reasons added since its first release, once
+    const t = readTable_(TEXR_SHEET_, true), add = exemptReasonsMissing_(t.rows.map(function (r) { return r.Reason; }));
+    if (add.length) t.sheet.getRange(t.sheet.getLastRow() + 1, 1, add.length, TEXR_COLS_.length).setValues(add);
+  }
   addColumns_(T.MRF.name, ['Notice_Proof_File', 'Notice_Ext_Status', 'Notice_Ext_Note', 'Notice_Ext_By', 'Notice_Ext_On']);
   dropStale_(T.TEX.name); dropStale_(TEXR_SHEET_);
 }
@@ -42,6 +55,14 @@ function exemptIndex_() {
     (out[String(x.Line_ID)] = out[String(x.Line_ID)] || []).push({ id: String(x.Exemption_ID), type: String(x.Type), days: Number(x.Days) || 0,
       from: ymd_(x.From_Date), to: ymd_(x.To_Date), r: String(x.Applies_Recruiter) === 'Yes', p: String(x.Applies_Position) === 'Yes', reason: String(x.Reason) });
   });
+  /* v154: a replacement after a backout keeps the original start, so it also keeps the original's approved exemptions
+     (they were granted for the same vacancy). Followed up the Parent_Line_ID chain; the original is Replaced and not counted. */
+  const parent = {};
+  readTable_(T.MRF.name).rows.forEach(function (l) { if (l.Parent_Line_ID) parent[String(l.Line_ID)] = String(l.Parent_Line_ID); });
+  Object.keys(parent).forEach(function (id) {
+    let p = parent[id], depth = 0; const mine = (out[id] = out[id] || []);
+    while (p && depth++ < 10) { (out[p] || []).forEach(function (x) { if (!mine.some(function (m) { return m.id === x.id; })) mine.push(x); }); p = parent[p]; }
+  });
   return out;
 }
 /** The approved exemptions of one position that apply to a clock ('r' recruiter and KPI, 'p' position). */
@@ -53,7 +74,7 @@ function exemptFor_(ctx, l, which) {
 }
 /** Notice days above the grace, unless the Head of HR rejected the extension. */
 function noticeExt_(l, grace) {
-  if (String(l.Notice_Ext_Status || '') === 'Rejected') return 0;
+  /* v151: a notice beyond the grace is always exempt (it is added to the allowed time) and the turnaround time is not affected by it. A rejection recorded earlier no longer changes anything. */
   return Math.max((Number(l.Notice_Period_Days) || 0) - grace, 0);
 }
 /** On-hold periods from Hold_Log lines "yyyy-mm-dd to yyyy-mm-dd (n days): reason", as [from, to) day ranges. */
@@ -231,17 +252,16 @@ function apiExemptionRevoke(id, note) {
   return apiExemptionsForLine(String(x.Line_ID));
 }
 
-/** Head of HR verifies or rejects the automatic notice-period extension of a position. */
+/** Head of HR verifies the automatic notice-period extension of a position against its proof, or clears a rejection recorded before v151. A notice beyond the grace can no longer be rejected. */
 function apiNoticeExtDecide(lineId, action, note) {
   const u = currentUser_(); ensureSchema_();
   requireExemptDecider_(u);
   const l = lineOf_(lineId); if (!l) throw new Error('Position ' + lineId + ' was not found.');
   requireUnlocked_(u, l);
-  if (['Verify', 'Reject', 'Reset'].indexOf(action) < 0) throw new Error('Choose Verify or Reject.');
+  if (action === 'Reject') throw new Error('A notice beyond the grace period is always exempt from the TAT; it can no longer be rejected.');
+  if (['Verify', 'Reset'].indexOf(action) < 0) throw new Error('Choose Verify.');
   note = clean_(String(note || '').trim()).slice(0, 500);
-  if (action === 'Reject' && !note) throw new Error('Give a reason for rejecting the notice extension.');
-  if (action === 'Verify' && !String(l.Notice_Proof_File || '')) throw new Error('Attach the notice proof before verifying.');
-  update_(T.MRF, lineId, { Notice_Ext_Status: action === 'Verify' ? 'Verified' : action === 'Reject' ? 'Rejected' : '', Notice_Ext_Note: note,
+  update_(T.MRF, lineId, { Notice_Ext_Status: action === 'Verify' ? 'Verified' : '', Notice_Ext_Note: note,
     Notice_Ext_By: u.email, Notice_Ext_On: new Date() }, u);
   exemptRecalc_(lineId, u);
   return apiExemptionsForLine(lineId);

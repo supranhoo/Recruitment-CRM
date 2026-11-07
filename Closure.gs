@@ -76,6 +76,9 @@ function apiClosePosition(lineId, d) {
       if (readTable_(T.APP.name).rows.some(function (x) { return x.Line_ID === to.Line_ID && x.Candidate_ID === a.Candidate_ID; })) { c = 'reject'; }
       else {
         update_(T.APP, a.App_ID, { Line_ID: to.Line_ID, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, u);
+        readTable_(T.INT.name, true).rows.forEach(function (i) { if (i.App_ID === a.App_ID && i.Status === 'Scheduled') update_(T.INT, i.Interview_ID, { Line_ID: to.Line_ID }, u); });
+        const mc = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === a.Candidate_ID; })[0];
+        if (mc && mc.Line_ID === line.Line_ID) update_(T.CAND, a.Candidate_ID, { Line_ID: to.Line_ID }, u);
         appendHistory_(Object.assign({}, a, { Line_ID: to.Line_ID }), a.Stage, a.Stage, 'Moved', 'Moved to ' + (to.MRF_No || to.Line_ID) + ' because ' + (line.MRF_No || line.Line_ID) + ' was ' + OUTCOME_TEXT_[outcome], u);
         moved++;
         return;
