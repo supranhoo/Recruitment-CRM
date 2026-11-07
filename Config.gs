@@ -82,7 +82,7 @@ const BUILD_ID = '158';
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
- * admin data checks); 'withdraw_offer' = close a position with a live offer; 'correct_data' = correct a joining date already recorded; 'system' = backups, archive, tools,
+ * admin data checks); 'withdraw_offer' = close a position with a live offer; 'correct_data' = correct a joining date already recorded; 'voice_call' = place voice screening calls (given by the Admin to named people in Admin > Voice agent, never by role; the Admin always has it); 'system' = backups, archive, tools,
  * JD library import; 'jd_manage' = sign off and edit the JD Master;
  * 'tat_exempt' = approve, reject, grant and revoke TAT exemptions and verify notice extensions;
  * 'bgv_decide' = decide on a BGV discrepancy (Head of HR, Admin);

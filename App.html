@@ -5999,14 +5999,66 @@ async function renderVoiceAdmin(el) {
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
   if ($('#vcClear')) $('#vcClear').onclick = e => { if (confirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
+  const host = document.createElement('div'); host.id = 'vcExtras'; el.appendChild(host);
+  voiceAdminExtras(host);
+}
+async function voiceAdminExtras(host) {
+  let D, A, R;
+  try { [D, A, R] = await Promise.all([api('apiVoiceDndList'), api('apiVoiceAccessList'), api('apiVoiceRequestsPending')]); } catch (e) { host.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  if (!host.isConnected) return;
+  const redo = () => voiceAdminExtras(host);
+  host.innerHTML = `<section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Who can place calls</h2><span class="hint">Admin always can. Others need a tick here (or an approved request for one call). Each person is limited to their own positions; leads to all.</span></div>
+      <div class="table-wrap"><table class="bgv-table"><thead><tr><th>Person</th><th>Role</th><th>Can call</th><th>Calls a day</th><th>Reason</th><th>Today</th></tr></thead><tbody>
+      ${A.users.map(x => `<tr data-em="${esc(x.email)}"><td><b>${esc(x.name)}</b><span class="sub">${esc(x.email)}</span></td><td>${esc(x.role)}</td>
+        <td>${x.admin ? '<span class="sub">always</span>' : `<input type="checkbox" data-f="act" ${x.active ? 'checked' : ''} aria-label="${esc(x.name)} can place voice calls">`}</td>
+        <td>${x.admin ? '' : `<input type="number" data-f="lim" min="1" max="500" step="1" value="${x.limit}" style="width:76px" aria-label="Calls a day for ${esc(x.name)}">`}</td>
+        <td>${x.admin ? '' : `<input data-f="why" maxlength="200" value="${esc(x.reason)}" placeholder="Why" aria-label="Reason for ${esc(x.name)}">`}</td><td class="num">${x.used || ''}</td></tr>`).join('')}</tbody></table></div>
+      <div class="drawer-actions" style="position:static"><button class="btn primary" id="vaSave">Save access</button></div></section>
+    <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Voice call requests</h2><span class="hint">${R.length ? R.length + ' waiting' : 'None waiting'}. Approve or decline on the candidate\u2019s card.</span></div>
+      ${R.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Candidate</th><th>Asked by</th><th>When</th><th>Why</th></tr></thead><tbody>${R.map(r => `<tr><td><b>${esc(r.name)}</b></td><td>${esc(String(r.by).split('@')[0])}</td><td class="nw">${esc(r.at)}</td><td>${esc(r.reason)}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>
+    <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Do Not Disturb register</h2><span class="hint">${D.total} number${D.total === 1 ? '' : 's'}. A number here is never called. The provider\u2019s own list is not connected yet.</span></div>
+      <div class="field wide"><label for="vdText">Add numbers <span class="opt">(10-digit mobiles, separated by commas, spaces or new lines)</span></label><textarea id="vdText" rows="3" placeholder="98xxxxxx01, 97xxxxxx02"></textarea></div>
+      <div class="field"><label for="vdNote">Note <span class="opt">(optional)</span></label><input id="vdNote" maxlength="200"></div>
+      <div class="drawer-actions" style="position:static"><button class="btn primary" id="vdAdd">Add to the register</button></div>
+      ${D.rows.length ? `<div class="table-wrap" style="margin-top:10px"><table class="bgv-table"><thead><tr><th>Number</th><th>Source</th><th>Note</th><th>Added</th><th></th></tr></thead><tbody>${D.rows.map(r => `<tr><td>${esc(String(r.phone).slice(0, 2))}\u2022\u2022\u2022\u2022\u2022\u2022${esc(String(r.phone).slice(-2))}</td><td>${esc(r.source)}</td><td>${esc(r.note)}</td><td class="nw">${esc(r.on)}<span class="sub">${esc(String(r.by).split('@')[0])}</span></td><td><button type="button" class="btn sm" data-vdrm="${esc(r.phone)}">Remove</button></td></tr>`).join('')}</tbody></table></div>${D.total > D.rows.length ? `<p class="hint">Showing the latest ${D.rows.length} of ${D.total}.</p>` : ''}` : ''}</section>`;
+  $('#vaSave', host).onclick = async e => {
+    const list = $$('tr[data-em]', host).map(tr => ({ email: tr.dataset.em, active: !!($('[data-f=act]', tr) && $('[data-f=act]', tr).checked), limit: $('[data-f=lim]', tr) ? $('[data-f=lim]', tr).value : '', reason: $('[data-f=why]', tr) ? $('[data-f=why]', tr).value : '' }));
+    busy(e.target, true, 'Saving\u2026');
+    try { await api('apiVoiceAccessSave', list); toast('Access saved'); redo(); } catch (err) { toast(err, true); busy(e.target, false, 'Save access'); }
+  };
+  $('#vdAdd', host).onclick = async e => {
+    busy(e.target, true, 'Adding\u2026');
+    try { const r = await api('apiVoiceDndAdd', $('#vdText', host).value, $('#vdNote', host).value); toast(r.added + ' added' + (r.already ? ', ' + r.already + ' already on the list' : '') + (r.badCount ? ', ' + r.badCount + ' not valid numbers' : '')); redo(); } catch (err) { toast(err, true); busy(e.target, false, 'Add to the register'); }
+  };
+  $$('[data-vdrm]', host).forEach(b => b.onclick = async () => {
+    const why = prompt('Why is this number being taken off the list?'); if (why === null) return;
+    try { await api('apiVoiceDndRemove', b.dataset.vdrm, why); toast('Removed'); redo(); } catch (err) { toast(err, true); }
+  });
 }
 /** On a pipeline card: Admin only. Previews what would be sent and, once the provider is connected, places the call. */
 /** For a recruiter or lead (not the Admin): the result of the calls to this candidate, to check, rate and complete the screening from. No call can be placed from here. */
-async function voiceReviewSection(el, a) {
+async function voiceRequestBlock(el, a, P, rq) {
+  const open = rq.requests.find(r => r.status === 'Pending'), appr = rq.requests.find(r => r.status === 'Approved' && !r.call), dec = rq.requests.find(r => r.status === 'Declined');
+  const again = () => voiceCardSection(el, a, P);
+  if (open) {
+    el.innerHTML = `<section class="app-sec"><h3>Voice screening call</h3><p class="sub">Requested by ${esc(String(open.by).split('@')[0])} on ${esc(open.at)}: ${esc(open.reason)}</p>
+      ${rq.canDecide ? `<div class="field"><label for="vrqNote">Note <span class="opt">(required to decline)</span></label><input id="vrqNote" maxlength="300"></div><div class="btn-row"><button class="btn sm primary" id="vrqOk">Approve the call</button><button class="btn sm" id="vrqNo">Decline</button></div>` : '<p class="hint">Waiting for a TA Lead, the Head of HR or the admin to approve.</p>'}</section>`;
+    const decide = async (ok, btn) => { busy(btn, true); try { await api('apiVoiceRequestDecide', open.id, ok, $('#vrqNote', el).value); toast(ok ? 'Approved. The call can now be placed.' : 'Declined'); } catch (e) { toast(e, true); } again(); };
+    if ($('#vrqOk', el)) { $('#vrqOk', el).onclick = e => decide(true, e.target); $('#vrqNo', el).onclick = e => decide(false, e.target); }
+    return;
+  }
+  if (!P.hasFinalSq) { el.innerHTML = ''; return; }
+  el.innerHTML = `<section class="app-sec"><h3>Voice screening call</h3><p class="hint">An AI voice agent can ask this position\u2019s confirmed screening questions by phone. A TA Lead, the Head of HR or the admin approves each call.</p>
+    ${dec ? `<p class="sub miss">Declined by ${esc(String(dec.decidedBy).split('@')[0])}${dec.note ? ': ' + esc(dec.note) : ''}</p>` : ''}
+    <div class="field"><label for="vrqWhy">Why call this candidate?</label><input id="vrqWhy" maxlength="300" placeholder="For example: 40 candidates to screen, the call saves a day"></div>
+    <div class="btn-row"><button class="btn sm primary" id="vrqGo">Request a voice call</button></div></section>`;
+  $('#vrqGo', el).onclick = async e => { busy(e.target, true); try { await api('apiVoiceRequest', a.App_ID, $('#vrqWhy', el).value); toast('Requested. A lead will approve or decline.'); } catch (err) { toast(err, true); } again(); };
+}
+async function voiceReviewSection(el, a, P, rq) {
   let calls = []; try { calls = await api('apiVoiceCallsFor', a.App_ID); } catch (e) { el.innerHTML = ''; return; }
   if (!el.isConnected) return;
   const last = calls.filter(c => c.hasResult)[0];
-  if (!last) { el.innerHTML = ''; return; }
+  if (!last) { if (rq && P) voiceRequestBlock(el, a, P, rq); else el.innerHTML = ''; return; }
   el.innerHTML = `<section class="app-sec"><h3>Voice screening result</h3>
     <p class="sub">Call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> \u00b7 ${esc(last.startedAt)}${last.duration ? ' \u00b7 ' + VOICE_MIN_(last.duration) : ''}${last.totalQ ? (last.remaining > 0 ? ` \u00b7 <b class="miss">${last.remaining} of ${last.totalQ} questions still without an answer</b>` : ' \u00b7 every question has an answer') : ''}</p>
     <p class="hint">An automated call asked the screening questions. Check what the candidate said, rate the answers and complete the screening.</p>
@@ -6015,18 +6067,22 @@ async function voiceReviewSection(el, a) {
 }
 async function voiceCardSection(el, a, P) {
   if (!el) return;
-  if (!can('voice_agent')) return voiceReviewSection(el, a);
+  let rq = null;
+  if (!can('voice_agent') && !can('voice_call')) {
+    try { rq = await api('apiVoiceRequestsFor', a.App_ID); } catch (e) { rq = null; }
+    if (!rq || !rq.canCall) return voiceReviewSection(el, a, P, rq);
+  }
   if (!P.hasFinalSq) {
-    el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3><p class="hint">Not available for this position yet: the screening questions have not been confirmed with the department. Finish <b>JD final</b> and <b>Questions final</b> for this position in <b>JD Master</b>, then reopen this card.</p></section>`;
+    el.innerHTML = `<section class="app-sec"><h3>Voice screening call</h3><p class="hint">Not available for this position yet: the screening questions have not been confirmed with the department. Finish <b>JD final</b> and <b>Questions final</b> for this position in <b>JD Master</b>, then reopen this card.</p></section>`;
     return;
   }
   let calls = []; try { calls = await api('apiVoiceCallsFor', a.App_ID); } catch (e) { return; }
   if (!el.isConnected) return;
   const last = calls[0];
-  el.innerHTML = `<section class="app-sec"><h3>Voice screening call <span class="badge">Admin test</span></h3>
-    <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.</p>
+  el.innerHTML = `<section class="app-sec"><h3>Voice screening call${can('voice_agent') ? ' <span class="badge">Admin</span>' : ''}</h3>
+    <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.${rq && rq.canCall && !can('voice_agent') && !can('voice_call') ? ' This call was approved: it can be placed once.' : ''}</p>
     ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.hasResult && last.totalQ ? (last.remaining > 0 ? ` · <b class="miss">${last.remaining} of ${last.totalQ} questions still without an answer</b>` : ' · every question has an answer') : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
-    <div class="btn-row"><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Choose questions and call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Open the call plan</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
+    <div class="btn-row"><button class="btn sm" id="vcDnc">Do not call this number</button><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Choose questions and call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Open the call plan</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
   if ($('#vcRes', el)) $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id), { name: a.cand.name }); } catch (err) { toast(err, true); } busy(e.target, false, 'View the result'); };
   if ($('#vcRef', el)) $('#vcRef', el).onclick = async e => { busy(e.target, true, 'Fetching\u2026'); try { await api('apiVoiceFetchResult', last.id); toast('The result was fetched.'); } catch (err) { toast(err, true); } await voiceCardSection(el, a, P); };
   const run = async (dry, btn, fu) => {
@@ -6046,6 +6102,10 @@ async function voiceCardSection(el, a, P) {
   };
   if ($('#vcFuPrev', el)) $('#vcFuPrev', el).onclick = e => openDesk(e.target, true, () => run(true, e.target, true));
   if ($('#vcFu', el)) $('#vcFu', el).onclick = e => openDesk(e.target, true, () => { if (confirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); });
+  $('#vcDnc', el).onclick = async e => {
+    if (!confirm('Add ' + a.cand.name + '\u2019s number to the Do Not Disturb register? The voice agent will never call it.')) return;
+    busy(e.target, true); try { const r = await api('apiVoiceDndMark', a.App_ID, 'Marked from the card'); toast(r.added ? 'Added to the register' : 'Already on the register'); } catch (err) { toast(err, true); } busy(e.target, false, 'Do not call this number');
+  };
   $('#vcPrev', el).onclick = e => run(true, e.target);
   $('#vcGo', el).onclick = e => openDesk(e.target, false, () => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); });
 }
