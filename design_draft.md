@@ -61,7 +61,7 @@ The proposed solution is a staged change: first a single check that every call m
 
 These come from the concepts brief. None can be answered from the code. Each blocks part of the design and needs a decision from the owner.
 
-*   **Budget**: the unit (rupees, or minutes if no rupee figure exists), the period (day, batch, month), who sets it, whether the Admin is exempt, and what happens at the limit (stop, or ask a lead).
+*   **Budget**: the unit (rupees, or minutes if no rupee figure exists), the period (day, batch, month), who sets it, and what happens at the limit (stop, or ask a lead). The draft assumes the Admin is not exempt.
 *   **Retry rule**: which outcomes retry, how many attempts, the gap, whether attempts rotate through times of day, whether Sundays and holidays count, and what a person sees after the last attempt.
 *   **Spoken opt-out**: whether "do not call me again" writes the register automatically or after a person confirms, and what the agent's prompt must say to tell it apart from "not interested in this job".
 *   **Result sharing**: the channel (to-do, link, e-mail), the content, where the interviewer's and the MRF raiser's addresses come from, whether either gets a CRM login, and the Apps Script mail quota tier (consumer or Workspace).
