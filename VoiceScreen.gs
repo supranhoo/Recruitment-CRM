@@ -23,6 +23,9 @@ const VOICE_DND_ = { name: 'Voice_DND', cols: ['Phone', 'Source', 'Note', 'Activ
 const VOICE_ACCESS_ = { name: 'Voice_Access', cols: ['Email', 'Active', 'Daily_Limit', 'Reason', 'Granted_By', 'Granted_At'] };
 const VOICE_REQ_ = { name: 'Voice_Requests', id: 'Req_ID', prefix: 'VRQ-', width: 5,
   cols: ['Req_ID', 'App_ID', 'Line_ID', 'Candidate_ID', 'Requested_By', 'Requested_At', 'Reason', 'Status', 'Decided_By', 'Decided_At', 'Decision_Note', 'Call_ID'] };
+const VOICE_QUEUE_ = { name: 'Voice_Queue', id: 'Row_ID', prefix: 'VBQ-', width: 6,
+  cols: ['Row_ID', 'Batch_ID', 'App_ID', 'Line_ID', 'Candidate_ID', 'Status', 'Reason', 'Call_ID', 'Requested_By', 'Requested_At', 'Updated_At'] };
+const VOICE_BATCH_MAX_ = 30;
 const VOICE_DEFAULT_LIMIT_ = 20;
 const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
 const VOICE_OPEN_STATUSES_ = ['Starting', 'Started'];
@@ -39,7 +42,7 @@ const VOICE_RATINGS_FROM_ = 6;
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
 function voiceSchema_() {
   addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols);
-  addSheet_(VOICE_DND_.name, VOICE_DND_.cols); addSheet_(VOICE_ACCESS_.name, VOICE_ACCESS_.cols); addSheet_(VOICE_REQ_.name, VOICE_REQ_.cols);
+  addSheet_(VOICE_DND_.name, VOICE_DND_.cols); addSheet_(VOICE_ACCESS_.name, VOICE_ACCESS_.cols); addSheet_(VOICE_REQ_.name, VOICE_REQ_.cols); addSheet_(VOICE_QUEUE_.name, VOICE_QUEUE_.cols);
 }
 /** A reviewer may see a call's result and work the screening from it: the Admin, or whoever may edit that position's pipeline and holds voice_review. */
 function voiceCanReview_(u, line) { return can_(u, 'voice_agent') || (can_(u, 'voice_review') && !!line && canEditLine_(u, line)); }
@@ -54,7 +57,7 @@ function voiceCfg_() {
   return { enabled: String(s.VOICE_ENABLED || 'No') === 'Yes', agentId: String(s.VOICE_AGENT_ID || VOICE_DEFAULTS_.agentId), agentVersion: v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion,
     connectionId: String(s.VOICE_CONNECTION_ID || VOICE_DEFAULTS_.connectionId), fromNumber: String(s.VOICE_FROM_NUMBER || VOICE_DEFAULTS_.fromNumber), dndRequired: String(s.VOICE_DND_REQUIRED || 'Yes') !== 'No',
     orgId: String(s.VOICE_ORG_ID || VOICE_DEFAULTS_.orgId), workspaceId: String(s.VOICE_WORKSPACE_ID || VOICE_DEFAULTS_.workspaceId),
-    ratePerMin: Math.max(0, Number(s.VOICE_RATE_PER_MIN) || 0), openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_, ratings: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_RATINGS_FROM_,
+    ratePerMin: Math.max(0, Number(s.VOICE_RATE_PER_MIN) || 0), queuePerMin: Math.max(1, Math.min(6, Math.floor(Number(s.VOICE_QUEUE_PER_MIN) || 2))), callHours: String(s.VOICE_CALL_HOURS || '09:00-19:00'), openingLine: String(s.VOICE_OPENING_LINE || ''), entryState: String(s.VOICE_ENTRY_STATE || ''), webhookUrl: String(s.VOICE_WEBHOOK_URL || ''), questionsVar: String(s.VOICE_QUESTIONS_VAR || ''), maxQ: Math.min(10, Math.max(1, Math.floor(Number(s.VOICE_MAX_Q)) || 6)), listOnly: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_LISTONLY_FROM_, ratings: (v >= 1 && v <= 9999 ? Math.floor(v) : VOICE_DEFAULTS_.agentVersion) >= VOICE_RATINGS_FROM_,
     keySet: !!key, keyHint: key ? '\u2026' + key.slice(-4) : '' };
 }
 /** What still has to be filled in before a call can be placed (empty = ready). */
@@ -66,7 +69,7 @@ function voiceMissing_(c) {
 function voiceCfgOut_(c) {
   const m = voiceMissing_(c);
   return { enabled: c.enabled, agentId: c.agentId, agentVersion: c.agentVersion, connectionId: c.connectionId, fromNumber: c.fromNumber, dndRequired: c.dndRequired, orgId: c.orgId, workspaceId: c.workspaceId,
-    ratePerMin: c.ratePerMin, openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
+    ratePerMin: c.ratePerMin, queuePerMin: c.queuePerMin, callHours: c.callHours, openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
     keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length, connected: voiceProviderConnected_(), dndWritten: voiceDndWritten_(), resultsWritten: voiceResultsWritten_() };
 }
 /** The call itself is written; the Do Not Disturb check and the way results come back are not. */
@@ -118,6 +121,12 @@ function apiVoiceConfigSave(d) {
   const rate = d.ratePerMin === undefined || d.ratePerMin === '' ? 0 : Number(d.ratePerMin);
   if (!(rate >= 0 && rate <= 10000)) throw new Error('The cost per minute must be a number from 0 to 10,000 (leave 0 or blank when unknown).');
   put('VOICE_RATE_PER_MIN', 'cost per minute', rate, before.ratePerMin);
+  const qpm = d.queuePerMin === undefined || d.queuePerMin === '' ? before.queuePerMin : Number(d.queuePerMin);
+  if (!(qpm >= 1 && qpm <= 6) || qpm % 1) throw new Error('Calls per minute in a batch must be a whole number from 1 to 6.');
+  put('VOICE_QUEUE_PER_MIN', 'batch calls per minute', qpm, before.queuePerMin);
+  const hrs = d.callHours === undefined ? before.callHours : String(d.callHours).trim();
+  if (!voiceHoursParse_(hrs)) throw new Error('Calling hours must look like 09:00-19:00 (start before end).');
+  put('VOICE_CALL_HOURS', 'calling hours', hrs, before.callHours);
   put('VOICE_QUESTIONS_VAR', 'questions variable', qv, before.questionsVar); put('VOICE_WEBHOOK_URL', 'webhook address', hook, before.webhookUrl);
   put('VOICE_ENABLED', 'allow calls', d.enabled === true ? 'Yes' : 'No', before.enabled ? 'Yes' : 'No');
   put('VOICE_DND_REQUIRED', 'Do Not Disturb check', d.dndRequired === false ? 'No' : 'Yes', before.dndRequired ? 'Yes' : 'No');
@@ -393,6 +402,10 @@ function voiceRequestBody_(phone, brief, cfg, callId) {
  */
 function apiVoiceStartScreening(appId, opts) {
   const u = currentUser_(); ensureSchema_();
+  return voiceStartFor_(u, appId, opts);
+}
+/** The whole single call (checks, preview, Do Not Disturb, placing, logging) for the given user object. Used by the card and by the batch queue. */
+function voiceStartFor_(u, appId, opts) {
   opts = opts || {};
   const app = appOf_(appId), line = lineOf_(app.Line_ID), cand = candRow_(app.Candidate_ID) || {};
   const who = voiceRequireCaller_(u, line, appId, !!opts.dryRun);
@@ -798,6 +811,188 @@ function voiceReqMarkPlaced_(reqId, callId) {
   });
 }
 
+
+
+/* ---------------------------------------------------------------- batch calling (up to 30 cards, one after another) ----------- */
+
+/** "09:00-19:00" as {from, to} in minutes of the day, or null when it is not a valid window. */
+function voiceHoursParse_(text) {
+  const m = String(text == null ? '' : text).trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const a = Number(m[1]) * 60 + Number(m[2]), b = Number(m[3]) * 60 + Number(m[4]);
+  if (Number(m[1]) > 23 || Number(m[3]) > 24 || Number(m[2]) > 59 || Number(m[4]) > 59 || a >= b) return null;
+  return { from: a, to: b };
+}
+/** True when `ms` falls inside the calling window on a Monday to Saturday (India time). */
+function voiceInHours_(ms, hoursText) {
+  const w = voiceHoursParse_(hoursText) || { from: 540, to: 1140 };
+  const ist = new Date(ms + 330 * 60000), day = ist.getUTCDay(), mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return day !== 0 && mins >= w.from && mins < w.to;
+}
+/** The next waiting rows to call in one run: oldest first, one per number, at most `n`. rows: queue rows; doneNumbers: numbers already placed in these batches. */
+function voiceQueuePick_(rows, n, doneNumbers) {
+  const seen = {}; (doneNumbers || []).forEach(function (x) { seen[x] = true; });
+  const out = [];
+  (rows || []).filter(function (r) { return String(r.Status) === 'Waiting'; })
+    .sort(function (a, b) { const x = a.Requested_At instanceof Date ? a.Requested_At.getTime() : 0, y = b.Requested_At instanceof Date ? b.Requested_At.getTime() : 0; return (x - y) || (String(a.Row_ID) < String(b.Row_ID) ? -1 : 1); })
+    .forEach(function (r) { if (out.length >= n) return; out.push(r); });
+  return out;
+}
+/** Whether a failed call's message means every later call in the batch would fail the same way. Returns '' or the reason to stop the batch. */
+function voiceQueueStopReason_(message, consecutiveFailures) {
+  const m = String(message || '');
+  if (/limit of \d+ voice calls|reached your limit/i.test(m)) return m.slice(0, 200);
+  if (/do not have voice calling access/i.test(m)) return m.slice(0, 200);
+  if (consecutiveFailures >= 3) return 'Stopped after 3 calls in a row could not be placed. Check the key, the connection and the agent version in Admin → Voice agent.';
+  return '';
+}
+/** How many of the latest finished calls of a batch failed in a row (Placed ends the run; waiting and stopped rows are not counted). */
+function voiceQueueTrailingFails_(rows, batchId) {
+  const mine = (rows || []).filter(function (r) { return String(r.Batch_ID) === String(batchId) && ['Placed', 'Failed'].indexOf(String(r.Status)) >= 0; })
+    .sort(function (a, b) { return (Number(String(a.Row_ID).split('-').pop()) || 0) - (Number(String(b.Row_ID).split('-').pop()) || 0); });
+  let n = 0;
+  for (let i = mine.length - 1; i >= 0 && String(mine[i].Status) === 'Failed'; i--) n++;
+  return n;
+}
+/** A user object for a person on the team list, as currentUser_ would build it (the queue job runs as the script, so it rebuilds the batch owner). */
+function voiceUserFor_(email) {
+  const e = String(email || '').toLowerCase().trim();
+  const r = usersCached_().filter(function (x) { return String(x.Email).toLowerCase().trim() === e && String(x.Active || 'Yes') !== 'No'; })[0];
+  if (!r) throw new Error(e + ' is no longer on the team list.');
+  const role = normRole_(r.Role), perms = effectivePerms_(role);
+  if (perms.indexOf('voice_call') < 0 && voiceHasAccess_(e)) perms.push('voice_call');
+  return { email: e, name: String(r.Name), role: role, recruiter: String(r.Recruiter_Name || r.Name), perms: perms };
+}
+function voiceQueueRows_() { voiceSchema_(); return readTable_(VOICE_QUEUE_.name).rows; }
+function voiceQueueWrite_(t, r, patch) {
+  Object.keys(patch).forEach(function (k) { r[k] = patch[k]; }); r.Updated_At = new Date();
+  t.sheet.getRange(r._row, 1, 1, t.headers.length).setValues([t.headers.map(function (h) { return r[h] === undefined ? '' : r[h]; })]);
+}
+/** The 1-minute trigger that works the queue: created when a batch starts, removed when no batch is waiting. */
+function voiceQueueTrigger_(on) {
+  const mine = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'voiceQueueJob'; });
+  if (on && !mine.length) ScriptApp.newTrigger('voiceQueueJob').timeBased().everyMinutes(1).create();
+  if (!on) mine.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+}
+function voiceCallerOk_(u) { return can_(u, 'voice_agent') || can_(u, 'voice_call'); }
+
+/** Checks a list of cards without calling anyone. Returns one verdict per card, the totals and the calls left today. */
+function apiVoiceBatchPreview(appIds) {
+  const u = currentUser_(); ensureSchema_();
+  if (!voiceCallerOk_(u)) throw new Error('You do not have voice calling access.');
+  return voiceBatchCheck_(u, appIds);
+}
+function voiceBatchCheck_(u, appIds) {
+  const ids = []; (appIds || []).forEach(function (x) { const k = String(x); if (k && ids.indexOf(k) < 0) ids.push(k); });
+  if (!ids.length) throw new Error('Tick at least one candidate.');
+  if (ids.length > VOICE_BATCH_MAX_) throw new Error('A batch can hold at most ' + VOICE_BATCH_MAX_ + ' candidates.');
+  const dnd = voiceDndNumbers_(), names = {}, seenPhone = {};
+  readTable_(T.CAND.name).rows.forEach(function (c) { names[String(c.Candidate_ID)] = c; });
+  let secs = 0, ready = 0;
+  const rows = ids.map(function (id) {
+    const o = { app: id, name: '', last4: '', ready: false, reason: '' };
+    try {
+      const app = appOf_(id), cand = names[String(app.Candidate_ID)] || {}, phone = voicePhone_(cand);
+      o.name = String(cand.Name || app.Candidate_ID); o.last4 = phone ? phone.slice(-4) : ''; o.line = String(app.Line_ID);
+      if (phone && seenPhone[phone]) { o.reason = 'The same number is already in this batch.'; return o; }
+      if (phone) seenPhone[phone] = true;
+      if (phone && voiceDndCheck_(phone, voiceCfg_())) { o.reason = 'On the Do Not Disturb register.'; return o; }
+      const r = voiceStartFor_(u, id, { dryRun: true });
+      if (!r.ready) { o.reason = r.problems.join('; '); return o; }
+      o.ready = true; ready++; secs += Number((r.brief && r.brief.plan && r.brief.plan.secs) || 0);
+    } catch (e) { o.reason = String(e && e.message || e).slice(0, 200); }
+    return o;
+  });
+  const cfg = voiceCfg_(), ev = voiceAccessEval_(voiceAccessRows_(), u.email, voiceUsedToday_(u.email), can_(u, 'voice_agent'));
+  const mins = Math.round(secs / 60);
+  return { rows: rows, ready: ready, skipped: rows.length - ready, minutes: mins, cost: cfg.ratePerMin > 0 ? Math.round(mins * cfg.ratePerMin * 100) / 100 : null,
+    left: ev.left, limit: ev.limit, overLimit: ev.left >= 0 && ready > ev.left, hours: cfg.callHours, inHours: voiceInHours_(Date.now(), cfg.callHours) };
+}
+/** Puts the ready cards in the queue and starts the timer. One open batch per person. */
+function apiVoiceBatchStart(appIds) {
+  const u = currentUser_(); ensureSchema_();
+  if (!voiceCallerOk_(u)) throw new Error('You do not have voice calling access.');
+  voiceSchema_();
+  const chk = voiceBatchCheck_(u, appIds), todo = chk.rows.filter(function (r) { return r.ready; });
+  if (!todo.length) throw new Error('None of the candidates is ready to call. Open the preview to see why.');
+  let batch = '';
+  withLock_(function () {
+    const t = readTable_(VOICE_QUEUE_.name, true);
+    if (t.rows.some(function (r) { return String(r.Requested_By).toLowerCase() === u.email && (String(r.Status) === 'Waiting' || String(r.Status) === 'Calling'); })) throw new Error('You already have a batch running. Stop it or wait for it to finish.');
+    batch = 'VBT-' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd-HHmmss');
+    const now = new Date(), start = t.sheet.getLastRow() + 1;
+    const out = todo.map(function (r, i) { const o = { Row_ID: batch + '-' + (i + 1), Batch_ID: batch, App_ID: r.app, Line_ID: r.line, Candidate_ID: '', Status: 'Waiting', Requested_By: u.email, Requested_At: now, Updated_At: now };
+      return t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; }); });
+    t.sheet.getRange(start, 1, out.length, t.headers.length).setValues(out);
+    dropStale_(VOICE_QUEUE_.name);
+    audit_(u, 'Voice agent', batch, 'Batch started', '', '', todo.length + ' calls queued, ' + (chk.rows.length - todo.length) + ' skipped');
+  });
+  voiceQueueTrigger_(true);
+  return { batch: batch, queued: todo.length, skipped: chk.rows.length - todo.length, inHours: chk.inHours, hours: chk.hours };
+}
+/** Stops the waiting calls of a batch (a call already placed carries on). The person who started it, a lead or the Admin. */
+function apiVoiceBatchStop(batchId) {
+  const u = currentUser_(); ensureSchema_(); voiceSchema_();
+  let n = 0;
+  withLock_(function () {
+    const t = readTable_(VOICE_QUEUE_.name, true), mine = t.rows.filter(function (r) { return String(r.Batch_ID) === String(batchId); });
+    if (!mine.length) throw new Error('That batch was not found.');
+    if (!(isLead_(u) || String(mine[0].Requested_By).toLowerCase() === u.email)) throw new Error('Only the person who started this batch, a lead or the Admin can stop it.');
+    mine.forEach(function (r) { if (String(r.Status) === 'Waiting') { voiceQueueWrite_(t, r, { Status: 'Stopped', Reason: 'Stopped by ' + u.email.split('@')[0] }); n++; } });
+    dropStale_(VOICE_QUEUE_.name);
+    audit_(u, 'Voice agent', String(batchId), 'Batch stopped', '', '', n + ' waiting calls stopped');
+  });
+  return { stopped: n, batches: apiVoiceBatches() };
+}
+/** Recent batches with their rows: your own, or all of them for a lead or the Admin. */
+function apiVoiceBatches() {
+  const u = currentUser_(); ensureSchema_();
+  if (!voiceCallerOk_(u) && !isLead_(u)) throw new Error('You do not have voice calling access.');
+  const names = {}; readTable_(T.CAND.name).rows.forEach(function (c) { names[String(c.Candidate_ID)] = String(c.Name); });
+  const appCand = {}; readTable_(T.APP.name).rows.forEach(function (a) { appCand[String(a.App_ID)] = String(a.Candidate_ID); });
+  const by = {}, order = [];
+  voiceQueueRows_().forEach(function (r) {
+    if (!isLead_(u) && String(r.Requested_By).toLowerCase() !== u.email) return;
+    const k = String(r.Batch_ID); if (!by[k]) { by[k] = { id: k, by: String(r.Requested_By), at: r.Requested_At instanceof Date ? fmt_(r.Requested_At, TZ, 'd MMM yyyy, HH:mm') : '', ms: r.Requested_At instanceof Date ? r.Requested_At.getTime() : 0, rows: [] }; order.push(k); }
+    by[k].rows.push({ name: names[appCand[String(r.App_ID)]] || String(r.App_ID), status: String(r.Status), reason: String(r.Reason || ''), call: String(r.Call_ID || '') });
+  });
+  return order.map(function (k) { const b = by[k], c = {}; b.rows.forEach(function (x) { c[x.status] = (c[x.status] || 0) + 1; });
+    b.counts = c; b.open = (c.Waiting || 0) + (c.Calling || 0) > 0; return b; }).sort(function (a, b) { return b.ms - a.ms; }).slice(0, 10);
+}
+/** The timer job: places the next waiting calls within the rate, the calling hours and the run's time budget. */
+function voiceQueueJob() {
+  const t0 = Date.now(), cfg = voiceCfg_();
+  let rows = voiceQueueRows_();
+  if (!rows.some(function (r) { return String(r.Status) === 'Waiting' || String(r.Status) === 'Calling'; })) { voiceQueueTrigger_(false); return; }
+  if (!voiceInHours_(t0, cfg.callHours)) return;
+  let placed = 0;
+  while (placed < cfg.queuePerMin && Date.now() - t0 < 4 * 60000) {
+    let claim = null, t = null;
+    withLock_(function () {
+      t = readTable_(VOICE_QUEUE_.name, true);
+      const next = voiceQueuePick_(t.rows, 1, [])[0];
+      if (next) { voiceQueueWrite_(t, next, { Status: 'Calling' }); claim = next; }
+    });
+    if (!claim) break;
+    let status = 'Placed', reason = '', callId = '', stop = '';
+    try {
+      const u = voiceUserFor_(claim.Requested_By), r = voiceStartFor_(u, String(claim.App_ID), {});
+      callId = String(r.callId || '');
+    } catch (e) {
+      status = 'Failed'; reason = String(e && e.message || e).slice(0, 300);
+    }
+    withLock_(function () {
+      const t2 = readTable_(VOICE_QUEUE_.name, true), cur = t2.rows.filter(function (x) { return String(x.Row_ID) === String(claim.Row_ID); })[0];
+      if (cur) voiceQueueWrite_(t2, cur, { Status: status, Reason: reason, Call_ID: callId });
+      if (status === 'Failed') stop = voiceQueueStopReason_(reason, voiceQueueTrailingFails_(t2.rows, claim.Batch_ID));
+      if (stop) t2.rows.forEach(function (x) { if (String(x.Batch_ID) === String(claim.Batch_ID) && String(x.Status) === 'Waiting') voiceQueueWrite_(t2, x, { Status: 'Stopped', Reason: stop }); });
+      dropStale_(VOICE_QUEUE_.name);
+    });
+    placed++;
+  }
+  rows = voiceQueueRows_();
+  if (!rows.some(function (r) { return String(r.Status) === 'Waiting' || String(r.Status) === 'Calling'; })) voiceQueueTrigger_(false);
+}
 
 /* ---------------------------------------------------------------- command center: success rate, cost, review ---------------- */
 
