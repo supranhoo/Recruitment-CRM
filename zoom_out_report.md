@@ -1,127 +1,114 @@
-# Stage 5: Initial Zoom Out Review
+# Stage 5: Initial Zoom Out Review (round 2, revised design)
 
-**Document:** `docs/designs/voice-screening-gate-retry-sharing.md` (406 lines, whole file)
+**Document:** `docs/designs/voice-screening-gate-retry-sharing.md` (revised, 518 lines, whole file)
 **Date:** 2026-11-08
-**Reviewers:** `egm-zoom-out` (Zoom-Out Standard) and `egm-inventive-catalyst` (Mode: REVIEW). Both were given no context beyond the document and were told not to read other files.
+**Reviewers:** `egm-zoom-out` (Zoom-Out Standard) and `egm-inventive-catalyst` (Mode: REVIEW). Each had only the document and was told not to read other files or any earlier report. Neither searched the code, so reuse claims (`voiceStatusClass_`, `voiceContactsRebuild_`, `voiceQueueReap_` and others) are unverified.
+**Context sufficiency:** passes. The first round's reports are in git history; they are not used here.
 
-**Limits of this review.** Neither reviewer read the code, so neither checked a claim that something "already exists" (`voiceDndAdd_`, `panelEmailIndex_`, `voiceAccessEval_`, `voiceQueuePick_`, the `HOD_Email` master). Reuse findings are judged from the text only. The zoom-out reviewer passed the document on context sufficiency (the objective and the why are clear).
-
-**What both reviewers say to keep.** The fail-closed decision core for the gate, reserving spend before a call, never putting a `Calling` row back to `Waiting`, retry off for the first batch, no automatic stage moves or messages to candidates, no transcripts in messages, and four small releases that can each be stopped after.
+**Kept as sound by the reviewers:** one gate with no override and fail-closed behaviour, distinct unanswered statuses, the reserve plus sweep, the reaper that never resets to `Waiting`, roll-forward rollback, and the number-keyed contact record. The catalyst reviewer found no false compromise in the foundational architecture.
 
 ## Blockers
 
-### B1. The first real batch goes out with the opt-out hole still open (both reviewers)
+### Z-B1. Consent and AI disclosure (Q6) is undecided and is not a rollout precondition (zoom-out)
 
-*Sections: Goals, CUJ 4, Technical Plan section 5, Delivery order.*
+*Sections: Open Questions Q6, Rollout preconditions, Risks.*
+Q6 says it blocks Release 1a, with the assumed default "not decided; the existing agent script is not changed". The six preconditions for any real batch do not include consent or disclosure. As written, the design permits the first real call to a candidate with no legal decision.
+**Fix:** add a numbered precondition "HR and legal have decided Q6 in writing"; say what the first batch may do if disclosure is required (a script change in the provider workspace); make Q6 and Q3 explicit go or no-go items.
 
-The Problem names the defect: "do not call me again" is filed as "not interested", and the next batch calls the number again. Goals promise the number is added to the opt-out register, and CUJ 4 says no later call reaches it. The plan does the opposite in the first batch:
+### Z-B2. The document commits to a detailed design for four releases when only Release 1a is justified by evidence (zoom-out)
 
-- The agent's `do_not_call` disposition ships in Release 3, after the first batch (Release 1) and after retry (Release 2). Until then the phrase is still filed as "not interested".
-- `VOICE_OPTOUT_AUTO` starts off. With it off, nothing is written to `Voice_DND`. The plan stops retries for the card only, so any other position's batch, or a single call from another card, still rings the number.
-
-The catalyst reviewer calls "write the register automatically versus wait for a person" a false either/or. Proposed fix, from both: write a provisional register entry at once, status "Pending confirmation", and have the gate treat it as an opt-out. A person confirms or undoes it with a reason, so the human decision corrects the default and does not gate it. Match on the number, not the card. Move the `do_not_call` disposition, the provisional entry and its to-do into Release 1 (the provider-prompt change is an Admin task that can run in parallel). Until the agent has the disposition, add a deterministic phrase scan of the transcript as a second signal, or require the recruiter to review every `not_interested` call during the pilot.
-
-### B2. The design does not say what happens to a queue row the gate refuses (catalyst reviewer)
-
-*Sections: 1, 4.*
-
-The gate can refuse at queue-run time for hours, daily limit, budget, an open call, or "could not check". The plan says what is logged on `Voice_Calls`. It does not say what becomes of the `Voice_Queue` row:
-
-- If the row stays `Waiting`, the one-minute trigger writes a new `Blocked` row into the call log every minute. A batch cut off at 19:00 would log 25 blocks a minute until 09:00.
-- If the row becomes `Failed`, the "three failures in a row" stop fires on policy refusals, which are not provider errors.
-- If a refusal counts as a `Blocked` result, Section 4's "never retry after a `Blocked` result" combined with "fail closed on any unreadable fact" means one transient sheet read error ends that candidate's retries for good.
-
-Proposed fix: classify refusals as defer (hours, a budget window, could not check, an open call: row `Scheduled` with `Not_Before` at the next window or a short backoff, no new log row per attempt) or terminal (opt-out, hard limits: row `Stopped` with a reason). Log one `Blocked` row per row per change of reason, not per poll. Give deferred rows the same 48-hour expiry.
+*Sections: Overview, Architecture 3, 4, 7, 8, Delivery order, Alternatives "Deferred: automatic retry".*
+The Overview says nobody has used voice screening on candidates and the Problem Statement says no figures exist. Releases 1b, 2 and 3 depend on numbers the first batch will produce (minutes per call, answer rate, ratings shape, billing basis). The document defers retry "because nobody has seen a real answer rate" and then specifies retry constants, columns, triggers, a reaper and tests in full, and assigns build numbers 160 to 163. This is speculative design and it hides the part that is needed.
+**Fix:** scope the design to Release 1a (gate, unanswered statuses, spoken opt-out, call-count caps, payload capture). Replace Architecture 3, 4, 7 and 8 with a short "Follow-ups decided after the pilot" section: the trigger condition (the Q5 thresholds) and a paragraph of direction each. Write the full design when the data exists.
 
 ## Major
 
-### M1. The gate has a check-then-act race (both reviewers)
+### Z-M1. A second source of truth for opt-out, accepted as drift (catalyst 1; zoom-out M1)
 
-The gate reads open calls, reserved minutes and the daily count, and `voiceLog_` writes the `Starting` row afterwards. A recruiter click and the one-minute job can both pass "one open call" and the budget check for the same card or the same last rupees. No lock is mentioned. Fix: take the script lock around gate, reserve write and `Starting` log, with the provider call after it and outside the lock. Or write the `Starting` row first and re-validate. Add an E2E case.
+`Voice_DND` stays the human-readable register while the gate reads only `Voice_Contacts`; drift is answered with an Admin rebuild button. A number added to `Voice_DND` by any path that does not go through `voiceDndAdd_` (a hand edit, an import) is invisible to the gate, so the check the design calls non-overridable fails open. The zoom-out reviewer adds that `Voice_Contacts` and `Voice_Budget` are premature at a call cap of 300 a month, when `Voice_Calls` is small and no read problem has been measured.
+**Options offered:** make `Voice_Contacts` the only store and render `Voice_DND` as a view; or have the gate also read `Voice_DND` (a small sheet) and fail closed on a mismatch; or, for 1a, keep opt-out state as a status column on `Voice_DND` and count attempts from `Voice_Calls` over 7 days, and add a derived index only if a measured read time forces it.
 
-### M2. The budget reserve is not the bound it is described as (catalyst) and is built too early (zoom-out)
+### Z-M2. Spend control is heavy for a pilot (zoom-out M2)
 
-*Section 3.*
+Reserve, sweep to "presumed spent", a monthly counter sheet, an invoice-derived rate, a *Close* action and a compiled-in cap on call length. The 1a call-count caps already bound spend. If a maximum call duration is a rollout precondition anyway, a ceiling of calls times maximum minutes times rate is a one-line check with no reserve or sweep.
+**Fix:** start 1b with that bound; add the reserve only if the pilot shows it is too loose.
 
-- `VOICE_MAX_CALL_MIN` is called a worst-case length but defaults to the existing 8-minute warning, which is not a cap. A longer call exceeds its reserve.
-- The sweep clears `Reserved_Min` after the maximum plus 60 minutes if no result arrives. A call that was billed but whose webhook was lost then drops out of both spent and reserved. The ceiling loosens silently, which is fail-open and contradicts the fail-closed statement.
-- Billed unanswered rings and per-minute rounding are outside the estimate. The invoice reconciliation is manual and only displayed.
-- The zoom-out reviewer adds that the whole mechanism (reserve column, two ceilings, a max-minutes setting, a sweep, reconciliation, a "set the cost per minute" block) is built before anyone has seen a real call, on a rate nobody has set, with a first batch of 5 to 10 candidates. A cap on call count per month and per batch, multiplied by a maximum call length, bounds spend with no reserve lifecycle. The Alternatives section rejects a count cap because it "does not follow call length", and a count times a maximum length does.
+### Z-M3. Retry is more complex than needed, and the document names the simpler option (zoom-out M3)
 
-Proposed: enforce a maximum call duration in the provider agent so the reserve is a true bound; turn an unresolved reserve into "presumed spent" at its reserve value until a person closes it; price at the higher of the configured and invoice-derived rate; keep a provider prepaid limit as a backstop. Or, as the simpler option, defer real-minute budgeting until the first batch shows the billing basis.
+A recruiter to-do with a *Call again* button needs no scheduler, trigger rule, system principal or `Attempts` column, and fits "a person always decides". It was rejected because "batches are meant to run without a recruiter at the screen", a preference, not evidence.
+**Fix:** choose the to-do and button for the first pass; adopt automatic retry only if the pilot shows retries are wanted and the manual route is a bottleneck.
 
-### M3. No per-candidate contact cap that holds on every path (catalyst)
+### Z-M4. The per-number cap contradicts "a person decides" (zoom-out M4)
 
-The daily limit counts calls per caller. Attempts live on the queue row. A single call from a card, or a second batch started after the first row is `Stopped`, starts again from zero. The Alternatives claim that the cross-batch cap is "covered" holds only while a row is still open. System retries also consume the recruiter's daily limit, so a batch that uses it up stops retries, and under B2's present wording stops them for good. Fix: add a gate check on attempts to the number in the last N hours or days, independent of queue rows. Give system retries their own quota.
+After 3 attempts the recruiter gets a to-do and is meant to decide. The per-number cap (3 attempts in 7 days) then refuses any further call to that number as `terminal`, including a manual call from the card, for up to 7 days; the "Call again" alternative would be refused by the same gate. Nothing says the recruiter can override.
+**Fix:** say whether the cap blocks manual calls. If not, apply it to automated and retry calls only. If it should, change the to-do wording so the recruiter is told the number is locked.
 
-### M4. The gate's own reads contradict the design's reasoning about sheet size (catalyst)
+### Z-M5. Release assignment is inconsistent between sections (zoom-out M5; catalyst nit)
 
-The design rejects "derive retry state from `Voice_Calls`" because reads of that sheet are large (transcripts). The gate reads the same sheet on every call, inside batch loops and on every one-minute run, for used today, spent, reserved and open calls. A one-minute trigger also stays alive for up to 48 hours for `Scheduled` rows, and Apps Script has daily trigger-runtime quotas. Fix: a small ledger sheet (month spent and reserved, per-number attempts, open-call keys) updated by the gate and ingest and read instead of the large log; poll every minute only while `Waiting` or `Calling` rows exist and arm a one-shot trigger for the earliest `Not_Before` otherwise. The ledger needs a periodic rebuild.
+The baseline and invoice page (`Voice_Admin_Notes`) is a Release 1b item, but the baseline is needed "before the pilot", the first batch after 1a, so that batch cannot report the recruiter-minutes measure. `Batch_ID` is a 1b column but is written from the queue in 1a. Q8 says it blocks 1a for "retry and hours", though retry is Release 2. The test table has retry cases in 1a.
+**Fix:** reconcile each item into one release. The simplest fix for the baseline is an ordinary document kept by the owner, not a sheet.
 
-### M5. Retry is designed in full before the first batch shows it is needed (zoom-out)
+### Z-M6. Altitude: Detailed Implementation and the test table are code-level (zoom-out M6)
 
-Four queue columns, a `Scheduled` status, a 48-hour window, trigger lifecycle rules, time-of-day rotation, and a free-text retry-plan setting with its own parser. The reviewer calls the free-text plan the speculative configurability the standard rejects: use constants (for example 3 attempts and one gap) until the answer rate is known. Alternatives omits the simplest option, a recruiter to-do after no answer with a "Call again" button on the card, which uses the already-gated single-call path and needs no scheduler or trigger change. At minimum, add it to Alternatives and say why automatic retry beats it.
+They list function signatures, argument names, per-function column lists, validation message text, CSS class choices and a 375 px check, and restate behaviour from the Architecture (the `voiceFindCost_` key rules, the reaper rule, the trigger rule). Three sections describe the retry trigger. A fresh reader cannot tell the decision from the code plan.
+**Fix:** move the file list and test table into a separate implementation plan or the pull request; keep decisions, interfaces, data flow and test intent in a few lines each.
 
-### M6. Result sharing contradicts its own rejection reasoning and cannot meet its goal (both reviewers)
+### Z-M7. Release 3 (sharing) is weakly motivated (zoom-out M7)
 
-*Section 7, CUJ 5, Alternatives, Goals.*
+The only evidence is one sentence. It needs fuzzy name matching, a department-head stand-in for the "MRF owner", and a message carrying answers to people who may have no login, which the document calls "the same kind of exposure as the rejected e-mailed transcript". Q4 asks about the mail quota though the CRM sends no mail.
+**Fix:** remove it from this design, or reduce it to a copy-text button with the card link for users with access; revisit on request.
 
-- E-mailed transcripts were rejected because they copy candidate data outside the access control. The prepared message carries the confirmed answers in plain text, and for a recipient with no CRM account the recruiter pastes the answers in full. That is the same exposure with a less sensitive payload. Say so as a deliberate trade-off, or send a link plus a one-line status.
-- The goal says the interviewer and MRF owner "learn that a result is ready". The design prepares text, records "prepared", and concedes it cannot guarantee delivery. Reword the goal as "prepares a message", or add a "Mark as sent" action with a reminder to-do after N hours.
-- No MRF-raiser field exists, so the plan sends the outcome to the department head, who may be the wrong person. Either add a "raised by" field at MRF entry (department head as fallback for old rows) or cut the MRF-owner half until the owner decides. The catalyst also suggests an expiring tokenised read-only link for non-users and notes that Apps Script web apps do not natively authenticate non-Google identities.
-- Show the recruiter each resolved address before sending, because names are matched fuzzily from free text.
+### Z-M8. Reuse is asserted, not evidenced (zoom-out M8)
 
-### M7. Success measures conflict and the headline metric cannot be measured in a pilot (both reviewers)
+Many new functions are proposed and only a few are marked existing. For each new function, add "searched for X, found Y, reason not reused", or drop it.
 
-- Goals define success as completed screenings over placed calls. Section 2 says the success rate "keeps its definition" (calls with answers over calls placed) and adds a second figure. One name has two definitions. Pick one and name the other differently.
-- Counting per placed call means each retry lowers the rate. A per-candidate denominator is more meaningful. The numerator measures recruiter diligence, not voice quality.
-- "Minutes saved per hire" cannot be computed from 5 to 10 candidates, since hires lag by weeks. The recruiter-minutes baseline, the metric itself and the invoice reconciliation appear in the Technical Plan but not in Detailed Implementation, which calls itself the single list of everything that changes. Add them as scoped items or mark them manual or out of scope. The catalyst proposes "minutes saved per completed screening" for the pilot.
+### Z-M9. Reserve correctness depends on a manual cross-system setting (catalyst 2)
 
-### M8. The `Blocked` statuses do not match the gate (both reviewers)
+`VOICE_MAX_CALL_MIN` "must equal" the provider agent's maximum duration. That is a promise, not a mechanism. **Fix:** when ingest sees a call whose `Duration_Sec` exceeds `VOICE_MAX_CALL_MIN`, raise a visible Admin alert and either block calls until acknowledged or raise the reserve to the observed maximum. Cost: a stricter gate that can block calls that would have fit; one overshooting call can still happen.
 
-The gate has five refusal reasons (hours, opt-out, limit, budget, open call, plus "could not check"). Only two `Blocked (...)` values are defined (Outside hours, Budget), yet `voiceStats_` reports blocked by hours, opt-out, budget and limit, and it is unstated where `voiceUsedToday_` treats "any Blocked". A row for every refused click also grows a sheet the document calls large. Fix: one `Blocked` status with the reason in a separate field, or list every value. Decide whether refused clicks should create rows at all.
+### Z-M10. Three overlapping attempt counters with two different 3s (catalyst 3)
 
-### M9. Hard limits are editable settings (catalyst)
+`Voice_Contacts.Attempt_Times` (per number, last five), `Voice_Queue.Attempts` (per row) and the "three failed in a row" count. A retried row can stop as "per-number cap" while its own `Attempts` is below 3, and the to-do text still says "after 3 attempts".
+**Fix:** make `Attempt_Times` the single counter and derive the row's attempt number from it (or keep the row column for display only); name the two constants differently; state the precedence (per-number cap is the hard stop, per-row count is the schedule); make the to-do text follow the real stop reason. Cost: the window keeps only five timestamps, so history older than 7 days is lost, and a rebuild must reproduce timestamps exactly.
 
-The goals say no call outside hours and opt-out cannot be switched off, but the hours window and all ceilings are Admin settings, and a bad value changes the limit. The audit stores the name, not the value. The document calls storing before and after "worth making" but leaves it out of Detailed Implementation. Fix: compile in an outer bound for hours (and sane maximums for ceilings and `VOICE_MAX_CALL_MIN`), let the setting only narrow within it, store before and after values, and put the audit change in Release 1. If the hours window comes from a regulation, it belongs here as a fixed bound.
+### Z-M11. The fail-closed gate has no degraded mode (catalyst 4)
 
-### M10. The status change is a repeating cost, and the one-time repair is risky (both reviewers)
+Behaviour on a lock timeout is not stated, nor how long the lock is held. A systemic fault looks the same as ordinary refusals.
+**Fix:** a lock timeout defers with a 15-minute backoff, not terminal; state the maximum lock-hold time; a command-center counter alerts the Admin when "could not check" refusals pass a small number in a run.
 
-- Every reader of `Status` must change, guarded only by a code search and tests. It will recur when later call types add statuses, and the Release 1 file list already omits `voiceQueueTrailingFails_`, which Section 2 names. Fix: one `voiceStatusClass_` function mapping status to a class (answered, unanswered, provider error, blocked, in progress) used by every reader, with an unknown value logged loudly.
-- The one-time repair (`voiceStatusRepair_`) rewrites old `Failed` rows. The document says nobody has used the feature on real candidates, so old rows are test calls. The repair is an irreversible rewrite with no backup, runs inside `voiceSchema_`, which runs on every schema ensure, and scans the large sheet unless a done marker exists. Fix: drop it (clear the test rows by hand), or keep the original status in a note column and add a run-once marker.
+### Z-M12. The result lag is treated as a general law (catalyst 5)
 
-### M11. Spoken opt-out depends on one model classification (catalyst)
+Results can arrive up to 30 minutes late; ingest-first helps queue runs but single calls and the reserve release still wait. A reserve can hold budget for a worst-case call plus 60 minutes, a large pessimistic window for a small first-batch budget.
+**Options:** have the receiver trigger ingest (the document says the receiver is not changed, so say so and name the lag as a constraint, not a law), or poll faster only while a call is in flight (uses the daily trigger-runtime budget).
 
-A candidate who says "do not call me again" but is classified as "not interested" is lost, which repeats the original bug. The transcript is already stored. Add a deterministic phrase scan as a second signal that raises the same provisional hold and to-do. Phrase lists must cover the languages used.
+### Z-M13. Opt-out depends on a manual provider change the CRM cannot verify (catalyst 6)
 
-### M12. Rollback is weaker than described (catalyst)
+The `do_not_call` disposition is a hand change in the provider workspace and the phrase scan is a heuristic; a missed opt-out is the highest-harm outcome. **Fix:** also hold any call that ended very short with no answers captured, and any `not_interested`, from retry pending a person's look (costs a few retries, never a wrong call); make the precondition test an executable check where the Admin runs a scripted test call and the CRM records that a `do_not_call` was seen.
 
-Rolling back the gate re-opens the original holes (night calls, opt-out). The repair is one-way. Prefer roll-forward for the gate, or keep the old safety checks in any rollback build.
+### Z-M14. Retry decision at two call sites (catalyst 8)
 
-### M13. Altitude and internal consistency (zoom-out)
+Ingest and manual fetch both call `voiceRetryNext_`. If the same call is recorded by both, the "already has its result" check covers only `Completed`, so an unanswered result could be applied twice and write the to-do or retry state twice. **Fix:** make `voiceApplyResult_` idempotent for every status with a result-applied marker, and keep the retry decision inside it so there is one call site.
 
-- The document is half design and half code index. Retry mitigations, the reaper, the share lookup, the status readers and the gate are each described twice, in the Technical Plan and again in Detailed Implementation, and the two have begun to drift. Detailed Implementation also lists function signatures and return shapes under the heading "no code here". Keep one description of each behaviour in the Technical Plan and reduce Detailed Implementation to a file and release checklist.
-- The gate's pure core has two names, `voiceMayCall_` (line 120) and `voiceGateDecide_` (line 303). The Technical Plan names `voiceMayCall_` as the entry and `voiceGateDecide_` as the pure core in Detailed Implementation; settle the naming in one place.
-- The Rollout section omits spoken opt-out (Release 3), which Delivery order includes.
-- `voiceFindCost_` hardening and the ingest error-retry behaviour appear only in Detailed Implementation, tied to no goal. Give each a one-line reason or remove it.
-- The "first later call type" Open Question and the configurable-call-type alternative keep a speculative future alive, though a non-goal already excludes it. Remove the question.
-- Open Questions are not mapped to releases or owners. Add a table: question, release it blocks, decision owner, assumed default.
+### Z-M15. The 48-hour expiry and Sundays interact badly (catalyst 9)
+
+A Saturday 18:00 no answer retries Monday 11:00, about 41 hours. A Saturday busy then no-answer chain can exceed 48 hours and stop with "retry window ended" instead of "no answer after 3 attempts". **Fix:** set the expiry in working time, or give the two stops different to-do text.
 
 ## Nits
 
-- Overview lists "four hard limits" but the gate has five checks. "No wrong rejection" is enforced by a non-goal, not the gate. Make the lists agree.
-- Three timeouts for one idea: a 5-minute reaper, a 30-minute open-call window, a `VOICE_MAX_CALL_MIN` plus 60-minute sweep. Derive them from one constant or explain.
-- `VOICE_DND_REQUIRED` stays as a setting that only affects a preview warning. Remove it.
-- The queue's `Failed` and the call's `Failed` mean different things. Use distinct names.
-- Month boundary, time zone and holiday handling for the hours and "this month" are unstated. The gate knows only a weekday window. State the zone and say holidays are out of scope.
-- "Flags" in the share message is undefined.
-- Terms a newcomer cannot read: MRF, SSOT, ADR-010, "W and T levels", "plan desk", "command center", `Tech_Panel`, `HOD_Email`, "the concepts brief", and the distinction between "owner" (decides) and "Admin" (configures).
-- "None" entries for `Dashboard.gs`, `Compliance.gs`, `README.md` and the receiver pad the file list. One line saying "no change" is enough.
-- Mark each function in the Technical Plan `(existing)` or `(new)` so reuse can be checked quickly.
-- No statement of how candidates were told about, or agreed to, an automated and possibly recorded call. The design only handles opt-out after the first call.
-- A small Node harness could run the pure functions on every pull request, since there is no test command.
-- Repeated "Rejected by author" boilerplate in Alternatives adds no information.
+*   Z-N1. Review-process residue: "revised after the egm-review findings" (status line) and "added after review" (Alternatives intro) mean nothing to a new reader; remove or move to a changelog.
+*   Z-N2. Line 344's sentence repeats itself ("up to 30 minutes after the call (up to 30 minutes for a single call; during a queue run ingest now runs first)"). Say: results arrive up to 30 minutes after a call; ingest now runs first in each queue run.
+*   Z-N3. Q5 sets "answer rate above 30 percent" on a batch of 5 to 10, which is too small to mean much. State a minimum number of calls or call the threshold indicative.
+*   Z-N4. Opt-out confirmation: undo is Admin-only, but nothing names who confirms a pending opt-out or how long it may stay pending (catalyst: add an age indicator and a daily reminder to the pending list).
+*   Z-N5. Risk table padding: the mail quota row ("None for the CRM") and the "setting changes alter a hard limit" row add length without a decision.
+*   Z-N6. The Problem Statement should carry the key facts from the SSOT and the brief itself so the document stands alone.
+*   Z-N7. Q8's assumed default ("not billed; no provider retry; ratings unknown") assumes the good case for a hard-limit question. Make the 1a default "assume billed and retried until the test call shows otherwise" (catalyst 10).
+*   Z-N8. `Voice_Admin_Notes` is a 1b sheet but the baseline is needed in 1a; the batch ceiling should be stated as conditional on `batchId`; confirm `voiceStatusClass_` maps the legacy `Blocked (Do Not Disturb)` value to "blocked"; make explicit that only the phone mapping is cached, never the opt-out state (CUJ 4 relies on this) (catalyst 12).
+*   Z-N9. A scan test for raw status string literals outside `voiceStatusClass_` is a cheaper guard than a manual code search; it is brittle to formatting and the repository has no test runner (catalyst 7).
+
+## Conflicts between the two reviewers
+
+The zoom-out reviewer wants the design cut to Release 1a and the contact and budget sheets, the reserve, retry and sharing removed or deferred (Z-B2, M1, M2, M3, M7). The catalyst reviewer accepts the design's scope and asks for more hardening (a single opt-out store, the observed-maximum guard, a single attempt counter, a lock-timeout rule, a push or faster poll, a conservative hold, an idempotency marker, working-time expiry). These cannot both be done in full: each hardening item adds mechanism to the parts the other reviewer wants removed. The owner decides the scope first.
 
 ## Summary
 
-Both reviewers find the document well motivated and the staged, stop-anywhere framing sound. They disagree on scope: the zoom-out reviewer wants the budget reserve, retry scheduler and MRF-owner sharing cut or deferred until the first batch produces numbers, while the catalyst reviewer wants them kept and hardened (a ledger, a lock, a deferral class, a provisional hold). Both agree on the first fix: move the opt-out protection into Release 1.
+Both reviewers find the core of Release 1a sound. The zoom-out reviewer's verdict is that the document fails the Zoom-Out Standard on simplicity and altitude and on one go or no-go gap (consent). The catalyst reviewer finds no false compromise in the foundation and lists residual duplication, manual preconditions and unaddressed degraded modes.
