@@ -2095,13 +2095,54 @@ async function profileExportCsv() {
   } catch (e) { toast(e, true); }
 }
 
+
+const CH_KINDS_ = [['', 'Everything'], ['stage', 'Stages and status'], ['interview', 'Interviews'], ['screening', 'Screening'], ['voice', 'Voice calls'], ['followup', 'Follow-ups'], ['change', 'Record changes']];
+function chEventBody(e) {
+  const kv = (k, v) => v ? `<div class="ch-kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>` : '';
+  if (e.kind === 'stage') return kv('From', P_NAMES[e.from] || e.from) + kv('To', P_NAMES[e.to] || e.to) + kv('Outcome', e.outcome) + kv('Note', e.note) + kv('By', e.by);
+  if (e.kind === 'interview') return kv('Status', e.status) + kv('Mode', e.mode) + kv('Panel', e.panel) + kv('Attendance confirmed', e.attendance) + kv('Panel unavailable', e.unavailable) + kv('Notes', e.note) + kv('Booked by', e.by);
+  if (e.kind === 'screening') return kv('Result', e.total ? `${e.met} of ${e.total} met, ${e.gaps} gaps, ${e.pct}%${e.band ? ' · ' + e.band : ''}` : '') + kv('Questions version', e.sqVersion ? String(e.sqVersion) : '') + kv('Note', e.note) + kv('Shared with', e.sharedWith)
+    + (e.answers && e.answers.length ? `<table class="ch-ans"><tbody>${e.answers.map(x => `<tr><td>${esc(x.q)}</td><td>${esc(x.a)}${x.r ? ` <span class="sub">(${esc(VOICE_RATE_[x.r] ? VOICE_RATE_[x.r][0] : x.r)})</span>` : ''}</td></tr>`).join('')}</tbody></table>` : '') + kv('Saved by', e.by);
+  if (e.kind === 'voice') return kv('Call', e.call) + kv('Status', e.status + (e.outcome ? ' · ' + e.outcome : '')) + kv('Length', e.secs ? VOICE_MIN_(e.secs) : '') + kv('Agent’s outcome', e.disposition) + kv('Summary', e.summary) + kv('Answers read', e.answersText) + kv('Note', e.note)
+    + (e.recording && /^https?:/i.test(e.recording) ? `<div class="ch-kv"><span>Recording</span><span><a href="${esc(e.recording)}" target="_blank" rel="noopener">Open the recording</a></span></div>` : '')
+    + (e.transcript ? `<details class="ch-tr"><summary>Transcript</summary><div class="cvtext" style="white-space:pre-wrap;max-height:240px;overflow:auto">${esc(e.transcript)}</div></details>` : '') + kv('Placed by', e.by);
+  if (e.kind === 'followup') return kv('Mode', e.mode) + kv('What the candidate said', e.response) + kv('Risk', e.risk) + kv('Next check-in', e.next) + kv('Note', e.note) + kv('By', e.by);
+  if (e.kind === 'change') return kv('Was', e.oldV || 'empty') + kv('Now', e.newV || 'empty') + kv('By', e.by);
+  return '';
+}
+function chRender(el, H, f) {
+  const events = H.events.filter(e => !f.kind || e.kind === f.kind);
+  const shown = f.all ? events : events.slice(0, 12);
+  const cards = H.cards.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Position</th><th>Stage</th><th>Status</th><th>Recruiter</th><th>Offer and joining</th><th></th></tr></thead><tbody>${H.cards.map(c => `<tr><td><b>${esc(c.mrf)} ${esc(c.position)}</b><span class="sub">${esc(c.dept)}${c.created ? ' · card from ' + esc(fmtDate(c.created)) : ''}</span></td><td>${esc(P_NAMES[c.stage] || c.stage)}<span class="sub">since ${esc(c.since)}</span></td>
+    <td>${esc(c.status)}${c.reason ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td><td>${esc(c.recruiter)}</td><td>${[c.offerDate ? 'offer ' + fmtDate(c.offerDate) : '', c.offerCtc ? 'CTC ' + c.offerCtc : '', c.edoj ? 'expected ' + fmtDate(c.edoj) : '', c.doj ? 'joined ' + fmtDate(c.doj) : '', c.backout ? 'backed out ' + fmtDate(c.backout) : ''].filter(Boolean).map(esc).join('<br>') || '<span class="sub">—</span>'}</td>
+    <td><button type="button" class="btn sm" data-chopen="${esc(c.line)}">Open position</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No position card yet: the candidate has not been added to a pipeline.</p>';
+  const res = H.results.length ? `<h4 class="ch-h">Interview results by position</h4><div class="table-wrap"><table class="bgv-table"><thead><tr><th>Position</th><th>Round</th><th>Result</th><th>When</th><th>By</th><th>Note</th></tr></thead><tbody>${H.results.map(r => `<tr><td>${esc(r.position)}</td><td>${esc(r.round)}</td><td><b>${esc(r.outcome || '—')}</b></td><td class="nw">${esc(r.at)}</td><td>${esc(String(r.by).split('@')[0])}</td><td>${esc(r.note)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const cvs = H.cvs.length ? `<h4 class="ch-h">CV files</h4><ul class="ch-cv">${H.cvs.map(c => `<li>${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name || 'CV file')}</a>` : esc(c.name || 'CV file')}${c.current ? ' <b class="ok">current</b>' : ''} <span class="sub">${esc([c.at, c.by ? String(c.by).split('@')[0] : '', c.source].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>` : '';
+  el.innerHTML = `<fieldset class="ch"><legend>History across all positions</legend>
+    <p class="hint">Everything recorded about this candidate, from every position, kept even when a card is moved or closed.</p>${cards}${res}
+    <h4 class="ch-h">Timeline</h4><div class="chips">${CH_KINDS_.map(([k, l]) => `<button type="button" class="chip" data-chk="${k}" aria-pressed="${(f.kind || '') === k}">${l}${k ? `<span class="n">${H.events.filter(e => e.kind === k).length}</span>` : `<span class="n">${H.events.length}</span>`}</button>`).join('')}</div>
+    ${shown.length ? `<ol class="ch-tl">${shown.map(e => `<li><details><summary><span class="ch-at">${esc(e.at)}</span> <b>${esc(e.kind === 'stage' && !e.moved && e.from !== e.to ? (P_NAMES[e.to] || e.to) : e.title)}</b>${e.kind === 'stage' && !e.moved && e.outcome ? ' \u00b7 ' + esc(e.outcome) : ''}${e.kind === 'change' ? ': ' + esc(e.oldV || 'empty') + ' \u2192 ' + esc(e.newV || 'empty') : ''}${e.position ? ` <span class="sub">${esc(e.position)}${e.origin ? ' · created on ' + esc(e.origin) : ''}</span>` : ''}${e.kind === 'stage' && e.moved ? ' <span class="badge">moved</span>' : ''}</summary><div class="ch-body">${chEventBody(e)}</div></details></li>`).join('')}</ol>
+      ${events.length > shown.length ? `<button type="button" class="btn sm" id="chMore">Show all ${events.length}</button>` : ''}${H.truncated ? '<p class="hint">Only the latest 600 entries are listed.</p>' : ''}` : '<p class="hint">Nothing recorded yet.</p>'}${cvs}</fieldset>`;
+  $$('[data-chk]', el).forEach(b => b.onclick = () => { f.kind = b.dataset.chk; f.all = false; chRender(el, H, f); });
+  if ($('#chMore', el)) $('#chMore', el).onclick = () => { f.all = true; chRender(el, H, f); };
+  $$('[data-chopen]', el).forEach(b => b.onclick = () => { S.pipe = S.pipe || {}; S.pipe.line = b.dataset.chopen; try { localStorage.setItem('bfcl.pipeLine', b.dataset.chopen); } catch (e) { } closeDrawer(); go('pipeline', true); });
+}
+async function candHistorySection(el, id) {
+  if (!el) return;
+  el.innerHTML = '<fieldset class="ch"><legend>History across all positions</legend><p class="hint">Loading the history…</p></fieldset>';
+  let H; try { H = await api('apiCandidateHistory', id); } catch (e) { if (el.isConnected) el.innerHTML = `<fieldset class="ch"><legend>History across all positions</legend><div class="note warn-note">${esc(e)}</div></fieldset>`; return; }
+  if (!el.isConnected) return;
+  chRender(el, H, { kind: '', all: false });
+}
 function archivedCandidateDrawer(c) {
   const b = openDrawer(esc(c.Name) + ' (archived)', `<div class="note warn-note">This candidate was archived on ${fmtDate(c.Archived_On)} after ${esc(String(S.boot.archiveDays || 180))} days without activity (last active ${fmtDate(c.Last_Activity)}). Archived candidates do not appear in normal lists or reports, but duplicate checks still find them.</div>
     <dl class="kv"><dt>Candidate ID</dt><dd>${esc(c.Candidate_ID)}</dd><dt>Mobile</dt><dd>${esc(c.Mobile || '\u2014')}</dd><dt>Email</dt><dd>${esc(c.Email || '\u2014')}</dd>
       <dt>Position</dt><dd>${esc(c.Position || '\u2014')}</dd><dt>Department</dt><dd>${esc(c.Dept || '\u2014')}</dd><dt>Experience</dt><dd>${esc(c.Relevant_Experience || '\u2014')}</dd>
       <dt>Designation</dt><dd>${esc(c.Current_Designation || '\u2014')}</dd><dt>HR result</dt><dd>${esc(c.HR_Result || '\u2014')}</dd><dt>CV</dt><dd>${c.CV_File_URL ? 'On file' : '\u2014'}</dd></dl>
+    <div id="candHistory"></div>
     <div class="drawer-actions"><button class="btn" id="arClose">Close</button><button class="btn primary" id="arRestore">Restore to active</button></div>`);
   $('#arClose', b).onclick = closeDrawer;
+  candHistorySection($('#candHistory', b), c.Candidate_ID);
   $('#arRestore', b).onclick = async () => {
     const btn = $('#arRestore', b); busy(btn, true, 'Restoring\u2026');
     try { const r = await api('apiRestoreCandidate', c.Candidate_ID); S.candStale = true; toast('Restored. The candidate is active again.'); candidateDrawer(r); }
@@ -2118,6 +2159,7 @@ function candidateDrawer(c, preset, parsedIn) {
     ${isNew ? `<div class="cvfill"><label for="cvFill"><b>Fill from a CV</b></label> <input type="file" id="cvFill" accept=".pdf,.docx,.doc,.jpg,.jpeg,.png">
       <span class="hint">Reads PDF and Word CVs, and scanned CVs or photos (OCR), in your browser; fills the empty fields, marks what to check, and looks for duplicates. The same file is attached as the CV.</span><div id="cvFillMsg" class="hint"></div></div>` : ''}
     <div id="dupNote"></div>
+    ${isNew ? '' : '<div id="candHistory"></div>'}
     <div id="candForm">${wrapForm(form(candidateFields(data), data, false))}</div>
     <fieldset><legend>CV</legend>
       <div id="cvBox">${data.CV_File_URL
@@ -2130,6 +2172,7 @@ function candidateDrawer(c, preset, parsedIn) {
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawer;
+  if ($('#candHistory', body)) candHistorySection($('#candHistory', body), data.Candidate_ID);
   if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });

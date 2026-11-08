@@ -221,10 +221,10 @@ function apiMoveToLine(appId, toLineId, reason) {
       if (!ss_().getSheetByName(def.name)) return [];
       return readTable_(def.name, true).rows.filter(function (r) { return String(r.App_ID) === String(app.App_ID) && String(r.Line_ID) !== toId; });
     };
-    sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId }, u); });
-    sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId }, u); });
-    sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId }, u); });
-    if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId }, u); });
+    sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+    sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+    sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+    if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
     const cand = readTable_(T.CAND.name, true).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
     if (cand && String(cand.Line_ID) === String(from.Line_ID)) update_(T.CAND, app.Candidate_ID, { Line_ID: toId }, u);
     update_(T.APP, app.App_ID, { Line_ID: toId, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, u);
