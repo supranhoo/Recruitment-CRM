@@ -232,3 +232,51 @@ All additions are created by `voiceSchema_` and read as blank for old rows ("fir
 *   `E2E.gs` cases for each hard limit: a call outside hours is refused on the single-call path and in a batch loop; a number on the register is refused with the setting off; an unanswered call counts against the daily limit; a reserve blocks the call that would pass the ceiling; a `do_not_call` disposition stops retries.
 *   A search-based check that no reader still treats `Failed` as "unanswered".
 *   There is still no automated test command in the repository, so the deploy check remains a syntax gate; the new tests run from the editor with `e2eTest()`.
+
+## Alternatives Considered
+
+The first six come from the concepts brief. The next five are the options the author did not choose during the Technical Plan.
+
+### Rejected by author: a configurable call-type framework now
+
+Reminders, offer follow-ups and joining check-ins would be defined as data rows with their own agent, outcomes and actions. Rejected by author: the framework would be designed from one working example. Each new type needs its own agent in the provider, and the screening code (plan desk, answer parser, review dialog, disposition map) cannot be reused by calls that have no questions. One later call type is chosen after the first real batch, and it passes through the same gate.
+
+### Rejected by author: a spend cap on the provider's cost figure
+
+Cap spend on the cost the provider reports. Rejected by author: the provider sends no cost field, so there is nothing to cap on. A cap on recorded minutes alone overshoots, because results arrive up to 30 minutes after the call.
+
+### Rejected by author: e-mailing the transcript or recording to the interviewer and MRF owner
+
+Rejected by author: it copies candidate data out of the app's access control with no way to take it back and no audit, and the recipients may not be CRM users.
+
+### Rejected by author: resetting a stuck `Calling` queue row to `Waiting`
+
+Rejected by author: the call may already have been placed, which would call the candidate twice. The reaper checks `Voice_Calls` and marks the row `Placed` or `Failed`.
+
+### Deferred: a WhatsApp or SMS nudge in place of redialling
+
+The app has no candidate messaging today. Worth testing if the first batch shows a low answer rate.
+
+### Deferred: automatic retry before the first real batch
+
+Nobody has seen a real answer rate, and retry spends money. The plan switches retry off for the first batch (`VOICE_RETRY_PLAN` empty) and turns it on afterwards.
+
+### Rejected by author: retry state in a new `Voice_Attempts` sheet
+
+A separate record per card (attempts used, maximum, earliest next time, stop reason), with the queue left as a plain list. Rejected by author in favour of columns on `Voice_Queue`: it reuses the queue and trigger and is the smaller change. Its advantage, a cap that holds across batches, is covered by refusing the same card or number in a second open batch. It would fail where the attempt record and queue row disagree after a crash. The accepted option gives up an independent record: retries across several days keep rows alive, which the `Scheduled` status and the 48-hour window manage.
+
+### Rejected by author: deriving retry state from `Voice_Calls`
+
+Count earlier calls and read the last outcome from existing rows, with no new state. Rejected by author: every read of `Voice_Calls` is large because rows carry transcripts, and a callback or time-of-day rotation needs a future time that cannot be stored.
+
+### Rejected by author: an outcome column or text matching for unanswered calls
+
+Two other ways to separate unanswered calls: a new `Outcome_Class` column beside `Status`, or matching the existing `Outcome` text. Rejected by author in favour of new `Status` values: a second column leaves two fields describing one call, and text matching misses any provider status string the mapping does not know. The accepted option's cost is that every reader of `Status` must change; the plan covers this with a code search and tests.
+
+### Rejected by author: an outbox with link-only mail, and in-app to-dos only, for result sharing
+
+An outbox sheet drained by a trigger (sends link-only mail with a log and a daily ceiling), and a to-do shown only to interviewers and MRF owners who are CRM users. Rejected by author in favour of a prepared message the recruiter sends: it adds no mail path, quota or access boundary, and a person sees each message before it leaves. The outbox would send reliably but fails when the recipient is not a CRM user or is matched by a fuzzy name, and a used-up mail quota would silence the failure alert. To-dos only would reach nobody when most recipients are not users. The accepted option cannot guarantee delivery.
+
+### Rejected by author: checking only recorded spend, and a call-count cap with a provider-side limit
+
+Checking only the minutes already recorded, or capping call counts and relying on a prepaid credit at the provider. Rejected by author in favour of a reserve before each call. Recorded spend alone lets a batch overshoot by every call placed during the 30-minute result lag. A call-count cap depends on the provider offering a limit and does not follow call length. The accepted option depends on a rate that someone must set and check against the invoice.
