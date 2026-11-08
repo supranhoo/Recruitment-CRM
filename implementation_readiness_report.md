@@ -1,153 +1,129 @@
-# Stage 9: Implementation Readiness Test (round 1)
+# Stage 9: Implementation Readiness Test (round 2, revised design)
 
-**Document:** `docs/designs/voice-screening-gate-retry-sharing.md`, DetailedRange lines 284 to 406 (the Detailed Implementation section)
+**Document:** `docs/designs/voice-screening-gate-retry-sharing.md`, DetailedRange lines 410 to 518 (Detailed Implementation)
 **Date:** 2026-11-08
-**Reviewers:** `egm-implementation-readiness` and `egm-codebase-details` (both against `implementation-readiness-standard.md`) and `egm-style`. All three completed; none is "not run".
-**Scope note.** Earlier stages ran with no files beyond the document. Here the two reviewers who check the plan against code were allowed to read the source files that the plan itself names (`VoiceScreen.gs`, `Tasks.gs`, `App.html`, `Styles.html`, `Config.gs`, `Compliance.gs`, `Dashboard.gs`, `E2E.gs`) and nothing else, so they could say whether an engineer could act on the text. The style reviewer read the document only. The choice was made so the codebase reviewer could do its job; it goes beyond your "no extra context" answer, which covered a reading list.
-**Round result:** not clean. The readiness reviewer's verdict is that the section does not meet the Zero-Decision Rule: an engineer following it literally would produce wrong behaviour in places, and in others would have to make design decisions.
+**Reviewers:** `egm-implementation-readiness` (R) and `egm-codebase-details` (K), both against `implementation-readiness-standard.md`, and `egm-style` (Y). All three completed. R and K were allowed to read the source files named in the Detailed Implementation (`VoiceScreen.gs`, `Tasks.gs`, `App.html`, `Styles.html`, `Config.gs`, `Compliance.gs`, `Dashboard.gs`, `E2E.gs`) and the design, and nothing else; the Y reviewer read the document only. That goes beyond a reading list and is why they could check code.
+**Round result:** not clean. R's verdict: the section fails the Zero-Decision Rule and the phasing rule as written. K's verdict: no item the document calls current is simply absent; the findings are gaps, contradictions and decisions left to the implementer.
 
-I checked two of the claims myself against `VoiceScreen.gs`. `voiceApplyResult_` stores any status that is not `Failed` as `Completed` (line 534), and `voiceDispositionAction_` is a pure string-to-label function with no call, card or user (line 1163). Both are true.
+**Verified by me against the source after the reports came in:** `voiceApplyResult_` stores any status that is not `Failed` as `Completed` (`VoiceScreen.gs:534`); `apiVoiceApplyResult` is Admin-only (`requireVoiceAdmin_`, line 526); `voiceUserFor_` throws if an email is not on the team list (line 861); `apiVoiceFetchResult` has its own inline variable reader that drops objects (about line 1300); `hodOf_` exists at `Pipeline.gs:1187`. **Not independently checked:** K's claim that E2E V1 already fails (V1 asserts `c.connected === false`; `voiceProviderConnected_` is `voicePlaceWritten_() && voiceDndWritten_()` and `voiceDndWritten_` returns true, so it depends on `voicePlaceWritten_`); K's claim of about 139 block comments in `App.html` against ADR-010 (a grep of lines 6010 to 6340 found 5 comment-like markers, which may sit inside strings); the lines K cites for the two-step ingest write.
 
-Finding ids: `R` readiness, `K` codebase, `Y` style; numbers follow each reviewer's own list. Findings raised by both R and K are merged.
+Ids: `R`, `K`, `Y` followed by each reviewer's own number (`B` blocker, `M` major, `N` nit). Merged findings list every source id.
 
 ## Blockers
 
-### E1. The new `No answer` and `Busy` statuses never reach the call row (R B1, K 2)
+### IR-B1. Deferred rows are stranded in Release 1a (R B1)
+Gate refusals in 1a set queue rows to `Scheduled` with `Not_Before`; the `voiceQueuePick_` change that picks due `Scheduled` rows is listed only under Release 2. The trigger rule is in the 1a list, but nothing in 1a picks the rows up, and `voiceQueueJob` turns the trigger off when no `Waiting` or `Calling` rows exist, so every deferred row sits until the 48-hour sweep and test T2 cannot pass.
+**Fix:** move the pick change (due `Scheduled` rows plus the row-to-number map) and the V6 update into 1a, with the `Not_Before` due test.
 
-The plan changes `voiceOutcome_` to return the new statuses (line 306) but lists `voiceApplyResult_` only for `Payload_Keys` and `Reserved_Min` (line 316). `voiceApplyResult_` (VoiceScreen.gs:534) stores `Failed` as `Failed` and every other status as `Completed`. Followed literally, `No answer` and `Busy` calls would be stored as `Completed`: the daily-limit change would not apply, retry would never fire, and the answered-call to-do path would treat them as answered, with no error. The manual fetch path (`apiVoiceFetchResult`, about lines 1277 to 1306) sets its own `Outcome` from the connection status, passes only `Failed` or `Completed`, and is not in the plan, so a fetched unanswered call is never classified and no retry decision is made.
-**Needed:** say how `voiceApplyResult_` accepts the four result statuses (and fix its comment and the answers-draft branch), and what `apiVoiceFetchResult` does for an unanswered call, including whether it triggers the retry decision.
+### IR-B2. Release 1a writes columns that exist only from 1b, and the 1b list has no schema line (R B2; K M10)
+`voiceStartFor_` writes `Batch_ID` in 1a and `voiceLog_` accepts the reserve in 1a, but `Batch_ID` and `Reserved_Min` are 1b columns. The 1b list never adds `Reserved_Min`, `Batch_ID`, `Voice_Budget` or `Voice_Admin_Notes` in `voiceSchema_`. `voiceLog_` fills columns by header name, so a missing column silently drops the value. The 1a `apiVoiceFetchResult` bullet also calls the Release 2 retry decision. **Fix:** put `Batch_ID` in 1a or drop the instruction; add a 1b `voiceSchema_` line; align each bullet with the data-model release column.
 
-### E2. The first batch's main learning goal has nowhere to be stored (R B2, K 1)
+### IR-B3. The screening-time baseline cannot be entered before the pilot (R B3)
+Section 6 (1a) says the Admin enters it "before the pilot", but the sheet and entry page are 1b, and the first real batch runs after 1a and before 1b. **Fix:** move the baseline half to 1a, or state that it is recorded without code.
 
-The design says the raw provider payload is kept on every call in `Voice_Calls.Final_Vars_JSON`. The code does not do that. `voiceVars_` (VoiceScreen.gs:1183 to 1187) keeps only non-empty, non-object, scalar variables, capped at 4,000 characters each, so an object-valued `screening_ratings` is discarded and an empty one never reaches the sheet. The raw payload exists only in `Voice_Inbox.Payload`, which has no link to a call. `Payload_Keys` lists only top-level field names, and `screening_ratings` is nested under the variables, so "ratings arrived: present, empty or absent" cannot be derived from what the plan stores. Release 1 cannot answer the question it exists to answer.
-**Needed:** define exactly what is persisted per call (for example a ratings-state column, nested key paths, or a link from the inbox row to the call) and how `voiceStats_` reads it. Correct the design's "raw payload is kept" statement.
+### IR-B4. The gate's "one open call", "same number" and monthly-count facts have no data source (R B4; K M9)
+Check 5 needs "the same card or the same number", but `Voice_Calls` stores only `Phone_Last4` and `Voice_Contacts` has no open-call field. The design says the gate reads small sheets, not `Voice_Calls`, but the existing open-call check and `voiceUsedToday_` read `voiceCallsRows_`. `VOICE_MAX_CALLS_MONTH` has no counter in 1a (`Voice_Budget` is 1b and counts minutes). The per-batch cap of 30 is enforced today only in `voiceBatchCheck_` (line 888), not at placement. Whether the existing open-call check and its `problems` entry (lines 432 to 436) stay or go is not said. **Fix:** for each of the five checks, name the exact sheet and column and how the number is derived; say what happens to the existing check.
 
-### E3. The spend ceiling cannot be coded without design choices (R B3)
-
-Not stated: which unit applies (line 310 blocks a rupee ceiling with no rate; the design says it falls back to minutes) and which setting selects it; whether a blank or zero ceiling means unlimited or blocked (the gate is meant to fail closed); whether "month" is the calendar month in India time, and whether it is counted from `Started_At` or `Completed_At`. `voiceMayCall_(u, app, cand, phone, cfg, opts)` has no batch id or planned seconds, though the reserve needs the plan's seconds and the per-batch ceiling needs a batch. How a batch's spend is summed (queue rows joined to `Call_ID`) is not said, nor that single calls skip the batch ceiling (K 10: `voiceQueueJob` calls `voiceStartFor_(u, appId, {})`, so the gate does not know the batch; `Voice_Calls` has no batch id).
-**Needed:** one rule for each, and the missing inputs added to the signature.
-
-### E4. A gate refusal inside the queue run has no defined outcome (R B4, K 4, K 5)
-
-Today `voiceQueueJob` marks the queue row `Failed` whenever `voiceStartFor_` throws, counts consecutive `Failed` rows, and stops the batch with the "check the key and the connection" message (VoiceScreen.gs:966 to 995; the stop regex matches only the limit and access texts, lines 844 to 845). The plan does not say whether a gate refusal throws or returns, or what the row becomes for each reason (hours, budget, opt-out, limit, could not check). Kept as is, a run that crosses 19:00 drains every remaining `Waiting` row to `Failed`, three budget or opt-out refusals trip the "three in a row" stop with a misleading message, and `Scheduled` retry rows refused by the gate are lost as `Failed`. Whether the top-of-run hours return (line 967) stays is not said; if it goes, every row is claimed and failed out of hours. The E2E case "a run that crosses 19:00" (line 366) has no defined expected result.
-**Needed:** per refusal type, the row's next status (`Waiting`, `Scheduled`, `Stopped` or `Failed`), whether the batch stops, which refusals count toward three in a row, and how an hours refusal ends the run.
-
-### E5. Release 3 puts a write inside a read-time function (K 3)
-
-`voiceDispositionAction_(disposition)` (VoiceScreen.gs:1163 to 1173) is a pure string-to-`{key, title, why}` mapper. It is called at read time from `voiceTaskRows_` (line 1154) and `apiVoiceCallDetail` (line 1339), and has no call, card, phone or user. The plan makes it stop retries and write `Voice_DND` (lines 328 and 191). That would write on every task refresh or detail open, and the function cannot reach the data it needs. CUJ 4 says the write happens "when the result is read by the ingest".
-**Needed:** move the register write and the retry stop into `voiceIngestRun_`, and keep `voiceDispositionAction_` for the to-do mapping only. State that undo is Admin-only today (`apiVoiceDndRemove` calls `requireVoiceAdmin_`, line 692), because the goal says "a person can undo it".
+### IR-B5. The first deploy can fail open: `Voice_Contacts` starts empty (K B1; R M3)
+Today the opt-out check reads `Voice_DND` directly (`voiceDndCheck_`, `voiceDndNumbers_`). The plan makes `Voice_Contacts` the gate's only input, and `voiceSchema_` creates it empty, while `Voice_DND` can already hold thousands of rows (uploads of up to 5,000, provider syncs of up to 20,000). Until the Admin presses the rebuild button every registered number passes the gate, which breaks "none to a number on the opt-out register". The rollout preconditions do not list the rebuild. **Fix:** build `Voice_Contacts` from `Voice_DND` inside the schema step when the sheet is first created, or have the gate OR both sources; add the rebuild to the preconditions.
 
 ## Major
 
-### E6. The gate's reasons and statuses are inconsistent with the existing code (R M6, K 4)
+### IR-M1. A gate refusal has no defined path through `voiceStartFor_`, and the old checks are not folded in (K M1, M2; R M1, M2)
+`voiceStartFor_` signals every refusal by throwing today (the open-call problem at line 434, the opt-out throw at line 450), and the queue job turns any throw into `Failed`, feeding the "three failed" rule. The plan says the gate "does not throw" but not whether `voiceStartFor_` returns a structured result or throws a typed error, nor how the card toast and `voicePreviewDialog` get the reason, nor how `voiceQueueJob` reads `kind`. The old open-call problem would throw before the gate runs, so a queue row with an open call would still become `Failed` (the thing the plan says must not happen). The `out.dnd` text and the "DND check not connected" problem (lines 435, 442) are tied to `dndRequired` and not listed; `voicePreviewDialog` renders `r.dnd` (App.html:6333). The daily limit is already enforced earlier by `voiceRequireCaller_` (line 631), which throws, and the plan puts it in the gate too without removing the throw; `voiceQueueStopReason_` still matches the limit text while gate refusals "no longer go through it". The gate's contract (field names, exact `reason` strings, `kind` for the daily limit, per-batch and monthly caps, a monthly cap deferring up to the 48-hour window, the "presumed spent" state which `Voice_Budget` has no marker for) is not specified. **Fix:** decide throw versus return once and write the contract.
 
-There are five gate reasons plus "could not check", but only two new `Blocked` values are added beside the existing `Blocked (Do Not Disturb)`. Limit, open-call and could-not-check refusals have no status, so "calls blocked by reason (hours, opt-out, budget, limit)" (line 308) cannot be computed except by parsing note text. The daily limit is already enforced earlier in `voiceRequireCaller_` (line 631), which throws before any row is written and is skipped in preview. The open-call problem at line 432 already exists. The dry run returns at line 444, before the register check. The plan does not say whether the gate replaces or duplicates these, whether a refusal throws or is returned as a preview `problems` entry, or that preview must not write a `Blocked` row.
+### IR-M2. Ingest idempotency and atomicity for the new statuses are undefined (K M3; R)
+The repeat-delivery guards depend on a non-empty `Interaction_ID` and on `Status === 'Completed'` with a transcript (lines 1220, 1225). A `No answer` or `Busy` result typically has neither, so a re-delivered webhook would be applied again, double-incrementing `Attempts` and `Attempt_Times`, repeating the retry decision and duplicating to-dos. Ingest also writes in two steps (`voiceApplyResult_`, then `voiceUpdate_`); a failure between them leaves the call `Completed`, and the new "retry up to 3 times" then lands on the guard and marks the row processed, losing outcome, duration, variables and cost for good (line numbers 1227 to 1234 as reported by K; not independently checked). **Fix:** one atomic write, or an idempotency rule keyed on a result-recorded marker for every status.
 
-### E7. The reserve is not released on a failed placement, and `voiceLog_` is not in the change list (R M1, K 8)
+### IR-M3. `Ratings_State` and `Payload_Keys` cannot be computed from `voiceVars_` (K M4)
+`voiceVars_` drops every object value including an empty `{}`, so `present`, `empty` and `absent` cannot be told apart from its output; ingest must read the raw `p.final_agent_variables.screening_ratings`, which the plan does not say. `apiVoiceFetchResult` has its own inline reader (verified), so extending `voiceVars_` misses it, and the fetch path has no inbox row, so it cannot write `Inbox_Key` or `Payload_Keys`. A payload hard-cut at the 45,000-character limit is invalid JSON and ends as "Unreadable payload" (ingest `JSON.parse`, line 1211), so the result is lost although T10 expects `Payload_Keys`.
 
-`Reserved_Min` is written when the call is logged `Starting` and cleared only by ingest or the sweep. When `voicePlaceCall_` throws (VoiceScreen.gs:459) the row becomes `Failed`, no result ever arrives, and the reserve holds budget for `VOICE_MAX_CALL_MIN` plus 60 minutes. `voiceLog_` (line 496) takes no reserve argument. The sweep's marker "No result: fetch or close" has no home: no "close" action exists (`Cancelled` is listed but nothing sets it), and the Fetch button appears only when `last.status === 'Started'` (App.html:6199), so a swept call still shows Fetch.
+### IR-M4. `apiVoiceFetchResult` cannot map "through `voiceOutcome_`" (K M5)
+`voiceOutcome_` reads `p.status` or `p.completion_status` from the webhook payload. The fetch works from the analytics attempt record (`connectivity_status`, `duration_in_seconds`, `interaction_id`) and sets `Failed` whenever `interaction_id` is absent. Passing the attempt record to `voiceOutcome_` yields "No result". The plan does not say which attempt field maps to `No answer` or `Busy`. The fetch ends in `apiVoiceApplyResult`, which is Admin-only (verified), so a recruiter or lead who passes the fetch permission check then fails; and no principal is given for the retry and opt-out writes it is meant to run.
 
-### E8. The check-and-reserve is not atomic (R M2)
+### IR-M5. The opt-out to-do mechanics do not work as designed (K M6; R M3)
+`voiceTaskRows_(apps)` takes `Applications` rows and builds the task key `voice_<key>|<callId>` (Tasks.gs:397 to 401). `Voice_Contacts` is keyed by number and has no `App_ID` or `Call_ID`; the plan does not say how a number maps to a card, which card or recruiter gets the to-do when a number sits on several cards, or what `callId` goes in the key. Adding `do_not_call -> optout` to `voiceDispositionAction_` already makes the existing path emit `voice_optout|callId`; a second source from `Voice_Contacts` would duplicate it, and the disposition-derived to-do has no suppression after Confirm or Undo (the code suppresses only `review` and `incomplete`). A transcript-only opt-out has no disposition, so only the contact-record path can produce its to-do. The read must tolerate the sheet not existing (the existing code guards `Voice_Calls` with `getSheetByName`, line 1141). Who may Confirm is not stated (only Undo is Admin-only, Q3), and the Confirm and Undo buttons have no API behind them; the pending opt-out list is placed in `renderVoiceAdmin`, but the register and batches panels are in `voiceAdminExtras`.
 
-The gate reads facts outside any lock, and `voiceLog_` takes the lock only for its own write. A single call and a queue run (or two queue runs) can both pass and over-commit a hard limit. State whether gate and reserve write sit inside one `withLock_`.
+### IR-M6. The single-call "did not answer" to-do is promised and not delivered (K M7; R M12 in Stage 7)
+Non-Goals say a single call from a card that ends unanswered gets the same to-do, but the plan builds it only from queue rows whose retries ended (Release 2), and a single call has no queue row. In 1a, with the statuses live, unanswered calls produce no to-do at all, and the `noanswer` action key is added in 1a while its task rule `voice_noanswer` is in Release 2.
 
-### E9. The sweep and reaper do not run when the trigger is off (R M3)
+### IR-M7. The function that computes the next calling window is missing (K M8; R M1)
+Nothing computes "next calling window start", needed for `Scheduled.Not_Before`, T2's "09:00 next window", the 15-minute backoff, the Sunday skip and the Release 2 11:00 rule. `voiceInHours_` returns only true or false (line 827). Name and specify it (including the case where 11:00 falls outside the window).
 
-`voiceQueueJob` returns early when no `Waiting` or `Calling` row exists (VoiceScreen.gs:966) and removes the trigger. `voiceBudgetSweep_` and `voiceQueueReap_` run inside that job, so with no open batch a lost webhook keeps budget reserved against single calls until a later batch starts. The plan says `Dashboard.gs` needs no change; say where the sweep runs when no batch is open.
+### IR-M8. The system principal and the identity used by ingest are under-specified (K M14; R M2)
+The queue job builds users with `voiceUserFor_`, which throws if the email is not on the team list (verified), so a named `system` principal fails. `voiceStartFor_` also runs `voiceRequireCaller_`; a principal that bypasses the daily limit has to carry `voice_agent` or be special-cased, and neither is stated. `voiceIngest_(u)` is also called with the viewing user in `apiVoiceConfig` (line 84), `apiVoicePlanDraft` (299) and `apiVoiceCallsFor` (1390); the plan switches only the queue job and the dashboard job. The text uses three names ("synthetic Admin user", "named system user", "named `system` principal") for what may be one object. Specify the object literal once and state that the side-effect writes inside `voiceIngestRun_` ignore the caller identity.
 
-### E10. Ingest as the first step of the queue job has no user (R M4, K 6)
+### IR-M9. Several new callable functions are not named (K M15; R M3)
+Missing: confirm and undo opt-out, the pending opt-out list, close call (sets `Cancelled`), save and read the baseline and invoice, the API wrappers for the two rebuild buttons, the phrase-scan function (the phrase list and "languages in use" are left to the implementer, which the standard forbids). Not stated: the permission each uses, how each is exposed to the page, and whether any registration file such as `Api.gs` is touched.
 
-`voiceIngestRun_(u)` skips any call that the user may not review (line 1215). `refreshDashboardJob` passes a synthetic Admin object (Dashboard.gs:85). The plan does not say what the queue job passes, so results may be silently skipped.
+### IR-M10. Settings work is incomplete (K M17, M18; R M4)
+The outer hours bound is enforced only on save, but the Settings sheet can be edited directly and `voiceInHours_` accepts windows up to 24:00, so the gate must clamp at read time. "Omitted settings keep their value" is wider than the plan says: `enabled` (line 131), `openingLine`, `entryState`, `questionsVar`, `webhookUrl` and `fromNumber` also reset to blank or No when omitted, so T12 would fail for them unless the scope is widened. `voiceCfg_` still has `dndRequired` and `voiceCfgOut_` returns it; whether these are deleted, hard-wired to Yes or left is not said. It is not stated where new keys are registered or seeded. "Planned minutes" has no source (it may always equal `VOICE_MAX_CALL_MIN`). "The higher of configured and invoice rate" does not say which invoice. The `Voice_Budget.Month` key format is not given.
 
-### E11. The reaper treats any call row as "placed" (R M5, K 17)
+### IR-M11. `voiceStats_` and the status class lack shapes (K M12; R M5)
+The plan says `voiceStats_` "keeps its five-argument form" and also "gains" buckets and that `apiVoiceStats` "passes new inputs"; V4 (E2E.gs:657 to 662) asserts values that do not change if the signature is unchanged. Return keys for ratings counts and median minutes are not named, nor the `voiceStatusClass_` identifiers, the status-to-class map (for `Cancelled`, `Started`, "presumed spent" and the legacy `Blocked (Do Not Disturb)`), the CSV header columns, the `apiVoiceHealth` return shape, or the `apiVoiceBatches` field for the `Scheduled` count. Answer rate and completion rate need screening data `voiceStats_` does not have.
 
-The rule "a `Voice_Calls` row for the same card started since the claim means `Placed`" also matches a `Blocked` or `Failed` row logged in that window. Only `Starting`, `Started` or `Completed` rows should count. The claim time must come from `Updated_At` (`voiceQueueWrite_`, line 868).
+### IR-M12. Batch visibility and Stop do not work for `Scheduled` rows (K M13)
+The batch status table is in `voiceAdminExtras` (App.html:6115 to 6117), fed by `apiVoiceBatches`, not in `voiceBatchDialog`. `apiVoiceBatches` computes `open` as `Waiting` plus `Calling` and the Stop button shows only when `b.open`, so a batch with only `Scheduled` rows shows no Stop button. That contradicts the rollback step "stop all batches including `Scheduled` rows".
 
-### E12. Retry fields and bookkeeping are unsourced (R M7, K 11)
+### IR-M13. Schema work is incomplete (K M11; R M6)
+Only `Voice_Queue` is called out for the `addColumns_` fix; `Voice_Inbox` has the same creation-only problem (`addSheet_` with `VOICE_INBOX_.cols`, line 44), so `Error_Count` will not appear on an existing sheet. `VOICE_CALL_EXTRA_` (line 18) is the list that gets the new `Voice_Calls` columns. Constants for the new sheets are not named. `voiceTaskRows_` and the `allTasks_` stamps must tolerate absent new sheets; writers must call `dropStale_` for the `allTasks_` stamp to help (only `Voice_DND` and `Voice_Queue` do today). `Voice_Admin_Notes` columns are not defined.
 
-Where `Max_Attempts` is written is not said (`apiVoiceBatchStart` builds the row, line 924, and is not listed for it), and no setting holds the default of 3. When `Attempts` is incremented (claim, placing or result) is not said. A queue row's `Call_ID` is overwritten on each attempt, so ingest cannot find the row by it. Single calls from a card have no queue row, so they get no retry and no "did not answer" to-do, though the Goals say a candidate who did not answer is retried. The retry plan text has two spellings and no grammar, nothing says what applies to attempt 3 and later, how `apiVoiceConfigSave` validates it, or that an empty plan means retry off. `voiceRetryNext_(row, outcome, plan, now, hours)` has no disposition, screening-complete or blocked input, though it "stops on" them (and those cases are largely unreachable because it retries only after `No answer` or `Busy`). "Next day 11:00" can fall outside a configured window or on a Sunday; which wins is not said. `Stop_Reason` here and the existing `Reason` column in `voiceQueueJob` should be one.
+### IR-M14. The share message depends on code that is not callable or is exact-match only (K M16)
+`voiceShareBuild_` needs the flag labels, which are built inline inside `apiVoiceCallDetail` (lines 1325 to 1331), not in a reusable function; no refactor is listed. `panelEmailIndex_` and `panelKey_` do exist and match exact normalised keys only and do not filter inactive members, so "a name matched by approximate spelling is marked" is new, unspecified logic. Existing panel splits use `;` only; the plan splits on commas as well. `hodOf_` exists (`Pipeline.gs:1187`), though `Tasks.gs` builds the HOD map inline and never calls it. The `apiVoiceShareDraft(callId, who)` signature takes a call id while the text says "latest completed screening of the card"; pick one.
 
-### E13. `apiVoiceBatchStop` leaves `Scheduled` rows live; `voiceQueueTrigger_` does not hold the keep-trigger rule (R M8, K 11)
+### IR-M15. The tests are not executable as written (K M20, N10; R M8)
+`voiceQueueJob` uses `Date.now()` directly, so T2's "clock passes 19:00" has no time seam; two simultaneous gate calls (T3) cannot be produced in a single-threaded `e2eTest()`. There is no mapping from T1 to T14 to `e2eTest()` names (existing are V1 to V6; the text says V7 onward). Existing V2 (dispositions), V3 (access and register) and V5 (DND mirror) touch changing code, but only V4 and V6 are listed for update. No tests are listed for `voiceFindCost_`, the ingest `Error_Count` stop, the trigger arming and one-shot rule, the "already queued" skip, the two rebuild functions, `apiVoiceBatchStop` on `Scheduled`, the 48-hour sweep, confirm and undo, the baseline and invoice rate, the settings audit before and after values, and the 45,000-character truncation.
 
-`apiVoiceBatchStop` stops only `Waiting` rows (VoiceScreen.gs:941) and is not in the file list. After Release 2 the owner and the rollback procedure cannot cancel scheduled retries, which place calls and spend money. `apiVoiceBatches` counts `open` from `Waiting` plus `Calling` (line 960), and the plan does not say how the batch-progress counts for `Scheduled` rows are built. `voiceQueueTrigger_` (line 872) takes only `on`; the keep-trigger condition lives inline in `voiceQueueJob` (lines 966, 994), not in `voiceQueueTrigger_` as the plan says.
+### IR-M16. The file boundary is not exact (K M19; R M15 of round 1 pattern, N3)
+Nothing is labelled Create, Modify or Delete; reported once per the standard. `Styles.html` is "no change" and `Compliance.gs` is "no change": say "not modified" and drop them from the boundary. The `App.html` bullets are tagged "releases 1 to 4" with no release mapping; the `Scheduled` display, the "already queued" reason and the share buttons belong to later releases. `VoiceScreen.gs` omits functions the plan changes or depends on (`voiceLog_`, `voiceCfgOut_`, `voiceQueueStopReason_`, `apiVoiceBatches`, `apiVoiceBatchStop`, `apiVoiceFetchResult`, `voiceQueueTrigger_`, and the writers and readers of `Reason` that move to `Stop_Reason`: `voiceQueueJob` line 986, `apiVoiceBatchStop` line 941, `apiVoiceBatches` line 957).
 
-### E14. The to-do changes have no home or mechanism (R M9, K 12)
-
-Tasks.gs builds a task id as `voice_` plus `action.key`, so the keys must be `optout` and `noanswer` to match the rules `voice_optout` and `voice_noanswer`; the plan does not say so. `voiceTaskRows_(apps)` reads only `Completed` calls with `Final_Vars_JSON` (line 1144), so an exhausted no-answer card, which has neither, cannot feed the `noanswer` to-do. To-dos are derived by `reconcileTasks_`, so "ingest creates the to-do" (design line 177) conflicts. "`voiceTaskRows_` shows the two new values" (line 157) is a no-op because it shows no status. `voiceDndAdd_(u, numbers, source, note)` needs the full number, but a call row holds only the last four digits, and the plan does not say who `u` is when called from ingest. Line 337 gives rule titles but not the full shape (`due`, `crit`, `missed`, `policy`). `allTasks_` caches on a stamp list that omits `Voice_Calls` and `Voice_Queue` (Tasks.gs:469), so new to-dos can lag up to 10 minutes.
-
-### E15. `voiceStats_` cannot be changed as written (R M10, K 14)
-
-`voiceStats_(calls, from, to, rate, labels)` is pure over a date window. Spent, reserved and ceiling are monthly and need other inputs, and the screenings join needs another. The output field names are undefined, and `App.html` `voiceCommand` consumes them. The existing result key `noAnswer` means "completed with no answers" (VoiceScreen.gs:1028, 1042; App.html:6072), so the new "no answer" bucket needs a different name. Existing E2E V4 (`E2E.gs:657` to `662`, five-argument call) and V6 (`voiceQueuePick_` with the old signature) are not listed for update. "Oldest unprocessed inbox row age and queue depth" (line 342) has no backend producer.
-
-### E16. Ingest error handling, cost reading and the repair lack mechanism (R M11, K 7, K 16)
-
-"After 3 failures it is marked with the error": `Voice_Inbox` has no counter column (line 20) and the plan adds none. Today an error is caught and the row stamped `Processed_At` with "Error: ..." (lines 1231, 1234). Re-running after a partial success would hit "This call already has its result" (line 533) or the repeat-delivery guard (line 1225). `voiceFindCost_` is to accept only keys that "name a cost and carry a currency or unit" and to ignore "credit balance" and "pending charges", but no key list or pattern is given. `voiceStatusRepair_` is "one-time" but `voiceSchema_` runs on nearly every voice function (including `voiceCallsRows_`), so an unguarded repair would scan a transcript-heavy sheet on every call and could recurse. `ensureSchema_` returns early once `SCHEMA_V >= 47`, so it will not run the step either; a property guard and a call site must be named, and the "Compliance.gs: no change" decision depends on the lazy `voiceSchema_` calls. New `Voice_Queue` columns need an extra-column list and an `addColumns_` call, because `VOICE_QUEUE_.cols` is used only when the sheet is created.
-
-### E17. Same-number matching cannot be done from stored data (R M6a, K 9)
-
-Queue rows carry no phone number, and `apiVoiceBatchStart` writes `Candidate_ID: ''` (line 924). `Voice_Calls` holds only `Phone_Last4`. `voiceQueuePick_` is pure, has no phone per row, and its `doneNumbers` argument filters nothing today (the comment at line 832 claims "one per number" but the code does not dedupe). The plan says only "resolved from the candidate record" with no new signature such as a row-to-number map. It does not say how `apiVoiceBatchStart` and `voiceBatchCheck_` do the "refuse a card or number already open" check, or whether a clash refuses the whole batch or skips that card (the preview needs the "already queued" reason, so `voiceBatchCheck_` must change, not only `apiVoiceBatchStart`). The facts (opt-out register, calls, spend) should be read once per batch, not per card, because `voiceBatchCheck_` already runs `voiceStartFor_` as a dry run per card (line 900). How numbers are gathered inside the lock in `voiceQueueJob`, which calls `voiceQueuePick_(rows, 1, [])` (line 973), is not said.
-
-### E18. Settings changes are incomplete (R M12, K 15, Y1)
-
-`voiceCfgOut_` (VoiceScreen.gs:69 to 73) returns an explicit field list, so the new settings will not reach the page unless it changes. `apiVoiceConfigSave` resets `ratePerMin` to 0 when it is omitted (line 121), unlike other fields that default to the previous value, and the budget depends on the rate. Only `VOICE_MAX_CALL_MIN` has a range; the ceilings, the retry plan and `VOICE_OPTOUT_AUTO` have no accepted values or failure messages. The preview text "Not required (switched off)" (line 442) must change with the `VOICE_DND_REQUIRED` label. The before-and-after audit for the new settings (line 405, "a small addition worth making") is neither in nor out of scope: decide, and put it in the `apiVoiceConfigSave` entry or drop it.
-
-### E19. The call card hides the real result behind a newer row (K 13)
-
-`voiceCardSection` (App.html:6193) takes `last = calls[0]`, the newest call of any status. A new `Blocked` or `No answer` row would replace the real result and hide *View result* and *Ask remaining questions* (App.html:6197). Missed readers of `Status` or the result path the plan should list: `apiVoiceFetchResult`, `voiceCallFlags_` (line 1132), `voiceCallOut_` (line 338), App.html `VOICE_STATUS_CLASS_` (6011, only `ok` and `miss`), the `voiceCommand` KPI "Failed, no answer or busy" (6064) and the CSV header (6073 to 6077). `voiceQueueTrailingFails_` (lines 850 to 856) reads `Voice_Queue.Status`, not `Voice_Calls.Status`, so it does not see `No answer` and needs no change for that reason; its risk is gate refusals counted as `Failed` (E4). App.html has no call-log status filter (the Recent calls table at 6039 has none), and statuses show as plain text classes, so the plan's "chips and filters" and a `Styles.html` change may not be needed; the plan should choose the class mapping or say "no change".
-
-### E20. The sharing message cannot be built from the text (R M13, K 18)
-
-Missing: the card link format, the Teams or mailto link format, the subject and the message template; what "confirmed answers", "outcome", "flags" and "counts only" mean in terms of `Screenings` fields and `voiceRowFlags_` and `voiceCallFlags_`; the field shapes of `{text, links, missing}`. The department master is ambiguous: `hodOf_(dept)` in `Pipeline.gs` reads `M_Departments`, while `Org.gs` has a separate `ORG_DEPT_` that also has `HOD_Email`, and `Pipeline.gs` is not in the file list. `panelEmailIndex_` is keyed by `panelKey_(name)` (Tasks.gs:446 to 453), the stored format of `Tech_Panel` is unspecified, and how a multi-valued panel is split is not said. Which screening applies when a card has several calls is not said. There is no field for the MRF raiser in the eight files.
-
-### E21. The test plan has titles, not tests (R M14, K 21, Y)
-
-No inputs, expected results or boundaries are given. Boundaries needed: 09:00 and 19:00 exactly, 18:59, Saturday evening into Sunday, ceiling equality, `Attempts` equal to `Max_Attempts`, `Not_Before` equal to now. The design promises "an e2e case covers each reader", but the list covers `voiceUsedToday_` and the gate only; status display, `voiceTaskRows_`, the batch stop rule and `voiceStats_` are uncovered. No cases are named for `voiceBudgetSweep_`, `voiceStatusRepair_`, the ingest failure counter, settings validation, rate-unset fail-closed, or the fetch path's status. The `'Failed'` code search (line 393) has no check that can be run. Eight names (V7 to V14) are given for more than ten cases. Y: "assumed V7 to V14" adds nothing; fix the names or drop "assumed".
-
-### E22. The file boundary is not exact (R M15, K)
-
-`Styles.html` "as needed, reusing existing chip classes where possible" cannot be enforced as an allowlist (see E19). The `App.html` bullets (lines 339 to 346) are tagged "releases 1 to 4" but not mapped to releases: the `Scheduled` display, the "already queued" reason and the share buttons belong to later releases. The `VoiceScreen.gs` list omits functions the plan itself changes or depends on: `voiceLog_`, `voiceCfgOut_`, `voiceQueueStopReason_`, `apiVoiceBatches`, `apiVoiceBatchStop`, `apiVoiceFetchResult`, `voiceQueueTrigger_` and a status-class map (named in the design as `voiceStatusClass_`, in the code as `VOICE_STATUS_CLASS_` on the page side).
-
-### E23. Style: uncalibrated claims and caveats (Y1 to Y3)
-
-Line 403 ("are the only guard") is an absolute that the plan itself contradicts (step 3, the E2E list). Line 404's rate risk follows no decision (line 310 already says what happens with no rate). Line 405 ends "a small addition worth making", a judgement that leaves scope unsaid. Line 286 says assumed defaults change "in one place, a setting or constant", but the default for `Max_Attempts` and the plan text sit inline at line 320 and are not named as settings. Lines 354 and 362 ("Listed so a reviewer sees it was considered", "Listed to record the decision") describe why a line exists, not behaviour; the three "no change" entries (lines 360 to 362, 377 to 379, 381 to 383) can be one line each. Line 350 states a dark and light theme requirement that step 8 (line 398) does not check.
+### IR-M17. Style: the section does not follow its own rule, and bullets are overloaded (Y 1 to 5)
+Line 412 says "Behaviour is described once, in the Architecture; here each item says what changes and why", but items restate behaviour (error text and bounds at line 434, the three-failure stamping rule at 429, the cost-key rule at 431, task text at 460); delete the claim or move the rules. "T ids are assumed to follow V6" hedges with no decision: state the mapping or say the T ids are document-local. "There is no test command in the repository, so the deploy check is still a syntax gate" cites no evidence (name the step; the visual check has no owner). "Nearly every voice function" is imprecise; the `miss` class reference is circular because the map is new in this release. Lines 428, 434 and 435 each carry 5 to 9 semicolon-separated changes and hide scope (the rate-reset fix is a separate behaviour change); split them.
 
 ## Nits
 
-- **Line 302:** "never allow" repeats "returns blocked". **Line 286:** "There is no code here." is filler, and "the single list of everything that changes" is an unprovable absolute (the provider workspace, line 385, and the secret rotation, line 383, sit outside it); say "the list of repository changes". **Line 290:** "Each can be stopped after." is vague. **Line 292:** "the owner reads the results" is a noun phrase mixed with a clause, and "the owner" differs from "MRF owner" (line 333). **Line 312:** "no longer at the top of the run only" is a double negative; say it is checked at each placement as well as at the start. **Line 317:** "real" appears twice; say "until a captured provider payload contains a cost field". **Lines 342 and 343:** long semicolon-chained bullets would read better as sub-bullets. **Line 344:** "clear refusals" is subjective. **Line 322:** "cannot" is absolute, and line 323 uses a second mechanism; say which enforces which case. **Line 331:** "Allowed only to a person who may review the card" is awkward. **Line 358:** write "SSOT section 12.5" in full, as line 375 does. **Line 387:** the Admin's real test call has no release or step attached; add it to the step list. (Y4 to Y17)
-- **Line 358:** `BUILD_ID` is the string `'159'`; give the four target values (for example 160 to 163). (R)
-- **Line 392:** Release 1 adds retry and opt-out settings and the `Scheduled` schema before any release uses them; harmless, but say so. (R)
-- **Line 398:** "preview at phone width" has no pass criterion. (R)
-- **The no-change entries** for `Dashboard.gs` and `Compliance.gs` are good practice, but the `Dashboard.gs` entry should be revisited under E9 and E10. (R, K)
+*   Line 431: "sibling key naming a currency" does not define "sibling". Line 427: the 1a bullet for `apiVoiceFetchResult` says "run the retry decision (Release 2)", an instruction to call a function that does not exist yet. (R N1, N2)
+*   `Dashboard.gs`: name the new step key beside the existing ingest `runStep_` (about line 84). The "already queued" reason text and the preview field it appears in are not stated. SSOT section numbers and the ADR count could not be checked. (R N4 to N6)
+*   `voiceQueuePick_` does no per-number dedupe today (`doneNumbers` is read into `seen` and never used; the job passes `[]` at line 973); state the new signature and parameter order. V6 calls `(rows, 1, [])`. (K N2)
+*   `voiceBatchCheck_` already runs `voiceDndCheck_` and `voiceStartFor_` dry-run per card (lines 899 to 900); "read facts once per batch" gives no mechanism to pass the facts in. (K N3)
+*   The Problem Statement says calling hours are checked "in the batch paths (`voiceQueueJob`, `voiceBatchCheck_`)"; `voiceBatchCheck_` only reports `inHours` (line 909) and only `voiceQueueJob` enforces it. (K N4)
+*   `voiceFindCost_` change drops `charge` and `billed` keys silently (the current regex is `cost|charge|credit|price|billed`) and `Cost_Unit` changes meaning from key name to currency; state it. (K N5)
+*   `noanswer` is a retry-exhaustion result, not a disposition, so it does not fit the map keyed by the agent's disposition string; give the key. (K N6)
+*   The legacy `Blocked (Do Not Disturb)` value must be recognised by both `voiceStatusClass_` and `VOICE_STATUS_CLASS_`, or T9's "unknown status logged loudly" fires for every old row. There is no "neutral text class": neutral statuses use an empty class; only `.ok` and `.miss` exist (Styles.html:254). (K N7, N8)
+*   ADR-010: K reports `App.html` containing many comments; clarify what ADR-010 forbids (my grep of lines 6010 to 6340 found 5 comment-like markers; unchecked whether they are in strings). (K N9)
+*   History.gs, Timeline.gs and Archive.gs may read `Voice_Calls` status (E2E.gs:643 shows `histBuild_` takes a `calls` input); the reader list and T9 cover only `VoiceScreen.gs`, `Tasks.gs` and `App.html`. (K N13)
+*   `voiceIngest_` holds `withLock_` for the whole run (line 1201); the gate's lock waits behind it and the plan adds work under that lock. Nested `withLock_` already exists; reentrancy could not be confirmed without `Db.gs`. (K N12)
+*   `BUILD_ID` keys the dashboard snapshot cache (Dashboard.gs:9, 15), so each release invalidates it; where the page's copy of `BUILD_ID` lives is not found in `App.html`. (K N14)
+*   Style: "This is the list of repository changes" is filler; "currently '159'" should be code format; "(new)" and "(existing)" are used inconsistently (`apiVoiceHealth`, `voiceStatusClass_`, `voiceQueueStopReason_ (existing)`); "stays" and "still" imply history; `voiceQueueReap_ (new): the reaper` is circular; `open` is a bucket, not a function; the "up to 10 minutes" figure needs its source constant; the sweep call from `refreshDashboardJob` is stated three times; line 495 is a 130-word bullet and its "one ADR each" count is ambiguous; T9 expects unknown-status logging that no item implements; expected-result cells mix tense and semicolon chains; "Also:" should be "Additional checks". (Y 6 to 18)
 
-## What checked out (current-state claims that are true)
+## What passes
 
-Every named current function exists as stated: `voiceStartFor_` (VoiceScreen.gs:408), `voiceOutcome_` (1189), `voiceUsedToday_` (612), `voiceStats_` (1009), `voiceQueuePick_` (833), `voiceQueueTrailingFails_` (850), `voiceTaskRows_` (1140), `voiceDispositionAction_` (1163), `voiceFindCost_` (1102), `voiceIngest_` and `voiceIngestRun_` (1200, 1203), `voiceApplyResult_` (529), `voiceCfg_` (55), `apiVoiceConfigSave` (91), `voiceBatchCheck_` and `apiVoiceBatchPreview` (885, 880), `apiVoiceBatchStart` (912), `voiceQueueJob` (963), `voiceQueueTrigger_` (872), `voiceSchema_` (43), `voiceDndAdd_` (642). Also true: `VOICE_STATUSES_` (30), the settings `VOICE_RATE_PER_MIN`, `VOICE_CALL_HOURS` and `VOICE_DND_REQUIRED` (60), the 8-minute `VOICE_WARN_MIN_` (269), the `App.html` functions named, `TASK_RULES_DEFAULT_` with existing `voice_*` rules (Tasks.gs:21, 49 to 53), `panelEmailIndex_` (447), `HOD_Email` on `M_Departments` (80), `Tech_Panel` on the MRF line, `SCHEMA_VERSION` '47' and `BUILD_ID` '159', and `refreshDashboardJob` calling `voiceIngest_` (Dashboard.gs:85). Behaviour claims that hold: `voiceOutcome_` maps everything not answered to `Failed`; `voiceUsedToday_` excludes `Failed` and `Blocked`; the opt-out check sits inside `cfg.dndRequired` (line 447); hours are checked only in the batch paths (967); `apiVoiceBatchStart` counts only `Waiting` and `Calling` (921); the Admin has no daily limit (592); the settings audit logs names only (136). Style kept: the lost-webhook rationale (line 314), the fail-closed statement (line 367) and the first half of line 405's audit wording.
+The file inventory by release and the repository paths are real; the `BUILD_ID` plan (159 to 160 to 163); the existing function names used (`voiceInHours_`, `voiceQueuePick_`, `voiceQueueTrailingFails_`, `panelEmailIndex_`, `panelKey_`, `hodOf_`, `withLock_`, `addColumns_`); most 1b formulas (reserve, ceiling equality, blank ceiling, no-rate block). Existing-behaviour claims that match the code (K): `voiceOutcome_`, `voiceApplyResult_` collapsing non-Failed to `Completed`, `voiceUsedToday_` (line 614), `voiceQueueTrailingFails_` (850), `voiceQueueTrigger_(on)` (872), `voiceCfgOut_` (69), `voiceVars_` (1185), the `voiceFindCost_` regex (1109), `voiceStats_` five-argument form (1009), `voiceDispositionAction_` as a pure map, the rate reset to 0 (121), `Candidate_ID` written empty on queue rows (924), `BUILD_ID` '159', `SCHEMA_VERSION` '47' and the `voiceSchema_` step, the `voice_*` task rule shape, the missing stamp-list entries (Tasks.gs:469), and `refreshDashboardJob` calling ingest as a synthetic Admin (Dashboard.gs:84 to 86).
 
 ## Traceability
 
-| Consolidated | Raw findings |
+| Consolidated | Source ids |
 |---|---|
-| E1 | R B1, K 2 |
-| E2 | R B2, K 1 |
-| E3 | R B3, K 10 |
-| E4 | R B4, K 4, K 5 |
-| E5 | K 3 |
-| E6 | R M6, K 4 |
-| E7 | R M1, K 8 |
-| E8 | R M2 |
-| E9 | R M3 |
-| E10 | R M4, K 6 |
-| E11 | R M5, K 17 |
-| E12 | R M7, K 11 |
-| E13 | R M8, K 11 |
-| E14 | R M9, K 12 |
-| E15 | R M10, K 14 |
-| E16 | R M11, K 7, K 16 |
-| E17 | R M6a, K 9, K 22, K 23 |
-| E18 | R M12, K 15, K 20, Y1 |
-| E19 | K 13, K 19 |
-| E20 | R M13, K 18 |
-| E21 | R M14, K 21 |
-| E22 | R M15 |
-| E23 | Y1 to Y3 |
-| Nits | R nits, Y4 to Y17 |
+| IR-B1 | R B1 |
+| IR-B2 | R B2, K M10 |
+| IR-B3 | R B3 |
+| IR-B4 | R B4, K M9 |
+| IR-B5 | K B1, R M3 |
+| IR-M1 | K M1, K M2, R M1, R M2 |
+| IR-M2 | K M3 |
+| IR-M3 | K M4 |
+| IR-M4 | K M5 |
+| IR-M5 | K M6, R M3 |
+| IR-M6 | K M7 |
+| IR-M7 | K M8, R M1 |
+| IR-M8 | K M14, R M2 |
+| IR-M9 | K M15, R M3 |
+| IR-M10 | K M17, K M18, R M4 |
+| IR-M11 | K M12, R M5 |
+| IR-M12 | K M13 |
+| IR-M13 | K M11, R M6, R M7 |
+| IR-M14 | K M16 |
+| IR-M15 | K M20, K N10, R M8 |
+| IR-M16 | K M19, R N3 |
+| IR-M17 | Y 1 to 5 |
+| Nits | R N1, N2, N4 to N6; K N1 to N9, N11 to N14; Y 6 to 18 |
