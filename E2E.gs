@@ -637,6 +637,10 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V5 provider Do Not Disturb list is mirrored without duplicates', function () {
+      const r = voiceDndSyncRows_(['+919876543210', '09876543210', '+91 91234 56780', 'abc', '12345'], ['9123456780']);
+      return r.numbers.length === 1 && r.numbers[0] === '9876543210' && r.invalid === 2 && r.already === 2 ? 'ok' : false;
+    });
     t('V4 voice command center figures', function () {
       const d0 = '2026-11-05', row = function (o) { return Object.assign({ Status: 'Completed', Started_By: 'a@x.com', Line_ID: 'L1', Started_At: d0, Duration_Sec: 120, Answers_JSON: '{"1":"x"}', Final_Vars_JSON: '{"call_disposition":"completed"}', Cost: '' }, o); };
       const r = voiceStats_([row({}), row({ Status: 'Failed', Answers_JSON: '', Final_Vars_JSON: '' }), row({ Status: 'Blocked (Do Not Disturb)' })], '2026-11-01', '2026-11-07', 3, {});
