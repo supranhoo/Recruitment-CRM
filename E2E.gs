@@ -637,6 +637,12 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V6 batch calling: hours, queue order and stop rules', function () {
+      const w = voiceHoursParse_('09:00-19:00'), monday = Date.parse('2026-11-09T10:00:00+05:30'), sunday = Date.parse('2026-11-08T10:00:00+05:30');
+      const pick = voiceQueuePick_([{ Row_ID: 'B-2', Status: 'Waiting', Requested_At: new Date(2000) }, { Row_ID: 'B-1', Status: 'Waiting', Requested_At: new Date(1000) }, { Row_ID: 'B-0', Status: 'Placed', Requested_At: new Date(500) }], 1, []);
+      return w && w.from === 540 && voiceInHours_(monday, '09:00-19:00') === true && voiceInHours_(sunday, '09:00-19:00') === false && pick.length === 1 && pick[0].Row_ID === 'B-1'
+        && /limit of 20/.test(voiceQueueStopReason_('You have reached your limit of 20 voice calls for today.', 1)) && voiceQueueStopReason_('network', 2) === '' && voiceQueueStopReason_('network', 3) !== '' ? 'ok' : false;
+    });
     t('V5 provider Do Not Disturb list is mirrored without duplicates', function () {
       const r = voiceDndSyncRows_(['+919876543210', '09876543210', '+91 91234 56780', 'abc', '12345'], ['9123456780']);
       return r.numbers.length === 1 && r.numbers[0] === '9876543210' && r.invalid === 2 && r.already === 2 ? 'ok' : false;
