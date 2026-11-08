@@ -97,7 +97,7 @@ function viewData(v, key, call, again, label, opts) {
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
-  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare']);
+  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
 function perfNow() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
@@ -4065,13 +4065,14 @@ async function viewAdmin(v) {
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="kpit" aria-selected="${f.tab === 'kpit'}">KPI targets</button>
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
-      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
+      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('lead') ? `<button role="tab" data-t="checkin" aria-selected="${f.tab === 'checkin'}">Check-in plan</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
   const el = $('#adBody');
   if (f.tab === 'users') return renderUsers(el, v);
   if (f.tab === 'voice' && can('voice_agent')) return renderVoiceAdmin(el);
   if (f.tab === 'routes' && can('tat_view')) return renderRoutesAdmin(el);
+  if (f.tab === 'checkin' && can('lead')) return renderCheckinPlan(el);
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
@@ -6360,6 +6361,99 @@ function voicePreviewDialog(r) {
 }
 
 /* ---- Hiring routes (fast-track) ---- */
+const CK_STATUS = { Planned: 'Planned', Waiting: 'Waiting', Skipped: 'Skipped' };
+function ckAskText(list) { return (list || []).map(a => [String(a.q || '').replace(/\|/g, '/'), a.type, a.risk || '', String(a.signal || '').replace(/\|/g, '/')].join(' | ')).join('\n'); }
+function ckParseAsk(text) {
+  return String(text || '').split('\n').map(x => x.trim()).filter(Boolean).map(line => {
+    const p = line.split('|').map(x => x.trim());
+    return { q: p[0], type: p[1] || 'text', risk: p[2] || '', signal: p.slice(3).join(' / ') };
+  });
+}
+async function checkinCardSection(el, a) {
+  let r; try { r = await api('apiCheckinFor', a.App_ID); } catch (e) { return; }
+  if (!r.live || !r.calls.length) return;
+  el.innerHTML = `<section class="app-sec"><h3>Check-in calls <span class="sub">plan ${esc(r.version)}</span></h3>
+    <p class="sub">Dates only. No check-in call is placed yet.</p>
+    <div class="table-wrap"><table><thead><tr><th>Call</th><th>Date</th><th>Status</th></tr></thead><tbody>${r.calls.map(c => `<tr style="cursor:default"><td>${esc(c.title)}</td><td>${c.due ? esc(fmtDate(c.due)) : '—'}</td><td>${esc(CK_STATUS[c.status] || c.status)}${c.reason ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></section>`;
+}
+async function renderCheckinPlan(el) {
+  let r; try { r = await api('apiCheckinPlan'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const cur = r.versions.find(v => v.id === r.current) || r.versions[0];
+  const anchorName = id => (r.anchors.find(x => x.id === id) || {}).name || id;
+  const when = t => t.offset === 0 ? `on the ${anchorName(t.anchor)} day` : t.offset < 0 ? `${-t.offset} day${t.offset === -1 ? '' : 's'} before the ${anchorName(t.anchor)}` : `${t.offset} day${t.offset === 1 ? '' : 's'} after the ${anchorName(t.anchor)}`;
+  el.innerHTML = `<div class="note">The check-in plan is the timeline of calls from the accepted offer to 90 days after joining: <b>when</b> each call is made, <b>what it asks</b> and <b>what it tells</b> the candidate.
+      In this release the plan only shows the dates on each card. <b>No check-in call is placed yet</b>, and a call never moves a stage or sets the risk by itself. A call never speaks about pay or terms.</div>
+    <div class="filters" style="margin-top:12px"><div style="flex:1"></div>${r.canEdit ? '<button class="btn primary" id="ckEdit">Change the plan</button>' : '<span class="hint">Only the Head of HR or the admin can change this.</span>'}</div>
+    <h3 style="margin:8px 0">Plan ${esc(cur ? cur.id : '')} in force${cur ? ` <span class="sub">from ${cur.eff <= '1900-01-02' ? 'all dates' : esc(fmtDate(cur.eff))}</span>` : ''}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Call</th><th>When</th><th>Asks</th><th>Tells</th><th>Tries</th></tr></thead><tbody>
+    ${cur ? cur.touches.map(t => `<tr style="cursor:default" class="${t.active === 'No' ? 'muted' : ''}"><td><b>${esc(t.id)}</b> ${esc(t.title)}${t.active === 'No' ? '<span class="sub">switched off</span>' : ''}${t.must === 'Yes' ? '<span class="sub">always kept</span>' : ''}</td>
+      <td>${esc(when(t))}</td><td>${t.ask.length ? `<ol style="margin:0 0 0 16px;padding:0">${t.ask.map(x => `<li>${esc(x.q)}</li>`).join('')}</ol>` : '<span class="muted">—</span>'}</td>
+      <td>${t.inform.length ? `<ul style="margin:0 0 0 16px;padding:0">${t.inform.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<span class="muted">—</span>'}</td><td class="num">${t.attempts}</td></tr>`).join('') : ''}</tbody></table></div>
+    <h3 style="margin:22px 0 8px">Version history</h3>
+    <div class="table-wrap"><table><thead><tr><th>Version</th><th>Effective</th><th>Calls</th><th>Note</th><th>By</th></tr></thead><tbody>
+    ${r.versions.map(v => `<tr style="cursor:default"><td><b>${esc(v.id)}</b>${v.status !== 'Active' ? '<span class="sub">superseded</span>' : ''}</td><td>${v.eff <= '1900-01-02' ? 'all dates' : esc(fmtDate(v.eff))}</td><td>${v.touches.length}</td><td>${esc(v.note)}</td><td>${esc(v.by)}<span class="sub">${esc(v.at)}</span></td></tr>`).join('')}</tbody></table></div>`;
+  if ($('#ckEdit', el)) $('#ckEdit', el).onclick = () => checkinEditor(r, cur, () => renderCheckinPlan(el));
+}
+function checkinEditor(r, cur, done) {
+  const b = openDrawer('Change the check-in plan', `<p class="hint" style="margin:0 0 8px">One block per call. Write each question on its own line as <b>question | type | risk | what a worrying answer means</b>. Type is yesno, text, number or choice; risk is Green, Amber, Red or empty. Write each fact to tell on its own line. You can use ${r.fields.map(f => '{' + f + '}').join(', ')}. Do not mention pay or terms.</p>
+    <div id="ckBlocks"></div>
+    <div class="btn-row" style="margin:8px 0"><button class="btn sm" id="ckAdd">Add a call</button></div>
+    <fieldset><div class="grid"><div class="field"><label for="ckEff">Takes effect from</label><input type="date" id="ckEff" value="${today()}" min="${today()}"></div>
+      <div class="field"><label for="ckNotice">Preview with a notice period of (days)</label><input type="number" id="ckNotice" min="10" max="120" value="45"></div></div>
+      <div class="field" style="margin-top:8px"><label for="ckNote">Why is the plan changing? (at least 10 characters)</label><input id="ckNote" placeholder="e.g. Added a call before the joining day"></div></fieldset>
+    <div id="ckPrev"></div>
+    <div class="drawer-actions"><button class="btn" id="ckCancel">Cancel</button><button class="btn" id="ckPreview">Preview</button><button class="btn primary" id="ckSave" disabled>Save as a new version</button></div>`);
+  const box = $('#ckBlocks', b);
+  const blockHtml = t => `<fieldset class="ck-block" data-id="${esc(t.id)}"><legend><b>${esc(t.id)}</b></legend><div class="grid">
+      <div class="field"><label>Title</label><input data-k="title" value="${esc(t.title)}"></div>
+      <div class="field"><label>Counted from</label><select data-k="anchor">${r.anchors.map(x => `<option value="${x.id}" ${x.id === t.anchor ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Days (negative = before)</label><input type="number" data-k="offset" min="-365" max="365" value="${t.offset}"></div>
+      <div class="field"><label>Tries</label><select data-k="attempts">${[1, 2, 3].map(n => `<option ${n === t.attempts ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label><input type="checkbox" data-k="active" ${t.active === 'No' ? '' : 'checked'}> On</label></div>
+      <div class="field"><label><input type="checkbox" data-k="must" ${t.must === 'Yes' ? 'checked' : ''}> Always keep</label></div></div>
+      <div class="field"><label>Questions</label><textarea data-k="ask" rows="4">${esc(ckAskText(t.ask))}</textarea></div>
+      <div class="field"><label>Facts to tell</label><textarea data-k="inform" rows="3">${esc((t.inform || []).join('\n'))}</textarea></div>
+      <div class="btn-row"><button class="btn sm" data-rm="1">Remove this call</button></div></fieldset>`;
+  (cur ? cur.touches : []).forEach(t => box.insertAdjacentHTML('beforeend', blockHtml(t)));
+  const stale = () => { $('#ckSave', b).disabled = true; $('#ckPrev', b).innerHTML = ''; };
+  const wire = () => $$('.ck-block', box).forEach(blk => {
+    $$('input,select,textarea', blk).forEach(i => { i.oninput = stale; i.onchange = stale; });
+    $('[data-rm]', blk).onclick = () => { blk.remove(); stale(); };
+  });
+  wire();
+  $('#ckAdd', b).onclick = () => {
+    const used = $$('.ck-block', box).map(x => Number(x.dataset.id.slice(1)));
+    const id = 'C' + (Math.max(0, ...used) + 1);
+    box.insertAdjacentHTML('beforeend', blockHtml({ id, title: '', anchor: 'EDOJ', offset: -7, attempts: 2, active: 'Yes', must: 'No', ask: [], inform: [] }));
+    wire(); stale();
+  };
+  const payload = () => ({
+    eff: $('#ckEff', b).value, note: $('#ckNote', b).value, notice: Number($('#ckNotice', b).value),
+    touches: $$('.ck-block', box).map(blk => {
+      const g = k => $(`[data-k="${k}"]`, blk);
+      return { id: blk.dataset.id, title: g('title').value, anchor: g('anchor').value, offset: Number(g('offset').value), attempts: Number(g('attempts').value),
+        active: g('active').checked ? 'Yes' : 'No', must: g('must').checked ? 'Yes' : 'No', ask: ckParseAsk(g('ask').value), inform: g('inform').value.split('\n').map(x => x.trim()).filter(Boolean) };
+    })
+  });
+  $('#ckCancel', b).onclick = closeDrawer;
+  $('#ckPreview', b).onclick = async () => {
+    const btn = $('#ckPreview', b); busy(btn, true, 'Checking…');
+    try {
+      const x = await api('apiCheckinPreview', payload());
+      $('#ckPrev', b).innerHTML = `<div class="note" style="margin-top:12px">For a sample candidate who accepts today (${esc(fmtDate(x.accepted))}) and joins on ${esc(fmtDate(x.edoj))}:</div>
+        <div class="table-wrap"><table><thead><tr><th>Call</th><th>Date</th><th>What the candidate hears</th></tr></thead><tbody>${x.calls.map(c => `<tr style="cursor:default" class="${c.status === 'Planned' ? '' : 'muted'}"><td><b>${esc(c.id)}</b> ${esc(c.title)}</td>
+          <td>${c.due ? esc(fmtDate(c.due)) : '—'}<span class="sub">${esc(c.status)}${c.reason ? ' · ' + esc(c.reason) : ''}</span></td>
+          <td>${c.inform.map(t => `<div>${esc(t)}</div>`).join('')}${c.ask.map(t => `<div><i>${esc(t)}</i></div>`).join('')}</td></tr>`).join('')}</tbody></table></div>`;
+      $('#ckSave', b).disabled = false;
+    } catch (e) { toast(e, true); }
+    busy(btn, false, 'Preview');
+  };
+  $('#ckSave', b).onclick = async () => {
+    const btn = $('#ckSave', b); busy(btn, true, 'Saving…');
+    try { const x = await api('apiCheckinSave', payload()); toast(`Saved as ${x.version}.`); closeDrawer(); done(); }
+    catch (e) { toast(e, true); busy(btn, false, 'Save as a new version'); }
+  };
+}
 async function renderRoutesAdmin(el) {
   let C; try { C = await api('apiFastTrackConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Hiring routes</h2><span class="hint">${C.canEdit ? 'Head of HR and Admin can change this' : 'View only'}</span></div>
@@ -7770,6 +7864,7 @@ async function viewPipeline(v) {
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
           ${(can('voice_agent') || can('voice_review')) && active ? '<div id="apVoice"></div>' : ''}
+          ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? '<div id="apCheckin"></div>' : ''}
           <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
@@ -7816,6 +7911,7 @@ async function viewPipeline(v) {
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
+    if ($('#apCheckin', d)) checkinCardSection($('#apCheckin', d), a);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });
