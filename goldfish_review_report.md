@@ -1,6 +1,6 @@
 # Goldfish Annotated Review Report
 
-**Status:** open (awaiting your decision)
+**Status:** resolved (auto accept applied 2026-11-08: 29 proposed fixes applied to the design; 2 escalated, 1 contested and 1 declined item bypassed)
 
 **Target:** `docs/designs/voice-screening-gate-retry-sharing.md` (`full file`, 406 lines)
 
