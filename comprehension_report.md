@@ -1,130 +1,137 @@
 ## What this proposes
 
-The document proposes hardening the existing Sarvam voice-screening feature of the Recruitment CRM before and just after its first real use. One gate function, `voiceMayCall_`, would sit in front of every call (single, batch and retry). It would check calling hours, opt-out, daily limit, budget and "one open call", in that order, stopping at the first failure, and it would log a named reason when it blocks a call. Unanswered calls would get their own statuses (`No answer`, `Busy`). Spend would be capped by a monthly and a per-batch ceiling, using a reserve before each call and real minutes after. A first batch of about 5 to 10 candidates would run with retries off so the owner can learn the real answer rate, call length, whether suggested ratings arrive and the billing basis. Afterwards, retry state would live on `Voice_Queue` rows, a spoken "do not call me again" (`do_not_call`) would feed the opt-out register, and a completed screening could be turned into a prepared message (Teams or e-mail link) that the recruiter sends to the technical interviewer and the MRF owner. The CRM itself sends nothing. A person always decides. Delivery is in four releases.
+The CRM can already place Sarvam voice-agent calls to candidates, but it has never been used on real candidates. The design makes it safe to use in four releases. Release 1a adds one gate in front of every call. The gate enforces calling hours, opt-out, a per-number attempt cap, call-count caps and "one open call". Release 1a also adds distinct statuses for No answer and Busy, a "Pending confirmation" opt-out state for a candidate who says "do not call me again", and capture of what the provider really returns. Release 1b adds a rupee spend ceiling with a reserve before each call. Release 2 retries unanswered batch candidates up to three attempts in total, then gives the recruiter a to-do. Release 3 prepares a message that the recruiter sends to the technical interviewer and the MRF owner. Throughout, a person decides: a call result never moves a stage, rejects a candidate or messages a candidate.
 
 ## How the existing system works, per this document
 
-The CRM is a Google Apps Script web app over Google Sheets. A recruiter or Admin-named person can call one candidate from a card, or queue up to 30 candidates from a position's board. Calls go through `voiceStartFor_` to the provider's outbound API. A separate webhook receiver stores results in `Voice_Inbox`, and a 30-minute job turns them into `Voice_Calls` rows. A draft screening is produced, and a person completes it. Today, calling hours are checked only for batches. The opt-out check can be switched off by the Admin setting `VOICE_DND_REQUIRED`. A spoken "do not call me again" is recorded as "not interested". No answer, busy and failed placement all become `Failed`. Unanswered calls stop counting against a per-person daily limit once the result arrives. There is no spend limit. The provider sends no cost, and the suggested ratings came back as an empty object. E-mail goes only to Admins. The interviewer is free text on the MRF line, and no field records who raised the MRF. A one-minute queue job places batch calls.
+A recruiter, or someone the Admin has named, can call one candidate from a card, or start a batch of up to 30 from a position's board. Every call goes through `voiceStartFor_` to the provider. The provider's result arrives through a separate webhook receiver into a `Voice_Inbox` sheet. A 30-minute job, or the queue job, ingests it into `Voice_Calls` as a draft screening that a person completes. Today the hours check exists only on the batch paths. The opt-out check can be turned off by `VOICE_DND_REQUIRED`. A spoken "do not call" only creates a to-do. No answer, busy and failed placement all become `Failed`. The only spend limit is a per-person daily call count. The CRM e-mails Admins only, and the interviewer is free text in `Tech_Panel`.
 
-My paraphrase of every section succeeded. I found no section I could not paraphrase, so I have no Blockers. The findings below are places where the parts do not connect or where the reader is left guessing.
+I could write both paraphrases. Separate from the findings below, the "existing system" part leans on SSOT section 8.7 and on code names for its detail, and does not describe the system itself. Examples are the queue lifecycle, the access-request flow and what `voiceInHours_` does.
 
 ## Findings
 
-(Stage 6, Comprehension Test. Reviewer: `egm-comprehension`, a fresh reader given only the document. Ranges: FeatureRange lines 1 to 283, DetailedRange lines 284 to 406 of `docs/designs/voice-screening-gate-retry-sharing.md`.)
+(Stage 6, round 2. Reviewer: `egm-comprehension`, a fresh reader given only the document, ranges FeatureRange lines 1 to 409 and DetailedRange lines 410 to 518 of `docs/designs/voice-screening-gate-retry-sharing.md`. Ids are `K` followed by the number.)
+
+### Blockers
+
+**K1. Release 1a creates `Scheduled` queue rows, but the picker that reads them only arrives in Release 2.**
+- Scope: CUJ 5, test T2, Architecture 1 table and Architecture 4, Detailed `voiceQueuePick_` and `apiVoiceBatchStop`, the "each safe to stop after" claim.
+- Hours-deferred rows become `Scheduled` with `Not_Before` in Release 1a. CUJ 5 and T2 are Release 1a cases.
+- Detailed lists "picks due `Scheduled` rows" under Release 2 only. It also lists `apiVoiceBatchStop` stopping `Scheduled` rows under Release 2 only. Yet the rollback text (Release 1a) says to stop `Scheduled` rows.
+- Architecture 4, under Release 2, says the one-shot trigger for `Scheduled` rows belongs to Release 2. Detailed puts that trigger rule in Release 1a.
+- A reader cannot tell whether, after Release 1a, deferred rows are ever placed. The "each release is safe to stop after" claim therefore fails for 1a.
+- The 48-hour expiry of `Scheduled` rows is described in Architecture 1, but no Detailed item implements it.
 
 ### Major
 
-**1. The stages and releases disagree, and the opening promises "an outbox" that the design rejects.**
-- Scope: lines 15-18, 35, 224, 288-295.
-- Line 35 describes three stages: gate plus first batch, then retry and a spend ceiling together, then result sharing "through a controlled outbox". The Technical Plan (section 9) gives three steps after the gate, and the Detailed Implementation gives four releases.
-- The spend ceiling and reserve are in Release 1, not alongside retry.
-- Spoken opt-out (Release 3) appears in neither line 35 nor section 9.
-- The "controlled outbox" is exactly the option rejected at lines 276-278. Overview item 4 also says "Send the relevant result", whereas the chosen design only prepares a message.
-- A fresh reader cannot tell what ships when, or what "each stage is safe to stop after" refers to.
+**K2. Release labels for `Batch_ID` and the baseline disagree.**
+- Scope: Data model table, Architecture 3, 4 and 6, Detailed.
+- `Batch_ID` is labelled Release 1b in the data model. Detailed Release 1a has `voiceStartFor_` write `Batch_ID`.
+- Release 2's ingest finds the queue row by `Batch_ID`. Yet the rollout says Release 2 needs only Release 1a's contact record and statuses.
+- The baseline of recruiter minutes must be entered "before the pilot", and Section 6 is labelled 1a. The baseline store (`Voice_Admin_Notes`) is Release 1b, after the first batch. The baseline therefore cannot exist before the pilot.
+- The invoice list is also 1b, but the goal says the first batch tells the owner the provider's billing basis.
 
-**2. Opt-out is a stated hard limit, but the fix arrives late and is off by default, and the "confirm" step is never delivered.**
-- Scope: Goals line 41, CUJ 4, section 5, Release 3, section 9 rollout order.
-- Goal 3 says a candidate who says "do not call me again" is added to the register. CUJ 4 says "No later call, batch or retry reaches that number". Both are unconditional.
-- The plan makes the register write conditional on `VOICE_OPTOUT_AUTO`, which "starts off". Otherwise only a to-do "confirm" appears.
-- Nothing describes what confirming does or which function adds the number to the register. Only undo is described.
-- Release 3 is after the first real batch and after retry. Until then, the exact problem in the Problem section stays live: a do-not-call candidate is recorded as "not interested" and is not registered.
-- Section 9 omits this release from its order entirely.
+**K3. Test calls versus "real" calls.**
+- Scope: Overview, Architecture 1, Goals, Rollout precondition 2.
+- "Real" is defined as calls to candidate numbers rather than team-owned numbers. Hours and opt-out "cannot be switched off for real calls", and `voiceMissing_` "stops every real call".
+- Nothing says how the gate tells a real call from a test call. Nothing says whether the gate also blocks the team-number test call that precondition 2 requires, for example at night.
 
-**3. A blocked call must be logged with a named reason, but only two blocked statuses exist.**
-- Scope: Goals line 39, CUJ 1, data model table (lines 213-218), `voiceMayCall_` return value (line 302), `voiceStats_` (line 308).
-- The data model defines only `Blocked (Outside hours)` and `Blocked (Budget)`.
-- The gate also blocks for opt-out, daily limit, open call and "could not check". The stats screen promises "calls blocked by reason (hours, opt-out, budget, limit)".
-- The document never says what status or note those other blocks carry, or how the stats are derived.
-- It also never says what happens to a queue row whose call is blocked. Line 178 says a retry is never made after a `Blocked` result, so a retry blocked by budget would apparently stop for good. That is not stated as intent.
+**K4. Single-call unanswered to-do versus Detailed.**
+- Scope: Non-Goals line 78, Detailed `Tasks.gs` `voiceTaskRows_`, Release 2.
+- The Non-Goals say a single call from a card that is not answered gets the same "did not answer" to-do.
+- Detailed derives the `noanswer` to-do only from queue rows whose retries ended (Release 2). A single call has no queue row. No release delivers the single-call to-do.
 
-**4. The success rate is defined two different ways.**
-- Scope: Goals line 46 versus section 2 (line 154) and line 308.
-- The Goals define the success rate as the share of placed calls that end in a person-completed screening.
-- The plan says the success rate "keeps its definition" (calls with answers over calls placed) and adds a second figure for completed screenings. The reader cannot tell which is "the success rate".
+**K5. The gate's refusal classes for limits are unspecified.**
+- Scope: Architecture 1 (Refusals and queue-row table), Q1, Detailed `voiceQueueStopReason_`.
+- `defer` is listed as hours, "a budget window", could not check, open call. `terminal` is opt-out, per-number cap, "a hard stop". Nobody says which kind applies to the daily limit, per-batch cap, monthly call cap or rupee ceiling.
+- "A budget window" has no defined `Not_Before`. A deferred monthly refusal would loop on 15-minute backoffs for 48 hours. Q1's default says the queue stops at the ceiling.
+- Detailed says `voiceQueueStopReason_` keeps matching limit texts, but "gate refusals no longer go through it".
+- The system principal for retries "does not use the recruiter's daily limit", yet check 4 applies the daily limit. How the system principal passes check 4 is not stated.
 
-**5. Several things the Technical Plan promises have no home in the Detailed Implementation, which calls itself "the single list of everything that changes".**
-- **Weekly invoice reconciliation (line 170).** The Admin enters invoice minutes and amount, and the effective rate is shown beside the configured one. No setting, function, sheet or screen is listed.
-- **The baseline of recruiter minutes per screening (line 199, Goal line 46).** There is no storage or entry screen. The plan says "settings or a small table" without choosing. Nothing computes "minutes saved per hire", and "per hire" is never tied to any data.
-- **`voiceQueueTrailingFails_`, the batch stop rule, and `voiceTaskRows_` status display (lines 155-156).** These are named readers of `Status` in the plan but absent from the file list. Only the generic "search for `'Failed'`" covers them.
-- **The `callback_requested` to-do (line 178).** It is unclear whether this exists today or is new. It is not listed.
-- **The `voiceVars_` change (line 198).** It is conditional, but its absence from the list is not noted.
-- **Audit of before-and-after values for the new settings (line 405).** The Risks section calls it "worth making", but no file entry delivers it.
+**K6. The reaper's list of "placed" statuses omits the new statuses.**
+- Scope: Architecture 4 (Stale `Calling` rows), test T8.
+- The reaper treats a stale `Calling` row as `Placed` only if a call row is `Starting`, `Started` or `Completed`. A call that was placed and quickly ended `No answer` or `Busy` matches none of these.
+- Such a row would be marked `Failed` with "Run ended before the call was placed". That is wrong and contradicts the reaper's own purpose.
 
-**6. Tests promised in the plan are not delivered in the detail.**
-- Scope: lines 159, 231-233, 366-367, 403.
-- Line 159 says "an e2e case covers each reader" of `Status`, and line 403 calls the "per-reader tests" the only guard.
-- The listed E2E cases cover only the daily-limit reader. There is no case for `voiceStats_` buckets, the "three Failed in a row" stop rule (including that a run of `No answer` does not stop a batch), task rows or chips.
-- The pure-function tests omit `voiceStats_`.
-- Line 366 says case names are "V7 to V14", which is 8 names, but about 10 cases are listed.
+**K7. The share-message content contradicts itself for non-users.**
+- Scope: Architecture 7 (content table versus "Non-users").
+- The table says the MRF owner's message has counts only and no answers. The Non-users bullet says that for a recipient without a CRM account "the message text carries the confirmed answers in full".
+- The interviewer table row already includes answers, so it is unclear what changes for non-users. It is unclear whether the MRF owner then receives answers, which the table forbids.
 
-**7. The budget unit and fallback are contradictory.**
-- Scope: line 163 versus line 310.
-- The plan says it assumes rupees and "falls back to minutes if the owner has no rate".
-- The detail says a rupee ceiling with no rate blocks the call with "Set the cost per minute".
-- No setting says which unit is in force, and the Admin screen has only "unit labels".
-- "Planned minutes" for the reserve (line 165) and the definition of "this month" (calendar month, timezone, which date counts) are also undefined.
+**K8. The opt-out contact record is empty at go-live.**
+- Scope: Architecture 1, Rollout, Detailed `voiceContactsRebuild_`.
+- The gate reads opt-out and attempt counts only from `Voice_Contacts`, a new sheet. `Voice_DND` is "mirrored" by new writes and by an Admin rebuild button.
+- No rollout step or precondition says to run the rebuild before the first batch. Numbers already on `Voice_DND` are therefore unprotected until someone does.
+- Nothing says who writes `Attempt_Times`, or when: at placement or at result. The per-number cap depends on this.
+- Detailed `voiceStartFor_` does not list a `Voice_Contacts` write.
 
-**8. The per-batch ceiling cannot be traced to data.**
-- Scope: lines 167, 302, 308, 311.
-- The gate's listed facts include "ceilings" but no per-batch spent or reserved minutes.
-- Nothing says how a call is tied to its batch, for example a batch id on `Voice_Calls` or the queue row.
-- It is also unstated whether retries count toward the original batch's ceiling.
+**K9. Opt-out features in the architecture have no matching implementation item.**
+- Scope: Architecture 5, Detailed.
+- The transcript phrase scan has no named function. The phrase list is undefined, and "the languages in use" are never named.
+- Confirm and Undo exist as `App.html` buttons, but there is no API or server function for them in the Detailed list.
+- It is not stated who may confirm. Only undo is Admin-only, per Q3.
+- Undoing a confirmed opt-out is said to "clear the state". It does not say it also removes the number from `Voice_DND`.
 
-**9. The budget sweep may not run when it is needed.**
-- Scope: lines 168, 182, 314.
-- The sweep clears reserves for lost webhooks "so a lost webhook cannot hold budget for ever". It lives in `voiceQueueJob`.
-- That job's trigger stays installed only while queue rows exist. Single-call reserves would sit and block the monthly ceiling until the next batch runs.
-- The `voiceQueueJob` entry (line 312) also does not list the sweep. It appears only in release step 5.
+**K10. Goals are not delivered by the Detailed section.**
+- Scope: Goals (measures, "no access to stage or reject functions"), Architecture 8, Detailed.
+- "Completion rate" and "recruiter minutes per completed screening" have no Detailed function. No data source is named for the recruiter minutes that the voice-assisted screening took.
+- "Candidates reached" and "calls with answers" are not tied to any status. A `Completed` status includes a `partial` call. "The pilot" is never defined, and it is used interchangeably with "the first batch".
+- The goal that "the call-result writer has no access to the stage or reject functions" is not implemented or tested anywhere in Detailed. It appears only as an EGM invariant in the Documents list.
 
-**10. The retry rule is not precisely specified.**
-- Scope: lines 177, 320.
-- The `VOICE_RETRY_PLAN` example, "busy 30m, no answer 4h, then next day 11:00", mixes outcome-keyed and attempt-keyed entries. Its format is not defined, though settings are "validated".
-- It is not stated when `Attempts` is incremented, or whether the first call counts toward `Max_Attempts` (default 3).
-- Retries exist only for queue rows. It is unclear whether an unanswered single call from a card is retried, although the Goals say "a candidate who did not answer is retried".
-- The Alternatives claim a cap "across batches" (line 266). That holds only while a row is still open. After a row is `Stopped`, the same card can be queued again, apparently with fresh attempts.
-- "Daily limit" is "per person". It is unclear whether that is the caller, the candidate or the queue's owner, so it is unclear how it applies to retries placed by the trigger.
+**K11. Planned minutes and the sweep are underspecified.**
+- Scope: Architecture 3, Detailed Release 1b.
+- "Planned minutes" is passed to the gate, but its source is not stated. It may always equal `VOICE_MAX_CALL_MIN`.
+- The Close action sets `Cancelled`. `Cancelled` is called "existing" but is not in the status list. It has no class in `voiceStatusClass_`, whose five classes do not cover `Cancelled`, `Started` or "presumed spent".
+- The sweep is said to run from `voiceQueueJob`, but Detailed lists the sweep call only in `refreshDashboardJob`.
+- `voiceLog_` is told to accept the reserve in Release 1a's list. `voiceStartFor_` in 1a already writes the reserve inside the lock, although the reserve is Release 1b.
 
-**11. Where the raw payload is stored is unclear.**
-- Scope: lines 84, 196, `Final_Vars_JSON`.
-- CUJ 2 says the raw payload is kept on every call. Section 6 says `Final_Vars_JSON` keeps it but "already holds scalar variables". The detail adds only `Payload_Keys`.
-- It is unclear whether the full payload is retained, or only scalars plus key names, and where. This is the main learning goal of the first batch.
+**K12. Retry timing is ambiguous.**
+- Scope: Q2 versus Architecture 4, CUJ 3.
+- Q2's default is "no answer after 4 hours, then the next window at 11:00". Architecture 4 says retry in 4 hours, "each retry is moved to the next calling window", at 11:00 if inside the window, else the window start.
+- If now plus 4 hours is already inside hours, does the retry still move to the next day at 11:00? Does Busy's 30-minute retry get moved too? The text allows either reading.
+- The Stopped reason reads "no answer after 3 attempts" even if the last attempt was Busy.
 
-**12. Project-specific terms are used without definition.**
-- Scope: throughout. This is the main self-containment gap, so a new reader cannot follow the sharing half of the design.
-- **MRF** is never expanded, and "MRF line", "MRF owner" and "raised the MRF" are never explained.
-- Other undefined terms:
-  - "card", "position", "line" (used interchangeably with position and MRF line), "Tech_Panel"
-  - "command center", "plan desk", "answer parser", "review dialog", "disposition map"
-  - "W and T levels (already parked)"
-  - "the owner" versus "Admin" roles
-  - `Voice_DND`, `Voice_Inbox`
-  - `Status` versus `Outcome` versus "disposition". Their relationship to provider statuses is never given, yet the repair pass keys on `Outcome`.
-  - "concepts brief", "root contract", "ADR-010", "SSOT 12.5", `./EGM.md`
-- The brief and the EGM file are cited as sources with no link or summary.
-- Sarvam appears once, then is only "the provider".
+**K13. Two sentences are wrong or unclear about `screening_ratings`.**
+- Scope: Architecture 6 versus T10.
+- Architecture 6 says `voiceVars_` drops object values, so an object-valued `screening_ratings` is lost. It then says `Ratings_State` "records that the field was empty or absent".
+- T10 expects an object payload to give `present`. So the object case is recorded as present, not empty or absent, and the sentence is inconsistent with T10.
+- It is not stated how `Ratings_State` is computed independently of `voiceVars_`.
 
-**13. "No override" contradicts the Admin's ability to change settings.**
-- Scope: lines 145, 405 versus Goal line 40.
-- The doc says there is no hours override, but the Admin can edit the hours window and the ceilings. Line 405 admits this. The Goal "No call is placed outside calling hours" is therefore only as strong as that setting.
-- Default hours and timezone are shown only inside a CUJ message (09:00 to 19:00, Monday to Saturday).
+### Nits and smaller gaps
 
-### Nit
+- **Terms used without definition.**
+  - Sheets and states: `Voice_Calls`, `Voice_Queue`, `Voice_Inbox` and `Voice_DND` (only the last two are named in the glossary), the queue row states (`Waiting`, `Calling`, `Placed`, `Stopped`, `Scheduled`) and the call state `Starting`.
+  - Voice flow: "follow-up call" and "approved request" (the access or approval flow is never described), "ingest", "the reaper", "preview", "board".
+  - Mechanics: `withLock_` and the "one-minute job".
+  - "Plan desk" is defined but used only in Alternatives.
+- **Three names for the system identity.** The text uses "synthetic Admin user" (Architecture 4), "named system user" (Architecture 5) and "named `system` principal" (Architecture 4). It is unclear whether these are one identity.
+- **Hours.**
+  - The calling-hours window is called "configured", yet no hours setting name or default appears. The data-model Settings row and the `voiceCfg_` list do not include one. Only the outer bounds 08:00 to 21:00 appear.
+  - The CUJ 1 message hard-codes 09:00 to 19:00, Monday to Saturday.
+  - Whether `voiceInHours_` already excludes Sundays is not stated.
+- **Caps.** CUJ 2 says the Admin sets the per-batch cap. Elsewhere the per-batch cap of 30 is existing and fixed.
+- **Q8.** "Blocks 1a (retry and hours)" uses "retry" for the provider's own retry, but a reader will take it as this design's Release 2 retry.
+- **Q4.** It asks about the "Apps Script mail quota tier", but the CRM sends no mail, and the Risks table says "n/a".
+- **Readers of `Status`.** Architecture 2 says `voiceTaskRows_` is not affected. T9 lists "task rows" as a reader to check, and Detailed changes `voiceTaskRows_` in other ways.
+- **`voiceStats_`.** It "keeps its five-argument form", yet `apiVoiceStats` "passes new inputs" and test V4 must be updated.
+- **Alternatives, final option.** The heading "a call-count cap with a provider-side limit in place of a rupee ceiling" does not describe what was chosen. The chosen design uses call-count caps first and then a rupee ceiling.
+- **Alternatives, spend cap on cost.** The parenthesis "(up to 30 minutes for a single call; during a queue run ingest now runs first)" is hard to follow.
+- **Header.** The status line cites "the egm-review findings", which no reader can look up.
+- **Three wordings of the no-answer to-do.**
+  - CUJ 3: "did not answer after 3 attempts".
+  - Architecture 4 Stopped reason: "no answer after 3 attempts".
+  - Detailed task rule: "no answer after the last attempt".
+  - The figure 3 also appears as a hard-coded text.
+- **Release 1a extras without rationale.** `apiVoiceHealth`, the inbox age and the queue depth have no counterpart in the Architecture or Goals.
+- **Scheduled-row expiry.** The 48-hour limit does not say what the age is measured from.
+- **Test gaps.**
+  - No test covers `voiceFindCost_`, the three-failure error stamp on `Voice_Inbox`, the monthly call cap, the "already queued" skip or the 48-hour expiry.
+  - Test ids are called T1 to T14 but are said to follow V6 as "V7 onward".
+- **Open-call window.** The 30-minute "one open call" window can lapse while a call or its result is still pending. The sweep waits `VOICE_MAX_CALL_MIN` plus 60 minutes. The two numbers are not reconciled.
+- **Rollout preconditions.** They say "owner of each is the Admin", but the call-site code audit (item 1) is an engineering task.
+- **Share message.** The share message "Outcome" is ambiguous. The glossary's Outcome is the provider's text, not the recruiter's confirmed result.
 
-**14. Names and content differ between the plan, CUJ 5 and the detail.**
-- CUJ 5 lists the same content for both recipients, while the plan and detail give the MRF owner "outcome and counts only". "Counts" of what is undefined.
-- The plan says interviewers are looked up from `Tech_Panel` "or the scheduled interview's panel". The detail mentions only the line's technical panel.
-- CUJ 5 says the change log records "message prepared". The plan and detail say "audit row".
-- The ingest function is `voiceIngest_` in the diagram and `voiceQueueJob`, but `voiceIngestRun_` in the detail.
-- The goals promise the interviewer and MRF owner "learn" a result is ready. Delivery depends on a person, as the final risk admits. The MRF owner is substituted with the department head until decided.
+## Cross-reference summary
 
-**15. Detailed Implementation items appear with no earlier rationale.**
-- These are the ingest error-retry (stop stamping `Processed_At`, mark after 3 failures), the `voiceFindCost_` hardening against credit-balance and pending-charge keys, and the command-center "oldest unprocessed inbox row age and queue depth".
-- None appears in the Problem, Goals or Technical Plan, and `voiceFindCost_` is never introduced.
-
-**16. Smaller items.**
-- Line 20 promises other call types are "sketched here". Only one paragraph in the Alternatives mentions them.
-- "Creates new sheets" (line 106) is used although no new sheet is decided. The baseline table is undecided.
-- There are no go or no-go thresholds for moving from the first batch to Release 2.
-- The daily-limit number is never given.
-- The Overview says batches can have up to 30 candidates, while the CUJ and release steps use 10 and 5 to 10. This is probably fine but is not explained.
-- The "30 minutes" open-call window and the "5 minutes" reaper threshold are both undefined against the 8-minute call and 30-minute result lag.
+- **Agree:** BUILD_ID 160 to 163 for four releases. Q-numbers referenced in the Architecture and Alternatives (Q1 to Q8). Settings names and the 1 to 5,000, 10,000,000 and 30 bounds. Test ids T3 and T9 as cited in Risks. The 5-minute reaper under the 6-minute run cap. The 30 percent threshold in Q5 and the WhatsApp alternative.
+- **Disagree:** the items under findings K1, K2, K4, K6 and K7 above.

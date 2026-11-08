@@ -1,139 +1,133 @@
-# Stage 7: Critic Review (round 1)
+# Stage 7: Critic Review (round 2, revised design)
 
-**Document:** `docs/designs/voice-screening-gate-retry-sharing.md`, FeatureRange lines 1 to 283 (overview through alternatives)
+**Document:** `docs/designs/voice-screening-gate-retry-sharing.md`, FeatureRange lines 1 to 409 (glossary through Alternatives)
 **Date:** 2026-11-08
-**Reviewers:** `egm-design` and `egm-structural` (both against `feature-spec-standard.md`) and `egm-style`. Each was a fresh context with only the document. All three completed; none is "not run".
-**Round result:** not clean. Two reviewers raised Blockers and several raised Majors, and nothing is settled yet.
+**Reviewers:** `egm-design` and `egm-structural` (both against `feature-spec-standard.md`) and `egm-style`. All three completed. Each had only the document.
+**Round result:** not clean. The design and structural reviewers raise Blockers. Ids: `D` design, `S` structural, `Y` style, numbered as in each reviewer's report.
 
-Finding ids are `<reviewer>-1-<n>`: `D` design, `S` structural, `Y` style. Where several reviewers raised the same issue, they are merged and all ids are listed.
+The structural reviewer confirmed that all five blueprint headings the standard names (Problem Statement, Goals & Non-Goals, Proposed Architecture, Alternatives Considered, Risks & Mitigations) are now present and correctly spelled, tables are well formed and no heading level is skipped. That fixes round one's missing-section and header-name findings.
 
 ## Blockers
 
-### C1. No Risks & Mitigations section (D1, S1)
+### CR-B1. Release 1a creates `Scheduled` queue rows that nothing in 1a can pick up (D B1, S 1)
 
-The feature-spec standard names "Risks & Mitigations" as a required heading (security, scalability, complexity risks and how each is mitigated). The document has none. Risks appear as scattered asides: retry-state mitigations (Technical Plan 4), rollback (section 9), the lost-webhook sweep (section 3). Missing or unassessed: concurrency, Apps Script execution and trigger quotas, sheet and cell size limits (raw payloads in `Final_Vars_JSON` against the 50,000-character cell limit), webhook authenticity and replay, candidate-data privacy, consent and retention, provider behaviour that bypasses the gate, a gate that fails closed and blocks every call.
-**Fix:** add one consolidated risk table: risk, effect, mitigation, owner.
+*Lines 153 to 162, 229, 234, 237 to 238, CUJ 5, data model rows 288 to 289.*
+In 1a a gate `defer` turns a queue row into `Scheduled` with `Not_Before`; CUJ 5 relies on it. The behaviour that makes those rows run (`voiceQueuePick_` picking due `Scheduled` rows, the one-shot trigger, `apiVoiceBatchStop` stopping `Scheduled` rows, the "already queued" rule) is written under Release 2. Section 4 says the status and columns "already exist from Release 1a" but not that the behaviour is needed in 1a. In 1a the one-minute trigger runs only while `Waiting` or `Calling` rows exist, so after CUJ 5 every row is `Scheduled`, the trigger stops, and the rows are stranded until the 48-hour rule. This contradicts "each safe to stop after" (line 28) and line 309. The rollback text (line 310) also depends on `apiVoiceBatchStop` stopping `Scheduled` rows.
+**Fix:** move the pick, trigger, stop and duplicate behaviour for `Scheduled` into 1a, or have 1a defer by stopping (a visible `Stopped` with a reason).
 
-### C2. The gate is check-then-act with no lock (D2)
+### CR-B2. Consent and AI disclosure (Q6) blocks 1a but is not a rollout precondition (D B2)
 
-`voiceMayCall_` reads open calls, reserved minutes and the daily count, and only afterwards writes `Starting` and `Reserved_Min`. A recruiter's click, the one-minute job, the 30-minute job and ingest can run at the same time, so two executions can both pass "one open call" and the budget check (a double call, or a ceiling overshoot). Ingest is not stated to be idempotent: overlapping runs could double-process one `Voice_Inbox` row (duplicate to-dos, `Attempts` counted twice, duplicate register rows).
-**Fix:** take the script lock around check-and-reserve-and-log, and around ingest; add processed-row markers; add an E2E case.
-
-### C3. A spoken "do not call me again" is not honoured by default, and the Goal and CUJ 4 overstate the result (D3, S6)
-
-Goal line 41 says the candidate "is added to the opt-out register". CUJ 4 says no later call, batch or retry reaches the number. Technical Plan 5 makes the register write conditional on `VOICE_OPTOUT_AUTO`, which starts off. With it off, only that card's retries stop, and the same number on another card, position or batch is still callable. The `do_not_call` agent disposition is also not listed as a precondition in the rollout, so until it ships a spoken opt-out is still filed as `not_interested`.
-**Fix:** write the register entry unconditionally (a provisional entry the gate honours, undoable by a person), or add a gate check that blocks any number with a `do_not_call` outcome. List the provider-prompt change as a rollout precondition.
+*Lines 91, 302 to 309, 329.*
+The preconditions omit Q6 and Q7, the risk row says only "decided by HR and legal", and the design does not say how the existing agent script handles consent or disclosure today. The first real batch reaches real candidates with the legal basis undecided and no mitigation, which fails the standard's rule that each risk have a mitigation.
+**Fix:** make Q6 a hard precondition for any real batch with a named decision owner.
 
 ## Major
 
-### C4. A blocked call's reasons, statuses and queue-row fate are not defined (D6, S7)
+### CR-M1. A hand edit of `Voice_DND` fails open; opt-out has two sources of truth (D M1)
 
-The data model defines only `Blocked (Outside hours)` and `Blocked (Budget)`. The gate also refuses for opt-out, daily limit, one open call and "could not check", and Goal line 39 promises a named reason for every block. The document never says what a queue row becomes when the gate blocks it. If it stays `Waiting`, the one-minute job writes a `Blocked` row per candidate per minute and a budget block never ends. Blocked rows do not count toward the "three failed in a row" stop, so nothing halts the loop. Line 178's "never retry after a `Blocked` result" turns a temporary block (hours, a read error) into a permanent end to retries.
-**Fix:** one `Blocked` status with the reason in a separate field, or list every value. Define queue transitions per reason (hold to the next window for temporary reasons, `Stopped` for opt-out), log a block once per row and reason, and say whether refused clicks create rows.
+The gate reads only `Voice_Contacts`; `Voice_DND` is kept in step by code paths plus a manual rebuild. Any writer that touches `Voice_DND` directly (a hand edit, an import, a path not on the list) leaves the gate unaware, so "none to a number on the opt-out register" is false. The call-site audit covers callers of the provider API, not writers of `Voice_DND`.
+**Fix:** the gate reads both, or detects drift and fails closed; audit the writers of `Voice_DND` too.
 
-### C5. Stage structure disagrees across Overview, Problem and Rollout (S5, Y3)
+### CR-M2. "Protected at once" is overstated (D M2)
 
-The Overview lists four stages, the Problem section three (check and first batch, then retry and a spend ceiling, then sharing "through a controlled outbox"), the rollout four releases that put the spend ceiling in Release 1 and spoken opt-out in Release 3 (section 9 omits spoken opt-out). The "controlled outbox" is the option the design rejects. CUJ 2 needs the ceilings before the first batch. "Each stage is safe to stop after" cannot be verified and conflicts with rollback leaving rows to review (section 9) and with stage 1's dependency on stage 2 through the limit.
-**Fix:** one list of stages and releases used everywhere; delete "outbox"; state real stopping conditions or drop the claim.
+The opt-out state is set only by ingest, which runs on a 30-minute job or at the start of a queue run, so during the lag another card, batch or single call can dial the same person; a lost webhook means the `do_not_call` never arrives (the risk table covers forged webhooks and lost spend results, not a lost opt-out). **Fix:** state the real exposure window; consider running ingest for the specific call before any further call to that number; add a lost-webhook risk row for the opt-out path.
 
-### C6. "Every call goes through `voiceStartFor_`" is asserted, not shown; provider-side behaviour is unconfirmed (D4)
+### CR-M3. The phrase scan runs on a transcript whose tail is truncated first (D M3)
 
-No audit of provider-API call sites is listed. Open Questions ask whether the provider retries on its own and honours our hours. If it does, or if the provider workspace can place or schedule calls, the hard limits are not hard.
-**Fix:** make provider retry and hours behaviour (checked with team-owned numbers) a precondition of any real batch, and add a call-site audit to the plan.
+Payloads over 45,000 characters lose trailing transcript entries first, and "do not call me again" is usually said near the end. The phrase list (languages, false positives, tests) is unspecified. **Fix:** scan before truncation or keep the tail; specify the list and a test set.
 
-### C7. No global kill switch (D5)
+### CR-M4. `Batch_ID` dependency between releases (D M4, S 2)
 
-Rollback stops batches (`apiVoiceBatchStop`) and removes the trigger, but single calls continue. A live pilot on real candidates needs one setting that blocks every call at the gate.
+Release 2 finds the queue row by `Batch_ID` and card, but `Batch_ID` is a 1b column; line 309 says Release 2 needs only 1a's contact record and statuses. Move it to 1a or state the dependency.
 
-### C8. Scalability and quota claims are absent and partly contradicted (D7, S1)
+### CR-M5. The pilot baseline is needed in 1a but stored in a 1b sheet (D M5, S 3)
 
-The design rejects "derive retry state from `Voice_Calls`" because its reads are large, yet the gate reads that sheet for every call (spent, reserved, daily count, open call), as do the 30-minute sweep and `voiceStats_`, with no stated way to keep this cheap (a summary row, a ledger, a date-bounded read). The one-minute trigger stays installed while any `Scheduled` row exists (up to 48 hours, about 1,440 runs a day) against Apps Script daily trigger-runtime quotas, which differ by account tier; Open Questions raise the tier only for mail. Raw payloads in a cell risk the 50,000-character limit, and the over-size behaviour is unspecified.
-**Fix:** add pilot volumes and storage and runtime estimates, define truncation, cheapen the gate's reads.
+`Voice_Admin_Notes` and the Admin page are 1b; the goal says the baseline is taken before the pilot, which is the first batch after 1a. Move it to 1a or drop "against a baseline" for the first batch.
 
-### C9. The reserve ceiling rests on unverified assumptions (D8)
+### CR-M6. The first batch is too small for the Q5 gate, and "answer rate" collides with an existing key (D M6)
 
-`VOICE_MAX_CALL_MIN` (default 8) is the worst-case call length, but nothing says the provider or agent caps call length. It is not stated whether a reserve is released when a placement fails outright, how billing is rounded, which batch a retry counts against for the per-batch ceiling, what "this month" means (calendar month, time zone, start date or result date), or what the fallback to minutes does in the gate. The 30-minute lag cited in the alternatives is partly obsolete: ingest now runs first in every queue run, though not for single calls.
+5 to 10 candidates and "answer rate above 30 percent" carries no statistical weight; there are no targets for completion rate or minutes. "Answer rate" collides with the existing `noAnswer` stats key (completed with no answers); how `partial` counts is undefined. State a sample size or caveat, define "answer" precisely, set targets.
 
-### C10. `Scheduled` rows versus "open" rows contradict each other, which weakens the retry cap (D9)
+### CR-M7. The "gate reads small sheets only" claim is inconsistent with its checks (D M7)
 
-A `Scheduled` row does not count as an open batch (so another batch can start), but the same card or number in an open row is refused. If `Scheduled` is not open, a second batch can queue the same number with `Attempts` reset. That is the cross-batch cap the Alternatives claim is "covered" when rejecting the `Voice_Attempts` option. `Max_Attempts` has no source setting. It is not stated when `Attempts` is incremented, whether `Busy` counts, or whether a recruiter re-queueing a stopped card resets the cap. The daily limit counts per caller. There is no per-candidate or per-number cap across cards, positions or recruiters.
+The daily limit (`voiceAccessEval_`, `voiceUsedToday_`) and the open-call check read `Voice_Calls`; the monthly call count has no source in 1a (`Voice_Budget` is 1b). Specify each check's source and state the cost of reading `Voice_Calls` under the lock at the expected volume.
 
-### C11. Result sharing contradicts itself and cannot meet its goal (D10, Y14)
+### CR-M8. Concurrency covers only the gate, not other writers of shared counters (D M8)
 
-CUJ 5 says both messages carry the confirmed answers, while section 7 gives the MRF owner outcome and counts only. The MRF owner is not a data field, so the department head, who may not be entitled to the result, is the fallback. Goal line 47 promises that the recipients "learn" a result is ready, yet the CRM sends nothing and cannot know whether the recruiter sent it. For recipients without a CRM login the answers are pasted in full, the same harm used to reject e-mailed transcripts; the audit row records only "prepared". Interviewer addresses come from a free-text name match, a weakness cited against the outbox option.
-**Fix:** reconcile the content, add a real MRF-owner field or ask the owner to approve the HOD fallback, reword the Goal to "prepares a message", and state the rule for non-users.
+`Voice_Contacts` and `Voice_Budget` are also written by ingest, `voiceDndAdd_`, the sweep, the reaper and the rebuild buttons. Read-modify-write from ingest racing the gate can lose an opt-out or an attempt. **Fix:** require the same lock for every writer; state the lock-timeout behaviour (fail closed).
 
-### C12. The success measure is defined two ways, and no metric has a target or go/no-go (D11, S8, Y3)
+### CR-M9. The 30-minute open-call window equals the maximum call length (D M9)
 
-Goal line 46 defines success as person-completed screenings over placed calls. Section 2 says the success rate "keeps its definition" (calls with answers over placed) and adds the Goal's definition as a second figure. No metric has a target or threshold, no criterion exists for moving from the first batch to Release 2, and "minutes saved per hire" cannot be measured from about 10 candidates.
-**Fix:** one name per definition; thresholds and go/no-go criteria; a per-completed-screening measure for the pilot.
+`VOICE_MAX_CALL_MIN` can be 30 and results lag, so a call can still be in progress when the window expires and a second call be placed. **Fix:** window at least `VOICE_MAX_CALL_MIN` plus the ingest lag, or treat a `Started` call without a result as open until resolved or closed.
 
-### C13. Privacy, consent, retention and webhook trust are not addressed (D12)
+### CR-M10. The reaper ignores the new statuses (D M10)
 
-Nothing covers consent to automated or recorded calls, disclosure that the caller is an AI agent, or retention of transcripts and payloads held in Sheets. The receiver is "not changed", with only "rotate the secret"; the document does not say how forged or replayed payloads are rejected, though one could write `Voice_DND`, release reserved budget or change an outcome.
+It looks for `Starting`, `Started` or `Completed`, so a call that ended `No answer` or `Busy` is not found, its row is marked `Failed` ("check the provider") and counts toward the three-failed stop. That is the bug `voiceStatusClass_` exists to prevent, and the reaper is not on the reader list. Use `voiceStatusClass_` and add it to the list.
 
-### C14. Claims about existing behaviour are stated flatly or inconsistently (Y1, Y2, Y4)
+### CR-M11. Ingest idempotency is undefined for unanswered results (D M11)
 
-Lines 11, 28-34 and 49 state facts that cannot be verified from the document: "nobody has used this", the opt-out check switchable, unanswered calls not counting against the limit. Line 32 and line 246 assert that the provider sends no cost field and that ratings came back as an empty object, while line 70 lists the post-call step as unconfirmed and line 196 says the first batch will capture "an unknown field such as a cost". The rejection of the cost-cap alternative rests on this.
-**Fix:** cite the evidence (code location, test call id, date) or narrow the claim ("no cost field has been observed in the payloads inspected; one call does not establish the general case"). Mark "candidates often do not answer" and similar motivation as assumptions the pilot tests.
+"Already has its result" applies only to `Completed`, so a duplicate webhook for a `No answer` call could reset `Not_Before`, double-schedule a retry or double-create the to-do. Define a per-call result-applied marker for all statuses.
 
-### C15. Alternatives section: attribution, missing options, thin entries (D13, S3, S4, S9, S10, Y13, Y20)
+### CR-M12. The unanswered-call to-do is promised in 1a but its rule ships in Release 2 (D M12)
 
-"Rejected by author" appears in nearly every heading and again in each body; the author is shown as Claude and the owner's decisions are not linked, so the label adds nothing. The brief that the first six alternatives come from has no path. Missing alternatives: enforcing hours and opt-out at the provider, a `Raised_By` field on the MRF instead of the HOD fallback, an Admin hours override. The two "Deferred" entries are not rejections and one has no threshold. Three headings bundle two options each.
-**Fix:** state the trade-off alone, or link the decision; name the brief by path; add the missing alternatives; one heading per option.
+Non-Goals say a single unanswered call "gets the same did-not-answer to-do"; `voice_noanswer` and the `noanswer` key are Release 2. In 1a the recruiter is not told.
 
-### C16. Open Questions have no owner, date or draft default (D14, S13)
+### CR-M13. Retry timing rules are ambiguous (D M13)
 
-Seven questions "block part of the design". None has an owner or date, several have no assumed default (retry rule, budget unit, spoken opt-out policy), and assumed answers elsewhere (rupee unit, `HOD_Email` fallback, Admin not exempt) are not cross-referenced back to the question.
+"Moved to the next calling window, to 11:00 if 11:00 is inside the window" read literally pushes a busy retry after 30 minutes, or a 4-hour retry at 14:00, to the next day; Q2 describes a different rule. The 48-hour expiry does not say what it is measured from; if from the last update, a repeatedly deferred row never expires. State one rule with worked examples.
 
-### C17. Required header names are not matched (S2)
+### CR-M14. "Attempt" is undefined (D M14)
 
-The standard names "Problem Statement", "Goals & Non-Goals" and "Proposed Architecture". The document has "The Problem", separate "Goals" and "Non-Goals", and "Technical Plan (Architecture)". The content is present; rename or alias the headings.
+Does a `Failed` placement, a `Blocked` row or a `partial` call count as an attempt or toward the monthly cap? The 7-day cap of 3 can pre-empt retries after earlier single calls and is classed `terminal` though it expires, so the to-do wording ("after 3 attempts") would be wrong. Define "attempt" once.
 
-## Nits
+### CR-M15. "Real" calls are undefined, so the gate may have a bypass (D M15)
 
-- **Hard-limit lists disagree.** The Overview says four hard limits; the gate has five checks (hours, opt-out, daily limit, budget, one open call), and "no wrong rejection" is a non-goal, not a gate check. (D15, Y)
-- **Settings versus hard limits.** Hours and ceilings are editable settings, so "no override" is only as strong as the setting. Hours "09:00 to 19:00 Monday to Saturday" are hard-coded in CUJ text while the window is a setting. Time zone and holidays are unstated. `VOICE_DND_REQUIRED` stays as a setting that no longer affects real calls; remove it. (D16)
-- **Reaper threshold.** Five minutes is close to the Apps Script 6-minute execution cap; a legitimate run could have its `Calling` row reaped. (D17)
-- **`partial` results** map to `Completed` and are never retried, so a candidate who hangs up midway gets an incomplete draft and no follow-up. Say so. (D18)
-- **One-time repair** rewrites old `Failed` rows irreversibly; keep the original value in a note column. (D19)
-- **Data-model table** omits `Voice_DND` source and reason fields, the new to-do types, the audit row type, and the existing `Stopped` and `Placed` queue states. (D20)
-- **CUJs missing** for a budget block, an opt-out register hit, a lost webhook and the "could not check" fail-closed path. (D21)
-- **Testing.** Concurrency, ingest idempotency, the reaper, time edges (18:58 to 19:00, Sunday, daylight saving) and the phone-number open-call check have no listed test; a code search is not a test. (D22)
-- **Terms and links.** MRF is never expanded; "gate", "check" and `voiceMayCall_` are used interchangeably; "result" means both a provider outcome and a screening result; "real" is undefined; `docs/BFCL_Recruitment_CRM_SSOT.md`, `./EGM.md` and "the concepts brief" lack stable links; "the author" versus "the owner" is unclear. (S3, Y19, Y20, Y10, D23)
-- **Style.** Line 20 duplicates Non-Goal line 54; line 35 restates the Overview list; "or any person the Admin has named" is wordy; line 159 is wordy; "still" in line 234 is filler; "fuzzy name" is jargon; "decision of the author" and "Rejected by author" refer to an undefined third party. (Y7 to Y9, Y16, Y18, Y21)
-- **Diagram.** The code fence at lines 122 to 143 has no language tag and no caption or prose reference. (S12)
-- **Overview line 20** says other call types are "sketched here", but no section sketches them. (S11, Y7)
-- **Nudge alternative** (WhatsApp or SMS) states no cost, complexity or consent trade-off. (S9)
+The glossary says real means candidate numbers as opposed to team numbers, and the checks "cannot be switched off for real calls". Nothing says how a call is classified. If it is a setting or number list, it is itself a way to disable the limits. Precondition 2 (a test call to a team number) would also be blocked by hours at night.
 
-## Disputed finding
+### CR-M16. The opt-out number is looked up from the candidate record after the fact (D M16)
 
-- **Y12** says the Alternatives intro ("first six come from the concepts brief, the next five are the options the author did not choose") does not match the headings. **S** checked the same text and found it matches the 11 headings (6 from the brief, 5 from the design choices). Reading the headings, the count is correct; Y12 is recorded as contested and not carried forward.
+The call row keeps four digits; at ingest the full number comes from the candidate record. If the number was edited in between, the wrong number is opted out and the right one stays callable. Store `Number_Key` or a hash on the call row at placement.
 
-## Kept as sound (all reviewers who commented)
+### CR-M17. Provider capabilities are assumed without proof (D M17)
 
-The caveats at lines 102 (the CRM cannot know whether the message was sent), 120 (fail-closed), 185 (the reaper never resets to `Waiting`, with the double-call reason given) and 225 (rollback leaves calls unrecallable), and the statement "The accepted option cannot guarantee delivery" in the alternatives.
+The reserve is a "true bound" only if the provider agent supports a maximum call duration equal to `VOICE_MAX_CALL_MIN`; no source shows it does and it is not in Q8. Billing rounding is open (Q8) so spent is systematically underestimated if each call rounds up. The 30-minute lag is the ingest job's cadence, not provider behaviour. `do_not_call` and ratings rely on the post-call analysis that already returned empty ratings once. Add these to Q8 and the preconditions with a fallback.
 
-## Traceability
+### CR-M18. The "fixed on the way" defects have no design (D M18, S 4)
 
-| Consolidated | Raw findings |
-|---|---|
-| C1 | D1, S1 |
-| C2 | D2 |
-| C3 | D3, S6 |
-| C4 | D6, S7 |
-| C5 | S5, Y3 |
-| C6 | D4 |
-| C7 | D5 |
-| C8 | D7, S1 |
-| C9 | D8 |
-| C10 | D9 |
-| C11 | D10, Y14 |
-| C12 | D11, S8, Y3 |
-| C13 | D12 |
-| C14 | Y1, Y2, Y4 |
-| C15 | D13, S3, S4, S9, S10, Y13, Y20 |
-| C16 | D14, S13 |
-| C17 | S2 |
-| Nits | D15 to D23, S11, S12, Y5 to Y11, Y15 to Y21 |
-| Disputed | Y12 |
+The `voiceFindCost_` hardening and the lost-result write are promised fixed, but no Goal, CUJ, section or release covers them; `Voice_Inbox.Error_Count` appears only in the data-model table. Add a short section for each or move them to Non-Goals.
+
+### CR-M19. Alternatives rule (D M19, S 6)
+
+"The decision is that there is none" (Admin hours override) is circular and attributes a decision to no named party. Central architectural choices have no alternative: the single gate, `Voice_Contacts` as the one input beside `Voice_DND`, immediate "Pending confirmation" against confirm-first, the `Voice_Budget` counter against reading `Voice_Calls`. The two "Deferred" entries should be labelled consistently.
+
+### CR-M20. No volume estimates (D M20)
+
+No estimate of calls per month, rows and cells added per month, trigger runtime against Apps Script quotas, or the rupee exposure of 300 calls at the maximum call length (up to 9,000 minutes). Add a sizing table.
+
+### CR-M21. The Open Questions table breaks its own contract (S 5)
+
+Q6 "Blocks 1a" but its default is "Not decided" (a blocker with no usable default); Q8 blocks "1a (retry and hours)" though retry is Release 2; Q7 blocks "Before wide use", not a release. Several assumed constants are not questions: the per-number cap of 3 in 7 days, `VOICE_MAX_CALLS_MONTH` 300, the 48-hour expiry, the 30-minute open-call window, the 15-minute backoff. A full retry cycle uses the whole per-number cap, so any later single call to that number is refused; this is not flagged.
+
+### CR-M22. Style: revision narration, unmeasurable framing, ambiguous status of numbers (Y 1 to 9)
+
+*   Lines 4 and 336 ("revised after the egm-review findings", "added after review") narrate revision history; remove or move to a changelog. (Y 1)
+*   The "no cost field was seen" and "empty ratings" evidence is restated at lines 49, 253 and 342 with no count; state the number of payloads inspected and the SSOT 8.7 location once and reference it. (Y 2)
+*   The pilot measures name answer and completion rate but set no target; say whether Q5 is the only threshold; the baseline has no sample size. (Y 3)
+*   Hard-coded numbers are "assumed" in places and flat elsewhere (3 attempts in 7 days, 300 calls, 15-minute backoff, 48 hours, 5 minutes, the bounds); line 231 says "code constants, not a setting" while Q2 says "one setting or constant". Say which are owner decisions and which are engineer choices. (Y 4)
+*   "No override" for opt-out and hours is stated four times (lines 60, 144, 193, 400). Keep it in Goals and one design place. (Y 5)
+*   Line 275: "same kind of exposure as the rejected e-mailed transcript, with a smaller payload" is an unmeasured comparison inside a trade-off with no named decision-taker; name who decides (the owner via Q4, or HR and legal). (Y 6)
+*   Line 344's nested parenthesis repeats itself; the risk row at line 330 ("None", n/a) has no decision; line 331 says engineer-owned but the Admin changes the values. (Y 7, 8)
+*   Line 310 states "would read `No answer` as an unknown status" with no pointer to the code; mark it as an inference. (Y 9)
+
+## Nits (structural, style, design)
+
+*   Section order: the standard lists Alternatives before Risks; the document has Risks first. (S 7)
+*   The "(existing)" convention at line 139 says "in `VoiceScreen.gs`" but later entries are existing in `Tasks.gs`, `Pipeline.gs` and `App.html`. (S 8)
+*   The glossary says `Voice_DND` is "mirrored into `Voice_Contacts`" as if both exist; `Voice_Contacts` is new; "Pending confirmation" is undefined; the "Source documents" bullet is not a term and its link text is split. (S 9, 10; Y 23)
+*   "Admin page below" instead of a section number; sections are tagged with a release inconsistently and not in order; the "as shown" Release cells; no CUJ for 1b, for opt-out undo, or for the failed-write and cost-parsing fixes; the Risks table cites T3 and T9, undefined in this scope; the risk list omits drift between `Voice_DND` and `Voice_Contacts`, lock contention and 10-digit normalisation collisions; 16 flat H3 Alternatives with a mixed "Not chosen"/"Deferred" pattern. (S 11 to 17)
+*   Phrases: "so it can be tested without sheets" duplicates the purity statement; "self-healing" is undefined; "safe" is subjective (use "defects that must be fixed before candidates are called"); "reliably" is unmeasured (line 233); "a lost result never loosens the ceiling" is absolute; line 408 misquotes the "a person always decides" goal; "Revisit if..." triggers (lines 356, 400, 408) are measurable only at 356 and 408; the Overview's "real" is undefined in the glossary. (Y 10 to 22)
+*   `voiceRequireCaller_` still runs before the gate, and the `system` principal for retries is not said to bypass it (the recruiter may have lost access by retry time); audit attribution for retry calls is unstated. The legacy `Blocked (Do Not Disturb)` status is not covered by `voiceStatusClass_`, so "unknown status is logged loudly" would fire on every old row. A pending opt-out has no confirmation owner, expiry or service time. The presumed-spent sweep does not say how a late result is reconciled, nor who may use *Close*. Message bodies in links can exceed link length limits. "Owner" is overloaded (business owner, MRF owner, the Owner column). Number keys are 10-digit, so Indian numbers only, which is not stated; holidays are out of scope; the compiled hours bound (08:00 to 21:00) versus the 09:00 to 19:00 default is unexplained. The claim that every call reaches the provider through `voiceStartFor_` is stated as fact but only verified by precondition 1; phrase it as an assumption. (D nits 1 to 10)
+
+## Comparison with round one
+
+Fixed since round one: the Risks & Mitigations section exists; the five blueprint headings match the standard; the Alternatives are one heading per option with the brief named; the success rate is now two named measures; the two stages-and-releases lists are consistent; the glossary exists. Still standing in a new form: opt-out has two sources of truth (round one found two owners; the contact record now makes a third place), the queue-row outcome is defined but its release assignment is wrong (CR-B1), and the per-number cap and attempt definitions are not settled. New since the revision: the release-assignment contradictions (CR-B1, CR-M4, CR-M5, CR-M12) are introduced by the split of Release 1 into 1a and 1b.
