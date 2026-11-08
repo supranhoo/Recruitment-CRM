@@ -5,7 +5,7 @@ Google Apps Script source for the BFCL Recruitment CRM web app.
 The CRM tracks every MRF position line and candidate for Human Resources – Talent Acquisition, from approval to onboarding, with the BFCL Recruitment Policy v2.0 built in: TAT, JD and screening-question validation with HODs, pipeline stages, automatic to-dos, Day’s Status, KPIs and compliance.
 
 - **Platform:** Google Apps Script web app · Google Sheets database · Google Drive for CVs and documents
-- **Live version:** v61 (29 Sep 2026) · database schema 26
+- **Live version:** v159 (8 Nov 2026) · database schema 47. The number in `BUILD_ID` (Config.gs) is the release number; the deploy workflow reports it as `Build v<N> is deployed`
 - **Documentation (single source of truth):** [`docs/BFCL_Recruitment_CRM_SSOT.md`](docs/BFCL_Recruitment_CRM_SSOT.md), covering every rule, screen, decision record and the detailed changelog
 
 No recruitment data is stored in this repository. The database, CVs and documents stay in Google Sheets and Drive.
@@ -52,13 +52,11 @@ This folder is configured for `clasp` through `.clasp.json`.
 
 - Keep `.clasp.json` committed so this folder stays linked to the Apps Script project.
 - Do not commit `.clasprc.json`; it contains local Google login tokens.
-- Deploy a new web app version from the Apps Script editor after pushing code changes when the live app should be updated.
+- A push to the Apps Script project alone does not update the live web app; a new deployment version does. The release workflow below does both.
 
 ## Releasing a version
 
-1. `clasp push` the tested change.
-2. In the Apps Script editor: **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The web-app link never changes.
-3. Add the release to the changelog in `docs/BFCL_Recruitment_CRM_SSOT.md`, then commit and tag it, for example `git tag v59` and `git push --tags`.
+A release is a merge to `main` that raises `BUILD_ID` in `Config.gs` (one new number per release, in the same pull request as the change), followed by the owner's approval of the `production` environment in GitHub Actions (next section). Add the release to the changelog in `docs/BFCL_Recruitment_CRM_SSOT.md` in the same pull request. The Apps Script editor route (Deploy → Manage deployments → Edit → New version → Deploy) is only a fallback when the workflow is unavailable.
 
 ### Releasing (from GitHub, with approval)
 
