@@ -439,12 +439,12 @@ function voiceStartFor_(u, appId, opts) {
   const body = voiceRequestBody_(phone, brief, cfg, '(call id)'); body.user_config.user_phone_number = '+91XXXXXX' + phone.slice(-4);
   const out = { dryRun: !!opts.dryRun, candidate: String(cand.Name || ''), phoneLast4: phone.slice(-4), questionsVersion: Number(fin.Version), brief: brief, request: body, notSent: ['gender', 'candidate_location', 'resume_highlights'],
     questionsSent: !!cfg.questionsVar, resultsReturn: cfg.webhookUrl ? 'Results will be sent to your webhook address' : 'No webhook address set: results will not come back automatically',
-    dnd: cfg.dndRequired ? 'Required: our own register is checked before every call (the provider\u2019s list is not connected yet)' : 'Not required (switched off)', ready: !problems.length, problems: problems,
+    dnd: 'Always on: our own register is checked before every call (the provider\u2019s list is not connected yet)', ready: !problems.length, problems: problems,
     warnings: (function () { const w = [], n = brief.plan.sent.length, mins = Math.round((brief.plan.secs || 0) / 60); if (n > VOICE_WARN_Q_) w.push(n + ' questions in one call is a lot for a candidate'); if (mins > VOICE_WARN_MIN_) w.push('about ' + mins + ' minutes is a long call'); return w; })(), estimate: { questions: brief.plan.sent.length, seconds: brief.plan.secs || 0 } };
   if (opts.dryRun) return out;
   if (problems.length) throw new Error('The call was not placed: ' + problems.join('; ') + '.');
   // 1) Do Not Disturb, 2) the call. Both are provider-specific and written when the provider API is known.
-  if (cfg.dndRequired && voiceDndCheck_(phone, cfg)) {
+  if (voiceDndCheck_(phone, cfg)) {
     const blocked = voiceLog_(u, app, cand, phone, 'Blocked (Do Not Disturb)', 'The number is on the Do Not Disturb list. No call was placed.', Number(fin.Version));
     audit_(u, 'Voice agent', blocked.Call_ID, 'Call blocked', '', '', 'Do Not Disturb');
     throw new Error('This number is on the Do Not Disturb list. No call was placed.');
@@ -712,6 +712,85 @@ function apiVoiceDndMark(appId, note) {
   if (!phone) throw new Error('The candidate has no valid 10-digit mobile number on file.');
   const r = voiceDndAdd_(u, [phone], 'Candidate opted out', note || 'Marked from the card');
   return { added: r.added, already: r.already, last4: phone.slice(-4) };
+}
+
+/* ---------------------------------------------------------------- "do not call me again" said on a call --------- */
+
+/**
+ * Phrases (English, romanised Hindi, Devanagari Hindi) with which a candidate asks never to be called again. They are anchored to "again,
+ * ever, never, anymore" so that a time preference ("do not call me now", "abhi call mat karo") does not match.
+ */
+const VOICE_OPTOUT_RES_ = [
+  /\b(do not|don'?t|dont|never|stop)\s+(call|calling|phone|phoning|ring|ringing|contact|contacting|disturb|disturbing)\b[^.?!]{0,25}\b(again|anymore|any more|ever|any longer)\b/i,
+  /\bstop\s+(calling|phoning|ringing|disturbing)\b/i,
+  /\bno more (calls?|phone calls?)\b/i,
+  /\b(remove|delete)\s+(my|this)\s+(number|mobile|name|details)\b/i,
+  /\b(dobara|dubara|dobaara|firse|phir se|fir se|kabhi)\b[^.?!]{0,30}\b(call|phone|fone|contact)\b[^.?!]{0,15}\b(mat|na|nahi|nahin)\b/i,
+  /\b(call|phone|fone|contact)\b[^.?!]{0,15}\b(mat|na|nahi|nahin)\s+(karo|karna|kijiye|kariye|kijiyega)\b[^.?!]{0,25}\b(dobara|dubara|dobaara|firse|phir se|fir se|kabhi)\b/i,
+  /\b(mera|mere)?\s*number\s+(hata|delete|remove)\b/i,
+  /(\u0926\u094b\u092c\u093e\u0930\u093e|\u0926\u0941\u092c\u093e\u0930\u093e|\u092b\u093f\u0930 \u0938\u0947|\u0915\u092d\u0940).{0,30}(\u092b\u094b\u0928|\u092b\u093c\u094b\u0928|\u0915\u0949\u0932|\u0915\u0949\u0932).{0,15}(\u092e\u0924|\u0928\u093e|\u0928\u0939\u0940\u0902)/,
+  /(\u092b\u094b\u0928|\u092b\u093c\u094b\u0928|\u0915\u0949\u0932|\u0915\u0949\u0932).{0,15}(\u092e\u0924|\u0928\u093e|\u0928\u0939\u0940\u0902)\s*(\u0915\u0930\u094b|\u0915\u0930\u0928\u093e|\u0915\u0940\u091c\u093f\u090f|\u0915\u0940\u091c\u093f\u092f\u0947).{0,25}(\u0926\u094b\u092c\u093e\u0930\u093e|\u0926\u0941\u092c\u093e\u0930\u093e|\u092b\u093f\u0930 \u0938\u0947|\u0915\u092d\u0940)/,
+  /(\u0928\u0902\u092c\u0930|\u0928\u092e\u094d\u092c\u0930)\s*(\u0939\u091f\u093e|\u0921\u093f\u0932\u0940\u091f)/
+];
+/** Whether the candidate's own lines in a transcript ("Candidate: ...") ask not to be called again. The agent's lines are ignored. */
+function voiceOptoutScan_(transcript) {
+  const lines = String(transcript == null ? '' : transcript).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*Candidate\s*:\s*(.*)$/i.exec(lines[i]); if (!m) continue;
+    const t = m[1];
+    for (let j = 0; j < VOICE_OPTOUT_RES_.length; j++) if (VOICE_OPTOUT_RES_[j].test(t)) return true;
+  }
+  return false;
+}
+/** The agent's own label for how the call ended, written as it is stored: do_not_call. */
+function voiceIsDncDisposition_(vars) { return String((vars && vars.call_disposition) || '').toLowerCase().trim().replace(/[\s-]+/g, '_') === 'do_not_call'; }
+/** The identity that records an opt-out heard on a call: nobody on the team clicked anything. */
+const VOICE_SYSTEM_USER_ = { email: 'voice-agent', name: 'Voice agent', role: 'Admin', recruiter: '', perms: [] };
+/**
+ * A candidate asked on a call not to be called again: the number goes on the Do Not Disturb register at once (a person can undo it).
+ * Nothing about the card changes. Returns 'disposition', 'phrase' or '' (not an opt-out, or no valid number to list).
+ */
+function voiceOptoutFromCall_(call, transcript, vars) {
+  const how = voiceIsDncDisposition_(vars) ? 'disposition' : (voiceOptoutScan_(transcript) ? 'phrase' : '');
+  if (!how) return '';
+  try {
+    const phone = voicePhone_(candRow_(call.Candidate_ID) || {});
+    if (!phone) { audit_(VOICE_SYSTEM_USER_, 'Voice agent', call.Call_ID, 'Do not call not listed', '', '', 'the candidate has no valid mobile number on file'); return ''; }
+    voiceDndAdd_(VOICE_SYSTEM_USER_, [phone], 'Candidate opted out', 'Said do not call on call ' + call.Call_ID + (how === 'phrase' ? ' (heard in the transcript)' : ' (the agent marked it)'));
+    return how;
+  } catch (e) { return ''; }
+}
+/** Same, from the candidate profile (Admin). */
+function apiVoiceDndUnmarkCandidate(candId, reason) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const phone = voicePhone_(candRow_(candId) || {});
+  if (!phone) throw new Error('The candidate has no valid 10-digit mobile number on file.');
+  apiVoiceDndRemove(phone, reason);
+  return { removed: true };
+}
+/** Who is on the register, by number: { number: { why, when, by } }. One sheet read; the numbers themselves are never sent to the page. */
+function voiceDncMap_() {
+  const out = {};
+  try {
+    voiceSchema_();
+    readTable_(VOICE_DND_.name).rows.forEach(function (r) {
+      if (String(r.Active) === 'No') return;
+      const n = voiceDndNorm_(r.Phone); if (!n) return;
+      const by = String(r.Added_By || ''), at = r.Added_On instanceof Date ? r.Added_On : null;
+      out[n] = { why: String(r.Note || r.Source || 'On the Do Not Disturb register'), source: String(r.Source || ''), by: by === 'voice-agent' ? 'Voice agent' : by, when: at ? ymd_(at) : '' };
+    });
+  } catch (e) { }
+  return out;
+}
+/** The register entry for one mobile number, or null. */
+function voiceDncFor_(map, mobile) { const n = voiceDndNorm_(mobile); return n && map && map[n] ? map[n] : null; }
+/** Takes the number of the candidate on a card off the register (Admin), with a reason. The page never handles the number. */
+function apiVoiceDndUnmark(appId, reason) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  const app = appOf_(appId), phone = voicePhone_(candRow_(app.Candidate_ID) || {});
+  if (!phone) throw new Error('The candidate has no valid 10-digit mobile number on file.');
+  apiVoiceDndRemove(phone, reason);
+  return { removed: true };
 }
 
 /** Who may call (Admin): every active team member with their access, limit and reason. */
@@ -1167,7 +1246,8 @@ function voiceDispositionAction_(disposition) {
     not_interested: { key: 'notint', title: 'Candidate said not interested: confirm and close the card', why: 'The candidate told the agent they are not interested. Confirm with them, then reject or withdraw the card with a reason.' },
     callback_requested: { key: 'callback', title: 'Candidate asked for a call back', why: 'The candidate asked to be called later. Call them back or place the voice call again.' },
     incomplete_screening: { key: 'incomplete', title: 'Voice screening incomplete: ask the remaining questions', why: 'Some questions were not answered. Ask them yourself or place a follow-up call.' },
-    wrong_number: { key: 'wrongno', title: 'Wrong number on the candidate record', why: 'The number did not reach the candidate. Check and correct the mobile number.' }
+    wrong_number: { key: 'wrongno', title: 'Wrong number on the candidate record', why: 'The number did not reach the candidate. Check and correct the mobile number.' },
+    do_not_call: { key: 'optout', title: 'Candidate asked not to be called again', why: 'The number is now on the Do Not Disturb register and will not be called. Check the card and close or withdraw it with a reason if the candidate is no longer interested.' }
   };
   return m[d] || null;
 }
@@ -1226,7 +1306,8 @@ function voiceIngestRun_(u) {
           else {
             voiceApplyResult_(u, call.Call_ID, { status: o.status, note: o.note, transcript: tr, answers: o.status === 'Completed' && Object.keys(answers).length ? answers : null });
             voiceUpdate_(call.Call_ID, { Outcome: o.outcome, Duration_Sec: Number(p.duration) || '', Interaction_ID: String(p.interaction_id || ''), Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000), Provider_Call_ID: att || String(call.Provider_Call_ID || ''), Recording_URL: voiceFindRecording_(p), Cost: (voiceFindCost_(p) || { amount: '' }).amount, Cost_Unit: (voiceFindCost_(p) || { key: '' }).key });
-            res = 'Recorded on ' + call.Call_ID; n++;
+            const dnc = voiceOptoutFromCall_(call, tr, vars);
+            res = 'Recorded on ' + call.Call_ID + (dnc ? ' (number added to the Do Not Disturb register)' : ''); n++;
           }
         } catch (e) { res = 'Error: ' + String(e && e.message || e).slice(0, 150); }
       }
@@ -1302,6 +1383,7 @@ function apiVoiceFetchResult(callId) {
   const why = failed ? ((cs || 'Not connected') + (a.failure_reason ? ': ' + String(a.failure_reason).slice(0, 150) : '')) : note;
   apiVoiceApplyResult(call.Call_ID, { status: failed ? 'Failed' : 'Completed', note: why, transcript: tr, answers: !failed && Object.keys(answers).length ? answers : null });
   voiceUpdate_(call.Call_ID, { Provider_Call_ID: att, Outcome: failed ? (cs || 'Not connected') : 'Answered', Duration_Sec: Number(a.duration_in_seconds) || '', Interaction_ID: inter, Final_Vars_JSON: JSON.stringify(vars).slice(0, 20000) });
+  if (!failed) voiceOptoutFromCall_(call, tr, vars);
   audit_(u, 'Voice agent', call.Call_ID, 'Result fetched', '', '', failed ? 'not connected' : 'transcript ' + (tr ? 'yes' : 'no'));
   return voiceCallOut_(voiceCallsRows_().filter(function (r) { return String(r.Call_ID) === String(callId); })[0]);
 }

@@ -9,7 +9,7 @@ HTML template; the browser calls the `api*` functions in the `.gs` files through
 `Users` sheet. Tables are read and written only through `Db.gs`
 (`readTable_`, `insert_`, `update_`, `nextId_`, `audit_`). Schema upgrades run
 step by step in `Compliance.gs:ensureSchema_` (`SCHEMA_VERSION` '47'). The release
-number is `Config.gs:BUILD_ID` ('159'). Files in `.html` (`Index.html`,
+number is `Config.gs:BUILD_ID` ('160'). Files in `.html` (`Index.html`,
 `App.html`, `Styles.html`) are the page and are outside this contract. Business
 rules and decisions are in [docs/BFCL_Recruitment_CRM_SSOT.md](./docs/BFCL_Recruitment_CRM_SSOT.md);
 [README.md](./README.md) holds the human-written setup and release notes.
@@ -58,6 +58,7 @@ Contracts per file (public entry points are the `api*` functions; `name_` helper
 - Editing a position: `canEditLine_` (lead, or the position's recruiter); pipeline writes call `requireLineEdit_`.
 - Every row write goes through `insert_`/`update_` under the script lock, with audit rows in `Audit_Log`.
 - Nothing about a candidate is deleted by a move, reject, hold, withdrawal or backout; history is read through `History.gs`.
+- Opt-out: the Do Not Disturb register is always checked before a real voice call (no setting turns it off), and a candidate who asks on a call not to be called again is added to it at once (`voiceOptoutFromCall_`); a person can undo it.
 - Voice calls and results only produce DRAFT screenings; a person completes them.
 - Code in `App.html` must not contain `//` or `/* */` comments (ADR-010 in the SSOT).
 - No code or document in this repository stores recruitment data.

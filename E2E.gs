@@ -644,6 +644,16 @@ function e2eRun_(trash) {
       const cv = histCvList_([{ File_URL: 'u1', Uploaded_At: new Date(1000) }, { File_URL: 'u2', Uploaded_At: new Date(2000) }], 'u2');
       return r.events.length === 3 && r.events[0].moved === true && r.events[2].origin === 'J1 A' && r.results.length === 1 && r.results[0].outcome === 'Cleared' && cv[0].url === 'u2' && cv[0].current === true ? 'ok' : false;
     });
+    t('V7 do not call me again: phrases, the agent label, the register by number', function () {
+      const said = function (x) { return 'Agent: Hello.\nCandidate: ' + x; };
+      const yes = ['Please do not call me again', 'stop calling me', 'Mujhe dobara call mat karna', 'mera number hata do'].every(function (x) { return voiceOptoutScan_(said(x)) === true; });
+      const no = ['Do not call me now, I am busy', 'Please call me tomorrow', 'Abhi call mat karo, kal karna', 'yes I am interested'].every(function (x) { return voiceOptoutScan_(said(x)) === false; });
+      const agentOnly = voiceOptoutScan_('Agent: please do not call me again if you are not interested.\nCandidate: ok') === false;
+      const m = { '9876543210': { why: 'Said do not call on call VCL-1', by: 'Voice agent', when: '2026-11-08' } };
+      const hit = voiceDncFor_(m, '+91 98765 43210'), miss = voiceDncFor_(m, '9123456780');
+      return yes && no && agentOnly && voiceIsDncDisposition_({ call_disposition: 'Do Not Call' }) === true && voiceIsDncDisposition_({ call_disposition: 'not_interested' }) === false
+        && voiceDispositionAction_('do_not_call').key === 'optout' && hit && hit.by === 'Voice agent' && miss === null ? 'ok' : false;
+    });
     t('V6 batch calling: hours, queue order and stop rules', function () {
       const w = voiceHoursParse_('09:00-19:00'), monday = Date.parse('2026-11-09T10:00:00+05:30'), sunday = Date.parse('2026-11-08T10:00:00+05:30');
       const pick = voiceQueuePick_([{ Row_ID: 'B-2', Status: 'Waiting', Requested_At: new Date(2000) }, { Row_ID: 'B-1', Status: 'Waiting', Requested_At: new Date(1000) }, { Row_ID: 'B-0', Status: 'Placed', Requested_At: new Date(500) }], 1, []);
