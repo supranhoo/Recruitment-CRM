@@ -529,6 +529,7 @@ function apiUploadCv(candidateId, fileName, mimeType, base64) {
   const safeName = candidateId + '_' + String(cand.Name).replace(/[^\w]+/g, '_') + '_' + fmt_(new Date(), TZ, 'yyyyMMdd') + ext;
   const blob = Utilities.newBlob(Utilities.base64Decode(base64), mimeType, safeName);
   const file = DriveApp.getFolderById(folderId).createFile(blob);
+  try { histCvRecord_(u, candidateId, file.getUrl(), fileName, String(cand.CV_File_URL || ''), 'Uploaded'); } catch (e) { console.error('CV version not recorded: ' + e); }
   update_(T.CAND, candidateId, { CV_File_URL: file.getUrl() }, u);
   return file.getUrl();
 }

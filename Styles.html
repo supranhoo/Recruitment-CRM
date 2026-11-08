@@ -959,4 +959,13 @@ a.btn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:cent
 .vc-onlychk #vrRows tr[data-flag="0"]{display:none}
 .vb-batch{margin:10px 0 16px}.vb-batch .dp-h{gap:10px;flex-wrap:wrap}
 .vb-v .sub{display:inline}.vb-v .sub:empty{display:none}
+/* candidate history */
+.ch{margin:0 0 14px;min-width:0}.ch-tl summary,.ch-kv span{overflow-wrap:anywhere}.ch-tl li{min-width:0}.ch-h{margin:14px 0 6px;font-size:14px;color:var(--navy)}
+.ch-tl{list-style:none;margin:8px 0;padding:0}.ch-tl li{border-bottom:1px solid var(--line-2);padding:6px 0}.ch-tl summary{cursor:pointer}
+.ch-at{display:inline-block;min-width:130px;color:var(--ink-2);font-size:13px}
+.ch-body{margin:6px 0 4px 8px;padding:6px 10px;border-left:3px solid var(--line);background:var(--paper);border-radius:var(--r-sm)}
+.ch-kv{display:grid;grid-template-columns:150px 1fr;gap:8px;padding:2px 0;font-size:14px}.ch-kv span:first-child{color:var(--ink-2)}
+.ch-ans{width:100%;border-collapse:collapse;margin:6px 0}.ch-ans td{padding:3px 6px;border-bottom:1px solid var(--line-2);vertical-align:top;font-size:13px}.ch-ans td:first-child{width:45%;color:var(--ink-2)}
+.ch-cv{margin:0;padding-left:18px}.ch-tr{margin-top:6px}
+@media (max-width:640px){.ch-kv{grid-template-columns:1fr}.ch-at{display:block}}
 </style>

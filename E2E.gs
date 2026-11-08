@@ -637,6 +637,13 @@ function e2eRun_(trash) {
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
     t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('H1 candidate history: merged timeline, origin of moved records, results by position', function () {
+      const r = histBuild_({ lines: { L1: 'J1 A', L2: 'J2 B' }, apps: [{ App_ID: 'A1', Line_ID: 'L2' }],
+        stage: [{ App_ID: 'A1', Line_ID: 'L1', From_Stage: 'Sourced', To_Stage: 'Technical', Outcome: 'Cleared', Changed_At: new Date(2000) }, { App_ID: 'A1', Line_ID: 'L2', From_Stage: 'Technical', To_Stage: 'Technical', Outcome: 'Moved', Changed_At: new Date(3000) }],
+        ivs: [{ App_ID: 'A1', Line_ID: 'L2', Origin_Line_ID: 'L1', Round: 'Technical', Start: new Date(1000) }], scrs: [], calls: [], fus: [], audit: [] });
+      const cv = histCvList_([{ File_URL: 'u1', Uploaded_At: new Date(1000) }, { File_URL: 'u2', Uploaded_At: new Date(2000) }], 'u2');
+      return r.events.length === 3 && r.events[0].moved === true && r.events[2].origin === 'J1 A' && r.results.length === 1 && r.results[0].outcome === 'Cleared' && cv[0].url === 'u2' && cv[0].current === true ? 'ok' : false;
+    });
     t('V6 batch calling: hours, queue order and stop rules', function () {
       const w = voiceHoursParse_('09:00-19:00'), monday = Date.parse('2026-11-09T10:00:00+05:30'), sunday = Date.parse('2026-11-08T10:00:00+05:30');
       const pick = voiceQueuePick_([{ Row_ID: 'B-2', Status: 'Waiting', Requested_At: new Date(2000) }, { Row_ID: 'B-1', Status: 'Waiting', Requested_At: new Date(1000) }, { Row_ID: 'B-0', Status: 'Placed', Requested_At: new Date(500) }], 1, []);
