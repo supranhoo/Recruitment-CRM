@@ -51,6 +51,7 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'voice_callback', title: 'Voice screening: candidate asked for a call back', due: 0, crit: null, missed: false, policy: 'Voice screening: call the candidate back' },
   { id: 'voice_incomplete', title: 'Voice screening: questions still open', due: 0, crit: null, missed: false, policy: 'Voice screening: ask the remaining questions or place a follow-up call' },
   { id: 'voice_wrongno', title: 'Voice screening: wrong number', due: 0, crit: null, missed: false, policy: 'Voice screening: check the candidate\u2019s mobile number' },
+  { id: 'voice_optout', title: 'Voice screening: candidate asked not to be called again', due: 0, crit: null, missed: false, policy: 'Voice screening: the number is on the Do Not Disturb register; check the card and close or withdraw it with a reason if needed' },
   { id: 'switchover', title: 'Switch-over check: positions to fix', due: 0, crit: null, missed: false, policy: 'Typed offer details must match the pipeline before the switch-over date' },
   { id: 'tat_overdue', title: 'Positions past TAT', due: 0, crit: null, missed: false, policy: 'Plan next steps for overdue positions' },
   { id: 'day_note', title: 'Write your day note', due: 0, crit: null, missed: false, policy: 'After 5 pm when nothing is logged for today' }

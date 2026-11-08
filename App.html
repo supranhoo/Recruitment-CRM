@@ -2159,6 +2159,7 @@ function candidateDrawer(c, preset, parsedIn) {
     ${isNew ? `<div class="cvfill"><label for="cvFill"><b>Fill from a CV</b></label> <input type="file" id="cvFill" accept=".pdf,.docx,.doc,.jpg,.jpeg,.png">
       <span class="hint">Reads PDF and Word CVs, and scanned CVs or photos (OCR), in your browser; fills the empty fields, marks what to check, and looks for duplicates. The same file is attached as the CV.</span><div id="cvFillMsg" class="hint"></div></div>` : ''}
     <div id="dupNote"></div>
+    ${isNew || !data._dnc ? '' : '<div id="candDnc">' + dncBanner(data._dnc) + '</div>'}
     ${isNew ? '' : '<div id="candHistory"></div>'}
     <div id="candForm">${wrapForm(form(candidateFields(data), data, false))}</div>
     <fieldset><legend>CV</legend>
@@ -2172,6 +2173,7 @@ function candidateDrawer(c, preset, parsedIn) {
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawer;
+  if ($('#candDnc', body)) dncUndo($('#candDnc', body), { cand: data.Candidate_ID }, async () => { closeDrawer(); openCandidate(data.Candidate_ID); });
   if ($('#candHistory', body)) candHistorySection($('#candHistory', body), data.Candidate_ID);
   if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
@@ -6033,14 +6035,13 @@ async function renderVoiceAdmin(el) {
         <div class="field"><label for="vcQpm">Batch calls per minute</label><input id="vcQpm" type="number" min="1" max="6" step="1" value="${esc(C.queuePerMin || 2)}"><span class="hint">How fast a batch of up to 30 candidates is called, one after another.</span></div>
         <div class="field"><label for="vcHrs">Calling hours <span class="opt">(Monday to Saturday, India time)</span></label><input id="vcHrs" value="${esc(C.callHours || '09:00-19:00')}" maxlength="11" placeholder="09:00-19:00"><span class="hint">A batch waits outside these hours.</span></div>
         <div class="field wide"><label for="vcHook">Webhook address <span class="opt">(where the provider sends the result: the receiver\u2019s address, ending ?key=\u2026)</span></label><input id="vcHook" value="${esc(C.webhookUrl)}" maxlength="400" placeholder="https:\/\/\u2026"></div>
-        <div class="field wide"><div class="rs-row"><label class="chk"><input type="checkbox" id="vcDnd" ${C.dndRequired ? 'checked' : ''}> Check the Do Not Disturb list before every call (recommended; on)</label></div></div></div>
+        <div class="field wide"><p class="hint">The Do Not Disturb register is always checked before a call; it cannot be switched off.</p></div></div>
       <div class="drawer-actions" style="position:static">${C.keySet ? '<button class="btn" id="vcClear">Remove the API key</button>' : ''}<button class="btn primary" id="vcSave">Save</button></div></section>
     <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent calls</h2><span class="hint">${C.calls} in total</span></div>
       ${C.recent.length ? `<div class="table-wrap"><table class="bgv-table"><thead><tr><th>Call</th><th>When</th><th>Candidate</th><th>Number</th><th>Status</th><th>Note</th></tr></thead><tbody>${C.recent.map(c => `<tr><td><b>${esc(c.id)}</b></td><td class="nw">${esc(c.startedAt)}<span class="sub">${esc(String(c.startedBy).split('@')[0])}</span></td><td>${esc(c.cand)}</td><td>…${esc(c.last4)}</td><td><b class="${VOICE_STATUS_CLASS_[c.status] || ''}">${esc(c.status)}</b>${c.draft ? '<span class="sub">draft screening written</span>' : ''}</td><td>${esc(c.note)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No call has been placed yet.</div>'}</section>`;
   const save = async (extra, btn, label) => {
     busy(btn, true, 'Saving…');
-    if (!$('#vcDnd').checked && C.dndRequired && !confirm('Switch off the Do Not Disturb check? Candidates on the Do Not Disturb list could then be called.')) return;
-    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, maxQ: $('#vcMq').value, ratePerMin: $('#vcRate').value, queuePerMin: $('#vcQpm').value, callHours: $('#vcHrs').value, webhookUrl: $('#vcHook').value, dndRequired: $('#vcDnd').checked }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
+    try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, maxQ: $('#vcMq').value, ratePerMin: $('#vcRate').value, queuePerMin: $('#vcQpm').value, callHours: $('#vcHrs').value, webhookUrl: $('#vcHook').value }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
     catch (e) { toast(e, true); busy(btn, false, label); }
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
@@ -6177,6 +6178,19 @@ async function voiceReviewSection(el, a, P, rq) {
     <div class="btn-row"><button class="btn sm primary" id="vcRes">Check, rate and complete</button></div></section>`;
   $('#vcRes', el).onclick = async e => { busy(e.target, true, 'Opening\u2026'); try { voiceResultDialog(await api('apiVoiceCallDetail', last.id), { name: a.cand.name }); } catch (err) { toast(err, true); } busy(e.target, false, 'Check, rate and complete'); };
 }
+function dncBanner(dnc, ref) {
+  if (!dnc) return '';
+  return `<div class="note dnc-note"><b>Do not call.</b> ${esc(dnc.why)}${dnc.when ? ' \u00b7 ' + esc(dnc.when) : ''}${dnc.by ? ' \u00b7 ' + esc(dnc.by) : ''}.${can('voice_agent') ? ' <button class="btn sm" data-dnc-undo="1">Undo</button>' : ''}</div>`;
+}
+function dncUndo(root, ref, done) {
+  const b = $('[data-dnc-undo]', root); if (!b) return;
+  b.onclick = async e => {
+    const why = prompt('Why is this number being taken off the Do Not Disturb register?'); if (!why) return;
+    busy(e.target, true, 'Working\u2026');
+    try { await api(ref.app ? 'apiVoiceDndUnmark' : 'apiVoiceDndUnmarkCandidate', ref.app || ref.cand, why); toast('The number is off the register.'); await done(); }
+    catch (err) { toast(err, true); busy(e.target, false, 'Undo'); }
+  };
+}
 async function voiceCardSection(el, a, P) {
   if (!el) return;
   let rq = null;
@@ -6192,6 +6206,7 @@ async function voiceCardSection(el, a, P) {
   if (!el.isConnected) return;
   const last = calls[0];
   el.innerHTML = `<section class="app-sec"><h3>Voice screening call${can('voice_agent') ? ' <span class="badge">Admin</span>' : ''}</h3>
+    ${dncBanner(a.dnc)}
     <p class="hint">An AI voice agent asks this position’s confirmed screening questions by phone. The answers come back as a draft screening.${rq && rq.canCall && !can('voice_agent') && !can('voice_call') ? ' This call was approved: it can be placed once.' : ''}</p>
     ${last ? `<p class="sub">Last call ${esc(last.id)}: <b class="${VOICE_STATUS_CLASS_[last.status] || ''}">${esc(last.status)}</b> · ${esc(last.startedAt)}${last.outcome ? ' · ' + esc(last.outcome) : ''}${last.hasResult && last.totalQ ? (last.remaining > 0 ? ` · <b class="miss">${last.remaining} of ${last.totalQ} questions still without an answer</b>` : ' · every question has an answer') : ''}${last.duration ? ' · ' + Math.floor(last.duration / 60) + ' min ' + (last.duration % 60) + ' s' : ''}${last.draft ? ' · draft screening written' : ''}${last.note ? ' · ' + esc(last.note) : ''}</p>` : ''}
     <div class="btn-row"><button class="btn sm" id="vcDnc">Do not call this number</button><button class="btn sm" id="vcPrev">Preview the call</button><button class="btn sm primary" id="vcGo">Choose questions and call</button>${last && last.hasResult ? '<button class="btn sm" id="vcRes">View the result</button>' : ''}${last && last.hasResult && last.remaining > 0 ? '<button class="btn sm primary" id="vcFu">Ask the remaining questions</button><button class="btn sm" id="vcFuPrev">Open the call plan</button>' : ''}${last && last.status === 'Started' ? '<button class="btn sm" id="vcRef">Fetch the result</button>' : ''}</div><span class="hint" id="vcMsg"></span></section>`;
@@ -6218,6 +6233,11 @@ async function voiceCardSection(el, a, P) {
     if (!confirm('Add ' + a.cand.name + '\u2019s number to the Do Not Disturb register? The voice agent will never call it.')) return;
     busy(e.target, true); try { const r = await api('apiVoiceDndMark', a.App_ID, 'Marked from the card'); toast(r.added ? 'Added to the register' : 'Already on the register'); } catch (err) { toast(err, true); } busy(e.target, false, 'Do not call this number');
   };
+  if (a.dnc) {
+    ['vcGo', 'vcPrev', 'vcFu', 'vcFuPrev'].forEach(id => { const b = $('#' + id, el); if (b) { b.disabled = true; b.title = 'This number is on the Do Not Disturb register'; } });
+    const dc = $('#vcDnc', el); if (dc) dc.hidden = true;
+    dncUndo(el, { app: a.App_ID }, async () => { a.dnc = null; await voiceCardSection(el, a, P); });
+  }
   $('#vcPrev', el).onclick = e => run(true, e.target);
   $('#vcGo', el).onclick = e => openDesk(e.target, false, () => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); });
 }
@@ -7424,7 +7444,7 @@ async function viewPipeline(v) {
           ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
             <b>${esc(a.cand.name || a.Candidate_ID)}</b>
             <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
-            <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}${a.screen && a.screen.status === 'Complete' ? fitChip(a.screen.band) : ''}</span>
+            <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}${a.dnc ? `<span class="dnc-flag" title="${esc(a.dnc.why)}">Do not call</span>` : ''}${a.screen && a.screen.status === 'Complete' ? fitChip(a.screen.band) : ''}</span>
           </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
       }).join('')}</div>`;
     $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => { f.cardTab = 'work'; CARD_TL.delete(b.dataset.app); openApp(P.apps.find(a => a.App_ID === b.dataset.app)); });

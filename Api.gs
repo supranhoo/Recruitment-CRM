@@ -448,7 +448,9 @@ function apiGetCandidate(id) {
       Current_Designation: a.designation, HR_Result: a.hr, Sourced_By: a.src, CV_File_URL: a.cv, Last_Activity: a.last, Archived_On: a.on, _archived: 'Yes' };
     throw new Error('Candidate ' + id + ' was not found.');
   }
-  const o = toClient_(r); delete o._row; return o;
+  const o = toClient_(r); delete o._row;
+  try { const d = voiceDncFor_(voiceDncMap_(), r.Mobile); if (d) o._dnc = { why: d.why, when: d.when, by: d.by }; } catch (e) { }
+  return o;
 }
 
 /**

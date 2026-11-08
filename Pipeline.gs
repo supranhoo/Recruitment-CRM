@@ -110,12 +110,14 @@ function apiPipeline(lineId) {
     (fus[f.App_ID] = fus[f.App_ID] || []).push(toClient_({ date: f.FU_Date, mode: f.Mode, response: f.Response, risk: f.Risk, next: f.Next_Date, note: f.Note, by: f.By }));
   });
   const scrs = {}; readTable_(T.SCR.name).rows.forEach(function (s) { if (onLine[s.App_ID]) scrs[s.App_ID] = scrClient_(s, false); });
+  let dncMap = {}; try { dncMap = voiceDncMap_(); } catch (e) { }   // the Do Not Disturb register by number: only the reason, date and who go to the page
   const apps = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === lineId; }).map(function (a) {
     const o = appClient_(a);
     o.screen = scrs[a.App_ID] || null;
     const c = cands[a.Candidate_ID] || {};
     o.cand = toClient_({ id: c.Candidate_ID, name: c.Name, mobile: c.Mobile, email: c.Email, exp: c.Relevant_Experience, ctc: c.Current_CTC,
       designation: c.Current_Designation, hasCv: c.CV_File_URL ? 'Yes' : '', tech: c.Tech_Result, hr: c.HR_Result, techBy: c.Tech_Interview_By, hrBy: c.HR_Interview_By });
+    const dnc = voiceDncFor_(dncMap, c.Mobile); if (dnc) o.dnc = { why: dnc.why, when: dnc.when, by: dnc.by };
     o.history = (hist[a.App_ID] || []).sort(function (x, y) { return x.ms - y.ms; });
     o.followups = fus[a.App_ID] || [];
     o.sinceMs = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0;
