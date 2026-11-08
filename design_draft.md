@@ -280,3 +280,127 @@ An outbox sheet drained by a trigger (sends link-only mail with a log and a dail
 ### Rejected by author: checking only recorded spend, and a call-count cap with a provider-side limit
 
 Checking only the minutes already recorded, or capping call counts and relying on a prepaid credit at the provider. Rejected by author in favour of a reserve before each call. Recorded spend alone lets a batch overshoot by every call placed during the 30-minute result lag. A call-count cap depends on the provider offering a limit and does not follow call length. The accepted option depends on a rate that someone must set and check against the invoice.
+
+## Detailed Implementation
+
+This is the single list of everything that changes. There is no code here. Names in `code style` are the new or changed functions, columns and settings. Defaults marked "assumed" stand in for owner decisions listed under Open Questions and are changed in one place, a setting or constant, once the owner decides.
+
+### Delivery order
+
+Four releases, each with its own pull request, `BUILD_ID` increase, tests and document updates. Each can be stopped after.
+
+1. **Release 1: gate, statuses, reserve, reaper.** Retry stays off (`VOICE_RETRY_PLAN` empty). After this release, the first real batch of 5 to 10 candidates runs with a recruiter alongside and the owner reads the results.
+2. **Release 2: retry.** Only after the first batch has shown the real answer rate and call length.
+3. **Release 3: spoken opt-out.** Needs the agent's `do_not_call` disposition added in the provider workspace first (an Admin task, tested with one real call).
+4. **Release 4: result message for the interviewer and MRF owner.**
+
+### Files changed
+
+#### `VoiceScreen.gs` (all four releases)
+
+Release 1:
+*   `voiceMayCall_(u, app, cand, phone, cfg, opts)`: new. Gathers the facts (now, hours text, register hit, calls used today and limit, spent and reserved minutes, ceilings, open calls for the card and the number) and calls the pure core. Returns `{ok:true}` or `{ok:false, reason, status}` where `status` is the logged `Blocked (...)` value. Any error while gathering returns blocked with "Could not check", never allow.
+*   `voiceGateDecide_(facts)`: new, pure. Order: hours, opt-out, daily limit, budget, open call. Stops at the first failure. No sheet access, so it is unit-tested directly.
+*   `voiceStartFor_`: call `voiceMayCall_` after the card, caller, phone and plan are known and before `voiceLog_` writes `Starting`. Remove the `cfg.dndRequired` condition around the register check for real calls (the preview still reports it). Write `Reserved_Min` when the call is logged. A blocked call writes a `Voice_Calls` row with the reason in `Status_Note`.
+*   `VOICE_STATUSES_`: add `No answer`, `Busy`, `Blocked (Outside hours)`, `Blocked (Budget)`.
+*   `voiceOutcome_`: map `no_answer` to `No answer` and `busy` to `Busy`; `failed` and any unknown provider value stay `Failed` with the raw text in the note.
+*   `voiceUsedToday_`: count `No answer` and `Busy`; still exclude `Failed` and any `Blocked`.
+*   `voiceStats_`: separate buckets for no answer, busy and failed; add a second success figure, "screenings completed by a person", joined from `Screenings`; add spent, reserved and ceiling; add "ratings arrived" as present, empty or absent; add median minutes per answered call; add calls blocked by reason (hours, opt-out, budget, limit). `apiVoiceStats` passes the new inputs.
+*   `voiceCfg_` and `apiVoiceConfigSave`: new settings `VOICE_BUDGET_MONTH`, `VOICE_BUDGET_BATCH`, `VOICE_MAX_CALL_MIN` (whole number 1 to 30; assumed default 8), `VOICE_RETRY_PLAN`, `VOICE_OPTOUT_AUTO`. All values are validated before any write, as the existing settings are. `VOICE_DND_REQUIRED` stays in the settings page but its label says it affects the preview only.
+*   `voiceBudgetCheck_`: new, pure. Inputs spent, reserved, this call's reserve, monthly and batch ceilings, rate. If no rate is set and a ceiling in rupees is set, it returns blocked with "Set the cost per minute".
+*   `voiceBatchCheck_` and `apiVoiceBatchPreview`: show the number of calls that fit the per-batch ceiling and the monthly remainder. They already call `voiceStartFor_` in dry-run mode, so the gate's answer shows per card.
+*   `voiceQueueJob`: first step is `voiceIngest_` so results are fresh; then the reaper; then pick and place. The hours check is no longer at the top of the run only; each placement goes through the gate.
+*   `voiceQueueReap_`: new. For each `Calling` row older than 5 minutes, look in `Voice_Calls` for a row for the same card started since the claim: if found, set the row `Placed` with that `Call_ID`; if not, set it `Failed` with "Run ended before the call was placed; check the provider". Never sets `Waiting`.
+*   `voiceBudgetSweep_`: new. Clear `Reserved_Min` on calls with no result for longer than `VOICE_MAX_CALL_MIN` plus 60 minutes and mark them "No result: fetch or close" so a lost webhook cannot hold budget.
+*   `voiceSchema_`: add columns `Voice_Calls.Reserved_Min`, `Voice_Calls.Payload_Keys`; add `Voice_Queue` columns `Attempts`, `Max_Attempts`, `Not_Before`, `Stop_Reason` and status `Scheduled`. Add `voiceStatusRepair_`: a one-time idempotent pass that rewrites old `Failed` rows whose `Outcome` is "No answer" or "Busy" to the new statuses.
+*   `voiceIngestRun_` and `voiceApplyResult_`: write `Payload_Keys` (top-level field names of the payload) and clear `Reserved_Min`. Errors while applying a result no longer stamp `Processed_At` as done; the row is retried on the next run, and after 3 failures it is marked with the error for an Admin to see.
+*   `voiceFindCost_`: accept a value only under a key that names a cost and carries a currency or unit, and ignore keys named credit balance or pending charges. Cost stays empty until a real payload shows a real field.
+
+Release 2:
+*   `voiceRetryNext_(row, outcome, plan, now, hours)`: new, pure. Returns `{schedule, notBefore}`, `{stop, reason}` or `{none}`. Retries only after `No answer` or `Busy`. Stops on `not_interested`, `wrong_number`, `do_not_call`, a completed screening, or any `Blocked` result. Uses `Attempts` and `Max_Attempts` (assumed default 3) and the plan text (assumed default "busy 30 minutes, no answer 4 hours, then next day 11:00"). The next time is moved forward to the next calling-hours window.
+*   `voiceIngestRun_`: after recording a result, call `voiceRetryNext_` and update the queue row (`Scheduled` with `Not_Before`, or `Stopped` with `Stop_Reason`).
+*   `voiceQueuePick_`: pick `Waiting` rows and `Scheduled` rows whose `Not_Before` has passed, oldest first, one per number. The caller passes the numbers in open rows, resolved from the candidate record, so one number cannot be in two batches or called twice in a run.
+*   `apiVoiceBatchStart`: refuse a card or number that already has a `Waiting`, `Calling` or `Scheduled` row; the "one open batch per person" test counts only `Waiting` and `Calling`.
+*   `voiceQueueJob` and `voiceQueueTrigger_`: keep the trigger while any `Waiting`, `Calling` or `Scheduled` row exists; return at once when nothing is due; turn a `Scheduled` row older than 48 hours into `Stopped` with "retry window ended".
+*   `voiceTaskRows_`: emit a to-do for a card whose retries ended without an answer ("did not answer after N attempts").
+
+Release 3:
+*   `voiceDispositionAction_`: add `do_not_call`: stop retries for the card, emit a confirm to-do, and, if `VOICE_OPTOUT_AUTO` is on, add a `Voice_DND` row with source "Candidate opted out". `voiceDndAdd_` is reused; the register matches the 10-digit number as today.
+
+Release 4:
+*   `apiVoiceShareDraft(callId, who)`: new. `who` is `interviewer` or `mrf_owner`. Allowed only to a person who may review the card and only when the screening is complete. Looks up recipients (below), builds the message with `voiceShareBuild_`, returns `{text, links, missing}`, and writes an audit row "Result message prepared".
+*   `voiceShareBuild_(screening, call, line, who)`: new, pure. Interviewer message: candidate, position, link, outcome, confirmed answers, flags. MRF owner message: outcome and counts only. Never includes transcript, recording link, phone number or the agent's suggested ratings.
+*   `voiceShareRecipients_(line, who)`: new. Interviewer: names in the line's technical panel resolved through `panelEmailIndex_`; unmatched names are returned as "no address on file". MRF owner: the department head's address from the department master until the owner decides where the raiser is recorded.
+
+#### `Tasks.gs` (releases 2 and 3)
+
+*   `TASK_RULES_DEFAULT_`: add `voice_noanswer` ("Voice screening: no answer after the last attempt") and `voice_optout` ("Candidate asked not to be called: confirm"). Both are switchable in Admin → Task rules, like the existing voice rules. Rationale: after the last attempt, or an opt-out, a person decides; nothing is closed or rejected automatically.
+
+#### `App.html` (releases 1 to 4)
+
+*   `renderVoiceAdmin`: new settings fields (budget month and batch, max call minutes, retry plan, opt-out automatic, with unit labels) and the changed label on the Do Not Disturb setting.
+*   `voiceCommand`: show spent, reserved and ceiling labelled as estimates; no answer, busy and failed as separate figures; "screenings completed by a person"; ratings arrival; blocked calls by reason; the oldest unprocessed inbox row age and queue depth.
+*   `voiceBatchDialog`: show how many calls fit the per-batch ceiling and the monthly remainder; show the gate's reason per card (hours, opt-out, budget, limit, already queued); a `Scheduled` state with the next attempt time on batch progress rows.
+*   `voicePreviewDialog` and the card's call area: show "Outside calling hours" and "Over the budget" as clear refusals with the reason.
+*   `voiceResultDialog`: add *Prepare message for the interviewer* and *for the MRF owner* buttons, shown only when the screening is complete; show the returned text, a copy button and the Teams or e-mail links; show "no address on file" lines. The page script must not contain `//` or `/* */` comments (ADR-010).
+*   Status chips and filters: add `No answer` and `Busy`.
+
+#### `Styles.html` (as needed)
+
+*   Chip colours for the two new statuses and for the blocked reasons, reusing existing chip classes where possible. Rationale: the status chips must read differently on a dark or light theme at phone width.
+
+#### `Dashboard.gs` (release 1)
+
+*   `refreshDashboardJob`: no change to the 30-minute ingest call. Rationale: the queue job now ingests itself, and the 30-minute job stays as the fallback when no batch is running. Listed so a reviewer sees it was considered.
+
+#### `Config.gs` (every release)
+
+*   `BUILD_ID`: raise the release number in the same pull request as the change (project rule, SSOT 12.5).
+
+#### `Compliance.gs` (none)
+
+*   No change. `voiceSchema_` is already a step of `ensureSchema_`, and the schema version stays at 47 because the additions self-heal. Listed to record the decision.
+
+#### `E2E.gs` (every release)
+
+*   New group of cases (names assumed V7 to V14): single call refused outside hours and on a Sunday; hours re-checked for each call in a batch run that crosses 19:00; a number on the register refused with `VOICE_DND_REQUIRED` set to No; a `No answer` call counts against the daily limit; a reserve blocks the call that would pass the monthly ceiling and a per-batch ceiling; a stale `Calling` row is resolved to `Placed` or `Failed` and never `Waiting`; retry schedule and stop rules (release 2); `do_not_call` stops retries and, with the setting on, writes the register (release 3); the share message omits transcript, phone number and ratings, and reports missing addresses (release 4); old `Failed` rows with outcome "No answer" are repaired once.
+*   Pure-function cases for `voiceGateDecide_`, `voiceBudgetCheck_`, `voiceRetryNext_` and `voiceShareBuild_`, including fail-closed behaviour.
+
+#### `EGM.md` (every release)
+
+*   Update the root contract's Global Invariants (hours, opt-out and budget are enforced in one gate; no override for opt-out) and the `VoiceScreen.gs` entry. Update `docs/voice-webhook/EGM.md` only if the receiver changes (it does not in this plan).
+
+#### `docs/BFCL_Recruitment_CRM_SSOT.md` (every release)
+
+*   Section 8.7: the gate, the new statuses, the reserve, retry, the `do_not_call` disposition, the share message, and the new settings. Section 12.2: the new settings keys. Section 5: the new columns and the `Scheduled` status. Section 10.4: the two new task rules. Section 13: one ADR for the gate and unanswered-call statuses, one for the reserve, one for retry on the queue, one for the share message. Section 14: a changelog entry per release.
+
+#### `README.md` (none)
+
+*   No change. The release steps are unchanged.
+
+#### `docs/voice-webhook/Code.gs` and `docs/voice-webhook/README.md` (none)
+
+*   No change to the receiver. The plan reads the payload the receiver already stores. The secret rotation is an Admin step recorded in the release notes, not a code change.
+
+#### Provider workspace (Admin, outside the repository)
+
+*   Add the `do_not_call` disposition to the agent's post-call analysis (release 3). Place one real call to a team-owned number to see the raw payload before the first batch, and read the shape of `screening_ratings`. Confirm the provider's billing basis for unanswered rings and whether the provider retries on its own.
+
+### Steps inside Release 1, in order
+
+1. Add the schema columns and the status repair to `voiceSchema_`.
+2. Add `voiceGateDecide_`, `voiceBudgetCheck_` and their tests.
+3. Change `voiceOutcome_`, `VOICE_STATUSES_`, `voiceUsedToday_`, `voiceStats_` and every other reader of `Status` found by searching for `'Failed'` and `'Completed'` in `VoiceScreen.gs`, `Tasks.gs` and `App.html`.
+4. Wire `voiceMayCall_` into `voiceStartFor_` and write `Reserved_Min`.
+5. Add the reaper and budget sweep to `voiceQueueJob`, and run ingest first.
+6. Add the settings, their validation and the page fields.
+7. Update the command center and batch dialog.
+8. Run `e2eTest()` from the editor, then a preview of the screens at phone width.
+9. Update the documents and `BUILD_ID`, open the pull request, merge, approve the production deployment.
+
+### Risks carried into implementation
+
+*   A reader of `Status` that is missed will misclassify `No answer` or `Busy` without an error. The code search and the per-reader tests are the only guard.
+*   The reserve and ceiling depend on a rate that has not been set and on whether the provider bills unanswered rings.
+*   The Admin settings page can still change the hours window and the ceilings, so a wrong value there changes the limits. Changes are audited by name, not by value, so the audit cannot show who set a bad ceiling; storing before and after for these new settings is a small addition worth making.
+*   Nothing guarantees that the interviewer or MRF owner receives a message, because a person sends it.
