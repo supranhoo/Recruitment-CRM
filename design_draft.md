@@ -402,5 +402,5 @@ Release 4:
 
 *   A reader of `Status` that is missed will misclassify `No answer` or `Busy` without an error. The code search and the per-reader tests are the only guard.
 *   The reserve and ceiling depend on a rate that has not been set and on whether the provider bills unanswered rings.
-*   The Admin settings page can still change the hours window and the ceilings, so a wrong value there changes the limits. Changes are audited by name, not by value, so the audit cannot show who set a bad ceiling; storing before and after for these new settings is a small addition worth making.
+*   The Admin settings page can still change the hours window and the ceilings, so a wrong value there changes the limits. Settings changes are audited by name, not by value, so the log shows who changed a ceiling but not to what; storing before and after for these new settings is a small addition worth making.
 *   Nothing guarantees that the interviewer or MRF owner receives a message, because a person sends it.
