@@ -650,6 +650,30 @@ function apiVoiceDndAdd(text, note) {
   const r = voiceDndAdd_(u, p.numbers, p.numbers.length > 5 ? 'Uploaded list' : 'HR added', note);
   r.bad = p.bad.slice(0, 10); r.badCount = p.bad.length; return r;
 }
+/**
+ * Numbers read from the provider's own Do Not Disturb list (+91 form) that the register does not hold yet: normalised, duplicates and
+ * invalid entries dropped. have = the 10-digit numbers already on the register.
+ */
+function voiceDndSyncRows_(providerNumbers, have) {
+  const known = {}; (have || []).forEach(function (n) { known[voiceDndNorm_(n)] = true; });
+  const out = [], seen = {}; let invalid = 0;
+  (providerNumbers || []).forEach(function (raw) {
+    const n = voiceDndNorm_(raw);
+    if (!n) { invalid++; return; }
+    if (known[n] || seen[n]) return;
+    seen[n] = true; out.push(n);
+  });
+  return { numbers: out, invalid: invalid, already: (providerNumbers || []).length - out.length - invalid };
+}
+/** Mirrors the provider's Do Not Disturb list into the register (Admin). numbers: the provider's list as it was read (a person or Claude reads it with the provider's tools). */
+function apiVoiceDndImportProvider(numbers) {
+  const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
+  if (!Array.isArray(numbers)) throw new Error('Send the provider\u2019s numbers as a list.');
+  if (numbers.length > 20000) throw new Error('At most 20,000 numbers at a time.');
+  const sync = voiceDndSyncRows_(numbers, voiceDndNumbers_());
+  const r = sync.numbers.length ? voiceDndAdd_(u, sync.numbers, 'Sarvam list', 'Synced from the provider list') : { added: 0, already: 0 };
+  return { added: r.added, already: sync.already + r.already, invalid: sync.invalid };
+}
 /** Takes a number off the register (Admin), with a reason; the row is kept and marked. */
 function apiVoiceDndRemove(phone, reason) {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
