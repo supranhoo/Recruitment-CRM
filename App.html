@@ -97,7 +97,7 @@ function viewData(v, key, call, again, label, opts) {
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
-  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare']);
+  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
 function perfNow() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
@@ -358,6 +358,7 @@ const NAV_ICON = {
   jdm: '<path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14.5 3.5V8H19"/><path d="M10 12h6M10 15.5h6M10 19h3.5"/><path d="M4.5 7v14h11"/>',
   bgv: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/><path d="m8.2 10.5 1.8 1.8 3-3.3"/>',
   ctc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01M8.5 14.5h.01M12 14.5h.01M15.5 14.5h.01M8.5 18h.01M12 18h.01"/><path d="M15.5 16.5V18"/>',
+  policy: '<path d="M6 3.5h9l3.5 3.5v13.5H6z"/><path d="M15 3.5V7h3.5"/><circle cx="11.5" cy="13" r="2.6"/><path d="m13.4 15 2.1 2.1"/>',
   admin: '<path d="M4 6.5h9M17 6.5h3M4 12h3M11 12h9M4 17.5h11M19 17.5h1"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17.5" r="2"/>',
 };
 function navSvg(k) { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICON[k] || ''}</svg>`; }
@@ -365,7 +366,7 @@ function buildRail(user) {
   const lead = (user.perms || []).includes('lead');
   const groups = [
     ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], ['bgv', 'BGV tracker'], (user.perms || []).includes('ctc_use') && ['ctc', 'CTC calculator'], ['daily', 'Daily log']]],
-    ['Reports', [['kpi', 'KPI scorecard'], ['org', 'Organogram'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
+    ['Reports', [['policy', 'Policy search'], ['kpi', 'KPI scorecard'], ['org', 'Organogram'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
     ['Setup', [['panel', 'Interview panel'], ['jdm', 'JD Master'], lead && ['admin', 'Admin']]]];
   const initials = String(user.name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
   late('#rail').innerHTML = `<div class="rail-head"><div class="brand" aria-label="BFCL Recruitment"><span class="brand-mark" aria-hidden="true"></span><span class="lbl brand-text" aria-hidden="true"><b>BFCL</b><small>Recruitment</small></span></div>
@@ -386,7 +387,7 @@ function setRail(mini, save) {
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
-const VIEWS = { org: viewOrg, depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
+const VIEWS = { org: viewOrg, depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, policy: viewPolicy, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
   S.view = view; S.candStale = true;
@@ -4065,13 +4066,15 @@ async function viewAdmin(v) {
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="kpit" aria-selected="${f.tab === 'kpit'}">KPI targets</button>
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
-      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
+      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('lead') ? `<button role="tab" data-t="checkin" aria-selected="${f.tab === 'checkin'}">Check-in plan</button>` : ''}${can('policy_manage') ? `<button role="tab" data-t="policies" aria-selected="${f.tab === 'policies'}">Policies</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
   const el = $('#adBody');
   if (f.tab === 'users') return renderUsers(el, v);
   if (f.tab === 'voice' && can('voice_agent')) return renderVoiceAdmin(el);
   if (f.tab === 'routes' && can('tat_view')) return renderRoutesAdmin(el);
+  if (f.tab === 'checkin' && can('lead')) return renderCheckinPlan(el);
+  if (f.tab === 'policies' && can('policy_manage')) return renderPolicyAdmin(el);
   if (f.tab === 'tat') return renderTatRules(el);
   if (f.tab === 'roles') return renderRoles(el);
   if (f.tab === 'grades') return renderGrades(el);
@@ -6360,6 +6363,273 @@ function voicePreviewDialog(r) {
 }
 
 /* ---- Hiring routes (fast-track) ---- */
+const CK_STATUS = { Planned: 'Planned', Waiting: 'Waiting', Skipped: 'Skipped' };
+function ckAskText(list) { return (list || []).map(a => [String(a.q || '').replace(/\|/g, '/'), a.type, a.risk || '', String(a.signal || '').replace(/\|/g, '/')].join(' | ')).join('\n'); }
+function ckParseAsk(text) {
+  return String(text || '').split('\n').map(x => x.trim()).filter(Boolean).map(line => {
+    const p = line.split('|').map(x => x.trim());
+    return { q: p[0], type: p[1] || 'text', risk: p[2] || '', signal: p.slice(3).join(' / ') };
+  });
+}
+async function checkinCardSection(el, a) {
+  let r; try { r = await api('apiCheckinFor', a.App_ID); } catch (e) { return; }
+  if (!r.live || !r.calls.length) return;
+  el.innerHTML = `<section class="app-sec"><h3>Check-in calls <span class="sub">plan ${esc(r.version)}</span></h3>
+    <p class="sub">Dates only. No check-in call is placed yet.</p>
+    <div class="table-wrap"><table><thead><tr><th>Call</th><th>Date</th><th>Status</th></tr></thead><tbody>${r.calls.map(c => `<tr style="cursor:default"><td>${esc(c.title)}</td><td>${c.due ? esc(fmtDate(c.due)) : '—'}</td><td>${esc(CK_STATUS[c.status] || c.status)}${c.reason ? `<span class="sub">${esc(c.reason)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></section>`;
+}
+async function renderCheckinPlan(el) {
+  let r; try { r = await api('apiCheckinPlan'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const cur = r.versions.find(v => v.id === r.current) || r.versions[0];
+  const anchorName = id => (r.anchors.find(x => x.id === id) || {}).name || id;
+  const when = t => t.offset === 0 ? `on the ${anchorName(t.anchor)} day` : t.offset < 0 ? `${-t.offset} day${t.offset === -1 ? '' : 's'} before the ${anchorName(t.anchor)}` : `${t.offset} day${t.offset === 1 ? '' : 's'} after the ${anchorName(t.anchor)}`;
+  el.innerHTML = `<div class="note">The check-in plan is the timeline of calls from the accepted offer to 90 days after joining: <b>when</b> each call is made, <b>what it asks</b> and <b>what it tells</b> the candidate.
+      In this release the plan only shows the dates on each card. <b>No check-in call is placed yet</b>, and a call never moves a stage or sets the risk by itself. A call never speaks about pay or terms.</div>
+    <div class="filters" style="margin-top:12px"><div style="flex:1"></div>${r.canEdit ? '<button class="btn primary" id="ckEdit">Change the plan</button>' : '<span class="hint">Only the Head of HR or the admin can change this.</span>'}</div>
+    <h3 style="margin:8px 0">Plan ${esc(cur ? cur.id : '')} in force${cur ? ` <span class="sub">from ${cur.eff <= '1900-01-02' ? 'all dates' : esc(fmtDate(cur.eff))}</span>` : ''}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Call</th><th>When</th><th>Asks</th><th>Tells</th><th>Tries</th></tr></thead><tbody>
+    ${cur ? cur.touches.map(t => `<tr style="cursor:default" class="${t.active === 'No' ? 'muted' : ''}"><td><b>${esc(t.id)}</b> ${esc(t.title)}${t.active === 'No' ? '<span class="sub">switched off</span>' : ''}${t.must === 'Yes' ? '<span class="sub">always kept</span>' : ''}</td>
+      <td>${esc(when(t))}</td><td>${t.ask.length ? `<ol style="margin:0 0 0 16px;padding:0">${t.ask.map(x => `<li>${esc(x.q)}</li>`).join('')}</ol>` : '<span class="muted">—</span>'}</td>
+      <td>${t.inform.length ? `<ul style="margin:0 0 0 16px;padding:0">${t.inform.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<span class="muted">—</span>'}</td><td class="num">${t.attempts}</td></tr>`).join('') : ''}</tbody></table></div>
+    <h3 style="margin:22px 0 8px">Version history</h3>
+    <div class="table-wrap"><table><thead><tr><th>Version</th><th>Effective</th><th>Calls</th><th>Note</th><th>By</th></tr></thead><tbody>
+    ${r.versions.map(v => `<tr style="cursor:default"><td><b>${esc(v.id)}</b>${v.status !== 'Active' ? '<span class="sub">superseded</span>' : ''}</td><td>${v.eff <= '1900-01-02' ? 'all dates' : esc(fmtDate(v.eff))}</td><td>${v.touches.length}</td><td>${esc(v.note)}</td><td>${esc(v.by)}<span class="sub">${esc(v.at)}</span></td></tr>`).join('')}</tbody></table></div>`;
+  if ($('#ckEdit', el)) $('#ckEdit', el).onclick = () => checkinEditor(r, cur, () => renderCheckinPlan(el));
+}
+function checkinEditor(r, cur, done) {
+  const b = openDrawer('Change the check-in plan', `<p class="hint" style="margin:0 0 8px">One block per call. Write each question on its own line as <b>question | type | risk | what a worrying answer means</b>. Type is yesno, text, number or choice; risk is Green, Amber, Red or empty. Write each fact to tell on its own line. You can use ${r.fields.map(f => '{' + f + '}').join(', ')}. Do not mention pay or terms.</p>
+    <div id="ckBlocks"></div>
+    <div class="btn-row" style="margin:8px 0"><button class="btn sm" id="ckAdd">Add a call</button></div>
+    <fieldset><div class="grid"><div class="field"><label for="ckEff">Takes effect from</label><input type="date" id="ckEff" value="${today()}" min="${today()}"></div>
+      <div class="field"><label for="ckNotice">Preview with a notice period of (days)</label><input type="number" id="ckNotice" min="10" max="120" value="45"></div></div>
+      <div class="field" style="margin-top:8px"><label for="ckNote">Why is the plan changing? (at least 10 characters)</label><input id="ckNote" placeholder="e.g. Added a call before the joining day"></div></fieldset>
+    <div id="ckPrev"></div>
+    <div class="drawer-actions"><button class="btn" id="ckCancel">Cancel</button><button class="btn" id="ckPreview">Preview</button><button class="btn primary" id="ckSave" disabled>Save as a new version</button></div>`);
+  const box = $('#ckBlocks', b);
+  const blockHtml = t => `<fieldset class="ck-block" data-id="${esc(t.id)}"><legend><b>${esc(t.id)}</b></legend><div class="grid">
+      <div class="field"><label>Title</label><input data-k="title" value="${esc(t.title)}"></div>
+      <div class="field"><label>Counted from</label><select data-k="anchor">${r.anchors.map(x => `<option value="${x.id}" ${x.id === t.anchor ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Days (negative = before)</label><input type="number" data-k="offset" min="-365" max="365" value="${t.offset}"></div>
+      <div class="field"><label>Tries</label><select data-k="attempts">${[1, 2, 3].map(n => `<option ${n === t.attempts ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label><input type="checkbox" data-k="active" ${t.active === 'No' ? '' : 'checked'}> On</label></div>
+      <div class="field"><label><input type="checkbox" data-k="must" ${t.must === 'Yes' ? 'checked' : ''}> Always keep</label></div></div>
+      <div class="field"><label>Questions</label><textarea data-k="ask" rows="4">${esc(ckAskText(t.ask))}</textarea></div>
+      <div class="field"><label>Facts to tell</label><textarea data-k="inform" rows="3">${esc((t.inform || []).join('\n'))}</textarea></div>
+      <div class="btn-row"><button class="btn sm" data-rm="1">Remove this call</button></div></fieldset>`;
+  (cur ? cur.touches : []).forEach(t => box.insertAdjacentHTML('beforeend', blockHtml(t)));
+  const stale = () => { $('#ckSave', b).disabled = true; $('#ckPrev', b).innerHTML = ''; };
+  const wire = () => $$('.ck-block', box).forEach(blk => {
+    $$('input,select,textarea', blk).forEach(i => { i.oninput = stale; i.onchange = stale; });
+    $('[data-rm]', blk).onclick = () => { blk.remove(); stale(); };
+  });
+  wire();
+  $('#ckAdd', b).onclick = () => {
+    const used = $$('.ck-block', box).map(x => Number(x.dataset.id.slice(1)));
+    const id = 'C' + (Math.max(0, ...used) + 1);
+    box.insertAdjacentHTML('beforeend', blockHtml({ id, title: '', anchor: 'EDOJ', offset: -7, attempts: 2, active: 'Yes', must: 'No', ask: [], inform: [] }));
+    wire(); stale();
+  };
+  const payload = () => ({
+    eff: $('#ckEff', b).value, note: $('#ckNote', b).value, notice: Number($('#ckNotice', b).value),
+    touches: $$('.ck-block', box).map(blk => {
+      const g = k => $(`[data-k="${k}"]`, blk);
+      return { id: blk.dataset.id, title: g('title').value, anchor: g('anchor').value, offset: Number(g('offset').value), attempts: Number(g('attempts').value),
+        active: g('active').checked ? 'Yes' : 'No', must: g('must').checked ? 'Yes' : 'No', ask: ckParseAsk(g('ask').value), inform: g('inform').value.split('\n').map(x => x.trim()).filter(Boolean) };
+    })
+  });
+  $('#ckCancel', b).onclick = closeDrawer;
+  $('#ckPreview', b).onclick = async () => {
+    const btn = $('#ckPreview', b); busy(btn, true, 'Checking…');
+    try {
+      const x = await api('apiCheckinPreview', payload());
+      $('#ckPrev', b).innerHTML = `<div class="note" style="margin-top:12px">For a sample candidate who accepts today (${esc(fmtDate(x.accepted))}) and joins on ${esc(fmtDate(x.edoj))}:</div>
+        <div class="table-wrap"><table><thead><tr><th>Call</th><th>Date</th><th>What the candidate hears</th></tr></thead><tbody>${x.calls.map(c => `<tr style="cursor:default" class="${c.status === 'Planned' ? '' : 'muted'}"><td><b>${esc(c.id)}</b> ${esc(c.title)}</td>
+          <td>${c.due ? esc(fmtDate(c.due)) : '—'}<span class="sub">${esc(c.status)}${c.reason ? ' · ' + esc(c.reason) : ''}</span></td>
+          <td>${c.inform.map(t => `<div>${esc(t)}</div>`).join('')}${c.ask.map(t => `<div><i>${esc(t)}</i></div>`).join('')}</td></tr>`).join('')}</tbody></table></div>`;
+      $('#ckSave', b).disabled = false;
+    } catch (e) { toast(e, true); }
+    busy(btn, false, 'Preview');
+  };
+  $('#ckSave', b).onclick = async () => {
+    const btn = $('#ckSave', b); busy(btn, true, 'Saving…');
+    try { const x = await api('apiCheckinSave', payload()); toast(`Saved as ${x.version}.`); closeDrawer(); done(); }
+    catch (e) { toast(e, true); busy(btn, false, 'Save as a new version'); }
+  };
+}
+function policyHeading(line) {
+  if (line.length > 90) return '';
+  const m = line.match(/^(?:(?:Section|Clause|Article|Chapter)\s+)?(\d+(?:\.\d+)*)[.)]?\s+[A-Z]/);
+  if (m) return m[1];
+  const a = line.match(/^(annexure|appendix|schedule)\s+\w+/i);
+  if (a) return a[0];
+  if (/^[A-Z0-9][A-Z0-9 &,\-/()]{3,78}$/.test(line) && (line.match(/[A-Z]/g) || []).length >= 3) return line.slice(0, 50);
+  return '';
+}
+function policyChunk(pages) {
+  const MAX = 1200, MIN = 300, OVER = 150, HARD = 1700, out = [];
+  let buf = '', sec = '', startPage = 0, added = 0;
+  const emit = text => { const t = text.replace(/\s+/g, ' ').trim(); if (t.length >= 20) out.push({ section: sec, page: startPage, text: t }); };
+  pages.forEach(pg => {
+    String(pg.text || '').split('\n').forEach(raw => {
+      const line = raw.replace(/\s+/g, ' ').trim();
+      if (!line || /^(page\s*)?\d+(\s*(of|\/)\s*\d+)?$/i.test(line)) return;
+      const h = policyHeading(line);
+      if (h && added >= 20) { emit(buf); buf = ''; added = 0; } else if (h && added === 0) buf = '';
+      if (h) sec = h;
+      if (!buf) startPage = pg.page;
+      buf += (buf ? ' ' : '') + line; added += line.length;
+      while (buf.length > HARD) {
+        let pos = buf.lastIndexOf('. ', HARD);
+        if (pos < MIN) pos = buf.lastIndexOf(' ', HARD);
+        if (pos < MIN) pos = HARD;
+        emit(buf.slice(0, pos + 1)); buf = buf.slice(pos + 1).trim(); added = buf.length;
+      }
+      if (added >= MAX && /[.!?:;]$/.test(line)) {
+        emit(buf);
+        buf = buf.slice(-OVER).replace(/^\S*\s/, ''); added = 0; startPage = pg.page;
+      }
+    });
+  });
+  if (added >= 20) emit(buf);
+  return out;
+}
+function pdfPageText(tc) {
+  let out = '', lastY = null, lastEnd = null;
+  tc.items.forEach(it => {
+    if (typeof it.str !== 'string') return;
+    const x = it.transform[4], y = it.transform[5], fs = Math.hypot(it.transform[2], it.transform[3]) || 10;
+    if (lastY !== null && Math.abs(y - lastY) > fs * 0.5) out += '\n';
+    else if (lastEnd !== null && x - lastEnd > fs * 0.2) out += ' ';
+    out += it.str; lastY = y; lastEnd = x + (it.width || 0);
+    if (it.hasEOL) { out += '\n'; lastY = null; lastEnd = null; }
+  });
+  return out;
+}
+async function extractPolicyPages(file, report) {
+  const name = String(file.name || '').toLowerCase();
+  if (/\.docx$/.test(name)) return [{ page: 0, text: await extractCvText(file, report) }];
+  if (!(/\.pdf$/.test(name) || file.type === 'application/pdf')) throw new Error('Add the policy as a PDF or a Word (.docx) file.');
+  const buf = await file.arrayBuffer();
+  await loadScript(CV_LIBS.pdf);
+  if (!window._pdfWorkerUrl) {
+    const src = await (await fetch(CV_LIBS.pdfWorker)).text();
+    window._pdfWorkerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = window._pdfWorkerUrl;
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise, pages = [];
+  let scanned = 0;
+  for (let i = 1; i <= Math.min(doc.numPages, 300); i++) {
+    report(`Reading page ${i} of ${doc.numPages}…`);
+    const page = await doc.getPage(i);
+    let text = pdfPageText(await page.getTextContent());
+    if (text.replace(/\s/g, '').length < 30 && scanned < 40) {
+      scanned++;
+      const vp = page.getViewport({ scale: 2.2 }), cv = document.createElement('canvas');
+      cv.width = vp.width; cv.height = vp.height;
+      await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      text = await ocrImages([{ passes: [ocrCanvas(cv, 1)] }], report);
+    }
+    pages.push({ page: i, text });
+  }
+  return pages;
+}
+async function policyHash(text) {
+  try { const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return ''; }
+}
+function policyMark(text, words) {
+  let h = esc(text);
+  words.forEach(w => { if (w.length < 3) return; h = h.replace(new RegExp('(' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>'); });
+  return h;
+}
+async function viewPolicy(v) {
+  const f = S.policy = S.policy || { q: '', res: null };
+  v.innerHTML = `<div class="page-head"><div><h1>Policy search</h1><p>Find the passage of the company policy that answers a question. The result is the policy text itself, with its document, version, section and page. Nothing is guessed.</p></div></div>
+    <section class="panel"><div class="field"><label for="plQ">Your question</label><input id="plQ" maxlength="500" placeholder="e.g. Which days can a new employee join?" value="${esc(f.q)}"></div>
+      <p class="hint" style="margin:6px 0 10px">Ask about the rule, not about a person. Do not type phone numbers, e-mail addresses or candidate details.</p>
+      <div class="btn-row"><button class="btn primary" id="plGo">Search the policy</button></div></section>
+    <div id="plOut" style="margin-top:14px"></div>`;
+  const out = $('#plOut', v);
+  const draw = () => {
+    const r = f.res; if (!r) { out.innerHTML = ''; return; }
+    if (r.state !== 'found') { out.innerHTML = `<div class="note warn-note">${esc(r.why)}</div>`; return; }
+    const words = f.q.toLowerCase().split(/[^a-z0-9.]+/).filter(Boolean);
+    out.innerHTML = `<p class="hint" style="margin:0 0 8px">${r.passages.length} passage${r.passages.length === 1 ? '' : 's'}, best match first. This is the policy text; for a decision on a case, ask HR.</p>` + r.passages.map(p => `<section class="panel" style="margin-bottom:10px">
+      <div class="sub" style="margin:0 0 6px"><b>${esc(p.title)}</b>${p.version ? ' · ' + esc(p.version) : ''}${p.section ? ' · section ' + esc(p.section) : ''}${p.page ? ' · page ' + p.page : ''}${p.eff ? ' · effective ' + esc(fmtDate(p.eff)) : ''}</div>
+      <div style="white-space:pre-wrap">${policyMark(p.text, words)}</div></section>`).join('');
+  };
+  draw();
+  const go1 = async () => {
+    const q = $('#plQ', v).value.trim(); f.q = q;
+    const btn = $('#plGo', v); busy(btn, true, 'Searching…');
+    try { f.res = await api('apiPolicySearch', q); draw(); } catch (e) { toast(e, true); }
+    busy(btn, false, 'Search the policy');
+  };
+  $('#plGo', v).onclick = go1;
+  $('#plQ', v).onkeydown = e => { if (e.key === 'Enter') go1(); };
+}
+async function renderPolicyAdmin(el) {
+  let r; try { r = await api('apiPolicyList'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
+  const live = r.docs.filter(d => d.status === 'Active');
+  el.innerHTML = `<div class="note">All policy documents live in one Drive folder (<a href="${esc(r.folderUrl)}" target="_blank" rel="noopener">open the folder</a>). Add a policy here and the app reads it, cuts it into passages and makes it searchable on the <b>Policy search</b> page. A replaced or withdrawn policy stays in the list as history and is no longer searched.
+      No AI is used in this release. Nothing about a candidate is ever stored here.</div>
+    <div class="filters" style="margin-top:12px"><div style="flex:1"></div><button class="btn primary" id="plAdd">Add a policy</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Policy</th><th>Version</th><th>Effective</th><th>Status</th><th class="num">Passages</th><th>Added</th><th></th></tr></thead><tbody>
+    ${r.docs.map(d => `<tr style="cursor:default" class="${d.status === 'Active' ? '' : 'muted'}"><td><b>${esc(d.title)}</b>${d.url ? ` <a href="${esc(d.url)}" target="_blank" rel="noopener">file</a>` : ''}${d.note ? `<span class="sub">${esc(d.note)}</span>` : ''}</td><td>${esc(d.version)}</td><td>${esc(fmtDate(d.eff))}</td><td>${esc(d.status)}${d.replaces ? `<span class="sub">replaced ${esc(d.replaces)}</span>` : ''}</td><td class="num">${d.chunks}</td>
+      <td>${esc(d.by)}<span class="sub">${esc(d.at)}</span></td><td class="nw">${d.status === 'Active' ? `<button class="btn sm" data-wd="${esc(d.id)}">Withdraw</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No policy has been added yet.</td></tr>'}</tbody></table></div>
+    <h3 style="margin:22px 0 8px">Questions the policies did not cover <span class="sub">${r.asked} asked in total</span></h3>
+    ${r.notCovered.length ? `<div class="table-wrap"><table><thead><tr><th>Question</th><th>Asked by</th><th>On</th></tr></thead><tbody>${r.notCovered.map(x => `<tr style="cursor:default"><td>${esc(x.q)}</td><td>${esc(x.by)}</td><td>${esc(x.at)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">None yet.</p>'}`;
+  $('#plAdd', el).onclick = () => policyAddDrawer(live, () => renderPolicyAdmin(el));
+  $$('[data-wd]', el).forEach(b => b.onclick = async () => {
+    const why = prompt('Why is this policy withdrawn? (at least 10 characters)'); if (!why) return;
+    busy(b, true, 'Withdrawing…');
+    try { await api('apiPolicyWithdraw', b.dataset.wd, why); toast('Policy withdrawn.'); renderPolicyAdmin(el); } catch (e) { toast(e, true); busy(b, false, 'Withdraw'); }
+  });
+}
+function policyAddDrawer(live, done) {
+  const b = openDrawer('Add a policy', `<fieldset><div class="grid">
+      <div class="field wide"><label for="paFile">Policy file (PDF or Word)</label><input type="file" id="paFile" accept=".pdf,.docx,application/pdf"></div>
+      <div class="field wide"><label for="paTitle">Title</label><input id="paTitle" placeholder="e.g. BFCL Recruitment Policy"></div>
+      <div class="field"><label for="paVer">Version</label><input id="paVer" placeholder="e.g. 2.0"></div>
+      <div class="field"><label for="paEff">Effective from</label><input type="date" id="paEff" max="${today()}" value="${today()}"></div>
+      <div class="field wide"><label for="paRep">This replaces</label><select id="paRep"><option value="">Nothing (a new policy)</option>${live.map(d => `<option value="${esc(d.id)}">${esc(d.title)} ${esc(d.version)}</option>`).join('')}</select></div>
+      <div class="field wide"><label for="paNote">Note</label><input id="paNote" placeholder="optional"></div></div></fieldset>
+    <div id="paPrev"></div>
+    <div class="drawer-actions"><button class="btn" id="paCancel">Cancel</button><button class="btn" id="paRead">Read the file</button><button class="btn primary" id="paSave" disabled>Add the policy</button></div>`);
+  let chunks = [], text = '', file = null;
+  const stale = () => { $('#paSave', b).disabled = true; };
+  $('#paFile', b).onchange = () => { stale(); $('#paPrev', b).innerHTML = ''; const x = $('#paFile', b).files[0]; if (x && !$('#paTitle', b).value) $('#paTitle', b).value = x.name.replace(/\.[^.]+$/, ''); };
+  $('#paCancel', b).onclick = closeDrawer;
+  $('#paRead', b).onclick = async () => {
+    file = $('#paFile', b).files[0]; if (!file) return toast('Choose the policy file first.', true);
+    if (file.size > 15 * 1024 * 1024) return toast('The file is over 15 MB.', true);
+    const btn = $('#paRead', b), prev = $('#paPrev', b); busy(btn, true, 'Reading…');
+    try {
+      const pages = await extractPolicyPages(file, m => { prev.innerHTML = `<p class="hint">${esc(typeof m === 'string' ? m : (m && m.status) || 'Reading…')}</p>`; });
+      text = pages.map(p => p.text).join('\n');
+      chunks = policyChunk(pages);
+      const chars = text.replace(/\s+/g, ' ').trim().length;
+      prev.innerHTML = `<div class="note ${chars < 200 || chunks.length < 1 ? 'warn-note' : ''}" style="margin-top:12px">${pages.length} page${pages.length === 1 ? '' : 's'}, ${chars.toLocaleString()} characters, <b>${chunks.length} passages</b>. Check that the first passages read properly before adding.</div>
+        ${chunks.slice(0, 3).map(c => `<div class="panel" style="margin-top:8px"><div class="sub">${c.section ? 'section ' + esc(c.section) + ' · ' : ''}page ${c.page || '—'}</div><div style="white-space:pre-wrap;max-height:130px;overflow:auto">${esc(c.text)}</div></div>`).join('')}`;
+      $('#paSave', b).disabled = chars < 200 || !chunks.length;
+    } catch (e) { prev.innerHTML = ''; toast(e, true); }
+    busy(btn, false, 'Read the file');
+  };
+  $('#paSave', b).onclick = async () => {
+    const btn = $('#paSave', b), prev = $('#paPrev', b); busy(btn, true, 'Adding…');
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej('Could not read the file.'); r.readAsDataURL(file); });
+      const meta = { title: $('#paTitle', b).value, version: $('#paVer', b).value, eff: $('#paEff', b).value, replaces: $('#paRep', b).value, note: $('#paNote', b).value,
+        chars: text.replace(/\s+/g, ' ').trim().length, hash: await policyHash(text), fileName: file.name, mime: file.type || (/\.docx$/i.test(file.name) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf'), base64: b64 };
+      const st = await api('apiPolicyStart', meta);
+      for (let i = 0; i < chunks.length; i += 40) {
+        prev.innerHTML = `<p class="hint">Saving passages ${i + 1}–${Math.min(i + 40, chunks.length)} of ${chunks.length}…</p>`;
+        await api('apiPolicyPart', st.docId, i + 1, chunks.slice(i, i + 40));
+      }
+      const fin = await api('apiPolicyFinish', st.docId);
+      toast(`Policy added: ${fin.chunks} passages.`); closeDrawer(); done();
+    } catch (e) { toast(e, true); busy(btn, false, 'Add the policy'); }
+  };
+}
 async function renderRoutesAdmin(el) {
   let C; try { C = await api('apiFastTrackConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Hiring routes</h2><span class="hint">${C.canEdit ? 'Head of HR and Admin can change this' : 'View only'}</span></div>
@@ -7770,6 +8040,7 @@ async function viewPipeline(v) {
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
           ${(can('voice_agent') || can('voice_review')) && active ? '<div id="apVoice"></div>' : ''}
+          ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? '<div id="apCheckin"></div>' : ''}
           <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
@@ -7816,6 +8087,7 @@ async function viewPipeline(v) {
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
+    if ($('#apCheckin', d)) checkinCardSection($('#apCheckin', d), a);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
     ['#apScreen', '#apScrOpen'].forEach(sel => { if ($(sel, d)) $(sel, d).onclick = () => { d.close(); openScreening(a.App_ID, refreshBoard); }; });

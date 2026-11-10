@@ -644,6 +644,26 @@ function e2eRun_(trash) {
       const cv = histCvList_([{ File_URL: 'u1', Uploaded_At: new Date(1000) }, { File_URL: 'u2', Uploaded_At: new Date(2000) }], 'u2');
       return r.events.length === 3 && r.events[0].moved === true && r.events[2].origin === 'J1 A' && r.results.length === 1 && r.results[0].outcome === 'Cleared' && cv[0].url === 'u2' && cv[0].current === true ? 'ok' : false;
     });
+    t('PL1 policy search: ranking, not-covered gate, clause numbers, question guards', function () {
+      const syn = policySynonymLists_(''), mk = function (id, section, text) { return { id: id, section: section, terms: policyTokens_('Recruitment Policy ' + section + ' ' + text).join(' ') }; };
+      const idx = [mk('a', '9.5', 'Backout replacement: if a selected candidate backs out after accepting the offer a replacement MRF is created within 2 working days.'),
+        mk('b', '20.1', 'Turnaround time for worker levels W1 to W3 is 20 days from the date the position is assigned.'),
+        mk('c', '2.3', 'Joining is permitted only on Mondays and Thursdays unless the Head of HR approves another day.'),
+        mk('d', '7.2', 'Referral bonus is payable to employees who refer a candidate that completes six months of service.')];
+      const ask = function (q) { const qt = policyQueryTerms_(q, syn), r = policyRank_(qt, idx); return { top: r[0] && r[0].id, ok: policyGate_(r, qt, 1.5).ok }; };
+      const a = ask('What happens when a candidate backs out after accepting the offer?'), b = ask('Which days can a new employee join?'), c = ask('What does clause 9.5 say'), n = ask('What is the dress code on Fridays?');
+      let phone = false, mail = false; try { policyQuestionCheck_('policy for 9876543210 joining'); } catch (er) { phone = /phone number/.test(er.message); } try { policyQuestionCheck_('policy for a@b.com'); } catch (er2) { mail = true; }
+      return a.top === 'a' && a.ok && b.top === 'c' && b.ok && c.top === 'a' && c.ok && n.ok === false && phone && mail ? 'ok' : false;
+    });
+    t('CK1 check-in plan: dates, short notice, Sundays, past days, pay words refused', function () {
+      const tc = checkinDefaults_(), ids = function (s) { return s.filter(function (x) { return x.status === 'Planned'; }).map(function (x) { return x.id; }).join(','); };
+      const long = checkinSchedule_(tc, { Offer_Accepted_On: '2026-11-09', EDOJ: '2026-12-24', Actual_DOJ: '' }, '2026-11-09');
+      const short = checkinSchedule_(tc, { Offer_Accepted_On: '2026-11-09', EDOJ: '2026-11-16', Actual_DOJ: '' }, '2026-11-09');
+      const after = checkinSchedule_(tc, { Offer_Accepted_On: '2026-11-09', EDOJ: '2026-12-24', Actual_DOJ: '2026-12-24' }, '2026-12-25');
+      let refused = false; try { checkinTouches_({ touches: [{ id: 'C1', title: 'Welcome', anchor: 'EDOJ', offset: -3, attempts: 1, ask: [], inform: ['Your CTC is fixed'] }] }); } catch (er) { refused = /pay or terms/.test(er.message); }
+      return ids(long) === 'C1,C2,C3,C4,C5' && /C4/.test(ids(short)) && /C5/.test(ids(short)) && ids(after) === 'C7,C8,C9' && refused
+        && long.every(function (x) { return !x.due || checkinDow_(x.due) !== 0; }) && checkinTouches_({ touches: tc.map(function (x) { return Object.assign({ active: 'Yes' }, x); }) }).length === 9 ? 'ok' : false;
+    });
     t('V7 do not call me again: phrases, the agent label, the register by number', function () {
       const said = function (x) { return 'Agent: Hello.\nCandidate: ' + x; };
       const yes = ['Please do not call me again', 'stop calling me', 'Mujhe dobara call mat karna', 'mera number hata do'].every(function (x) { return voiceOptoutScan_(said(x)) === true; });
