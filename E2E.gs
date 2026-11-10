@@ -644,6 +644,18 @@ function e2eRun_(trash) {
       const cv = histCvList_([{ File_URL: 'u1', Uploaded_At: new Date(1000) }, { File_URL: 'u2', Uploaded_At: new Date(2000) }], 'u2');
       return r.events.length === 3 && r.events[0].moved === true && r.events[2].origin === 'J1 A' && r.results.length === 1 && r.results[0].outcome === 'Cleared' && cv[0].url === 'u2' && cv[0].current === true ? 'ok' : false;
     });
+    t('PR1 several recruiters on a position: who may work a card, who may change its status, ticket owner', function () {
+      const line = { Line_ID: 'L-E2E', Recruiter: 'Priya' }, app = { Owner_Recruiter: 'Rahul', Line_ID: 'L-E2E' }, mine = { Owner_Recruiter: 'Priya', Line_ID: 'L-E2E' };
+      const lead = { email: 'm@x.com', recruiter: 'Meera', perms: ['lead'] }, priya = { email: 'p@x.com', recruiter: 'Priya', perms: [] }, rahul = { email: 'r@x.com', recruiter: 'Rahul', perms: [] }, zed = { email: 'z@x.com', recruiter: 'Zed', perms: [] };
+      const was = posRecTagged_; posRecTagged_ = function () { return ['Rahul']; };
+      try {
+        const rule = onPosition_(lead, line) && onPosition_(priya, line) && onPosition_(rahul, line) && !onPosition_(zed, line)
+          && canActCard_(rahul, line, app) && !canActCard_(rahul, line, mine) && canActCard_(priya, line, app) && canActCard_(lead, line, mine)
+          && actedFor_(app, priya) === 'Rahul' && actedFor_(app, rahul) === '' && actedFor_({ Owner_Recruiter: '' }, priya) === '';
+        let msg = ''; try { requireCardAct_(rahul, mine); } catch (er) { msg = er.message; }
+        return rule && /added by Priya/.test(msg) ? 'ok' : false;
+      } finally { posRecTagged_ = was; }
+    });
     t('PL1 policy search: ranking, not-covered gate, clause numbers, question guards', function () {
       const syn = policySynonymLists_(''), mk = function (id, section, text) { return { id: id, section: section, terms: policyTokens_('Recruitment Policy ' + section + ' ' + text).join(' ') }; };
       const idx = [mk('a', '9.5', 'Backout replacement: if a selected candidate backs out after accepting the offer a replacement MRF is created within 2 working days.'),

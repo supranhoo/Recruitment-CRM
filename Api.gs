@@ -31,6 +31,10 @@ function listLine_(l, ctx, u) {
   Object.keys(c).forEach(function (k) { l[k] = c[k]; });
   const o = toClient_(l);
   o._canEdit = canEditLine_(u, l);
+  ctx.pr = ctx.pr || posRecMap_();
+  o.Tagged = ctx.pr[String(l.Line_ID)] || [];
+  const me = String(u.recruiter || '').trim().toLowerCase();
+  o._tagged = !!me && o.Tagged.some(function (n) { return String(n).trim().toLowerCase() === me; });
   o.Route = routeOf_(l);
   delete o._row;
   return o;
@@ -56,7 +60,7 @@ function apiGetPosition(lineId) {
  * Stamps are read before the data is built, so a write during the build can only cause an extra refetch.
  */
 const FETCHABLE_ = {
-  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules'], per: 'day', packed: true },
+  apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules', 'Position_Recruiters'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
   apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
   apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
@@ -141,8 +145,9 @@ function apiSavePosition(data) {
       if (ap.Line_ID === rec.Line_ID && String(ap.Status) === 'Active' && ['Offer', 'Prejoin'].indexOf(String(ap.Stage)) >= 0 && ymd_(ap.EDOJ) !== ymd_(rec.EDOJ)) update_(T.APP, ap.App_ID, { EDOJ: rec.EDOJ || '' }, u);
     });
   }
+  if (!old || String(old.Recruiter || '').trim() !== String(rec.Recruiter || '').trim()) posRecSetLead_(rec.Line_ID, rec.Recruiter, u);   // the lead row follows the position's recruiter; the cards' copy of the name is refreshed
   bgvTouchLine_(rec.Line_ID);
-  const o = toClient_(lineOf_(rec.Line_ID) || rec); o._canEdit = true; delete o._row;
+  const o = toClient_(lineOf_(rec.Line_ID) || rec); o._canEdit = true; o.Tagged = posRecTagged_(rec.Line_ID); delete o._row;
   return o;
 }
 
@@ -501,7 +506,7 @@ function apiSaveCandidate(data, force) {
   }
   if (patch.Line_ID) {   // attaching a candidate to a position needs the right to edit that position
     const was = data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null;
-    if (!was || String(was.Line_ID || '') !== String(patch.Line_ID)) requireLineEdit_(u, patch.Line_ID);
+    if (!was || String(was.Line_ID || '') !== String(patch.Line_ID)) requireOnPosition_(u, patch.Line_ID);
   }
   guardCandidatePipelineFields_(patch, data.Candidate_ID ? readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === data.Candidate_ID; })[0] : null, u);
   const rec = data.Candidate_ID ? update_(T.CAND, data.Candidate_ID, patch, u) : insert_(T.CAND, Object.assign({ Sourced_By: u.recruiter }, patch), u);

@@ -97,7 +97,7 @@ function viewData(v, key, call, again, label, opts) {
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
-  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch']);
+  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch', 'apiPosRecList']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
 function perfNow() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
@@ -1196,7 +1196,7 @@ async function viewPositions(v) {
     const s = p.Position_Status;
     if (!ignoreStatus && f.sel.length && !f.sel.includes(s)) return false;
     if (!ignoreStatus && !f.sel.length && s === 'Removed') return false;
-    if (f.recruiter && String(p.Recruiter).trim() !== f.recruiter) return false;
+    if (f.recruiter && String(p.Recruiter).trim() !== f.recruiter && !(p.Tagged || []).includes(f.recruiter)) return false;
     if (f.band && String(p.Grade)[0] !== f.band) return false;
     if (f.dept && p.Dept !== f.dept) return false;
     if (f.q) { const q = f.q.toLowerCase(); if (![p.MRF_No, p.Position, p.Dept, p.Remarks, p.Line_ID].join(' ').toLowerCase().includes(q)) return false; }
@@ -1452,6 +1452,25 @@ async function exemptSectionInto(el, p, afterChange) {
   el.innerHTML = '<p class="hint">Loading exemptions…</p>';
   await load();
 }
+async function posTagsSection(el, p) {
+  if (!el) return;
+  let r; try { r = await api('apiPosRecList', p.Line_ID); } catch (e) { return; }
+  const draw = () => {
+    const names = r.tagged;
+    el.innerHTML = `<section class="app-sec"><h3>Recruiters on this position</h3>
+      <p class="sub">Lead recruiter: <b>${esc(r.lead || 'not assigned')}</b>. Tagged recruiters can add candidates, record follow-ups and move a colleague’s candidate forward. Each candidate’s ticket shows the recruiter who added it.</p>
+      <div class="chips" id="ptChips">${names.map(n => `<span class="chip">${esc(n)}${r.canTag ? ` <button type="button" class="linkbtn" data-untag="${esc(n)}" aria-label="Remove ${esc(n)}">×</button>` : ''}</span>`).join('') || '<span class="hint">No other recruiter is tagged.</span>'}</div>
+      ${r.canTag ? `<div class="btn-row" style="margin-top:8px"><select id="ptPick" aria-label="Recruiter to tag"><option value="">Tag a recruiter…</option>${r.pick.filter(n => n.toLowerCase() !== String(r.lead).toLowerCase() && !names.includes(n)).map(n => `<option>${esc(n)}</option>`).join('')}</select><button class="btn sm" id="ptAdd">Tag</button></div>` : ''}
+      ${r.history.length > 1 ? `<details style="margin-top:8px"><summary class="hint">History</summary><ul class="hint" style="margin:6px 0 0 18px">${r.history.map(h => `<li>${esc(h.name)} (${esc(h.role.toLowerCase())}) from ${esc(fmtDate(h.since) || '—')}${h.until ? ' to ' + esc(fmtDate(h.until)) : ''}</li>`).join('')}</ul></details>` : ''}</section>`;
+    const save = async list => {
+      try { r = await api('apiPosRecSet', p.Line_ID, list); p.Tagged = r.tagged; const row = (S.positions || []).find(x => x.Line_ID === p.Line_ID); if (row) row.Tagged = r.tagged.slice(); S.posStale = true; toast('Tagged recruiters saved.'); draw(); }
+      catch (e) { toast(e, true); }
+    };
+    $$('[data-untag]', el).forEach(b => b.onclick = () => save(names.filter(n => n !== b.dataset.untag)));
+    if ($('#ptAdd', el)) $('#ptAdd', el).onclick = () => { const v = $('#ptPick', el).value; if (v) save(names.concat([v])); };
+  };
+  draw();
+}
 function positionDrawer(p) {
   const isNew = !p;
   const data = p ? Object.assign({ BGV_Required: 'Auto' }, p) : { Receipt_Date: today(), Approval_Status: 'Approved', Offer_Sent: 'No', Recruiter: S.boot.user.recruiter, BGV_Required: 'Auto', _count: 1 };
@@ -1466,6 +1485,7 @@ function positionDrawer(p) {
       ${!isNew && p.Replaced_By ? `<div class="note warn-note">Closed after a backout on ${fmtDate(p.Replaced_On)}. Replaced by <b>${esc((lineById(p.Replaced_By) || {}).MRF_No || p.Replaced_By)}</b> (policy 9.5).</div>` : ''}
       ${!isNew && p.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc((lineById(p.Parent_Line_ID) || {}).MRF_No || p.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(p.TAT_Start_From)}.</div>` : ''}
       ${isNew ? '' : `<p style="margin:12px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="openPipe">Open candidate pipeline</button><button class="btn" id="openDaily">Daily log of this position</button></p>`}
+      ${isNew ? '' : '<div id="posTags"></div>'}
       ${isNew ? '' : '<div id="posTasks"></div>'}
       <div class="readout" id="tatReadout"></div>
       ${isNew ? '' : '<div id="posExempt"></div>'}
@@ -1499,6 +1519,7 @@ function positionDrawer(p) {
       'Notice_Ext_Status', 'Pos_Final_TAT', 'Pos_Days_Taken', 'Pos_TAT_Result'].forEach(k => { data[k] = l[k]; }); readout(); S.posStale = true; } catch (e) { }
   });
   if (!isNew) lineTasksInto($('#posTasks', body), p.Line_ID);
+  if (!isNew) posTagsSection($('#posTags', body), p);
   /* The drawer opens from the list in memory; the position itself is re-read from the server so an edit is never saved
      over a colleague's newer change. Untouched, the drawer redraws with the new values; once typed in, it warns instead. */
   if (!isNew && !ro) {
@@ -7600,7 +7621,7 @@ async function viewPipeline(v) {
   const earlyLine = f.line, early = earlyLine ? fresh('apiPipeline', earlyLine) : null;   // the board starts loading while the positions list loads
   if (early) early.catch(() => { });
   await loadPositions();
-  const mine = S.positions.filter(p => isLead() || p.Recruiter === S.boot.user.recruiter);
+  const mine = S.positions.filter(p => isLead() || p._tagged || String(p.Recruiter || '').trim().toLowerCase() === String(S.boot.user.recruiter || '').trim().toLowerCase());
   if (!f.pfInit) { f.pfInit = true; try { Object.assign(f, JSON.parse(localStorage.getItem(PF_KEY_) || '{}')); } catch (e) { } }
   if (!isLead()) f.rec = '';
   f.status = f.status || 'Active'; f.q = f.q || '';
@@ -7676,19 +7697,23 @@ async function viewPipeline(v) {
   $('#pRefresh').onclick = () => { const b = $('#pRefresh'); busy(b, true, 'Refreshing\u2026'); showLine(f.line).finally(() => busy($('#pRefresh'), false, 'Refresh')); };
   if (!f.line) { late('#pBody').innerHTML = '<div class="empty">No positions to show.</div>'; return; }
   try { localStorage.setItem('bfcl.pipeLine', f.line); } catch (e) { }
-  let P = null, replaced = false, closedSt = false, owns = false, canEdit = false, onboardOnly = false, firstTasks = null;
+  let P = null, replaced = false, closedSt = false, owns = false, canEdit = false, canWork = false, onboardOnly = false, firstTasks = null;
   const derive = () => {
     replaced = P.line.Position_Status === 'Replaced';
     closedSt = ['Not Needed', 'No Vacancy', 'On Hold'].includes(P.line.Position_Status);
-    owns = isLead() || String(P.line.Recruiter) === S.boot.user.recruiter;
+    const acc = P.line.access || {};
+    owns = !!acc.line;
+    const onPos = !!acc.work;
     canEdit = !replaced && !closedSt && owns;
+    canWork = !replaced && !closedSt && onPos;
     // The Onboarding team confirms the hiring, records the joining and completes the onboarding of fast-track positions of any recruiter.
-    onboardOnly = !replaced && !closedSt && !owns && can('onboard');
+    onboardOnly = !replaced && !closedSt && !onPos && can('onboard');
   };
   const fastRoute = () => P.route === 'Fast-track';
   const PN = st => (fastRoute() && FAST_NAMES[st]) || P_NAMES[st];
   const stagesOf = () => fastRoute() ? P.fastStages : P_STAGES;
-  const canNext = nx => canEdit || (onboardOnly && fastRoute() && ['Offer', 'Joined', 'Onboarded'].includes(nx));
+  const canAct = a => !replaced && !closedSt && !!(a.can && a.can.act);
+  const canNext = nx => canWork || (onboardOnly && fastRoute() && ['Offer', 'Joined', 'Onboarded'].includes(nx));
   const renderBoard = () => {
     if (!$('#pBody')) return;
     const L = P.line;
@@ -7705,7 +7730,7 @@ async function viewPipeline(v) {
       ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
       <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d, v], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span>${v ? `<button class="linkbtn rview" data-rview="${v[0]}">${v[1]}</button>` : ''}</div></div>`).join('')}</div>
-        <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button><button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canEdit && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}</div></section>
+        <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button>' : ''}${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}</div></section>
       ${closedSt ? `<div class="note warn-note">${P.line.Position_Status === 'On Hold' ? 'On hold' : 'Closed without a hire (' + esc(P.line.Position_Status) + ')'}${P.line.Closure_Reason ? ': ' + esc(P.line.Closure_Reason) : ''}. This board is read-only${P.line.Position_Status === 'On Hold' ? ' until the position is resumed' : ''}.${P.line.Position_Status === 'On Hold' && owns ? ' <button class="btn sm" id="pResume">Resume position</button>' : ''}</div>` : ''}
       <div id="pTasks"></div>
       <div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
@@ -7714,6 +7739,7 @@ async function viewPipeline(v) {
           ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
             <b>${esc(a.cand.name || a.Candidate_ID)}</b>
             <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
+            ${a.owner ? `<span class="powner" title="Added by ${esc(a.owner)}"><span class="pown-ini" aria-hidden="true">${esc(a.owner.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase())}</span>${esc(a.owner)}</span>` : ''}
             <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}${a.dnc ? `<span class="dnc-flag" title="${esc(a.dnc.why)}">Do not call</span>` : ''}${a.screen && a.screen.status === 'Complete' ? fitChip(a.screen.band) : ''}</span>
           </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
       }).join('')}</div>`;
@@ -7748,10 +7774,10 @@ async function viewPipeline(v) {
     if ($('#pReinstate')) $('#pReinstate').onclick = () => reinstateDialog(P.apps.filter(a => a.Status === 'Withdrawn' && a.Backout_Date).sort((a, b) => String(b.Backout_Date).localeCompare(String(a.Backout_Date)))[0], reloadBoard);
     if ($('#pGoRepl')) $('#pGoRepl').onclick = () => { f.closed = false; $('#pClosed').checked = false; gotoLine(P.line.Replaced_By); };
     if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.closed = true; $('#pClosed').checked = true; gotoLine(P.line.Parent_Line_ID); };
-    if (!canEdit) return;
-    $('#pAdd').onclick = addToPipelineDialog;
-    $('#pQs').onclick = questionsDialog;
+    if ($('#pAdd')) $('#pAdd').onclick = addToPipelineDialog;
     if ($('#pBatch')) $('#pBatch').onclick = () => voiceBatchDialog(P, () => renderBoard());
+    if (!canEdit) return;
+    $('#pQs').onclick = questionsDialog;
     $('#pJdMake').onclick = () => openJdMaker(f.line, '', async () => { try { await refreshLine(f.line); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); } });
     $('#pJd').onclick = () => openJdPicker(async file => {
       try { await api('apiUseJd', [f.line], file.id); await refreshLine(f.line); toast(file.name + ' attached as the JD'); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); }
@@ -8007,7 +8033,7 @@ async function viewPipeline(v) {
       ${lead ? `<div id="apTabWork" role="tabpanel"${curTab === 'work' ? '' : ' hidden'}>` : ''}
       <div class="app-grid3">
         <div>
-          ${canEdit && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
+          ${canWork && active && next === 'Screened' && P.hasFinalSq ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3><p class="hint">Screen the candidate on the department-confirmed questions. Completing the screening moves them to ${P_NAMES[next]}.</p>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apScreen">${a.screen ? 'Continue screening' : 'Record screening'}</button></div></section>` : ''}
           ${canNext(next) && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3>${fastRoute() ? `<p class="hint">${esc(FAST_HINTS[next] || '')}</p>` : ''}${hrOptional ? `<p class="hint">${hr ? 'Optional: record an HR interview only if one was held.' : 'The HR interview is optional: the recruiter can discuss with the candidate while verifying documents.'}</p>` : ''}<div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">${fastRoute() ? esc(FAST_BTN[next] || 'Move to ' + PN(next)) : 'Move to ' + PN(next)}</button>${hrOptional ? (hr ? '<button class="btn sm" id="apHrBack" type="button">No HR interview: back to Documents verified</button>' : '<button class="btn sm" id="apHr" type="button">Record an HR interview (optional)</button>') : ''}</div></section>` : ''}
@@ -8015,14 +8041,14 @@ async function viewPipeline(v) {
             <div class="drawer-actions" style="position:static"><button class="btn" id="apPapersUp">Upload chosen files</button></div></section>` : ''}
           ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
             ${a.followups.length ? `<ul class="work">${a.followups.map(x => `<li><b>${fmtDate(x.date)}</b> ${esc(x.mode)} \u00b7 <span class="risk r-${esc(x.risk)}">${esc(x.risk)}</span> ${esc(x.response)}${x.note ? ` \u2014 ${esc(x.note)}` : ''}${x.next ? ` \u00b7 next ${fmtDate(x.next)}` : ''}</li>`).join('')}</ul>` : '<p class="hint">No check-ins logged yet.</p>'}
-            ${canEdit && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
+            ${canWork && active ? `<div id="apFu">${wrapForm(form([{ k: 'date', l: 'Date', t: 'date', req: true }, { k: 'mode', l: 'Mode', t: 'select', opts: ['Call', 'WhatsApp', 'Email', 'Meeting'], noBlank: true },
               { k: 'response', l: 'What the candidate said', wide: true }, { k: 'risk', l: 'Risk of not joining', t: 'select', opts: ['Green', 'Amber', 'Red'], noBlank: true },
               { k: 'next', l: 'Next check-in', t: 'date' }, { k: 'note', l: 'Note', wide: true }], { date: today(), mode: 'Call', risk: a.Risk || 'Green', next: daysAhead(3) }))}</div>
               <div class="drawer-actions" style="position:static"><button class="btn" id="apFuSave">Log check-in</button></div>` : ''}</section>` : ''}
         </div>
         <div>
-          ${interviewSecHtml(a, canEdit && active)}
-          ${canEdit ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
+          ${interviewSecHtml(a, canWork && active)}
+          ${canAct(a) ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
             ${active && ['Offer', 'Prejoin'].includes(a.Stage) ? `<div class="field" style="margin-top:8px"><label for="apBoDate">Backout date</label><input id="apBoDate" type="date" value="${today()}" max="${today()}"></div>
               <div class="field" style="margin-top:8px"><label for="apEdoj">Expected joining date</label><div class="rc-act"><input id="apEdoj" type="date" value="${esc(a.EDOJ || P.line.EDOJ || '')}"><button class="btn sm" id="apEdojSave">Change</button></div></div>
               <p class="hint">Recording a backout closes ${esc(P.line.MRF_No || 'this MRF')} and raises the replacement MRF (policy 9.5). Other active candidates move to it, and its TAT counts from the original start.</p>` : ''}
@@ -8035,8 +8061,8 @@ async function viewPipeline(v) {
         <div>
           ${a.screen ? `<section class="app-sec scr-card"><h3>Screening ${fitChip(a.screen.band)}</h3><p class="scr-cnt"><b>${a.screen.met}</b> of ${a.screen.total} met \u00b7 <b>${a.screen.partly}</b> partly \u00b7 <b>${a.screen.gaps}</b> gaps${a.screen.koFailed.length ? ' \u00b7 <b class="miss">knock-out not met</b>' : ''}</p>
             <p class="sub">${a.screen.status === 'Complete' ? 'Completed' : 'Draft'} ${fmtDate(a.screen.on)} \u00b7 questions v${a.screen.sqVersion}${a.screen.sharedOn ? ' \u00b7 shared with ' + esc(a.screen.sharedWith || 'department') + ' ' + fmtDate(a.screen.sharedOn) : ''}</p>
-            <div class="btn-row"><button class="btn sm" id="apScrOpen">Open screening</button>${canEdit && active && a.screen.status === 'Complete' ? '<button class="btn sm primary" id="apScrShare">Share with department</button>' : ''}</div></section>`
-            : P.hasFinalSq && canEdit && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
+            <div class="btn-row"><button class="btn sm" id="apScrOpen">Open screening</button>${canWork && active && a.screen.status === 'Complete' ? '<button class="btn sm primary" id="apScrShare">Share with department</button>' : ''}</div></section>`
+            : P.hasFinalSq && canWork && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
           ${(can('voice_agent') || can('voice_review')) && active ? '<div id="apVoice"></div>' : ''}
@@ -8045,7 +8071,7 @@ async function viewPipeline(v) {
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
           ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
-          <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.by)}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
+          <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.who || h.by)}${h.for ? ' for ' + esc(h.for) : ''}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
         </div></div>
       ${lead ? `</div><div id="apTabDetail" role="tabpanel" class="tl-panel" aria-live="polite"${curTab === 'work' ? ' hidden' : ''}></div>` : ''}
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');

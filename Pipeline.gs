@@ -50,12 +50,17 @@ function appendHistory_(app, from, to, outcome, note, u) {
   });
   const o = { Hist_ID: 'SH-' + String(n + 1).padStart(6, '0'), App_ID: app.App_ID, Candidate_ID: app.Candidate_ID, Line_ID: app.Line_ID,
     Recruiter: app.Recruiter, From_Stage: from, To_Stage: to, Outcome: outcome || '', Note: clean_(String(note || '').slice(0, 1000)),
-    Changed_By: u.email, Changed_At: new Date() };
+    Changed_By: u.email, Changed_At: new Date(), Actor_Name: String(u.recruiter || '').trim(), Acted_For: actedFor_(app, u) };
   sh.getRange(last + 1, 1, 1, headers.length).setValues([headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
   const now = String(Date.now());   // a move changes the Overview counts and the KPIs
   props.setProperties({ KPI_DIRTY_AT: now, DASH_DIRTY_AT: now, IDMAX_Stage_History: String(n + 1) });
   });
+}
+/** The card's recruiter when someone else moves it (a tagged colleague or a lead), else blank. */
+function actedFor_(app, u) {
+  const owner = String((app && app.Owner_Recruiter) || '').trim(), me = String(u.recruiter || '').trim();
+  return owner && me && owner.toLowerCase() !== me.toLowerCase() ? owner : '';
 }
 /** The highest history number in use: the remembered one, or the last row's, whichever is higher; the full scan runs only when nothing is remembered. */
 function histNextBase_(remembered, lastRowId, scan) {
@@ -72,6 +77,7 @@ function ensureApp_(cand, u) {
   const stage = stageFromCandidate_(cand);
   const rejected = /reject/i.test(txt_(cand.HR_Result) || txt_(cand.Tech_Result));
   const app = insert_(T.APP, { Candidate_ID: cand.Candidate_ID, Line_ID: cand.Line_ID, MRF_No: line.MRF_No, Recruiter: line.Recruiter,
+    Owner_Recruiter: String(u.recruiter || '').trim() || txt_(cand.Sourced_By) || String(line.Recruiter || ''),
     Stage: stage, Status: rejected ? 'Rejected' : 'Active', Stage_Since: new Date(), Risk: '' }, u);
   appendHistory_(app, '', stage, rejected ? 'Rejected' : '', u.email === 'migration' ? 'Created from existing candidate record' : 'Added to pipeline', u);
   return app;
@@ -102,7 +108,7 @@ function apiPipeline(lineId) {
   readTable_(T.HIST.name).rows.forEach(function (h) {
     if (!onLine[h.App_ID]) return;
     (hist[h.App_ID] = hist[h.App_ID] || []).push({ from: String(h.From_Stage), to: String(h.To_Stage), outcome: String(h.Outcome), note: String(h.Note),
-      by: String(h.Changed_By), at: h.Changed_At instanceof Date ? fmt_(h.Changed_At, TZ, 'd MMM yyyy, HH:mm') : '', ms: h.Changed_At instanceof Date ? h.Changed_At.getTime() : 0 });
+      by: String(h.Changed_By), who: String(h.Actor_Name || ''), for: String(h.Acted_For || ''), at: h.Changed_At instanceof Date ? fmt_(h.Changed_At, TZ, 'd MMM yyyy, HH:mm') : '', ms: h.Changed_At instanceof Date ? h.Changed_At.getTime() : 0 });
   });
   const fus = {};
   readTable_(T.FU.name).rows.forEach(function (f) {
@@ -111,8 +117,11 @@ function apiPipeline(lineId) {
   });
   const scrs = {}; readTable_(T.SCR.name).rows.forEach(function (s) { if (onLine[s.App_ID]) scrs[s.App_ID] = scrClient_(s, false); });
   let dncMap = {}; try { dncMap = voiceDncMap_(); } catch (e) { }   // the Do Not Disturb register by number: only the reason, date and who go to the page
+  const me = currentUser_(), onPos = onPosition_(me, line), leadRec = canEditLine_(me, line);
   const apps = readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === lineId; }).map(function (a) {
     const o = appClient_(a);
+    o.owner = String(a.Owner_Recruiter || '').trim() || String(a.Recruiter || '');
+    o.can = { work: onPos, act: canActCard_(me, line, a) };
     o.screen = scrs[a.App_ID] || null;
     const c = cands[a.Candidate_ID] || {};
     o.cand = toClient_({ id: c.Candidate_ID, name: c.Name, mobile: c.Mobile, email: c.Email, exp: c.Relevant_Experience, ctc: c.Current_CTC,
@@ -125,6 +134,8 @@ function apiPipeline(lineId) {
   });
   const posts = readTable_(T.POST.name).rows.filter(function (p) { return p.Line_ID === lineId; }).map(function (p) { const o = toClient_(p); delete o._row; return o; });
   const l = toClient_(line); delete l._row;
+  l.Tagged = posRecTagged_(lineId);
+  l.access = { line: leadRec, work: onPos, me: String(me.recruiter || '') };
   l.Position_Status = positionStatus_(line);
   const byId = {}; readTable_(T.MRF.name).rows.forEach(function (x) { byId[x.Line_ID] = x; });
   if (line.Replaced_By && byId[line.Replaced_By]) l.replacedByMrf = String(byId[line.Replaced_By].MRF_No || line.Replaced_By);
@@ -176,7 +187,7 @@ function apiPositionFunnel(lineId) {
 
 function apiAddToPipeline(candidateId, lineId) {
   const u = currentUser_(); ensureSchema_();
-  requireActiveLine_(requireLineEdit_(u, lineId));
+  requireActiveLine_(requireOnPosition_(u, lineId));
   ensureActiveCandidate_(candidateId, u);
   const c = readTable_(T.CAND.name).rows.filter(function (r) { return r.Candidate_ID === candidateId; })[0];
   if (!c) throw new Error('Candidate ' + candidateId + ' was not found.');
@@ -257,7 +268,7 @@ function apiMoveStage(appId, toStage, data) {
   if (STAGES.indexOf(toStage) < 0) throw new Error('Unknown stage.');
   const app = appOf_(appId);
   const line0 = lineOf_(app.Line_ID);
-  const line = canOnboardMove_(u, line0, toStage) ? line0 : requireLineEdit_(u, app.Line_ID);   // the Onboarding team may move fast-track cards to Hiring confirmed, Joined and Onboarded
+  const line = canOnboardMove_(u, line0, toStage) ? line0 : requireOnPosition_(u, app.Line_ID);   // the Onboarding team may move fast-track cards to Hiring confirmed, Joined and Onboarded
   requireActiveLine_(line);
   if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them first.');
   const from = String(app.Stage), fi = STAGES.indexOf(from), ti = STAGES.indexOf(toStage);
@@ -302,6 +313,7 @@ function apiMoveStage(appId, toStage, data) {
     outcome = data.result;
     if (/reject/i.test(data.result)) { patch.Status = 'Rejected'; patch.Status_Reason = 'Not selected in ' + STAGE_NAMES[toStage].toLowerCase(); }
     if (/hold/i.test(data.result)) { patch.Status = 'On hold'; patch.Status_Reason = 'On hold after ' + STAGE_NAMES[toStage].toLowerCase(); }
+    if (patch.Status) requireCardAct_(u, app);   // a result that rejects or holds the card is a status change: the card's recruiter, the position's recruiter or a lead
   }
   if (toStage === 'Docs') {
     const docs = data.docs || {};
@@ -407,7 +419,7 @@ function apiSetAppStatus(appId, status, reason, backoutDate) {
   const u = currentUser_(); ensureSchema_();
   if (['Active', 'Rejected', 'On hold', 'Withdrawn'].indexOf(status) < 0) throw new Error('Unknown status.');
   const app = appOf_(appId);
-  const line = requireLineEdit_(u, app.Line_ID);
+  const line = requireCardAct_(u, app);
   requireNotReplaced_(line);
   if (status === 'Active') { requireActiveLine_(line); ensureActiveCandidate_(app.Candidate_ID, u); }
   if (status !== 'Active' && !String(reason || '').trim()) throw new Error('Give a short reason.');
@@ -487,11 +499,11 @@ function apiPipelineFind(q) {
   if (!words.length || words.join('').length < 2) return [];
   const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
   const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
-  const lead = isLead_(u), me = String(u.recruiter || '').trim().toLowerCase(), out = [];
+  const lead = isLead_(u), me = String(u.recruiter || '').trim().toLowerCase(), out = [], tagMap = posRecMap_();
   readTable_(T.APP.name).rows.forEach(function (a) {
     const c = cands[a.Candidate_ID], l = lines[a.Line_ID];
     if (!c || !l || positionStatus_(l) === 'Removed') return;
-    if (!lead && String(l.Recruiter || '').trim().toLowerCase() !== me) return;
+    if (!lead && String(l.Recruiter || '').trim().toLowerCase() !== me && !(tagMap[String(l.Line_ID)] || []).some(function (n) { return String(n).trim().toLowerCase() === me; })) return;
     const hay = (String(c.Name || '') + ' ' + String(c.Candidate_ID || '')).toLowerCase(), mob = String(c.Mobile || '').replace(/\D/g, '');
     const ok = words.every(function (w) { const d = w.replace(/\D/g, ''); return hay.indexOf(w) >= 0 || (d.length >= 4 && mob.indexOf(d) >= 0); });
     if (!ok) return;
@@ -666,7 +678,7 @@ function apiReinstateBackout(appId, d) {
 function apiAddFollowup(appId, data) {
   const u = currentUser_(); ensureSchema_();
   const app = appOf_(appId);
-  requireLineEdit_(u, app.Line_ID);
+  requireOnPosition_(u, app.Line_ID);
   if (!data.date || !data.mode || !data.risk) throw new Error('Date, mode and risk are required.');
   if (['Green', 'Amber', 'Red'].indexOf(data.risk) < 0) throw new Error('Risk must be Green, Amber or Red.');
   withLock_(function () {
@@ -748,6 +760,7 @@ const OFFER_ACCEPT_RISK_DAYS_ = 7;
  * - unassessed: joiners with no check-in ever recorded, so their risk is not known.
  */
 function pipelineAlerts_(onlyRecruiter) {
+  const tagMap = posRecMap_();
   const now = Date.now(), today = ymd_(new Date()), DAY = 86400000;
   const cands = {};
   readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
@@ -770,7 +783,8 @@ function pipelineAlerts_(onlyRecruiter) {
   STAGES.forEach(function (s) { out.counts[s] = 0; });
   readTable_(T.APP.name).rows.forEach(function (a) {
     if (String(a.Status) !== 'Active') return;
-    if (onlyRecruiter && String((lines[a.Line_ID] || {}).Recruiter || a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()) return;
+    if (onlyRecruiter && String((lines[a.Line_ID] || {}).Recruiter || a.Recruiter).toLowerCase() !== onlyRecruiter.toLowerCase()
+      && !(tagMap[String(a.Line_ID)] || []).some(function (n) { return String(n).trim().toLowerCase() === onlyRecruiter.toLowerCase(); })) return;
     out.counts[a.Stage] = (out.counts[a.Stage] || 0) + 1;
     const c = cands[a.Candidate_ID] || {}, l = lines[a.Line_ID] || {}, st = String(a.Stage);
     const since = a.Stage_Since instanceof Date ? a.Stage_Since.getTime() : 0, fu = fus[a.App_ID] || { n: 0, last: null };
@@ -1217,7 +1231,7 @@ function apiScreening(appId) {
 function apiSaveScreening(appId, d) {
   const u = currentUser_(); ensureSchema_();
   d = d || {};
-  const app = appOf_(appId), line = requireLineEdit_(u, app.Line_ID);
+  const app = appOf_(appId), line = requireOnPosition_(u, app.Line_ID);
   if (String(app.Status) !== 'Active') throw new Error('This candidate is ' + String(app.Status).toLowerCase() + '. Reactivate them first.');
   const fin = sqFinalFor_(app.Line_ID), old = scrOf_(appId);
   let items, sqDoc, sqVer;
@@ -1255,7 +1269,7 @@ function apiSaveScreening(appId, d) {
 function apiScreeningShared(appId, d) {
   const u = currentUser_(); ensureSchema_();
   d = d || {};
-  const app = appOf_(appId); requireLineEdit_(u, app.Line_ID);
+  const app = appOf_(appId); requireOnPosition_(u, app.Line_ID);
   const s = scrOf_(appId);
   if (!s || String(s.Status) !== 'Complete') throw new Error('Complete the screening before sharing it with the department.');
   const reason = clean_(String(d.reason || '').trim()).slice(0, 500);
