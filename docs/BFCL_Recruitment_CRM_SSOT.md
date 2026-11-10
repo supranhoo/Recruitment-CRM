@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Document version** | 1.21 (drift check of 8 Nov 2026 applied; see `2026-11-08_DRIFT_REPORT.md` for what was found) |
-| **Describes app version** | **v162** (`BUILD_ID` 162, 8 Nov 2026; v159 was the first release after v158) |
-| **Database schema version** | **49** (Script Property `SCHEMA_V`) |
+| **Describes app version** | **v163** (`BUILD_ID` 163, 8 Nov 2026; v159 was the first release after v158) |
+| **Database schema version** | **50** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
 | **Policy basis** | BFCL Recruitment Policy, Version 2.0, effective 16 July 2026, revision due 01 May 2027 |
@@ -701,6 +701,14 @@ Before the switch-over date, Open/Offered positions whose typed details disagree
 
 **Keep as is** (`apiReconcileReviewed`) needs a note and removes the position from the list. **Correct a wrong link** (`apiUnlinkApp`, `lead`): removes a card linked by mistake without recording a backout ("Linked in error"; counts for nothing in the scorecard) and returns the position to the check. As of 26 Sep the check showed *"Nothing to fix"* after the team's clean-up (a few items remain to confirm, §15).
 
+### 9.8 Several recruiters on one position (`PosRec.gs`, `Auth.gs`; ADR-077; schema 50; v163)
+- **Who is on a position.** `MRF.Recruiter` stays the position's **lead recruiter** (all TAT, KPI, task and dashboard credit still follows it in v163). Sheet `Position_Recruiters` holds a row for the lead (`Role` Lead) and for every **tagged** recruiter (`Role` Tagged), each with `Assigned_On`, `Ended_On` and `Status` Active/Ended; nothing is deleted. The Lead row follows `MRF.Recruiter` (`posRecSetLead_`, called from `apiSavePosition` and the deactivation handover); a lead change also refreshes the recruiter name on the position's active cards (this fixes the old drift of `Applications.Recruiter` after a reassignment). A user who is deactivated is taken off every tag. Up to 8 tagged recruiters; only active recruiters (`M_Recruiters`) can be tagged.
+- **Who may tag.** TA Lead, Head of HR and Admin (`isLead_`), in the position drawer, section *Recruiters on this position* (`apiPosRecSet`, `apiPosRecList`, read-only list for everyone).
+- **The ticket.** Each card records the recruiter who **added the candidate** in `Applications.Owner_Recruiter` (set in `ensureApp_` to the signed-in user's recruiter name; existing cards were filled from the candidate's *Sourced by*, else the position's recruiter at the time). It is never changed by reassignments or line moves. The pipeline ticket shows *name + initials*, the drawer history shows "moved by X for Y" (`Stage_History.Actor_Name`, `Acted_For`).
+- **Rights (`onPosition_`, `canActCard_`, `requireOnPosition_`, `requireCardAct_`).** *On the position* = a lead, the lead recruiter, or a tagged recruiter. Anyone on the position can **add candidates, record follow-ups, record the screening and interview details, and move a card forward** (`apiMoveStage`, `apiAddToPipeline`, `apiSaveCandidate` attach, `apiAddFollowup`, `apiSaveScreening`, `apiScreeningShared`, interview calls). **Reject, hold, withdraw, backout and reactivate** (`apiSetAppStatus`, and a Technical/HR result that rejects or holds) need the card's recruiter (while still tagged), the lead recruiter or a lead. Moving back, position edits, JD, screening questions, job posts, close and resume stay with the lead recruiter and leads. A recruiter taken off the position loses access, including to cards they added. The page uses the server's answer (`line.access`, `app.can`) instead of its own name comparison.
+- **Seeing it.** Pipeline page, search and alerts include positions where the user is tagged; the Positions list filter by a recruiter also matches tagged recruiters.
+- **Not changed in v163.** TAT, KPIs, dashboard, tasks, daily funnel, Day's status, BGV owner and department delay still credit the lead recruiter only. Splitting that credit (card events to the card's recruiter, position measures to each tagged recruiter, behind a `SPLIT_CREDIT_FROM` date) is the approved v164.
+
 ## 10. Daily work
 
 ### 10.1 Daily log (`Daily_Funnel`)
@@ -1090,6 +1098,9 @@ Context: only the Admin could place voice calls; recruiters wanted to call their
 Decision: (1) `voice_call` is a computed permission from `Voice_Access` (Admin always; named people with a daily limit, default 20), never by role. (2) A recruiter without access can request one call with a reason; a TA Lead, the Head of HR or the Admin approves. (3) The Do Not Disturb register `Voice_DND` is the check before every call; the provider's list is copied in on request. (4) Up to 30 candidates per batch, placed by a one-minute trigger within the calling hours and a per-minute rate, through the same code as a single call so every limit applies. (5) The command center shows calls, success rate and cost (the provider's own figure if its payload carries one, else an estimate from a per-minute setting).
 Consequences: calls can now be placed by people other than the Admin, so the audit and the daily limit are the controls; a batch stops on the person's limit, lost access or three failures in a row.
 
+**ADR-077 — Several recruiters per position: one lead keeps the credit for now, any tagged recruiter can work and move cards forward, the ticket shows who added the candidate** (10 Nov, user decision; v163)
+- Rights are split so that rejecting, holding or backing out a candidate stays with the card's recruiter, the lead recruiter and leads, while a colleague can keep the card moving when its recruiter is away. Credit stays with the lead recruiter in v163; the user has chosen to split it between tagged recruiters in v164.
+
 **ADR-076 — Policy answers come only from the policy text, found by search first; the AI comes after** (9 Nov, user decision; v162)
 - Policies are retrieved, not trained: the app finds the passages and shows them. v162 has no AI. When an AI answer is added (v163) it may use only the passages found, must cite them with a verbatim quote that the code checks, and must refuse when the passages do not cover the question.
 
@@ -1328,6 +1339,10 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
 ### 2026-11-08
+
+**v163 — Several recruiters on one position** (schema 50; `PosRec.gs`, `Auth.gs`, `Pipeline.gs`, `Api.gs`, `Tasks.gs`, `Users.gs`, `Config.gs`, `Compliance.gs`, `App.html`, `Styles.html`, `E2E.gs`; §9.8, ADR-077)
+- New sheet `Position_Recruiters`; `Applications.Owner_Recruiter`; `Stage_History.Acted_For` and `Actor_Name`. Tagging in the position drawer; the ticket shows who added the candidate; tagged recruiters can add candidates, record follow-ups and screening, and move cards forward; status changes stay with the card's recruiter, the lead recruiter and leads. Cards' recruiter name is now refreshed when a position is reassigned.
+- Credit for TAT, KPIs and tasks is unchanged (lead recruiter). Tests: E2E PR1; local checks of the rights matrix, tagging, lead change and deactivation.
 
 **v162 — Policy library and policy search (no AI)** (schema 49; `Policy.gs`, `Config.gs`, `Compliance.gs`, `App.html`, `E2E.gs`; §8.11, ADR-076)
 - New Drive folder `Policies` and sheets `Policy_Docs`, `Policy_Chunks`, `Policy_Queries`; Admin tab *Policies* to add, replace and withdraw; page *Policy search* showing the matching policy passages; permissions `policy_ask` (all roles) and `policy_manage` (Head of HR, Admin).

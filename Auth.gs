@@ -70,6 +70,45 @@ function canEditLine_(u, line) {
   return isLead_(u) || String(line.Recruiter).trim().toLowerCase() === u.recruiter.trim().toLowerCase();
 }
 
+/** True when the user is on the position: its lead recruiter, a tagged recruiter, or a lead (TA Lead, Head of HR, Admin). */
+function onPosition_(u, line) {
+  return canEditLine_(u, line) || isTagged_(u, line.Line_ID);
+}
+function isTagged_(u, lineId) {
+  const me = String(u.recruiter || '').trim().toLowerCase();
+  return !!me && posRecTagged_(lineId).some(function (n) { return String(n).trim().toLowerCase() === me; });
+}
+function isCardOwner_(u, app) {
+  const me = String(u.recruiter || '').trim().toLowerCase(), who = String(app.Owner_Recruiter || '').trim().toLowerCase();
+  return !!me && me === who;
+}
+/** Everything a card's own recruiter may do (move, reject, hold, withdraw, back out): leads, the position's recruiter, or the recruiter who added the candidate while still on the position. */
+function canActCard_(u, line, app) {
+  return canEditLine_(u, line) || (isCardOwner_(u, app) && isTagged_(u, line.Line_ID));
+}
+/** Who is on a position, for messages: "Priya, with Rahul and Sana". */
+function positionPeople_(line) {
+  const t = posRecTagged_(line.Line_ID), lead = String(line.Recruiter || 'nobody');
+  return lead + (t.length ? ', with ' + t.join(' and ') : '');
+}
+/** The position, if the user is on it (lead recruiter or tagged) or is a lead; otherwise an error naming the people on it. Used for adding candidates, follow-ups, screening and interviews, and moving a card forward. */
+function requireOnPosition_(u, lineId) {
+  const l = lineOf_(lineId);
+  if (!l) throw new Error('Position ' + lineId + ' was not found.');
+  if (!onPosition_(u, l)) throw new Error('This position belongs to ' + positionPeople_(l) + '. Only they, a TA Lead or the Head of HR can work on its pipeline.');
+  return l;
+}
+/** The position, if the user may reject, hold, withdraw or back out this card; otherwise an error that says who can. */
+function requireCardAct_(u, app) {
+  const l = lineOf_(app.Line_ID);
+  if (!l) throw new Error('Position ' + app.Line_ID + ' was not found.');
+  if (!canActCard_(u, l, app)) {
+    const owner = String(app.Owner_Recruiter || '').trim();
+    throw new Error((owner ? 'This candidate was added by ' + owner + '. ' : '') + 'Only ' + (owner ? 'they, ' : '') + 'the position\u2019s recruiter (' + String(l.Recruiter || 'nobody') + '), a TA Lead or the Head of HR can change the status. You can move the card forward.');
+  }
+  return l;
+}
+
 /** Users list cached for 5 minutes so every page action doesn't re-read the Users sheet. */
 function usersCached_() {
   const cache = CacheService.getScriptCache();

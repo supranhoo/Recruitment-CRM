@@ -112,8 +112,9 @@ function apiSaveUser(d) {
   // Hand over open positions before the recruiter goes inactive.
   let reassigned = 0;
   if (res.cur && res.cur.active && !active && d.reassignTo) {
-    (openLinesByRecruiter_()[res.cur.recruiter.toLowerCase()] || []).forEach(function (l) { update_(T.MRF, l.id, { Recruiter: String(d.reassignTo) }, u); reassigned++; });
+    (openLinesByRecruiter_()[res.cur.recruiter.toLowerCase()] || []).forEach(function (l) { update_(T.MRF, l.id, { Recruiter: String(d.reassignTo) }, u); posRecSetLead_(l.id, String(d.reassignTo), u); reassigned++; });
   }
+  if (res.cur && res.cur.active && !active) posRecEndAllFor_(res.cur.recruiter, u);   // a person who has left is taken off every position they were tagged on
   syncRecruiterList_(recruiter, email, role, active);
   const access = (!res.cur || res.cur.active !== active) ? syncAccess_(email, active) : '';
   audit_(u, 'Users', email, res.cur ? 'Update' : 'Create', 'user', res.cur ? res.cur.role + (res.cur.active ? '' : ' (inactive)') : '',

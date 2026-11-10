@@ -785,7 +785,7 @@ function apiScheduleInterview(appId, d) {
   d = d || {};
   const a = readTable_(T.APP.name, true).rows.filter(function (r) { return r.App_ID === appId; })[0];
   if (!a) throw new Error('Application not found.');
-  requireActiveLine_(requireLineEdit_(u, a.Line_ID));
+  requireActiveLine_(requireOnPosition_(u, a.Line_ID));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d.date || ''))) throw new Error('Pick the interview date.');
   if (!/^\d{2}:\d{2}$/.test(String(d.time || ''))) throw new Error('Pick the interview time.');
   if (['Technical', 'HR'].indexOf(d.round) < 0) throw new Error('Pick the interview round.');
@@ -816,7 +816,7 @@ function apiInterviewAction(id, action, d) {
   d = d || {};
   const i = readTable_(T.INT.name, true).rows.filter(function (r) { return r.Interview_ID === id; })[0];
   if (!i) throw new Error('Interview not found.');
-  requireLineEdit_(u, i.Line_ID);
+  requireOnPosition_(u, i.Line_ID);
   if (action === 'confirm') update_(T.INT, id, { Attendance_Confirmed: 'Yes' }, u);
   else if (action === 'cancel') update_(T.INT, id, { Status: 'Cancelled', Notes: String(d.reason || i.Notes || '').slice(0, 500) }, u);
   else if (action === 'unavailable') {
