@@ -235,6 +235,10 @@ function setSetting_(key, value, note) {
   if (row) s.sheet.getRange(row._row, 2).setValue(value);
   else s.sheet.appendRow([key, value, note || '']);
   dropStale_('Settings');
+  if (key === 'SPLIT_CREDIT_FROM') {   // who is credited changes: rebuild the scorecard, the dashboard and the day snapshots (v164)
+    const now = String(Date.now());
+    try { PropertiesService.getScriptProperties().setProperties({ KPI_DIRTY_AT: now, DASH_DIRTY_AT: now }); daySnapDropAll_(); } catch (e) { }
+  }
 }
 
 function summaryRecipients_() {

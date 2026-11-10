@@ -62,7 +62,7 @@ function pipelineCredits_(h, fast) {
 function pipelineEvents_(from, to) {
   const start = cutover_();
   const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
-  const removed = {}; readTable_(T.APP.name).rows.forEach(function (a) { if (String(a.Status) === 'Removed') removed[a.App_ID] = true; });
+  const removed = {}, appRow = {}; readTable_(T.APP.name).rows.forEach(function (a) { appRow[a.App_ID] = a; if (String(a.Status) === 'Removed') removed[a.App_ID] = true; });
   const rows = readTableFrom_(T.HIST.name, 'Changed_At', start).rows.filter(function (h) { const d = ymd_(h.Changed_At); return d && d >= start && !removed[h.App_ID]; })
     .sort(function (a, b) { return (a.Changed_At instanceof Date ? a.Changed_At.getTime() : 0) - (b.Changed_At instanceof Date ? b.Changed_At.getTime() : 0); });
   const all = [], byApp = {}, seen = {}, fastOf = {};
@@ -77,7 +77,7 @@ function pipelineEvents_(from, to) {
     pipelineCredits_(h, isFastLine(h.Line_ID)).forEach(function (c) {
       if (c.metric !== 'Backouts' && got[c.metric]) return;   // once per card
       const l = lines[h.Line_ID] || {};
-      const ev = { day: ymd_(h.Changed_At), metric: c.metric, si: c.si, stage: String(h.To_Stage), recruiter: String(l.Recruiter || h.Recruiter || ''), line: String(h.Line_ID), app: app,
+      const ev = { day: ymd_(h.Changed_At), metric: c.metric, si: c.si, stage: String(h.To_Stage), recruiter: String(cardCredit_(l, appRow[app]) || h.Recruiter || ''), line: String(h.Line_ID), app: app,
         cand: String(h.Candidate_ID), position: String(l.Position || ''), mrf: String(l.MRF_No || ''), dept: String(l.Dept || ''),
         grade: String(l.Grade || ''), outcome: String(h.Outcome || ''), time: fmt_(h.Changed_At, TZ, 'HH:mm'),
         remark: c.metric === 'Docs' && String(h.To_Stage) === 'Docs' ? String(h.Note || '').trim() : '' };   // the remarks typed when the documents were verified
@@ -309,7 +309,7 @@ function daySnapDropAll_() {
 }
 function daySnapTouch_(table, changes, created, rec) {
   try {
-    if (table === 'Users' || table === 'M_Recruiters') return daySnapDropAll_();
+    if (table === 'Users' || table === 'M_Recruiters' || table === 'Position_Recruiters') return daySnapDropAll_();
     const own = table === T.FUNNEL.name ? 'Entry_Date' : table === 'Daily_Summary' ? 'Summary_Date' : table === T.CAND.name ? 'Created_At' : '';
     const moving = table === T.MRF.name ? ['Offer_Date', 'Actual_DOJ', 'Backout_Date'] : [];
     const labels = table === T.MRF.name ? ['Recruiter', 'Position', 'Dept', 'Grade', 'MRF_No', 'Approval_Status', 'BGV_Prev_Org_Date', 'BGV_Required'] : [];

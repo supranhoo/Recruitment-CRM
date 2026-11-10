@@ -190,10 +190,10 @@ function kpiRecon_(month, recruiter, kpi) {
   const targets = kpiTargets_(), clocks = kpiClocks_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
   const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
   const out = {}; KPI_RECON_BUCKETS_.forEach(function (b) { out[b[0]] = []; });
-  readTable_(T.MRF.name).rows.forEach(function (l) {
-    const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
+  const reconLine = function (l, cr) {
+    const rec = cr ? cr.name : (String(l.Recruiter || 'Unassigned').trim() || 'Unassigned');
     if (want && rec.toLowerCase() !== want) return;
-    const status = positionStatus_(l), clk = kpiLineClock_(l, clocks), receipt = clk.receipt, doj = clk.doj;
+    const status = positionStatus_(l), clk = kpiLineClock_(l, clocks, cr ? cr.from : ''), receipt = clk.receipt, doj = clk.doj;
     const joinedIn = !!doj && doj.slice(0, 7) === month;
     let bucket = '', d = null;
     if (kpiWorkable_(l, status) && receipt) {
@@ -220,7 +220,8 @@ function kpiRecon_(month, recruiter, kpi) {
       receipt: receipt, doj: doj };
     Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end));
     out[bucket].push(it);
-  });
+  };
+  readTable_(T.MRF.name).rows.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
   const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
 }
@@ -269,8 +270,8 @@ function kpiWorkedIn_(clk, month) {
   return !!clk.receipt && clk.receipt <= end && !(clk.doj && clk.doj < start);
 }
 /** The recruiter-clock numbers of one position line, as used by every KPI. */
-function kpiLineClock_(l, k) {
-  const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
+function kpiLineClock_(l, k, startOverride) {
+  const receipt = startOverride || tatStart_(l), doj = ymd_(l.Actual_DOJ);
   const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
   const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
   return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday };
@@ -303,25 +304,31 @@ function computeKpis_(fy) {
   const lines = readTable_(T.MRF.name).rows;
   const recruiters = {};
   const cell = function () { return { num: 0, den: 0, worked: 0, workedOk: 0, items: [], notDue: 0, notDueItems: [] }; };
-  const bucket = function (rec, kpi, month) {
-    const r = recruiters[rec] = recruiters[rec] || {};
-    const k = r[kpi] = r[kpi] || {};
-    return k[month] = k[month] || cell();
+  const bucketIn = function (store) {
+    return function (rec, kpi, month) {
+      const r = store[rec] = store[rec] || {};
+      const k = r[kpi] = r[kpi] || {};
+      return k[month] = k[month] || cell();
+    };
   };
+  const bucketMain = bucketIn(recruiters), extra = {}, bucketExtra = bucketIn(extra);   // extra: the tagged recruiters' cells (v164), merged after the team row is built
+  const bucket = bucketMain;
   const inFy = function (m) { return months.indexOf(m) >= 0; };
   const clocks = kpiClocks_(), nowMonth = ymd_(new Date()).slice(0, 7);
 
-  lines.forEach(function (l) {
-    const rec = String(l.Recruiter || 'Unassigned').trim() || 'Unassigned';
-    const receipt = tatStart_(l), doj = ymd_(l.Actual_DOJ);
+  const doLine = function (l, cr) {
+    const bucket = cr ? bucketExtra : bucketMain;   // a tagged recruiter's credit goes to their own cells; the lead's goes exactly where it always did
+    const rec = cr ? cr.name : (String(l.Recruiter || 'Unassigned').trim() || 'Unassigned');
+    const receipt = cr ? cr.from : tatStart_(l), doj = ymd_(l.Actual_DOJ);
     const status = positionStatus_(l);
     // Recruiter clock adjustments, as on the TAT screens: approved exemptions that apply to the recruiter, notice beyond
     // the grace (unless the Head of HR rejected it) and on-hold / paused days, which are not counted against the recruiter.
-    const clk = kpiLineClock_(l, clocks), ex = clk.ex, hold = clk.hold, paused = clk.paused;
+    const clk = kpiLineClock_(l, clocks, cr ? cr.from : ''), ex = clk.ex, hold = clk.hold, paused = clk.paused;
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
     // Where the TAT start comes from, so the drill-down can say which date it is (the MRF approved date, not the received date).
-    const startFrom = ymd_(l.TAT_Start_From) ? 'carried' : ymd_(l.Assigned_On) ? (ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : 'assigned') : ymd_(l.Approved_On) ? 'approved' : 'received';
+    if (cr) brief.credit = 'tagged';
+    const startFrom = cr ? 'assigned' : ymd_(l.TAT_Start_From) ? 'carried' : ymd_(l.Assigned_On) ? (ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : 'assigned') : ymd_(l.Approved_On) ? 'approved' : 'received';
     if (startFrom !== 'approved') brief.from = startFrom;   // the usual case (counted from the MRF approved date) is left out to keep the result small
     if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
     if (ymd_(l.Receipt_Date) && ymd_(l.Receipt_Date) !== receipt) brief.recv = ymd_(l.Receipt_Date);
@@ -357,7 +364,8 @@ function computeKpis_(fy) {
     // The backout is counted in the month of its date, for the position's recruiter; the positions worked on are counted in the loop above.
     const backM = ymd_(l.Backout_Date).slice(0, 7);
     if (backM && inFy(backM)) { const c = bucket(rec, 'OFFER_BACKOUT', backM); c.num++; c.items.push(Object.assign({ event: 'Backout', date: ymd_(l.Backout_Date) }, brief)); }
-  });
+  };
+  lines.forEach(function (l) { doLine(l, null); posTaggedCredits_(l).forEach(function (cr) { doLine(l, cr); }); });
 
   // ---- Compliance KPIs (scored from KPI_CAPTURE_FROM onward) ----
   const s = settings_();
@@ -468,6 +476,16 @@ function computeKpis_(fy) {
     });
   });
   recruiters['TEAM_TOTAL'] = team;
+  Object.keys(extra).forEach(function (rec) {   // v164: the tagged recruiters' own cells, added after the team row so a position counts once in the team
+    Object.keys(extra[rec]).forEach(function (kpi) {
+      Object.keys(extra[rec][kpi]).forEach(function (m) {
+        const src = extra[rec][kpi][m], dst = bucketMain(rec, kpi, m);
+        dst.num += src.num; dst.den += src.den; dst.worked += src.worked; dst.workedOk += src.workedOk; dst.notDue += src.notDue;
+        src.items.forEach(function (it) { dst.items.push(it); });
+        src.notDueItems.forEach(function (it) { dst.notDueItems.push(it); });
+      });
+    });
+  });
 
   const finish = function (kpi, c, m) {
     if (KPI_DEFS[kpi].count) {
@@ -510,7 +528,7 @@ function apiKpi(fy, fresh) {
   currentUser_();
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
-  const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0') + '|' + ymd_(new Date());   // a new day can make a position due (v153)
+  const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0') + '|' + ymd_(new Date()) + '|' + splitFrom_();   // a new day can make a position due (v153); the split-credit date changes who is credited (v164)
   const key = 'kpi_b' + BUILD_ID + '_' + dbTag_() + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
   if (!fresh) {
     /* The result is kept in pieces (cacheBigPut_), so it is cached however large it grows; a piece that is missing counts as no cache. */

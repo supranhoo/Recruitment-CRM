@@ -644,6 +644,18 @@ function e2eRun_(trash) {
       const cv = histCvList_([{ File_URL: 'u1', Uploaded_At: new Date(1000) }, { File_URL: 'u2', Uploaded_At: new Date(2000) }], 'u2');
       return r.events.length === 3 && r.events[0].moved === true && r.events[2].origin === 'J1 A' && r.results.length === 1 && r.results[0].outcome === 'Cleared' && cv[0].url === 'u2' && cv[0].current === true ? 'ok' : false;
     });
+    t('SC1 split credit: nothing changes without the date; card events go to the card\u2019s recruiter; tagged recruiters earn position credit', function () {
+      const was = { s: settings_, r: posRecRows_, m: _tables.__posrec };
+      const L = { Line_ID: 'L-SC', Recruiter: 'Priya' }, mine = { Owner_Recruiter: 'Rahul' }, lead = { Owner_Recruiter: 'Priya' }, ghost = { Owner_Recruiter: 'Nobody' };
+      const rows = [{ Line_ID: 'L-SC', Recruiter: 'Priya', Role: 'Lead', Status: 'Active', Assigned_On: '2026-07-02' }, { Line_ID: 'L-SC', Recruiter: 'Rahul', Role: 'Tagged', Status: 'Active', Assigned_On: '2026-11-12' }];
+      try {
+        posRecRows_ = function () { return rows; };
+        const probe = function (date) { settings_ = function () { return { SPLIT_CREDIT_FROM: date }; }; _tables.__posrec = null; return { split: lineSplit_(L), tags: posTaggedCredits_(L).length, rahul: cardCredit_(L, mine), lead: cardCredit_(L, lead), ghost: cardCredit_(L, ghost) }; };
+        const off = probe(''), future = probe('2027-01-01'), on = probe('2026-11-01');
+        return !off.split && off.tags === 0 && off.rahul === 'Priya' && JSON.stringify(off) === JSON.stringify(future)
+          && on.split && on.tags === 1 && on.rahul === 'Rahul' && on.lead === 'Priya' && on.ghost === 'Priya' ? 'ok' : false;
+      } finally { settings_ = was.s; posRecRows_ = was.r; _tables.__posrec = null; }
+    });
     t('PR1 several recruiters on a position: who may work a card, who may change its status, ticket owner', function () {
       const line = { Line_ID: 'L-E2E', Recruiter: 'Priya' }, app = { Owner_Recruiter: 'Rahul', Line_ID: 'L-E2E' }, mine = { Owner_Recruiter: 'Priya', Line_ID: 'L-E2E' };
       const lead = { email: 'm@x.com', recruiter: 'Meera', perms: ['lead'] }, priya = { email: 'p@x.com', recruiter: 'Priya', perms: [] }, rahul = { email: 'r@x.com', recruiter: 'Rahul', perms: [] }, zed = { email: 'z@x.com', recruiter: 'Zed', perms: [] };

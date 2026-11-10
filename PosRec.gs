@@ -121,3 +121,50 @@ function apiPosRecSet(lineId, names) {
   });
   return apiPosRecList(lineId);
 }
+
+/* ---------------------------------------------------------------- split credit (v164) ----------------------------------------------
+ * Setting SPLIT_CREDIT_FROM (a date). Empty = every figure is credited exactly as before (the lead recruiter only). From the date, a
+ * position that has a recruiter tagged on or after it is "split": card events go to the card's recruiter, position measures also go to
+ * each active tagged recruiter (team totals count the position once). A position with no such tag is never affected.
+ */
+function splitFrom_() {
+  const v = settings_().SPLIT_CREDIT_FROM, d = ymd_(v) || String(v || '').replace(/^'/, '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
+}
+/** {split, by: {Line_ID: {tagged: [{name, from}], known: {lowercase name: true}, split: bool}}}, built once per run. */
+function posCreditIdx_() {
+  if (_tables.__posrec) return _tables.__posrec;
+  const split = splitFrom_(), idx = { split: split, by: {} };
+  if (split) posRecRows_().forEach(function (r) {
+    const nm = String(r.Recruiter || '').trim(); if (!nm) return;
+    const e = idx.by[String(r.Line_ID)] = idx.by[String(r.Line_ID)] || { tagged: [], known: {}, split: false };
+    e.known[nm.toLowerCase()] = true;
+    const from = ymd_(r.Assigned_On);
+    if (String(r.Role) === 'Tagged' && from && from >= split) {
+      e.split = true;
+      if (String(r.Status) === 'Active') e.tagged.push({ name: nm, from: from });
+    }
+  });
+  _tables.__posrec = idx;
+  return idx;
+}
+/** True when the position is credited in the split way. */
+function lineSplit_(l) {
+  const e = l && posCreditIdx_().by[String(l.Line_ID)];
+  return !!(e && e.split);
+}
+/** The active tagged recruiters who earn position credit: [{name, from}] (empty unless the position is split). */
+function posTaggedCredits_(l) {
+  const e = l && posCreditIdx_().by[String(l.Line_ID)];
+  return e && e.split ? e.tagged : [];
+}
+/**
+ * Who a card's events count for. The position's lead recruiter (exactly l.Recruiter, as before) unless the position is split and the card's
+ * recruiter is a person on that position, then that person.
+ */
+function cardCredit_(l, app) {
+  if (!l || !app || !lineSplit_(l)) return l && l.Recruiter;
+  const owner = String(app.Owner_Recruiter || '').trim(), lead = String(l.Recruiter || '').trim();
+  if (!owner || owner.toLowerCase() === lead.toLowerCase()) return l.Recruiter;
+  return posCreditIdx_().by[String(l.Line_ID)].known[owner.toLowerCase()] ? owner : l.Recruiter;
+}
