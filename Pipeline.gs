@@ -828,11 +828,12 @@ function apiPipelineAlerts() {
 
 /** Candidate moves per recruiter on a date, from Stage_History (used by the daily review). */
 function pipelineMoves_(date) {
-  const out = {}, lines = {};
+  const out = {}, lines = {}, apps = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
+  if (splitFrom_()) readTable_(T.APP.name).rows.forEach(function (a) { apps[a.App_ID] = a; });   // card credit is only looked up when credit is split (v164)
   readTableFrom_(T.HIST.name, 'Changed_At', date).rows.forEach(function (h) {
     if (ymd_(h.Changed_At) !== date || String(h.Changed_By) === 'migration') return;
-    const r = String((lines[h.Line_ID] || {}).Recruiter || h.Recruiter || 'Unassigned').trim();   // same credit as the scorecard (pipelineEvents_)
+    const r = String(cardCredit_(lines[h.Line_ID] || {}, apps[h.App_ID]) || h.Recruiter || 'Unassigned').trim();   // same credit as the scorecard (pipelineEvents_)
     const o = out[r] = out[r] || {};
     const key = h.From_Stage === h.To_Stage ? String(h.Outcome || 'Status change') : String(h.To_Stage);
     o[key] = (o[key] || 0) + 1;

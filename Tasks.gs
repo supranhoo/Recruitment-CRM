@@ -134,6 +134,7 @@ function computeTasks_() {
     if (now < dueAt) return;
     const critAt = t.forceCritical ? (t.critAt || t.startMs) : (r.crit === null ? 0 : t.startMs + r.crit * HOUR_MS_);
     t.rule = rid; t.missedRule = r.missed; t.policy = r.policy;
+    if (fl && lineSplit_(fl)) t.split = true;   // v164: on a split position the stored recruiter follows the card's recruiter
     t.dueAt = dueAt; t.critAt = critAt;
     t.level = critAt && now >= critAt ? 'critical' : 'due';
     t.ageText = hoursText_((now - t.startMs) / HOUR_MS_);
@@ -196,8 +197,8 @@ function computeTasks_() {
     if (String(a.Stage) !== 'Shared') return;
     const l = lines[a.Line_ID]; if (!l) return;
     const since = ms_(a.Stage_Since); if (!since) return;
-    const k = String(l.Recruiter) + '|' + String(l.Dept);
-    const g = hodGroups[k] = hodGroups[k] || { recruiter: String(l.Recruiter), dept: String(l.Dept), oldest: since, items: [], line: a.Line_ID };
+    const who = String(cardCredit_(l, a)), k = who + '|' + String(l.Dept);   // v164: the card's recruiter on a split position
+    const g = hodGroups[k] = hodGroups[k] || { recruiter: who, dept: String(l.Dept), oldest: since, items: [], line: a.Line_ID };
     g.oldest = Math.min(g.oldest, since);
     g.items.push({ name: candName(a), position: String(l.Position), mrf: String(l.MRF_No || ''), hours: Math.floor((now - since) / HOUR_MS_), line: a.Line_ID });
   });
@@ -222,7 +223,7 @@ function computeTasks_() {
 
   apps.forEach(function (a) {
     const l = lines[a.Line_ID]; if (!l) return;
-    const rec = String(l.Recruiter || a.Recruiter), c = cands[a.Candidate_ID] || {};
+    const rec = String(cardCredit_(l, a) || a.Recruiter), c = cands[a.Candidate_ID] || {};
     const who = candName(a), ctxt = who + ' \u00b7 ' + lineLabel(l), since = ms_(a.Stage_Since), st = String(a.Stage);
     const mine = intsByApp[a.App_ID] || [];
 
@@ -397,7 +398,7 @@ function computeTasks_() {
   // Voice screening calls: what the agent heard (completed, not interested, call back, incomplete, wrong number) becomes a to-do for the card's recruiter.
   voiceTaskRows_(apps).forEach(function (v) {
     const a = v.app;
-    add('voice_' + v.action.key, { key: 'voice_' + v.action.key + '|' + v.callId, recruiter: String(a.Recruiter), line: a.Line_ID, app: a.App_ID, title: v.action.title + ': ' + candName(a),
+    add('voice_' + v.action.key, { key: 'voice_' + v.action.key + '|' + v.callId, recruiter: String(lineSplit_(lines[a.Line_ID]) ? cardCredit_(lines[a.Line_ID], a) : a.Recruiter), line: a.Line_ID, app: a.App_ID, title: v.action.title + ': ' + candName(a),
       context: lineLabel(lines[a.Line_ID]) + ' \u00b7 ' + v.action.why, startMs: v.at || now, manual: true, open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
   });
 
@@ -467,7 +468,7 @@ function taskState_() {
 function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date; }
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
-  const stamps = tableStamps_(['MRF', 'Applications', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
+  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
@@ -514,8 +515,8 @@ function reconcileTasks_() {
       } else if (s.Resolved_At && !s.Done_At) {
         updates.push({ r: s._row, v: row(Object.assign({}, s, { Title: t.title, Context: t.context, First_Seen: now, Critical_At: crit, Resolved_At: '',
           Chase_Count: 0, Last_Chased_At: '', Snoozed_Until: '', Snooze_Reason: '', Updated_At: now })) });
-      } else if (String(s.Title) !== t.title || String(s.Context) !== t.context || ms_(s.Critical_At) !== (t.critAt || 0)) {
-        updates.push({ r: s._row, v: row(Object.assign({}, s, { Title: t.title, Context: t.context, Critical_At: crit, Updated_At: now })) });
+      } else if (String(s.Title) !== t.title || String(s.Context) !== t.context || ms_(s.Critical_At) !== (t.critAt || 0) || (t.split && String(s.Recruiter) !== String(t.recruiter))) {
+        updates.push({ r: s._row, v: row(Object.assign({}, s, { Title: t.title, Context: t.context, Critical_At: crit, Updated_At: now }, t.split ? { Recruiter: t.recruiter } : {})) });
       }
     });
     Object.keys(st.map).forEach(function (k) {

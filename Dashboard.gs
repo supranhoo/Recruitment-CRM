@@ -71,8 +71,8 @@ function buildSnapshot_(by) {
 /** Called after every save to positions or the daily log. Cheap: one property write. */
 function markDashDirty_(sheetName) {
   const props = PropertiesService.getScriptProperties();
-  if (sheetName === T.MRF.name || sheetName === T.FUNNEL.name) props.setProperty('DASH_DIRTY_AT', String(Date.now()));
-  if ([T.MRF.name, T.CAND.name, 'Observations', 'Audit_Checks', 'BGV_Cases'].indexOf(sheetName) >= 0) props.setProperty('KPI_DIRTY_AT', String(Date.now()));
+  if (sheetName === T.MRF.name || sheetName === T.FUNNEL.name || sheetName === 'Position_Recruiters') props.setProperty('DASH_DIRTY_AT', String(Date.now()));
+  if ([T.MRF.name, T.CAND.name, 'Observations', 'Audit_Checks', 'BGV_Cases', 'Position_Recruiters'].indexOf(sheetName) >= 0) props.setProperty('KPI_DIRTY_AT', String(Date.now()));
 }
 
 /** 30-minute trigger: rebuild only if something changed since the last snapshot. */

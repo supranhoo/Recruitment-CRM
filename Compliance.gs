@@ -154,6 +154,12 @@ function ensureSchema_() {
           'First month scored for psychometric, BGV, observation and audit KPIs']);
       }
     });
+    step_('SPLIT_CREDIT_FROM setting', function () {
+      const s = readTable_('Settings', true);
+      if (!s.rows.some(function (r) { return r.Key === 'SPLIT_CREDIT_FROM'; })) {
+        s.sheet.appendRow(['SPLIT_CREDIT_FROM', '', 'Date (yyyy-mm-dd). From this date a position with a tagged recruiter credits card events to the card\u2019s recruiter and position measures to each tagged recruiter. Empty = lead recruiter only. Positions tagged before the date are not affected.']);
+      }
+    });
     const bad = Object.keys(failed);
     props.setProperty('SCHEMA_LAST_MS', String(Date.now() - t0));
     if (!bad.length && !locked) {

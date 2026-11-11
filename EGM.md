@@ -9,7 +9,7 @@ HTML template; the browser calls the `api*` functions in the `.gs` files through
 `Users` sheet. Tables are read and written only through `Db.gs`
 (`readTable_`, `insert_`, `update_`, `nextId_`, `audit_`). Schema upgrades run
 step by step in `Compliance.gs:ensureSchema_` (`SCHEMA_VERSION` '50'). The release
-number is `Config.gs:BUILD_ID` ('163'). Files in `.html` (`Index.html`,
+number is `Config.gs:BUILD_ID` ('164'). Files in `.html` (`Index.html`,
 `App.html`, `Styles.html`) are the page and are outside this contract. Business
 rules and decisions are in [docs/BFCL_Recruitment_CRM_SSOT.md](./docs/BFCL_Recruitment_CRM_SSOT.md);
 [README.md](./README.md) holds the human-written setup and release notes.
@@ -34,7 +34,7 @@ Contracts per file (public entry points are the `api*` functions; `name_` helper
 - `Kpi.gs`, `KpiAdmin.gs`: monthly scorecard from `KPI_Targets` and `KPI_Scoring`; KPI set-up is append-only and versioned (`kpi_edit`).
 - `Checkin.gs`: check-in plan (versioned `Checkin_Plan`: timeline, questions, facts to tell; `checkinSchedule_` dates; `apiCheckinPlan/Preview/Save/For`); plans and shows dates only, places no call (v161).
 - `Policy.gs`: policy library (Drive folder `Policies`, `Policy_Docs`/`Policy_Chunks`/`Policy_Queries`), browser-read upload in parts, BM25 passage search with a not-covered gate; no AI and no policy text leaves the sheet (v162).
-- `PosRec.gs`: several recruiters per position (`Position_Recruiters`: lead and tagged rows; `Applications.Owner_Recruiter`; `apiPosRecList/Set`); rights helpers `onPosition_`, `canActCard_`, `requireOnPosition_`, `requireCardAct_` are in `Auth.gs`. Credit stays with `MRF.Recruiter` (v163).
+- `PosRec.gs`: several recruiters per position (`Position_Recruiters`: lead and tagged rows; `Applications.Owner_Recruiter`; `apiPosRecList/Set`); rights helpers `onPosition_`, `canActCard_`, `requireOnPosition_`, `requireCardAct_` are in `Auth.gs`. Credit stays with `MRF.Recruiter` unless Setting `SPLIT_CREDIT_FROM` is set (v164: `lineSplit_`, `posTaggedCredits_`, `cardCredit_`; KPIs, dashboard, funnel, events and card tasks).
 - `Departments.gs`, `Grades.gs`: department delay report (read only); grade and designation master data.
 
 ### Candidates and pipeline

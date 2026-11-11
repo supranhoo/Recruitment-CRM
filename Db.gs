@@ -267,6 +267,7 @@ function dropStale_(name) {
   bumpStamp_(name);
   if (name === T.CAND.name) _tables.__cidx = null;   // derived views of a table are dropped with it
   if (name === T.APP.name) _tables.__live = null;
+  if (name === 'Position_Recruiters' || name === 'Settings') _tables.__posrec = null;   // the split-credit view (v164)
   Object.keys(_tables).forEach(function (k) { if (k === name || k.indexOf(name + '|') === 0) _tables[k] = null; });
   if (CACHED_TABLES_.indexOf(name) >= 0) dropTableCache_(name);
 }

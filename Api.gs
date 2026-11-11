@@ -62,8 +62,8 @@ function apiGetPosition(lineId) {
 const FETCHABLE_ = {
   apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules', 'Position_Recruiters'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
-  apiListFunnel: { tables: ['Daily_Funnel', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
+  apiListFunnel: { tables: ['Daily_Funnel', 'Position_Recruiters', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
+  apiPipeline: { tables: ['Position_Recruiters', 'Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) {
   const t0 = Date.now(), u = currentUser_();
@@ -365,6 +365,13 @@ function apiSaveFunnel(data) {
   FUNNEL_METRICS.forEach(function (m) { if (typedM.indexOf(m) < 0) patch[m] = 0; });
   if (!FUNNEL_METRICS.some(function (m) { return patch[m] > 0; }) && !patch.Remarks && !patch.FB_From_Dept) throw new Error(typedM.length ? 'Enter at least one count or a remark.' : 'Enter a remark or the department feedback. The counts come from the pipeline.');
   patch.MRF_No = line.MRF_No;
+  const entryDay = ymd_(patch.Entry_Date), splitEntry = lineSplit_(line) && entryDay >= splitFrom_();
+  let entryWho = '';   // v164: on a split position each credited recruiter has their own entry for the day
+  if (splitEntry) {
+    const names = [String(line.Recruiter || '').trim()].concat(posTaggedCredits_(line).map(function (c) { return c.name; })).filter(String);
+    const want = String(isLead_(u) && data.Recruiter ? data.Recruiter : u.recruiter).trim().toLowerCase();
+    entryWho = names.filter(function (n) { return n.toLowerCase() === want; })[0] || names[0] || u.recruiter;
+  }
   return withLock_(function () {
   let rec;
   // One entry per position and day: a "new" entry for a position and day that already has one (a second click, a slow reply, a second tab,
@@ -372,7 +379,7 @@ function apiSaveFunnel(data) {
   let entryId = data.Entry_ID;
   if (!entryId) {
     const day = ymd_(patch.Entry_Date);
-    const same = readTable_(T.FUNNEL.name, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')); })[0];
+    const same = readTable_(T.FUNNEL.name, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')) && (!splitEntry || String(r.Recruiter || '').trim().toLowerCase() === entryWho.toLowerCase()); })[0];
     if (same) {
       if (!isLead_(u) && String(same.Created_By).toLowerCase() !== u.email) throw new Error('An entry for this position and day already exists (logged by ' + String(same.Created_By) + '). Ask a TA Lead to change it.');
       entryId = same.Entry_ID;
@@ -385,7 +392,7 @@ function apiSaveFunnel(data) {
     });
   } else {
     // An entry counts for the position's recruiter, also when a lead or a colleague types it; Created_By keeps who typed it.
-    patch.Recruiter = String(line.Recruiter || '').trim() || u.recruiter;
+    patch.Recruiter = splitEntry ? entryWho : (String(line.Recruiter || '').trim() || u.recruiter);
     rec = insert_(T.FUNNEL, patch, u);
   }
   const o = toClient_(rec); delete o._row;
@@ -395,10 +402,12 @@ function apiSaveFunnel(data) {
 const FUNNEL_REMOVED_RE_ = /^\[duplicate removed/;
 /** Entries logged more than once for one position and day: [{keep, extra: [entries]}], earliest first. */
 function funnelDuplicates_() {
-  const by = {};
+  const by = {}, lines = {}, from = splitFrom_();
+  if (from) readTable_(T.MRF.name).rows.forEach(function (l) { lines[String(l.Line_ID)] = l; });
   readTable_(T.FUNNEL.name).rows.forEach(function (r) {
     if (!r.Entry_ID || FUNNEL_REMOVED_RE_.test(String(r.Remarks || ''))) return;
-    const k = String(r.Line_ID) + '|' + ymd_(r.Entry_Date);
+    const day = ymd_(r.Entry_Date), perPerson = from && day >= from && lineSplit_(lines[String(r.Line_ID)]);   // on a split position the key includes the recruiter (v164)
+    const k = String(r.Line_ID) + '|' + day + (perPerson ? '|' + String(r.Recruiter || '').trim().toLowerCase() : '');
     (by[k] = by[k] || []).push(r);
   });
   const out = [];
@@ -650,6 +659,13 @@ function computeDashboard_() {
     const end = ymd_(l.TAT_End_Date);
     if (s === 'Closed' && end >= since180) { k.closed180++; if (l.TAT_Result === 'Achieved') k.achieved180++; }
     if (ymd_(l.Backout_Date) >= since180) k.backouts180++;
+    posTaggedCredits_(l).forEach(function (cr) {   // split credit (v164): a tagged recruiter's own view; the totals above count the position once
+      const tb = byRec[cr.name] = byRec[cr.name] || { recruiter: cr.name, open: 0, offered: 0, overdue: 0, joined30: 0, cv30: 0, interviews30: 0, selected30: 0 };
+      if (s === 'Open') tb.open++;
+      if (s === 'Offered') tb.offered++;
+      if (l.TAT_Result === 'Overdue') tb.overdue++;
+      if (doj && doj >= since30) tb.joined30++;
+    });
   });
 
   const funnel = {}; STAGES.forEach(function (k) { funnel[k] = 0; });   // the Pipeline stages, from the switch-over
