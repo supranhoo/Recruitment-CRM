@@ -3481,9 +3481,9 @@ async function openShareDept(appId, after) {
     <div class="sh-mail"><label><span>To</span><input id="shTo" value="${esc(SD.hod.email)}" placeholder="HOD email (add it in Admin \u2192 HOD contacts)"></label>
       <label><span>Subject</span><input id="shSubj" value="${esc(subject)}"></label><textarea id="shBody" rows="10">${esc(bodyText)}</textarea></div>
     ${ne ? `<div class="field wide sh-reason"><label for="shWhy">Reason for sharing a candidate who did not meet a knock-out</label><input id="shWhy" placeholder="Recorded with the screening"></div>` : ''}
-    <p class="hint sh-hint">Open in Outlook fills in the recipient, subject and message, and downloads the two files: drag them into the message.</p>
+    <p class="hint sh-hint"><b>Open in Outlook app</b> downloads a draft with the recipient, subject, message and both files already attached: open it with Outlook (the first time, right-click it, Open with, Outlook). <b>Open in Outlook (web)</b> fills in the message at outlook.office.com and downloads the two files to drag in.</p>
     <div class="sh-foot"><label class="sh-ck"><input type="checkbox" id="shMove"${STAGE_BEFORE_SHARED(SD.stage) ? ' checked' : ' disabled'}> Move to \u201cShared with dept\u201d${STAGE_BEFORE_SHARED(SD.stage) ? '' : ' (already there)'}</label>
-      <div><button class="btn" data-close>Close</button><button class="btn" id="shDl">Download files</button><button class="btn" id="shCopy">Copy message</button><button class="btn primary" id="shOut">Open in Outlook</button></div></div>`;
+      <div><button class="btn" data-close>Close</button><button class="btn" id="shDl">Download files</button><button class="btn" id="shCopy">Copy message</button><button class="btn" id="shOut">Open in Outlook (web)</button><button class="btn primary" id="shEml">Open in Outlook app</button></div></div>`;
   $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
   let recorded = !!sc.sharedOn && !STAGE_BEFORE_SHARED(SD.stage);
   const reason = () => $('#shWhy', d) ? $('#shWhy', d).value.trim() : '';
@@ -3506,6 +3506,38 @@ async function openShareDept(appId, after) {
     window.open(url, '_blank', 'noopener');
     e.target.disabled = true; try { await files(); await record(); } catch (err) { toast(err, true); } e.target.disabled = false;
   };
+  /* A draft message file with the CV and the screening attached (v168): Outlook opens an .eml marked X-Unsent as an editable draft. */
+  $('#shEml', d).onclick = async e => {
+    if (!need()) return;
+    e.target.disabled = true;
+    try {
+      const p = await pdfScreening(SD), atts = [{ name: p.name, mime: 'application/pdf', bytes: new Uint8Array(await p.blob.arrayBuffer()) }];
+      if (c.hasCv) { const cv = await api('apiGetCv', c.id); const ext = (String(cv.name).match(/\.[a-z0-9]+$/i) || [''])[0]; atts.push({ name: fileSafe('CV - ' + c.name) + ext, mime: cv.mime || 'application/octet-stream', bytes: b64Bytes(cv.b64) }); }
+      saveBlob(new Blob([buildEml($('#shTo', d).value, $('#shSubj', d).value, $('#shBody', d).value, atts)], { type: 'message/rfc822' }), fileSafe('Share - ' + c.name + ' - ' + (SD.line.mrf || SD.line.id)) + '.eml');
+      toast('Draft saved. Open the file with Outlook; the CV and screening are attached.');
+      await record();
+    } catch (err) { toast(err, true); }
+    e.target.disabled = false;
+  };
+}
+/** A draft e-mail as an RFC 822 message: To, Subject, the text and the attachments (bytes), marked X-Unsent so Outlook opens it for editing. */
+function buildEml(to, subject, body, atts) {
+  const enc = new TextEncoder(), crlf = '\r\n';
+  const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s).replace(/.{1,76}/g, '$&' + crlf).replace(/(\r\n)+$/, ''); };
+  const line = v => String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').trim();
+  const word = v => {   // RFC 2047 encoded words of at most 75 characters
+    v = line(v); if (/^[\x20-\x7e]*$/.test(v)) return v;
+    const out = []; let cur = '';
+    Array.from(v).forEach(ch => { if (enc.encode(cur + ch).length > 33) { out.push(cur); cur = ''; } cur += ch; }); if (cur) out.push(cur);
+    return out.map(x => '=?UTF-8?B?' + btoa(String.fromCharCode.apply(null, enc.encode(x))) + '?=').join(crlf + ' ');
+  };
+  const fname = n => { const f = line(n).replace(/["\\]/g, '-'); return /^[\x20-\x7e]*$/.test(f) ? 'filename="' + f + '"' : "filename*=UTF-8''" + encodeURIComponent(f).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase()); };   // RFC 2231 for a name with accents
+  const bound = '=_Share_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const text = String(body == null ? '' : body).replace(/\r?\n/g, crlf);
+  let m = ['X-Unsent: 1', 'To: ' + line(to), 'Subject: ' + word(subject), 'MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="' + bound + '"', '', 'This is a multi-part message in MIME format.', '',
+    '--' + bound, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(text)), ''].join(crlf);
+  atts.forEach(a => { m += crlf + ['--' + bound, 'Content-Type: ' + (a.mime || 'application/octet-stream') + ';' + crlf + ' ' + fname(a.name).replace(/^filename/, 'name'), 'Content-Transfer-Encoding: base64', 'Content-Disposition: attachment;' + crlf + ' ' + fname(a.name), '', b64(a.bytes), ''].join(crlf); });
+  return m + crlf + '--' + bound + '--' + crlf;
 }
 function STAGE_BEFORE_SHARED(stage) { return ['Sourced', 'Screened'].includes(stage); }
 async function loadScreenHistory(cand, body) {
