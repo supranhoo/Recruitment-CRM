@@ -33,7 +33,7 @@ function kpiEditGuard_(u) { if (!can_(u, 'kpi_edit')) throw new Error('Only the 
 function kpiTargetText_(t) {
   if (!t) return 'none';
   if (t.active === false) return 'override ended (team target applies)';
-  return t.days + ' days · ' + String(t.levels || 'All') + ' levels · notice ' + (t.exempt ? 'exempt' : 'not exempt');
+  return 'each grade\u2019s TAT rule · ' + String(t.levels || 'All') + ' levels · notice ' + (t.exempt ? 'exempt' : 'not exempt');
 }
 function kpiRulesText_(kpi, rules) {
   if (KPI_DEFS[kpi] && KPI_DEFS[kpi].count) {
@@ -107,7 +107,7 @@ function kpiParseDraft_(d) {
       out.targets.push({ recruiter: key, kpi: kpi, levels: cur.levels, days: cur.days, exempt: cur.exempt, from: from, active: false, id: '', _who: who });
       out.label = KPI_DEFS[kpi].name + ' · ' + who + ': override ends';
     } else {
-      const days = kpiInt_(d.days, 1, 365, 'The target days');
+      const days = d.days === undefined || d.days === null || d.days === '' ? (cur ? cur.days : 0) : kpiInt_(d.days, 1, 365, 'The target days');   // v167: the days come from the TAT rules; the stored number is kept but not used
       const lv = KPI_LEVEL_CHOICES_.filter(function (l) { return l.toLowerCase() === String(d.levels || '').trim().toLowerCase(); })[0];
       if (!lv) throw new Error('Levels must be All, M, W or T.');
       const row = { recruiter: key, kpi: kpi, levels: lv, days: days, exempt: true, from: from, active: true, id: '', _who: who };   // notice beyond the grace is always exempt (v151): there is nothing to choose

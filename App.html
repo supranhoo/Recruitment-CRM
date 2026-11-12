@@ -3958,7 +3958,7 @@ function kpiBandsText(rules) {
   return b.length ? b.map(x => `${x.score} for ${x.min}%${x.min === 100 ? '' : '+'}`).join(', ') + `, 0 below ${b[b.length - 1].min}%` : '';
 }
 function kpiStepsText(r) { return (r.steps || []).map(x => `${x.score} for up to ${x.max}`).join(', ') + `, ${r.otherwise || 0} for more`; }
-function kpiTatText(t) { return `${t.days} days · ${t.levels} levels · notice ${t.exempt ? '' : 'not '}exempt`; }
+function kpiTatText(t) { return `each grade\u2019s TAT rule · ${t.levels} levels · notice ${t.exempt ? '' : 'not '}exempt`; }
 function kpiNextMonth(m) { const [y, mm] = m.split('-').map(Number), t = y * 12 + mm; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; }
 function kpiCellText(c, count, unit) {
   if (!c) return '–';
@@ -3976,7 +3976,7 @@ async function renderKpiTargets(el, setup) {
   const edit = s.canEdit;
   const tatCard = (t, ti) => `<section class="panel kpia-card"><h3>${esc(t.name)}</h3>
     <p class="kpia-team">${t.team ? `<b>Whole team:</b> ${esc(kpiTatText(t.team))} <span class="sub">in force since ${esc(monthLabel(t.team.from))}${t.team.id ? ' · ' + esc(t.team.id) : ''}</span>` : '<span class="miss">No team target is set.</span>'}</p>
-    ${t.overrides.length ? `<ul class="kpia-list">${t.overrides.map((o, oi) => `<li><span><b>${esc(o.who)}</b> \u00b7 ${o.days} days \u00b7 ${esc(o.levels)} levels \u00b7 notice ${o.exempt ? '' : 'not '}exempt <span class="sub">override since ${esc(monthLabel(o.from))}${o.id ? ' \u00b7 ' + esc(o.id) : ''}</span></span>
+    ${t.overrides.length ? `<ul class="kpia-list">${t.overrides.map((o, oi) => `<li><span><b>${esc(o.who)}</b> \u00b7 ${esc(o.levels)} levels \u00b7 notice ${o.exempt ? '' : 'not '}exempt <span class="sub">override since ${esc(monthLabel(o.from))}${o.id ? ' \u00b7 ' + esc(o.id) : ''}</span></span>
       ${edit ? `<span class="kpia-acts"><button class="btn sm" data-a="ochg" data-t="${ti}" data-o="${oi}">Change</button><button class="btn sm" data-a="oend" data-t="${ti}" data-o="${oi}">End override</button></span>` : ''}</li>`).join('')}</ul>` : '<p class="hint">No recruiter has an override: everyone follows the team target.</p>'}
     ${t.upcoming.length ? `<p class="hint"><b>Starting later:</b> ${t.upcoming.map(u => `${esc(u.who)}: ${u.active === false ? 'override ends' : esc(kpiTatText(u))} from ${esc(monthLabel(u.from))}`).join('; ')}</p>` : ''}
     ${edit ? `<div class="btn-row"><button class="btn" data-a="team" data-t="${ti}">Change team target</button><button class="btn" data-a="add" data-t="${ti}">Add recruiter override</button></div>` : ''}</section>`;
@@ -4022,7 +4022,7 @@ function kpiaDrawer(s, cfg, done) {
     body = `<p class="hint">${esc(cfg.name)}</p>
       <div class="field"><label for="kfWho">Applies to</label><select id="kfWho" ${cfg.who ? 'disabled' : ''}>${opts(cfg.who ? [[cfg.who, cfg.who === '*' ? 'Whole team' : cfg.who]] : s.recruiters.map(r => [r, r]), cfg.who || '', !cfg.who)}</select></div>
       ${cfg.end ? `<p>From the month below this recruiter follows the team target again (${esc(kpiTatText(cfg.cur))}).</p>` : `
-      <div class="field"><label for="kfDays">Target days</label><input id="kfDays" type="number" min="1" max="365" step="1" value="${esc(c.days)}"></div>
+      <p class="note" style="margin:8px 0">The days are not set here. Each position is judged on the standard TAT of its own grade (W1 to W5, M1 to M7, T), from <b>Admin \u2192 TAT rules</b>, as in force on the day its clock started.</p>
       <div class="field"><label for="kfLv">Levels counted</label><select id="kfLv">${opts(s.levels.map(l => [l, l]), c.levels, false)}</select></div>
       <p class="hint">Notice beyond ${s.grace} days is always exempt: it is added to the allowed days and does not affect the TAT.</p>`}`;
   } else if (k === 'BANDS') {
@@ -4046,7 +4046,7 @@ function kpiaDrawer(s, cfg, done) {
     const d = { type: k, from: $('#kfFrom', root).value, reason: $('#kfWhy', root).value, base: s.base };
     if (k === 'TARGET') {
       d.kpi = cfg.kpi; d.who = cfg.who || $('#kfWho', root).value;
-      if (cfg.end) d.active = false; else { d.days = $('#kfDays', root).value; d.levels = $('#kfLv', root).value; d.exempt = 'Yes'; }
+      if (cfg.end) d.active = false; else { d.levels = $('#kfLv', root).value; d.exempt = 'Yes'; }
     } else if (k === 'BANDS' || k === 'COUNTS') {
       const rows = $$('.kpia-row', root).map(r => [$('.kr-a', r).value, $('.kr-b', r).value]);
       if (k === 'BANDS') { d.kpis = $$('.kf-kpi', root).filter(x => x.checked).map(x => x.value); d.bands = rows.map(r => ({ min: r[0], score: r[1] })); }
@@ -4296,7 +4296,7 @@ async function viewKpi(v, fresh) {
     const newest = w => k.targets.filter(t => t.kpi === kpi && t.recruiter === w && t.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0];
     let t = who !== '*' ? newest(who) : null; if (t && t.active === false) t = null;
     t = t || newest('*') || k.targets.filter(x => x.kpi === kpi && x.recruiter === '*').sort((a, b) => (a.from < b.from ? 1 : -1))[0]; if (!t) return '';
-    return `${t.days} days \u00b7 ${String(t.levels || 'All')} levels${t.exempt ? ` \u00b7 notice beyond ${grace} days exempt` : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' \u00b7 team default' : ''}`;
+    return `each grade\u2019s TAT rule \u00b7 ${String(t.levels || 'All')} levels${t.exempt ? ` \u00b7 notice beyond ${grace} days exempt` : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' \u00b7 team default' : ''}`;
   };
   const teamDays = kpi => { const t = k.targets.filter(x => x.kpi === kpi && x.recruiter === '*' && x.active !== false && x.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0]; return t ? t.days : ({ TIMELY_CLOSURE: 60, M_FULFILMENT: 50, W_FULFILMENT: 20 })[kpi]; };
   const pctRules = KPI_PCT_KPIS.map(x => k.scoring && k.scoring[x] ? k.scoring[x].rules : null);
@@ -4326,7 +4326,7 @@ async function viewKpi(v, fresh) {
   v.innerHTML = `
     <div class="page-head"><div><h1>KPI scorecard</h1>
       <p>Monthly results against each recruiter's own targets${isLead() ? ' (<a href="#" id="kpiSetup">see or change them in Admin \u2192 KPI targets</a>)' : ''}. Click any month to see the positions behind the number.</p></div>
-      <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button>${isLead() ? '<button class="btn" id="kpiOldNew" title="Timely closure, M-level and W-level: the percentage under the rule used before version 166 next to the new one, for every recruiter and month">Old rule vs new rule (CSV)</button>' : ''}</div></div>
+      <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button>${isLead() ? '<button class="btn" id="kpiOldNew" title="Timely closure, M-level and W-level: the percentage with the single KPI target days used before version 167 next to each grade\u2019s own TAT, for every recruiter and month">Target days vs grade TAT (CSV)</button>' : ''}</div></div>
     <div class="filters">
       <div class="field"><label for="kfy">Financial year</label><select id="kfy">${opts([fyNow() - 1, fyNow()].map(y => [y, `FY ${y}-${String(y + 1).slice(2)}`]), f.fy, false)}</select></div>
       <div class="field"><label for="krec">Recruiter</label><select id="krec">${opts([['TEAM_TOTAL', 'Whole team']].concat(recs.map(r => [r, r])), f.rec, false)}</select></div>
@@ -4345,7 +4345,7 @@ async function viewKpi(v, fresh) {
       const c = (k.data[rec][kp] || {})[m]; if (!c || !c.worked) return;
       rows.push([rec === 'TEAM_TOTAL' ? 'Whole team' : rec, k.defs[kp].name, monthLabel(m), c.worked, c.oldMissed == null ? '' : c.oldMissed, c.oldPct == null ? '' : c.oldPct, c.missed, c.pct == null ? '' : c.pct, c.oldPct == null || c.pct == null ? '' : Math.round((c.pct - c.oldPct) * 10) / 10]);
     })));
-    csvSave(`kpi-old-vs-new-rule-fy${f.fy}.csv`, ['Recruiter', 'KPI', 'Month', 'Positions worked on', 'Missed (old rule)', '% (old rule)', 'Missed (new rule)', '% (new rule)', 'Change in % points'], rows);
+    csvSave(`kpi-target-days-vs-grade-tat-fy${f.fy}.csv`, ['Recruiter', 'KPI', 'Month', 'Positions worked on', 'Missed (single target days)', '% (single target days)', 'Missed (grade TAT)', '% (grade TAT)', 'Change in % points'], rows);
   };
   $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
   $$('.kcell[data-k]', v).forEach(td => {

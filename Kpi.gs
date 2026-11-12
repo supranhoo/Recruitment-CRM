@@ -240,7 +240,7 @@ function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
-    rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: t && d ? t.days : '', allowed: d ? d.allowed : '', exm: t && d ? d.allowed - t.days : '',
+    rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: d ? d.std : '', allowed: d ? d.allowed : '', exm: d ? d.allowed - d.std : '',
     logic: clk.receipt ? kpiStartSource_(l) + ' to DOJ' + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
     days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
 }
@@ -270,7 +270,9 @@ function kpiLineClock_(l, k, startOverride) {
   const receipt = startOverride || tatStart_(l), doj = ymd_(l.Actual_DOJ);
   const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
   const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
-  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday };
+  /* v167: the standard days of the position's own grade, from the TAT rule in force on the day its clock started (Admin > TAT rules). */
+  const std = receipt ? Number(ruleFor_(k.ruleCtx, l.Grade, receipt).std) || 0 : 0;
+  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday, std: std };
 }
 /**
  * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
@@ -290,15 +292,18 @@ function kpiMonthStatus_(clk, d, month, today) {
   const ok = d.due >= cut;
   return { ok: ok, why: ok ? 'within' : 'overdue', cut: cut };
 }
-function kpiDue_(l, kpi, targets, rec, clk, status) {
+function kpiDue_(l, kpi, targets, rec, clk, status, flatDays) {
   if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
   // Notice beyond the grace is always added (v151); an offer sent within the TAT runs the full notice from the offer (v152).
-  const a = tatAllowed_(clk.receipt, t.days + clk.ex.days, clk.notice, clk.noticeDays, clk.hold, clk.paused, clk.offer), allowed = a.allowed;
+  /* v167: the days are the grade's own TAT rule (clk.std); the KPI target only says which levels count. flatDays = the target's single
+     number, as before v167, used only for the comparison download (and when a clock carries no grade days). */
+  const std = !flatDays && clk.std ? clk.std : t.days;
+  const a = tatAllowed_(clk.receipt, std + clk.ex.days, clk.notice, clk.noticeDays, clk.hold, clk.paused, clk.offer), allowed = a.allowed;
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
   const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
-  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, days: days, ok: !!clk.doj && days <= allowed,
+  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, std: std, days: days, ok: !!clk.doj && days <= allowed,
     byOffer: a.byOffer, offer: a.byOffer ? clk.offer : '',
     notDue: !clk.doj && !!clk.today && due >= clk.today };   // not joined and the due date is today or later: not a miss yet (v153)
 }
@@ -346,14 +351,16 @@ function computeKpis_(fy) {
     if (kpiWorkable_(l, status)) KPI_TAT_.forEach(function (kpi) {
       const d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d) return;
+      const dFlat = kpiDue_(l, kpi, targets, rec, clk, status, true);   // with the target's single number of days (before v167), for the comparison download only
       months.forEach(function (m) {
         if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
         const c = bucket(rec, kpi, m), st = kpiMonthStatus_(clk, d, m, clocks.exToday);
+        if (dFlat && kpiMonthStatus_(clk, dFlat, m, clocks.exToday).ok) c.oNum = (c.oNum || 0) + 1;
         c.worked++; c.den++;
         if (st.ok) c.num++;
         if (st.why === 'ontime') c.workedOk++;
         if (st.why !== 'within') {
-          const it = Object.assign({ due: d.due, allowed: d.allowed, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
+          const it = Object.assign({ due: d.due, allowed: d.allowed, std: d.std, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
           if (st.why === 'overdue') it.doj = '';   // in this month it had not joined yet
           if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
           else if (clk.notice) it.notice = clk.notice;
@@ -361,8 +368,6 @@ function computeKpis_(fy) {
         }
         if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
       });
-      /* The rule before v166 (scored once, in the month it joined or fell due), kept only for the one-time old-versus-new comparison. */
-      if (inFy(d.month) && d.month <= nowMonth && !d.notDue) { const oc = bucket(rec, kpi, d.month); oc.oDen = (oc.oDen || 0) + 1; if (d.ok) oc.oNum = (oc.oNum || 0) + 1; }
     });
 
     // 3. Offer backout rate (v150) — candidates who backed out in the month ÷ positions worked on in the month × 100.
@@ -475,7 +480,7 @@ function computeKpis_(fy) {
         const t = (team[kpi] = team[kpi] || {})[m] = team[kpi][m] || cell();
         t.worked += src.worked || 0; t.workedOk += src.workedOk || 0;
         t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0); t.notDue += src.notDue || 0;
-        t.oDen = (t.oDen || 0) + (src.oDen || 0); t.oNum = (t.oNum || 0) + (src.oNum || 0);
+        t.oNum = (t.oNum || 0) + (src.oNum || 0);
         src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
         (src.notDueItems || []).forEach(function (it) { t.notDueItems.push(Object.assign({ recruiter: rec }, it)); });
       });
@@ -487,7 +492,7 @@ function computeKpis_(fy) {
       Object.keys(extra[rec][kpi]).forEach(function (m) {
         const src = extra[rec][kpi][m], dst = bucketMain(rec, kpi, m);
         dst.num += src.num; dst.den += src.den; dst.worked += src.worked; dst.workedOk += src.workedOk; dst.notDue += src.notDue;
-        dst.oDen = (dst.oDen || 0) + (src.oDen || 0); dst.oNum = (dst.oNum || 0) + (src.oNum || 0);
+        dst.oNum = (dst.oNum || 0) + (src.oNum || 0);
         src.items.forEach(function (it) { dst.items.push(it); });
         src.notDueItems.forEach(function (it) { dst.notDueItems.push(it); });
       });
@@ -505,10 +510,9 @@ function computeKpis_(fy) {
     const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
     const o = { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
       worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: tat ? missed : undefined };
-    if (tat) {   // the result under the rule before v166, for the comparison download only
-      const om = (c.oDen || 0) - (c.oNum || 0);
-      o.oldPct = kpi === 'W_FULFILMENT' ? (c.oDen ? Math.round(1000 * (c.oNum || 0) / c.oDen) / 10 : null) : (c.worked ? Math.round(1000 * (c.worked - om) / c.worked) / 10 : null);
-      o.oldMissed = om;
+    if (tat) {   // the result with the KPI target's single number of days (before v167), for the comparison download only
+      o.oldMissed = c.worked - (c.oNum || 0);
+      o.oldPct = c.worked ? Math.round(1000 * (c.oNum || 0) / c.worked) / 10 : null;
     }
     return o;
   };
