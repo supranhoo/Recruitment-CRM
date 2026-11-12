@@ -1354,6 +1354,14 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
+### 2026-11-12
+
+**v168 — Share with department: "Open in Outlook app" draft, and the experience text** (no schema change; `Pipeline.gs`, `App.html`)
+- "Open in Outlook" opened Outlook on the web (outlook.office.com) in a new tab and never the desktop application; a web link cannot carry the CV and screening PDF. It is now labelled **Open in Outlook (web)** and a new **Open in Outlook app** button downloads one `.eml` draft (`X-Unsent: 1`) with the recipient, subject and message from the dialog and the screening PDF and the CV attached; opened with Outlook (the first time: right-click, Open with, Outlook) it is an editable draft. Sharing is recorded as before.
+- The message wording "(Tue Jan 02 1900 00:00:00 GMT+0521 … yrs)": a date-formatted experience cell reached the message as a date. `expYears_` gives the number of years (a date becomes its day number; "6 years" loses its unit, so "6 years yrs" is gone).
+- An empty "To" is data, not code: add the HOD's e-mail in Admin → HOD contacts.
+- Tested: Node `keml` (experience cases; the .eml read back with Python's `email` library: headers, accents and Hindi in subject and text, byte-identical attachments, short CRLF lines, no header injection), browser `p19eml`. Opening the file in the real desktop Outlook is not testable here. The older suites that already failed on `main` before this change fail identically after it.
+
 ### 2026-11-08
 
 **v167 — The TAT KPIs use each grade's own TAT rule** (no schema change; `Kpi.gs`, `KpiAdmin.gs`, `App.html`; ADR-080)

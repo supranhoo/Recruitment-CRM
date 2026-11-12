@@ -1236,7 +1236,7 @@ function apiScreening(appId) {
   return { appId: String(appId), stage: String(app.Stage), status: String(app.Status), canEdit: canEditLine_(u, line) && String(app.Status) === 'Active',
     line: { id: String(line.Line_ID), mrf: String(line.MRF_No || ''), position: String(line.Position), grade: String(line.Grade || ''), dept: String(line.Dept) },
     cand: { id: String(cand.Candidate_ID || ''), name: String(cand.Name || ''), designation: String(cand.Current_Designation || ''), company: String(cand.Current_Company || ''),
-      exp: String(cand.Total_Exp_Years || cand.Experience || ''), education: String(cand.Education || ''), location: String(cand.Current_Location || ''), hasCv: !!cand.CV_File_URL },
+      exp: expYears_(cand), education: String(cand.Education || ''), location: String(cand.Current_Location || ''), hasCv: !!cand.CV_File_URL },
     finalItems: fin ? sqParse_(String(fin.Content)) : null, finalVersion: fin ? Number(fin.Version) : 0, jdVersion: st.jdFinal ? st.jdFinalVersion : 0,
     screening: cur, newerQuestions: !!(cur && fin && cur.sqVersion && Number(fin.Version) !== cur.sqVersion), hod: hodOf_(line.Dept), recruiter: String(line.Recruiter || '') };
 }
@@ -1297,4 +1297,17 @@ function apiCandidateScreenings(candId) {
   currentUser_(); ensureSchema_();
   return readTable_(T.SCR.name).rows.filter(function (s) { return String(s.Candidate_ID) === String(candId); })
     .sort(function (a, b) { return ms_(b.Updated_At || b.Created_At) - ms_(a.Updated_At || a.Created_At); }).map(function (s) { return scrClient_(s, true); });
+}
+
+/**
+ * A candidate's experience as plain years for messages (v168): the number of years, without a unit. A date-formatted cell
+ * (the number 3 shown as 2 Jan 1900) comes back as a Date, so it is turned back into its day number; text such as "6 years"
+ * loses its unit because the screens add " yrs". Total_Exp_Years is preferred over Experience; blank stays blank.
+ */
+function expYears_(cand) {
+  const one = function (v) {
+    if (v instanceof Date && !isNaN(v)) return String(Math.round((Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()) - Date.UTC(1899, 11, 30)) / 86400000));
+    return String(v == null ? '' : v).trim().replace(/\s*(years?|yrs?)\.?$/i, '').trim();
+  };
+  return one(cand.Total_Exp_Years) || one(cand.Experience);
 }
