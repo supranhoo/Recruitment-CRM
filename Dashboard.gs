@@ -15,7 +15,8 @@ function snapshotUsable_(snap) {
   return !!snap && String(snap.build) === String(BUILD_ID) && !!snap.funnel && STAGES.every(function (k) { return k in snap.funnel; });
 }
 
-function apiDashboard() {
+function apiDashboard() { return timed_('apiDashboard', apiDashboardRun_, arguments); }
+function apiDashboardRun_() {
   const u = currentUser_();
   let snap = readSnapshot_();
   if (!snap) snap = buildSnapshot_(u.email);

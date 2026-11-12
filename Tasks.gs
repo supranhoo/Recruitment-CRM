@@ -468,15 +468,24 @@ function taskState_() {
 function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date; }
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
-  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Tasks', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
+  const stateStamps = tableStamps_(['Tasks', 'Task_Actions']).join('|');
+  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
-  const key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + sj.length;
+  let hs = 0; for (let i = 0; i < stateStamps.length; i++) hs = (hs * 31 + stateStamps.charCodeAt(i)) >>> 0;
+  const baseKey = 'tasksc_' + bucket + '_' + h.toString(36) + '_' + sj.length, key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + hs.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
      which used to mean it was never cached and was rebuilt from about ten sheets on every call. */
   try { const hit = cacheBigGet_(key); if (hit) return JSON.parse(hit); } catch (e) { }
   const now = Date.now(), t0 = now;
+  /* v165: the computed to-dos (about ten sheets) are cached on their own; a Done/Snooze/Chased click changes only the state below. */
+  let computed = null;
+  try { const c = cacheBigGet_(baseKey); if (c) computed = JSON.parse(c); } catch (e) { computed = null; }
+  if (!computed) {
+    computed = computeTasks_();
+    try { const cs = JSON.stringify(computed); if (cs.length < 900000) cacheBigPut_(baseKey, cs, 900); } catch (e) { }
+  }
   const state = taskState_().map, notes = taskNotes_(0);
-  const list = computeTasks_().map(function (t) {
+  const list = computed.map(function (t) {
     const s = state[t.key];
     t.notes = notes[t.key] || [];
     const reopened = s && s.Resolved_At;
@@ -578,7 +587,8 @@ function sortTasks_(a, b) {
 }
 
 /** The signed-in recruiter's to-do list (the head and admin may ask for any recruiter, or '*' for the team). */
-function apiMyTasks(who) {
+function apiMyTasks(who) { return timed_('apiMyTasks', apiMyTasksRun_, arguments); }
+function apiMyTasksRun_(who) {
   const u = currentUser_(); ensureSchema_();
   const target = who && isLead_(u) ? String(who) : u.recruiter;
   const all = allTasks_().filter(function (t) { return target === '*' || String(t.recruiter).toLowerCase() === target.toLowerCase(); });
@@ -591,13 +601,15 @@ function apiMyTasks(who) {
 }
 
 /** Open tasks for one position (anyone who can see the position). */
-function apiTasksForLine(lineId) {
+function apiTasksForLine(lineId) { return timed_('apiTasksForLine', apiTasksForLineRun_, arguments); }
+function apiTasksForLineRun_(lineId) {
   currentUser_(); ensureSchema_();
   return allTasks_().filter(function (t) { return t.line === lineId && !t.hidden; }).sort(sortTasks_).map(taskClient_);
 }
 
 /** Counts for the Overview: the user's own, or the team's for the head and admin. */
-function apiTaskSummary() {
+function apiTaskSummary() { return timed_('apiTaskSummary', apiTaskSummaryRun_, arguments); }
+function apiTaskSummaryRun_() {
   const u = currentUser_(); ensureSchema_();
   const lead = isLead_(u);
   const all = allTasks_().filter(function (t) { return !t.hidden && (lead || String(t.recruiter).toLowerCase() === u.recruiter.toLowerCase()); });

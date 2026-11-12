@@ -17,7 +17,7 @@ function sheet_(name) {
 }
 
 /** Small, rarely-changed tables are kept in the script cache for 10 minutes (dropped on every app write). */
-const CACHED_TABLES_ = ['Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users', 'BGV_Rules'];
+const CACHED_TABLES_ = ['Voice_DND', 'Position_Recruiters', 'Settings', 'M_Grades', 'M_Designations', 'M_Exemption_Reasons', 'TAT_Exemptions', 'TAT_Rules', 'CTC_Rules', 'M_Recruiters', 'M_Lists', 'M_Departments', 'Org_Divisions', 'Org_Departments', 'Org_Dept_Map', 'KPI_Targets', 'M_Panel_Members', 'Users', 'BGV_Rules'];
 const TABLE_CACHE_SECONDS_ = 600;
 function tableCacheKey_(name) { return 'tbl3_' + dbTag_() + '_' + name; }   // tagged by database file: the test copy's tables never reach the real app
 function dropTableCache_(name) {
@@ -242,7 +242,7 @@ function historyMaxId_(def) {
  * the server answers "same" instead of re-reading and re-sending the data (an ETag-style check).
  * A lost stamp simply gets a new value, which makes the page fetch fresh data: never stale, only slower.
  */
-const VERSION_TTL_ = 3600;
+const VERSION_TTL_ = 21600;   // v165: 6 hours (was 1); a lost stamp only means one extra rebuild
 function stampKey_(name) { return 'ver_' + name; }
 function tableStamps_(names) {
   const c = CacheService.getScriptCache();
@@ -268,6 +268,8 @@ function dropStale_(name) {
   if (name === T.CAND.name) _tables.__cidx = null;   // derived views of a table are dropped with it
   if (name === T.APP.name) _tables.__live = null;
   if (name === 'Position_Recruiters' || name === 'Settings') _tables.__posrec = null;   // the split-credit view (v164)
+  if (name === 'Position_Recruiters') _tables.__prmap = null;
+  if (name === 'Settings') _tables.__settings = null;
   Object.keys(_tables).forEach(function (k) { if (k === name || k.indexOf(name + '|') === 0) _tables[k] = null; });
   if (CACHED_TABLES_.indexOf(name) >= 0) dropTableCache_(name);
 }
@@ -275,10 +277,19 @@ function dropStale_(name) {
 var _lockDepth_ = 0;
 function withLock_(fn) {
   if (_lockDepth_ > 0) return fn();   // already inside the lock in this run: do not take it twice
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) throw new Error('Someone else is saving right now. Try again in a few seconds.');
+  const lock = LockService.getScriptLock(), t0 = Date.now();
+  if (!lock.tryLock(20000)) {
+    try { const k = 'LOCK_TIMEOUTS_' + ymd_(new Date()), p = PropertiesService.getScriptProperties(); p.setProperty(k, String(Number(p.getProperty(k) || 0) + 1)); } catch (e) { }
+    perfLog_('lock', { timeout: true, waitMs: Date.now() - t0 });
+    throw new Error('Someone else is saving right now. Try again in a few seconds.');
+  }
+  const t1 = Date.now();
   _lockDepth_++;
-  try { return fn(); } finally { _lockDepth_--; lock.releaseLock(); }
+  try { return fn(); } finally {
+    _lockDepth_--; lock.releaseLock();
+    const wait = t1 - t0, hold = Date.now() - t1;   // v165: long waits and long holds are logged so the slow saves can be found
+    if (wait >= 1000 || hold >= 1000) perfLog_('lock', { waitMs: wait, holdMs: hold });
+  }
 }
 
 /** Normalises client input: only editable fields, dates parsed, text cleaned. */
@@ -350,7 +361,9 @@ function auditMany_(user, sheetName, id, action, changes) {
 }
 
 function settings_() {
+  if (_tables.__settings) return Object.assign({}, _tables.__settings);   // v165: built once per run (a copy, so a caller cannot change it)
   const map = {};
   readTable_('Settings').rows.forEach(function (r) { map[r.Key] = r.Value; });
-  return map;
+  _tables.__settings = map;
+  return Object.assign({}, map);
 }

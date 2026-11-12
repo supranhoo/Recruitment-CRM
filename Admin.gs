@@ -44,7 +44,7 @@ function apiAdminInfo() {
     backupStale: !bk || Date.now() - new Date(bk).getTime() > 36 * 3600000,
     jobs: { nightly: props.getProperty('JOB_OK_nightly') || '', refresh: props.getProperty('JOB_OK_refresh') || '' },
     triggers: { nightly: triggers.indexOf('nightlyJob') >= 0, refresh: triggers.indexOf('refreshDashboardJob') >= 0, weekly: triggers.indexOf('weeklySummaryJob') >= 0 },
-    errors: errors.slice(0, 10) };
+    errors: errors.slice(0, 10), perf: perfSummary_() };
 }
 
 /* ---------------- Speed and health check (Admin) ---------------- */
@@ -129,7 +129,9 @@ function jobLog_(job, step, err) {
 }
 /** Runs one step of a scheduled job so a failure in it does not stop the rest, and is recorded. */
 function runStep_(job, step, fn) {
+  const t0 = Date.now();
   try { return fn(); } catch (e) { console.error(job + ' / ' + step + ': ' + e); jobLog_(job, step, e); return undefined; }
+  finally { const ms = Date.now() - t0; jobTime_(job, step, ms); if (ms >= 5000) perfLog_('job', { job: job, step: step, ms: ms }); }
 }
 function jobDone_(job) { try { PropertiesService.getScriptProperties().setProperty('JOB_OK_' + job, new Date().toISOString()); } catch (e) { } }
 

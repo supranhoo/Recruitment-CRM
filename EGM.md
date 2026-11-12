@@ -9,7 +9,7 @@ HTML template; the browser calls the `api*` functions in the `.gs` files through
 `Users` sheet. Tables are read and written only through `Db.gs`
 (`readTable_`, `insert_`, `update_`, `nextId_`, `audit_`). Schema upgrades run
 step by step in `Compliance.gs:ensureSchema_` (`SCHEMA_VERSION` '50'). The release
-number is `Config.gs:BUILD_ID` ('164'). Files in `.html` (`Index.html`,
+number is `Config.gs:BUILD_ID` ('165'). Files in `.html` (`Index.html`,
 `App.html`, `Styles.html`) are the page and are outside this contract. Business
 rules and decisions are in [docs/BFCL_Recruitment_CRM_SSOT.md](./docs/BFCL_Recruitment_CRM_SSOT.md);
 [README.md](./README.md) holds the human-written setup and release notes.
@@ -24,6 +24,7 @@ Contracts per file (public entry points are the `api*` functions; `name_` helper
 - `Compliance.gs`: `ensureSchema_`, `addSheet_`, `addColumns_`, observations, monthly audit sample, attachments (`apiUploadDoc`, `apiGetDoc`, 15 MB limit), interview panel members.
 - `Setup.gs`, `Import.gs`: editor-run setup (CV folder, admin user, nightly trigger, `shareWithTeam`) and the one-time database import (reads `DATA_B64`, which is not in this repository; refuses if `DB_ID` is already set).
 - `Dashboard.gs`: snapshot cache plus `Dash_Snapshot` sheet, `refreshDashboardJob` (30 minutes), `installTriggers`.
+- `Perf.gs`: speed measurement (`timed_` around busy `api*` calls, `perfLog_` JSON lines, slow-call list in the script cache, job step times, `schemaOnce_`); no sheet writes, roles only (v165).
 - `Admin.gs`: backups (`backupDb_`), job health (`runStep_`, `jobLog_`), data checks (`dataChecks_`), audit-log viewer, `setSetting_`, weekly summary e-mail and its Monday trigger.
 - `Users.gs`: user management (`users_view`, `users_edit`), keeps `M_Recruiters` and Drive edit access in step; cannot remove the last active Admin.
 

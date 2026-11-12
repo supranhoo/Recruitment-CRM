@@ -347,7 +347,8 @@ function match_(words, hay) { hay = hay.toLowerCase(); return candWordsMatch_(wo
  * Server-side candidate search, one page at a time. f = { q, hr, src, dup, cv, line, archived: 'no'|'include'|'only', page, size }.
  * Every word typed must match somewhere (name, mobile, email, position, ID, designation, education, department).
  */
-function apiSearchCandidates(f) {
+function apiSearchCandidates(f) { return timed_('apiSearchCandidates', apiSearchCandidatesRun_, arguments); }
+function apiSearchCandidatesRun_(f) {
   currentUser_(); ensureSchema_();
   f = f || {};
   const size = Math.min(Math.max(Number(f.size) || 50, 1), 200), page = Math.max(0, Number(f.page) || 0);

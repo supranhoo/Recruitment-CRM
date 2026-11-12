@@ -97,7 +97,11 @@ function viewData(v, key, call, again, label, opts) {
 /* Reads that cannot change a position: they do not make the Positions list check the server again. Any other call still does, so a function missing here only costs a check. */
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
-  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch', 'apiPosRecList']);
+  'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch', 'apiPosRecList',
+  'apiGetDoc', 'apiGetCv', 'apiSuggestForLine', 'apiBgvReports', 'apiDeptDelays', 'apiOrganogram', 'apiListPanel', 'apiJdmOverview', 'apiCtcList', 'apiCtcGet', 'apiCtcRules',
+  'apiDocFlow', 'apiTatRules', 'apiCandidateHistory', 'apiListUsers', 'apiListJds', 'apiAuditLog', 'apiAdminInfo', 'apiTaskAdmin']);
+/* Writes that change nothing another page shows: they do not throw the remembered pages away. */
+const QUIET_WRITES = new Set(['apiSaveDaySummary']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
 const PERFSTAT = {};
 function perfNow() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
@@ -194,7 +198,7 @@ function apiCall(fn, args) {
     /* Any other call may have changed positions on the server (a pipeline move sets the offer, a closure the status):
        the next screen that shows positions checks the server in the background instead of waiting 15 s. */
     /* A write also makes every remembered page result out of date (they are asked for again on the next visit). */
-    const ok = READ_ONLY.has(fn) ? resolve : r => { S.posCheckedAt = 0; RESULTS_EPOCH++; RESULTS.clear(); resolve(r); };
+    const ok = READ_ONLY.has(fn) || QUIET_WRITES.has(fn) ? resolve : r => { S.posCheckedAt = 0; RESULTS_EPOCH++; RESULTS.clear(); resolve(r); };
     const run = google.script.run.withSuccessHandler(ok)
       .withFailureHandler(e => reject(e && e.message ? e.message.replace(new RegExp('^Error:\\s*'), '') : String(e)));
     if (typeof run[fn] !== 'function') return reject(UPDATED_MSG);
@@ -317,9 +321,11 @@ function toast(msg, err) {
 function busy(btn, on, label) { if (!btn) return; btn.disabled = on; if (label) btn.textContent = label; }
 
 try { if (localStorage.getItem('bfcl.rail') === 'mini' && $('#boot')) $('#boot').classList.add('rail-mini'); } catch (e) { }
-window.addEventListener('load', () => {
+const bootStart = () => {
   if ($('#bootMain')) late('#bootMain').innerHTML = skFor('overview');
-  api('apiBootstrap').then(b => {
+  const first = window.BOOT && window.BOOT.user ? Promise.resolve(window.BOOT) : api('apiBootstrap');
+  window.BOOT = null;
+  first.then(b => {
     S.boot = b;
     buildPanelIndex();
     buildRail(b.user);
@@ -340,7 +346,8 @@ window.addEventListener('load', () => {
   $('#drawerClose').addEventListener('click', closeDrawer);
   $('#scrim').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) closeDrawer(); });   // Escape cancels the dialog on top, not the drawer under it
-});
+};
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootStart); else setTimeout(bootStart, 0);
 
 const NAV_ICON = {
   overview: '<path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9v11h13V9"/><path d="M10 20v-5h4v5"/>',
@@ -4154,7 +4161,8 @@ async function viewAdmin(v) {
         <div class="btn-row"><button class="btn primary" id="spdRun">Run the speed check</button><button class="btn" id="spdSchema">Retry the database upgrade now</button></div><div id="spdOut" aria-live="polite"></div></section>
       <section class="panel" style="margin-top:20px"><h2>Speed in this browser</h2>
         <p style="color:var(--ink-2);max-width:75ch">How long it took, from the click until real figures or rows were on screen, for what you have opened since this page loaded (milliseconds). \u201cFirst visit\u201d waited for the server; \u201cRepeat visit\u201d was drawn from the page\u2019s memory while the server was asked again.</p>
-        <div id="perfOut"></div><div class="btn-row"><button class="btn" id="perfRefresh">Refresh this table</button></div></section>` : ''}
+        <div id="perfOut"></div><div class="btn-row"><button class="btn" id="perfRefresh">Refresh this table</button></div></section>
+      <section class="panel" style="margin-top:20px"><h2>Slow calls on the server</h2>${serverPerfHtml(info.perf)}</section>` : ''}
       <section class="panel" style="margin-top:20px"><h2>Weekly email summary</h2>
         <p style="color:var(--ink-2);max-width:75ch">Every Monday at 9:00: headline numbers, positions past TAT, last week\u2019s joinings, offers and backouts, this month\u2019s KPI scores and open data-check issues. Sent to everyone in the Users sheet with the Admin, Head of HR or TA Lead role, plus any addresses in Settings \u2192 WEEKLY_SUMMARY_TO.</p>
         <div id="wkStatus"><p class="hint">Loading\u2026</p></div></section>`;
@@ -6651,6 +6659,19 @@ function policyAddDrawer(live, done) {
     } catch (e) { toast(e, true); busy(btn, false, 'Add the policy'); }
   };
 }
+function serverPerfHtml(p) {
+  if (!p) return '<p class="hint">Not available.</p>';
+  const when = iso => { try { return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(iso); } };
+  const by = {};
+  (p.slow || []).forEach(x => { const o = by[x.fn] = by[x.fn] || { fn: x.fn, n: 0, max: 0, sum: 0, last: x.at }; o.n++; o.sum += x.ms; o.max = Math.max(o.max, x.ms); });
+  const rows = Object.values(by).sort((a, b) => b.max - a.max);
+  const jobRows = [];
+  Object.keys(p.jobs || {}).forEach(j => Object.keys(p.jobs[j] || {}).forEach(st => { const v = p.jobs[j][st] || []; if (v.length) jobRows.push({ job: j, step: st, last: v[0], max: Math.max(...v), n: v.length }); }));
+  jobRows.sort((a, b) => b.max - a.max);
+  return `<p style="color:var(--ink-2);max-width:75ch">Calls that took ${p.slowMs} ms or more in the last 6 hours, from everyone’s use, and how long each step of the scheduled jobs took recently. Saves that could not get the shared lock today: <b>${p.lockTimeoutsToday}</b>.</p>
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Call</th><th class="num">Times slow</th><th class="num">Average ms</th><th class="num">Slowest ms</th><th>Last</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.fn)}</td><td class="num">${r.n}</td><td class="num">${Math.round(r.sum / r.n)}</td><td class="num">${r.max}</td><td>${esc(when(r.last))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No slow calls in the last 6 hours.</p>'}
+    ${jobRows.length ? `<h3 style="margin-top:14px">Scheduled job steps</h3><div class="table-wrap"><table><thead><tr><th>Job</th><th>Step</th><th class="num">Last ms</th><th class="num">Slowest of the last ${Math.max(...jobRows.map(r => r.n))}</th></tr></thead><tbody>${jobRows.map(r => `<tr style="cursor:default"><td>${esc(r.job)}</td><td>${esc(r.step)}</td><td class="num">${r.last}</td><td class="num">${r.max}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+}
 async function renderRoutesAdmin(el) {
   let C; try { C = await api('apiFastTrackConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Hiring routes</h2><span class="hint">${C.canEdit ? 'Head of HR and Admin can change this' : 'View only'}</span></div>
@@ -7689,7 +7710,7 @@ async function viewPipeline(v) {
     box.innerHTML = m.length ? `<div class="pf-matches" role="list" aria-label="Candidates matching ${esc(q)}"><div class="sub">Candidates</div>${m.map((x, i) => `<button type="button" class="pf-match" role="listitem" data-i="${i}"><b>${esc(x.name)}</b> <span class="sub">${esc(x.cand)}${x.last4 ? ' \u00b7 ends ' + esc(x.last4) : ''}</span><span class="sub">${esc(x.mrf)} \u00b7 ${esc(x.position)} \u00b7 ${esc(x.dept)} \u00b7 ${esc(x.recruiter || 'Not assigned')} \u00b7 ${esc(x.stage)}${x.status !== 'Active' ? ' \u00b7 ' + esc(x.status) : ''}</span></button>`).join('')}</div>` : '';
     $$('.pf-match', box).forEach(b => b.onclick = () => { const x = m[+b.dataset.i]; f.openApp = x.app; if (x.status !== 'Active') f.closed = true; gotoLine(x.line); });
   };
-  $('#pfQ').oninput = e => { f.q = e.target.value; drawPicker(); clearTimeout(pfTimer); pfTimer = setTimeout(showMatches, 300); };
+  $('#pfQ').oninput = (() => { let t = 0; return e => { f.q = e.target.value; clearTimeout(t); t = setTimeout(drawPicker, 120); clearTimeout(pfTimer); pfTimer = setTimeout(showMatches, 300); }; })();
   $('#pfQ').onkeydown = e => { if (e.key === 'ArrowDown') { const b = $('.pf-match', $('#pfMatches')); if (b) { e.preventDefault(); b.focus(); } } };
   $('#pfMatches').onkeydown = e => { const bs = $$('.pf-match', $('#pfMatches')), i = bs.indexOf(document.activeElement); if (e.key === 'ArrowDown' && i < bs.length - 1) { e.preventDefault(); bs[i + 1].focus(); } if (e.key === 'ArrowUp') { e.preventDefault(); (i > 0 ? bs[i - 1] : $('#pfQ')).focus(); } };
   if (f.q) showMatches();
