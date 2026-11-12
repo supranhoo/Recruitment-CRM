@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.21 (drift check of 8 Nov 2026 applied; see `2026-11-08_DRIFT_REPORT.md` for what was found) |
-| **Describes app version** | **v166** (`BUILD_ID` 166, 8 Nov 2026; v159 was the first release after v158) |
+| **Describes app version** | **v167** (`BUILD_ID` 167, 8 Nov 2026; v159 was the first release after v158) |
 | **Database schema version** | **50** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -1105,6 +1105,9 @@ Context: only the Admin could place voice calls; recruiters wanted to call their
 Decision: (1) `voice_call` is a computed permission from `Voice_Access` (Admin always; named people with a daily limit, default 20), never by role. (2) A recruiter without access can request one call with a reason; a TA Lead, the Head of HR or the Admin approves. (3) The Do Not Disturb register `Voice_DND` is the check before every call; the provider's list is copied in on request. (4) Up to 30 candidates per batch, placed by a one-minute trigger within the calling hours and a per-minute rate, through the same code as a single call so every limit applies. (5) The command center shows calls, success rate and cost (the provider's own figure if its payload carries one, else an estimate from a per-minute setting).
 Consequences: calls can now be placed by people other than the Admin, so the audit and the daily limit are the controls; a batch stops on the person's limit, lost access or three failures in a row.
 
+**ADR-080 — KPI days come from the TAT rules per grade, for all three TAT KPIs** (12 Nov, user decision; v167)
+- One number of days per KPI judged W4/W5 against 20 days although their TAT differs. The TAT rules are now the single source of days for the position's TAT bar and for the KPIs; KPI targets keep only the levels counted.
+
 **ADR-079 — A TAT KPI gives every position a result in every month it was worked on** (12 Nov, user decision; v166; supersedes the “counted once” part of the v153 rule)
 - “Counted in another month” read as excluded and was not accepted. A position is Achieved or Missed each month as it stood at the month end; an unfilled position past its TAT keeps counting as a miss until it is filled; the rule applies to all months.
 
@@ -1352,6 +1355,13 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
 ### 2026-11-08
+
+**v167 — The TAT KPIs use each grade's own TAT rule** (no schema change; `Kpi.gs`, `KpiAdmin.gs`, `App.html`; ADR-080)
+- **Days:** for Timely closure, M-level and W-level fulfilment, each position's standard days are now the **TAT rule of its own grade** (Admin → TAT rules; W1–W5, M1–M7, T; the version in force on the day the position's clock started), in place of the KPI target's single number (60 / 50 / 20). Exemptions, notice beyond the grace, the offer rule, hold and paused days are added as before; the v166 monthly Achieved/Missed rule is unchanged.
+- **KPI targets** still decide which levels a KPI counts, from which month, and recruiter overrides of levels. Their *Target days* are **no longer used** (the column is kept for history; the editor shows a note instead of the field).
+- **Effect:** W4/W5 and any grade whose TAT is not the old target are judged on their own days; **Timely closure is stricter** (each grade's TAT instead of 60 days for all). All months are recalculated.
+- **One-time check:** KPI scorecard → *Target days vs grade TAT (CSV)* (leads; replaces v166's old-vs-new download): misses and % with the single target days next to the grade days, per recruiter, KPI and month.
+- Tests: harness run of the real scorecard and reconciliation with TAT rules W1 20, W4 30 (22 from a later date), M5 50.
 
 **v166 — Timely closure: every position is Achieved or Missed in every month it was worked on** (no schema change; `Kpi.gs`, `App.html`, `Admin.gs`, `E2E.gs`; ADR-079)
 - **Rule (replaces the v153 “counted once, in the month it joined or fell due”):** for each review month, every position worked on in it (clock started by the month end, not joined before the month began; Open, Offered or Closed; not an internal fill; has a target for its level) gets one status as it stood at the cut-off (the month end; today in the current month) — `kpiMonthStatus_`: joined by the cut-off and within the allowed days = **Achieved (joined on time)**; joined by the cut-off after the allowed days = **Missed (joined late)**; not joined by the cut-off and the due date on or after it = **Achieved (within TAT at month end)**; not joined by the cut-off and the due date before it = **Missed (past TAT, not filled)**. A position that joined in a later month is judged as it stood at this month's end. **A position past its TAT is a miss in every month until it is filled.**
