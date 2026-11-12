@@ -165,13 +165,12 @@ function kpiTargets_() {
 }
 
 /** The TAT KPIs scored on positions worked on (worked − missed) ÷ worked: Timely closure (v153) and M-level fulfilment (v157). W-level stays on time ÷ due. */
-const KPI_WORKED_BASIS_ = ['TIMELY_CLOSURE', 'M_FULFILMENT'];
+const KPI_WORKED_BASIS_ = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];   // v166: all three on positions worked on
 const KPI_RECON_BUCKETS_ = [
-  ['ontime', 'Counted, on time', 'Joined within the allowed days, in the month it joined (or fell due).'],
-  ['late', 'Counted, filled late', 'Joined after the allowed days; counted as a miss in the month it fell due.'],
-  ['overdue', 'Counted, overdue and not joined', 'Fell due in this month and nobody has joined yet; a miss.'],
-  ['notyet', 'Not yet due', 'Falls due later this month and has not joined yet; it counts once it joins or its due date passes.'],
-  ['other', 'Counted in another month', 'Worked on this month but scored in another: it falls due in a later month, or it joined or fell due in an earlier one. Each row shows the month it is scored in and its result there.'],
+  ['ontime', 'Achieved: joined on time', 'Joined in this month within the allowed days.'],
+  ['within', 'Achieved: within TAT at month end', 'Not joined by the end of this month (today, in the current month) and its due date had not passed.'],
+  ['late', 'Missed: joined late', 'Joined in this month after the allowed days.'],
+  ['overdue', 'Missed: past TAT, not filled', 'Its due date had passed by the end of this month and nobody had joined yet. It is a miss in every month until it is filled.'],
   ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
   ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
@@ -202,9 +201,7 @@ function kpiRecon_(month, recruiter, kpi) {
       if (!kpiWorkedIn_(clk, month)) return;
       d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d) { const t = kpiTargetFor_(l, kpi, targets, rec, clk); if (t && !levelMatch_(t.levels, l.Grade)) return; bucket = 'notarget'; }   // another level is not part of this KPI
-      else if (d.month !== month) bucket = 'other';
-      else if (d.notDue) bucket = 'notyet';
-      else bucket = d.ok ? 'ontime' : doj ? 'late' : 'overdue';
+      else bucket = kpiMonthStatus_(clk, d, month, clk.today).why;
     } else {
       const lvl = targetFor_(targets, rec, kpi, month);
       if (lvl && !levelMatch_(lvl.levels, l.Grade)) return;   // a position of another level is not part of this KPI
@@ -237,24 +234,16 @@ function kpiStartSource_(l) {
  */
 function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
   const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
-  const dojKra = clk.doj || (monthEnd > today ? today : monthEnd);
+  const cutoff = monthEnd > today ? today : monthEnd, dojKra = clk.doj && clk.doj <= cutoff ? clk.doj : cutoff;   // v166: a later joining does not count in this month
   const closed = clk.doj || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
-  /* v166: every row says which month it is scored in and its result there, so a position "counted in another month" is not a mystery. */
-  const cm = d ? d.month : '', cres = !d ? '' : d.notDue ? 'Pending (not yet due)' : d.ok ? 'Achieved' : 'Missed';
-  const res = { ontime: 'Achieved', late: 'Missed', overdue: 'Missed', notyet: 'Pending (not yet due)', other: cm ? 'Not scored this month: ' + cres + ' in ' + kpiMonthName_(cm) : 'Counted in another month' }[bucket] || 'Not counted';
+  const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: t && d ? t.days : '', allowed: d ? d.allowed : '', exm: t && d ? d.allowed - t.days : '',
     logic: clk.receipt ? kpiStartSource_(l) + ' to DOJ' + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
-    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res, cm: cm, cmName: cm ? kpiMonthName_(cm) : '', cres: cres };
+    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
 }
-/** '2026-12' as 'Dec 2026'. */
-function kpiMonthName_(m) {
-  const n = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(String(m).slice(5, 7)) - 1];
-  return n ? n + ' ' + String(m).slice(0, 4) : String(m);
-}
-
 function apiKpiRecon(month, recruiter, kpi) {
   currentUser_();
   month = String(month || '');
@@ -289,6 +278,17 @@ function kpiLineClock_(l, k, startOverride) {
  */
 function kpiTargetFor_(l, kpi, targets, rec, clk) {
   return clk.receipt ? targetFor_(targets, rec, kpi, clk.doj ? clk.doj.slice(0, 7) : clk.receipt.slice(0, 7)) : null;
+}
+/**
+ * v166: the status of one position in one review month it was worked on. The cut-off is the month end (today, in the current month).
+ * Joined by the cut-off: on time or late by its days taken. Not joined by the cut-off (also when it joined in a later month):
+ * within TAT while the due date is on or after the cut-off, else past TAT. Returns {ok, why: ontime | late | within | overdue}.
+ */
+function kpiMonthStatus_(clk, d, month, today) {
+  const end = addDays_(addDays_(month + '-28', 4).slice(0, 8) + '01', -1), cut = today && end > today ? today : end;
+  if (clk.doj && clk.doj <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: ok ? 'ontime' : 'late', cut: cut }; }
+  const ok = d.due >= cut;
+  return { ok: ok, why: ok ? 'within' : 'overdue', cut: cut };
 }
 function kpiDue_(l, kpi, targets, rec, clk, status) {
   if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
@@ -340,31 +340,29 @@ function computeKpis_(fy) {
     if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
     if (ymd_(l.Receipt_Date) && ymd_(l.Receipt_Date) !== receipt) brief.recv = ymd_(l.Receipt_Date);
 
-    // 1 + 2 + 3. Timely closure (all levels), M-level and W-level fulfilment: a position counts in the month it joined if that is on or before the month
-    // it fell due, else in its due month (late and unfilled positions count against the month they fell due). On time = joined within the allowed days.
-    KPI_TAT_.forEach(function (kpi) {
-      const d = kpiDue_(l, kpi, targets, rec, clk, status);
-      if (!d || !inFy(d.month) || d.month > ymd_(new Date()).slice(0, 7)) return;
-      const c = bucket(rec, kpi, d.month);
-      // Falls due later this month and has not joined: not counted until it joins or the due date passes (v153); still worked on.
-      if (d.notDue) { c.notDue++; c.notDueItems.push(Object.assign({ due: d.due, allowed: d.allowed, status: status }, brief)); return; }
-      c.den++; if (d.ok) c.num++;
-      const it = Object.assign({ due: d.due, allowed: d.allowed, days: d.days, ok: d.ok, status: status }, brief);
-      if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
-      else if (clk.notice) it.notice = clk.notice;
-      c.items.push(it);
-    });
-    // Positions worked on in each month (clock started by month end, not ended before month start), and how many joined on time in it.
-    // Each KPI counts only the positions of its own level (kpiDue_ gives null for the others).
+    // 1 + 2 + 3. Timely closure (all levels), M-level and W-level fulfilment (v166): every position worked on in a month is either
+    // Achieved or Missed in that month (kpiMonthStatus_). Rate = achieved \u00f7 worked on. Each KPI counts only the positions of its own
+    // level (kpiDue_ gives null for the others). The cell lists the misses and the joinings; "within TAT" rows are in the reconciliation.
     if (kpiWorkable_(l, status)) KPI_TAT_.forEach(function (kpi) {
       const d = kpiDue_(l, kpi, targets, rec, clk, status);
       if (!d) return;
       months.forEach(function (m) {
         if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
-        const c = bucket(rec, kpi, m);
-        c.worked++; if (clk.doj && clk.doj.slice(0, 7) === m && d.days <= d.allowed) c.workedOk++;
-        if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month: the same figure as the "N of M worked on" line of Timely closure
+        const c = bucket(rec, kpi, m), st = kpiMonthStatus_(clk, d, m, clocks.exToday);
+        c.worked++; c.den++;
+        if (st.ok) c.num++;
+        if (st.why === 'ontime') c.workedOk++;
+        if (st.why !== 'within') {
+          const it = Object.assign({ due: d.due, allowed: d.allowed, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
+          if (st.why === 'overdue') it.doj = '';   // in this month it had not joined yet
+          if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
+          else if (clk.notice) it.notice = clk.notice;
+          c.items.push(it);
+        }
+        if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
       });
+      /* The rule before v166 (scored once, in the month it joined or fell due), kept only for the one-time old-versus-new comparison. */
+      if (inFy(d.month) && d.month <= nowMonth && !d.notDue) { const oc = bucket(rec, kpi, d.month); oc.oDen = (oc.oDen || 0) + 1; if (d.ok) oc.oNum = (oc.oNum || 0) + 1; }
     });
 
     // 3. Offer backout rate (v150) — candidates who backed out in the month ÷ positions worked on in the month × 100.
@@ -477,6 +475,7 @@ function computeKpis_(fy) {
         const t = (team[kpi] = team[kpi] || {})[m] = team[kpi][m] || cell();
         t.worked += src.worked || 0; t.workedOk += src.workedOk || 0;
         t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0); t.notDue += src.notDue || 0;
+        t.oDen = (t.oDen || 0) + (src.oDen || 0); t.oNum = (t.oNum || 0) + (src.oNum || 0);
         src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
         (src.notDueItems || []).forEach(function (it) { t.notDueItems.push(Object.assign({ recruiter: rec }, it)); });
       });
@@ -488,6 +487,7 @@ function computeKpis_(fy) {
       Object.keys(extra[rec][kpi]).forEach(function (m) {
         const src = extra[rec][kpi][m], dst = bucketMain(rec, kpi, m);
         dst.num += src.num; dst.den += src.den; dst.worked += src.worked; dst.workedOk += src.workedOk; dst.notDue += src.notDue;
+        dst.oDen = (dst.oDen || 0) + (src.oDen || 0); dst.oNum = (dst.oNum || 0) + (src.oNum || 0);
         src.items.forEach(function (it) { dst.items.push(it); });
         src.notDueItems.forEach(function (it) { dst.notDueItems.push(it); });
       });
@@ -500,13 +500,17 @@ function computeKpis_(fy) {
       return { num: c.num, den: c.den, pct: null, pending: pending,
         score: pending ? null : kpiScoreFor_(scoring, kpi, c.num, m), items: c.items };
     }
-    /* Timely closure (v153) = positions worked on in the month without a TAT miss ÷ positions worked on; a miss is a position that fell
-       due in the month and joined late or has not joined (den − num), counted once, in that month. The other KPIs: num ÷ den. */
-    const tat = KPI_TAT_.indexOf(kpi) >= 0, timely = KPI_WORKED_BASIS_.indexOf(kpi) >= 0, missed = c.den - c.num;   // v157: M-level on the same basis as Timely closure
-    const pct = timely ? (c.worked ? Math.round(1000 * (c.worked - missed) / c.worked) / 10 : null) : c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
-    return { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
-      worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: timely ? missed : undefined,
-      notDue: tat ? c.notDue : undefined, notDueItems: tat ? c.notDueItems : undefined };
+    /* TAT KPIs (v166) = positions achieved in the month \u00f7 positions worked on in it (den = worked on). The other KPIs: num \u00f7 den. */
+    const tat = KPI_TAT_.indexOf(kpi) >= 0, missed = c.den - c.num;
+    const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
+    const o = { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
+      worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: tat ? missed : undefined };
+    if (tat) {   // the result under the rule before v166, for the comparison download only
+      const om = (c.oDen || 0) - (c.oNum || 0);
+      o.oldPct = kpi === 'W_FULFILMENT' ? (c.oDen ? Math.round(1000 * (c.oNum || 0) / c.oDen) / 10 : null) : (c.worked ? Math.round(1000 * (c.worked - om) / c.worked) / 10 : null);
+      o.oldMissed = om;
+    }
+    return o;
   };
   const out = {};
   Object.keys(recruiters).forEach(function (rec) {

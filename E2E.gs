@@ -597,7 +597,7 @@ function e2eRun_(trash) {
         const c = (k.data.TEAM_TOTAL[kpi] || {})[month] || { num: 0, den: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
         const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
         out.push(kpi + ' ' + c.num + '/' + c.den);
-        return r.kpi === kpi && n('ontime') === c.num && n('ontime') + n('late') + n('overdue') === c.den;
+        return r.kpi === kpi && n('ontime') + n('within') === c.num && n('ontime') + n('within') + n('late') + n('overdue') === c.den;
       });
       return ok ? out.join(', ') : false;
     });
@@ -746,23 +746,20 @@ function e2eRun_(trash) {
         if (b.key === 'ontime' && i.result !== 'Achieved') bad = bad || 'ontime result'; if ((b.key === 'late' || b.key === 'overdue') && i.result !== 'Missed') bad = bad || 'missed result'; }); });
       return bad ? false : n + ' positions';
     });
-    t('K46 Timely closure and M-level = positions worked on without a TAT miss \u00f7 positions worked on; W-level stays on time \u00f7 due; a position not yet due is not a miss; the reconciliation adds up to the worked-on count', function () {
+    t('K46 v166: every position worked on in a month is Achieved or Missed; rate = achieved \u00f7 worked on for the three TAT KPIs; the reconciliation adds up', function () {
       const k = apiKpi(fy, true), d = k.data.TEAM_TOTAL, month = ymd_(new Date()).slice(0, 7), today = ymd_(new Date()); let bad = '', cells = 0;
-      Object.keys(d.TIMELY_CLOSURE || {}).forEach(function (m) { const c = d.TIMELY_CLOSURE[m]; cells++;
-        const want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null;
-        if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'Timely ' + m + ': ' + c.pct + ' vs ' + want; });
-      Object.keys(d.M_FULFILMENT || {}).forEach(function (m) { const c = d.M_FULFILMENT[m], want = c.worked ? Math.round(1000 * (c.worked - (c.den - c.num)) / c.worked) / 10 : null; if (c.pct !== want || c.missed !== c.den - c.num) bad = bad || 'M_FULFILMENT ' + m; });   // v157: M-level on positions worked on
-      Object.keys(d.W_FULFILMENT || {}).forEach(function (m) { const c = d.W_FULFILMENT[m]; if (c.pct !== (c.den ? Math.round(1000 * c.num / c.den) / 10 : null) || c.missed !== undefined) bad = bad || 'W_FULFILMENT ' + m; });
       KPI_TAT_.forEach(function (kpi) {
-        const c = (d[kpi] || {})[month] || { num: 0, den: 0, worked: 0, notDue: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
-        const n = function (key) { return r.buckets.filter(function (b) { return b.key === key; })[0].items.length; };
-        if (n('notyet') !== (c.notDue || 0) || n('ontime') + n('late') + n('overdue') + n('notyet') + n('other') !== (c.worked || 0)) bad = bad || kpi + ' reconciliation ' + month;
+        Object.keys(d[kpi] || {}).forEach(function (m) { const c = d[kpi][m]; cells++;
+          if (c.den !== c.worked || c.missed !== c.worked - c.num || c.pct !== (c.worked ? Math.round(1000 * c.num / c.worked) / 10 : null)) bad = bad || kpi + ' ' + m; });
+        const c = (d[kpi] || {})[month] || { num: 0, worked: 0 }, r = apiKpiRecon(month, 'TEAM_TOTAL', kpi);
+        const n = function (key) { const b = r.buckets.filter(function (x) { return x.key === key; })[0]; return b ? b.items.length : -1; };
+        if (n('other') !== -1 || n('notyet') !== -1 || n('ontime') + n('within') !== c.num || n('ontime') + n('within') + n('late') + n('overdue') !== (c.worked || 0)) bad = bad || kpi + ' reconciliation ' + month;
       });
-      const tg = [{ recruiter: '*', kpi: 'TIMELY_CLOSURE', levels: 'All', days: 60, exempt: true, from: '2025-04' }], g = { Grade: 'M3', Fill_Type: '' };
-      const clk = function (start) { return { receipt: start, doj: '', ex: { days: 0, reasons: [], pauses: [] }, notice: 0, hold: 0, paused: 0, offer: '', noticeDays: 0, today: today }; };
-      const later = kpiDue_(g, 'TIMELY_CLOSURE', tg, 'asha', clk(addDays_(today, -50)), 'Open'), past = kpiDue_(g, 'TIMELY_CLOSURE', tg, 'asha', clk(addDays_(today, -70)), 'Open');
-      if (!later || later.notDue !== true || !past || past.notDue !== false) bad = bad || 'not-yet-due test';
-      return bad ? false : cells + ' Timely closure months follow the formula; the current month\u2019s reconciliation adds up';
+      const dd = { due: '2026-08-15', allowed: 30, days: 40 }, open = { doj: '' }, late = { doj: '2026-09-10' };
+      const s1 = kpiMonthStatus_(open, dd, '2026-07', today), s2 = kpiMonthStatus_(open, dd, '2026-08', today), s3 = kpiMonthStatus_(late, dd, '2026-08', today), s4 = kpiMonthStatus_(late, dd, '2026-09', today),
+        s5 = kpiMonthStatus_({ doj: '2026-08-10' }, { due: '2026-08-15', allowed: 30, days: 20 }, '2026-08', today);
+      if (s1.why !== 'within' || !s1.ok || s2.why !== 'overdue' || s2.ok || s3.why !== 'overdue' || s4.why !== 'late' || s4.ok || s5.why !== 'ontime' || !s5.ok) bad = bad || 'month status';
+      return bad ? false : cells + ' TAT KPI months follow achieved \u00f7 worked on; the current month\u2019s reconciliation adds up';
     });
     t('K45 An offer within the TAT runs the notice from the offer: due on the later of today\u2019s due date and offer + notice; a late offer, or no offer sent, keeps today\u2019s rule', function () {
       const tg = [{ recruiter: '*', kpi: 'M_FULFILMENT', levels: 'M', days: 50, exempt: true, from: '2025-04' }], g = { Grade: 'M3', Fill_Type: '' };

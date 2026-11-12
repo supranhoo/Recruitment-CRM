@@ -314,7 +314,7 @@ function sendSummary_(to, test) {
     const c = team[key] && team[key][month];
     const def = k.defs[key];
     let val = def.count && month < k.captureFrom ? 'Scored from ' + k.captureFrom : '\u2014';
-    if (c) val = def.count ? (c.pending ? c.pending + ' to check' : c.num + ' ' + def.unit) : (c.pct == null ? '\u2014' : c.missed != null ? c.pct + '% (' + (c.worked - c.missed) + '/' + c.worked + ' worked on)' : c.pct + '% (' + c.num + '/' + c.den + ')');
+    if (c) val = def.count ? (c.pending ? c.pending + ' to check' : c.num + ' ' + def.unit) : (c.pct == null ? '\u2014' : c.missed != null ? c.pct + '% (' + (c.worked - c.missed) + '/' + c.worked + ' achieved)' : c.pct + '% (' + c.num + '/' + c.den + ')');
     const sc = c && c.score != null ? c.score + ' / 5' : '';
     return '<tr><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(def.name) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2">' + esc(val) + '</td><td style="padding:6px 10px;border-bottom:1px solid #E9EDF2;font-weight:600">' + sc + '</td></tr>';
   };
