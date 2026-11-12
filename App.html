@@ -4399,13 +4399,13 @@ function kpiDrill(k, f, kpi, m) {
 /** The tracker-style report of a reconciliation (v155): the sheet's columns in its order, then Where it sits, Due by, TAT start and Counted in. */
 const RECON_REPORT_HEAD = ['MRF No.', 'Review Month', 'MRF Receipt date', 'Position', 'Level', 'Dept', 'Recruiter', 'No.of positions/Resource', 'Approved', 'No vanacy marked date', 'Not needed marked date', 'Offer sent',
   'Offer letter date', 'EDOJ as per Offer', 'DOJ for KRA', 'Actual DOJ', 'Position Status', 'Position closed on', 'Notice Period', 'Backout', 'Final Remark', 'Standard TAT', 'Exemption days', 'Final allowed TAT', 'TAT logic',
-  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in'];
+  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in', 'Scored in month', 'Result in that month'];
 const RECON_DATE_COLS = [2, 9, 10, 12, 13, 14, 15, 17, 19, 28, 29];   // 0-based columns that hold dates
 function reconReport(r, kpiName) {
   const mm = r.month.slice(5, 7) + '-' + r.month.slice(0, 4), toD = v => v ? new Date(v + 'T00:00:00Z') : '';
   const rows = [];
   r.buckets.forEach(b => b.items.forEach(i => rows.push([i.mrf, mm, i.receipt, i.position, i.grade, i.dept, i.recruiter, i.nres, i.appr, i.nv, i.nn, i.osent, i.odate, i.edoj, i.dojKra, i.doj, i.status, i.closed, i.notice, i.bo, i.rmk,
-    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || ''].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
+    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || '', i.cmName || '', i.cres || ''].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
   return { head: RECON_REPORT_HEAD, rows };
 }
 async function reconExcel(r, kpi, kpiName) {
@@ -4427,8 +4427,8 @@ async function reconExcel(r, kpi, kpiName) {
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
-  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined'],
-    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined', 'Due by', 'Scored in month', 'Result in that month'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj, i.due, i.cmName || '', i.cres || ''])));
   const d = cpDlg(`<h2 id="cpTitle">${esc(kpiName || r.name || 'KPI')}: all positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
     <p class="hint">Positions whose clock started on or before the month end and which had not ended before it. Status is as of today. ${KPI_WORKED_BASIS.includes(kpi || 'TIMELY_CLOSURE') ? 'Worked on = the rows down to \u201cCounted in another month\u201d; the rate is those without a miss (all of them except \u201cfilled late\u201d and \u201coverdue\u201d) \u00f7 worked on.' : 'The first three rows are the KPI\u2019s count; a position not yet due is counted once it joins or its due date passes.'}</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
@@ -4439,8 +4439,8 @@ async function kpiReconDialog(month, rec, kpi, kpiName) {
   const root = d || document;
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
-    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th></tr></thead><tbody>
-      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td></tr>`).join('')}</tbody></table></div>`;
+    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th><th>Due by</th><th>Scored in</th></tr></thead><tbody>
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.cmName ? esc(i.cmName) + `<span class="sub">${esc(i.cres)}</span>` : '\u2014'}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
   const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);

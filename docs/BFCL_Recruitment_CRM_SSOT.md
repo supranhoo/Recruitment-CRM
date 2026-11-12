@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.21 (drift check of 8 Nov 2026 applied; see `2026-11-08_DRIFT_REPORT.md` for what was found) |
-| **Describes app version** | **v165** (`BUILD_ID` 165, 8 Nov 2026; v159 was the first release after v158) |
+| **Describes app version** | **v166** (`BUILD_ID` 166, 8 Nov 2026; v159 was the first release after v158) |
 | **Database schema version** | **50** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -1349,6 +1349,9 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
 ### 2026-11-08
+
+**v166 — KPI reconciliation says which month each position is scored in** (no schema change; `Kpi.gs`, `App.html`)
+- In the Timely closure / M-level / W-level reconciliation, every row now carries *Scored in month* and *Result in that month* (Achieved, Missed, Pending). A row under “Counted in another month” reads “Not scored this month: Missed in Aug 2026” in place of the bare label. The on-screen list adds *Due by* and *Scored in*; the Excel and CSV downloads add the two columns at the end. No KPI figure changes.
 
 **v165 — Speed: measured, and the first low-risk fixes** (no schema change; `Perf.gs`, `Db.gs`, `Admin.gs`, `Api.gs`, `Main.gs`, `Index.html`, `Auth.gs`, `Compliance.gs`, `VoiceScreen.gs`, `History.gs`, `PosRec.gs`, `Pipeline.gs`, `Kpi.gs`, `Tasks.gs`, `App.html`)
 - **Measurement:** long lock waits and holds (1 s or more), lock time-outs (counted per day), 18 busy server calls taking 800 ms or more, and each scheduled job step's last 10 durations. They go to the execution log as JSON lines and to Admin → Tools → *Slow calls on the server*. Roles only, never who.

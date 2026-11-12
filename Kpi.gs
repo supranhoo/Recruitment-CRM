@@ -171,7 +171,7 @@ const KPI_RECON_BUCKETS_ = [
   ['late', 'Counted, filled late', 'Joined after the allowed days; counted as a miss in the month it fell due.'],
   ['overdue', 'Counted, overdue and not joined', 'Fell due in this month and nobody has joined yet; a miss.'],
   ['notyet', 'Not yet due', 'Falls due later this month and has not joined yet; it counts once it joins or its due date passes.'],
-  ['other', 'Counted in another month', 'Falls due in a later month, or joined or fell due in an earlier one.'],
+  ['other', 'Counted in another month', 'Worked on this month but scored in another: it falls due in a later month, or it joined or fell due in an earlier one. Each row shows the month it is scored in and its result there.'],
   ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
   ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
@@ -239,13 +239,20 @@ function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
   const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
   const dojKra = clk.doj || (monthEnd > today ? today : monthEnd);
   const closed = clk.doj || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
-  const res = { ontime: 'Achieved', late: 'Missed', overdue: 'Missed', notyet: 'Pending (not yet due)', other: 'Counted in another month' }[bucket] || 'Not counted';
+  /* v166: every row says which month it is scored in and its result there, so a position "counted in another month" is not a mystery. */
+  const cm = d ? d.month : '', cres = !d ? '' : d.notDue ? 'Pending (not yet due)' : d.ok ? 'Achieved' : 'Missed';
+  const res = { ontime: 'Achieved', late: 'Missed', overdue: 'Missed', notyet: 'Pending (not yet due)', other: cm ? 'Not scored this month: ' + cres + ' in ' + kpiMonthName_(cm) : 'Counted in another month' }[bucket] || 'Not counted';
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: t && d ? t.days : '', allowed: d ? d.allowed : '', exm: t && d ? d.allowed - t.days : '',
     logic: clk.receipt ? kpiStartSource_(l) + ' to DOJ' + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
-    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
+    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res, cm: cm, cmName: cm ? kpiMonthName_(cm) : '', cres: cres };
+}
+/** '2026-12' as 'Dec 2026'. */
+function kpiMonthName_(m) {
+  const n = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(String(m).slice(5, 7)) - 1];
+  return n ? n + ' ' + String(m).slice(0, 4) : String(m);
 }
 
 function apiKpiRecon(month, recruiter, kpi) {
