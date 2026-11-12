@@ -41,8 +41,10 @@ const VOICE_RATINGS_FROM_ = 6;
 
 /** Creates the call-log sheet if it is missing. Cheap and safe to call every time (like profileSchema_), so a skipped schema step cannot break the page. */
 function voiceSchema_() {
-  addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols);
-  addSheet_(VOICE_DND_.name, VOICE_DND_.cols); addSheet_(VOICE_ACCESS_.name, VOICE_ACCESS_.cols); addSheet_(VOICE_REQ_.name, VOICE_REQ_.cols); addSheet_(VOICE_QUEUE_.name, VOICE_QUEUE_.cols);
+  schemaOnce_('voice', function () {   // v165: was 7 sheet look-ups and a header read on every board and candidate open
+    addSheet_(VOICE_CALLS_.name, VOICE_CALL_COLS_); addColumns_(VOICE_CALLS_.name, VOICE_CALL_EXTRA_); addSheet_(VOICE_INBOX_.name, VOICE_INBOX_.cols);
+    addSheet_(VOICE_DND_.name, VOICE_DND_.cols); addSheet_(VOICE_ACCESS_.name, VOICE_ACCESS_.cols); addSheet_(VOICE_REQ_.name, VOICE_REQ_.cols); addSheet_(VOICE_QUEUE_.name, VOICE_QUEUE_.cols);
+  });
 }
 /** A reviewer may see a call's result and work the screening from it: the Admin, or whoever may edit that position's pipeline and holds voice_review. */
 function voiceCanReview_(u, line) { return can_(u, 'voice_agent') || (can_(u, 'voice_review') && !!line && canEditLine_(u, line)); }
@@ -585,7 +587,7 @@ function voiceDndParse_(text) {
 function voiceDndMatch_(phone, numbers) { const n = voiceDndNorm_(phone); return !!n && (numbers || []).indexOf(n) >= 0; }
 function voiceDndNumbers_() {
   voiceSchema_();
-  return readTable_(VOICE_DND_.name).rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return voiceDndNorm_(r.Phone); }).filter(String);
+  return readTable_(VOICE_DND_.name, true).rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return voiceDndNorm_(r.Phone); }).filter(String);   // fresh: this list decides whether a real call may be placed
 }
 /** Whether a person may place calls and how many are left today. rows: Voice_Access rows; used: calls placed today by them. Admin: always, no limit. */
 function voiceAccessEval_(rows, email, used, isAdmin) {

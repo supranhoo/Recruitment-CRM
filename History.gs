@@ -11,8 +11,10 @@ const HIST_TEXT_MAX_ = 6000;
 const HIST_KINDS_ = ['stage', 'interview', 'screening', 'voice', 'followup', 'change'];
 
 function histSchema_() {
-  addSheet_(HIST_CVS_.name, HIST_CVS_.cols);
-  ['Interviews', 'Followups', 'Screenings'].forEach(function (n) { addColumns_(n, ['Origin_Line_ID']); });
+  schemaOnce_('hist', function () {
+    addSheet_(HIST_CVS_.name, HIST_CVS_.cols);
+    ['Interviews', 'Followups', 'Screenings'].forEach(function (n) { addColumns_(n, ['Origin_Line_ID']); });
+  });
 }
 function histCut_(v, n) { v = String(v == null ? '' : v); return v.length > n ? v.slice(0, n) + '…' : v; }
 function histMs_(v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; }

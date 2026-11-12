@@ -3,7 +3,8 @@
  * Every one resolves the user first, so nothing is reachable without a Users-sheet entry.
  */
 
-function apiBootstrap() {
+function apiBootstrap() { return timed_('apiBootstrap', apiBootstrapRun_, arguments); }
+function apiBootstrapRun_() {
   const u = currentUser_();
   ensureSchema_();
   const lists = {};
@@ -40,7 +41,8 @@ function listLine_(l, ctx, u) {
   return o;
 }
 
-function apiListPositions() {
+function apiListPositions() { return timed_('apiListPositions', apiListPositionsRun_, arguments); }
+function apiListPositionsRun_() {
   const u = currentUser_();
   const ctx = tatContext_();
   return readTable_(T.MRF.name).rows.map(function (l) { return listLine_(l, ctx, u); });
@@ -63,9 +65,10 @@ const FETCHABLE_ = {
   apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules', 'Position_Recruiters'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
   apiListFunnel: { tables: ['Daily_Funnel', 'Position_Recruiters', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Position_Recruiters', 'Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
+  apiPipeline: { tables: ['Voice_DND', 'Position_Recruiters', 'Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
 };
-function apiFetch(fn, args, known) {
+function apiFetch(fn, args, known) { return timed_('apiFetch', apiFetchRun_, arguments); }
+function apiFetchRun_(fn, args, known) {
   const t0 = Date.now(), u = currentUser_();
   const spec = FETCHABLE_[fn];
   if (!spec) throw new Error('Unknown list.');
@@ -99,7 +102,8 @@ function apiPacked(fn, args) {
   return { cols: cols, rows: list.map(function (o) { return cols.map(function (k) { return o[k] === undefined ? null : o[k]; }); }) };
 }
 
-function apiSavePosition(data) {
+function apiSavePosition(data) { return timed_('apiSavePosition', apiSavePositionRun_, arguments); }
+function apiSavePositionRun_(data) {
   const u = currentUser_();
   const ctx = tatContext_();
   const patch = prepare_(T.MRF, data);
@@ -347,7 +351,8 @@ function funnelWithPipeline_(u, filter, from, to, rows) {
   return rows.sort(function (a, b) { return a.Entry_Date < b.Entry_Date ? 1 : a.Entry_Date > b.Entry_Date ? -1 : (a.derived ? 1 : 0) - (b.derived ? 1 : 0); });
 }
 
-function apiSaveFunnel(data) {
+function apiSaveFunnel(data) { return timed_('apiSaveFunnel', apiSaveFunnelRun_, arguments); }
+function apiSaveFunnelRun_(data) {
   const u = currentUser_();
   const patch = prepare_(T.FUNNEL, data);
   const line = readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === patch.Line_ID; })[0];
@@ -452,7 +457,8 @@ function apiListCandidates() {
   });
 }
 
-function apiGetCandidate(id) {
+function apiGetCandidate(id) { return timed_('apiGetCandidate', apiGetCandidateRun_, arguments); }
+function apiGetCandidateRun_(id) {
   currentUser_();
   let r = candRowFast_(id);
   if (!r) r = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === id; })[0];
@@ -490,7 +496,8 @@ function normPhone_(p) {
   return d;
 }
 
-function apiSaveCandidate(data, force) {
+function apiSaveCandidate(data, force) { return timed_('apiSaveCandidate', apiSaveCandidateRun_, arguments); }
+function apiSaveCandidateRun_(data, force) {
   const u = currentUser_();
   const patch = prepare_(T.CAND, data);
   if (!patch.Name) throw new Error('Candidate name is required.');

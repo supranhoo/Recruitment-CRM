@@ -10,9 +10,11 @@ const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / K
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
 /** Adds new columns/sheets once. Cheap after the first run (one property read). */
+var _schemaOk_ = false;
 function ensureSchema_() {
+  if (_schemaOk_) return;   // v165: checked once per run (it was one property read on every call)
   const props = PropertiesService.getScriptProperties();
-  if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) return;
+  if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) { _schemaOk_ = true; return; }
   if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a while ago: wait before trying again
   const t0 = Date.now(), doneKey = 'SCHEMA_DONE_' + SCHEMA_VERSION;
   let done = []; try { done = JSON.parse(props.getProperty(doneKey) || '[]'); } catch (e) { done = []; }

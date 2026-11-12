@@ -54,7 +54,7 @@ function appendHistory_(app, from, to, outcome, note, u) {
   sh.getRange(last + 1, 1, 1, headers.length).setValues([headers.map(function (h) { return o[h] === undefined ? '' : o[h]; })]);
   dropStale_(T.HIST.name);
   const now = String(Date.now());   // a move changes the Overview counts and the KPIs
-  props.setProperties({ KPI_DIRTY_AT: now, DASH_DIRTY_AT: now, IDMAX_Stage_History: String(n + 1) });
+  props.setProperties({ DASH_DIRTY_AT: now, IDMAX_Stage_History: String(n + 1) });   // v165: the KPI scorecard reads neither the history nor the cards, so a move no longer makes it stale
   });
 }
 /** The card's recruiter when someone else moves it (a tagged colleague or a lead), else blank. */
@@ -97,15 +97,24 @@ function appClient_(a) {
 }
 
 /** Everything the pipeline board needs for one position. */
-function apiPipeline(lineId) {
+function apiPipeline(lineId) { return timed_('apiPipeline', apiPipelineRun_, arguments); }
+function apiPipelineRun_(lineId) {
   currentUser_(); ensureSchema_();
   const line = lineOf_(lineId);
   if (!line) throw new Error('Pick a position.');
   const onLine = {}, lineCands = [];
-  readTable_(T.APP.name).rows.forEach(function (a) { if (a.Line_ID === lineId) { onLine[a.App_ID] = true; lineCands.push(a.Candidate_ID); } });
+  let firstDay = '', undated = false;
+  readTable_(T.APP.name).rows.forEach(function (a) {
+    if (a.Line_ID !== lineId) return;
+    onLine[a.App_ID] = true; lineCands.push(a.Candidate_ID);
+    const d = ymd_(a.Created_At); if (!d) undated = true; else if (!firstDay || d < firstDay) firstDay = d;
+  });
   const cands = candNamesSlim_(lineCands);
   const hist = {};
-  readTable_(T.HIST.name).rows.forEach(function (h) {
+  /* v165: a card's history cannot start before the card was created, so only the history since the board's oldest card is read
+     (Stage_History only grows). A card without a creation date falls back to the whole sheet. */
+  const histSrc = Object.keys(onLine).length && firstDay && !undated ? readTableFrom_(T.HIST.name, 'Changed_At', addDays_(firstDay, -1)) : readTable_(T.HIST.name);
+  histSrc.rows.forEach(function (h) {
     if (!onLine[h.App_ID]) return;
     (hist[h.App_ID] = hist[h.App_ID] || []).push({ from: String(h.From_Stage), to: String(h.To_Stage), outcome: String(h.Outcome), note: String(h.Note),
       by: String(h.Changed_By), who: String(h.Actor_Name || ''), for: String(h.Acted_For || ''), at: h.Changed_At instanceof Date ? fmt_(h.Changed_At, TZ, 'd MMM yyyy, HH:mm') : '', ms: h.Changed_At instanceof Date ? h.Changed_At.getTime() : 0 });
@@ -262,7 +271,8 @@ function boardAfterWrite_(lineId) {
   return board;
 }
 
-function apiMoveStage(appId, toStage, data) {
+function apiMoveStage(appId, toStage, data) { return timed_('apiMoveStage', apiMoveStageRun_, arguments); }
+function apiMoveStageRun_(appId, toStage, data) {
   const u = currentUser_(); ensureSchema_();
   data = data || {};
   if (STAGES.indexOf(toStage) < 0) throw new Error('Unknown stage.');
@@ -415,7 +425,8 @@ function apiCorrectJoiningDate(appId, newDoj, reason) {
 }
 
 /** Rejects, holds, withdraws (backs out) or reactivates an application. */
-function apiSetAppStatus(appId, status, reason, backoutDate) {
+function apiSetAppStatus(appId, status, reason, backoutDate) { return timed_('apiSetAppStatus', apiSetAppStatusRun_, arguments); }
+function apiSetAppStatusRun_(appId, status, reason, backoutDate) {
   const u = currentUser_(); ensureSchema_();
   if (['Active', 'Rejected', 'On hold', 'Withdrawn'].indexOf(status) < 0) throw new Error('Unknown status.');
   const app = appOf_(appId);
@@ -821,7 +832,8 @@ function pipelineAlerts_(onlyRecruiter) {
   return out;
 }
 
-function apiPipelineAlerts() {
+function apiPipelineAlerts() { return timed_('apiPipelineAlerts', apiPipelineAlertsRun_, arguments); }
+function apiPipelineAlertsRun_() {
   const u = currentUser_(); ensureSchema_();
   return pipelineAlerts_(isLead_(u) ? '' : u.recruiter);
 }

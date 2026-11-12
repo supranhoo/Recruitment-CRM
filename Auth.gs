@@ -1,5 +1,7 @@
 /** Identifies the signed-in team member from the Users sheet. */
+var _curUser_ = null;
 function currentUser_() {
+  if (_curUser_) return Object.assign({}, _curUser_, { perms: _curUser_.perms.slice() });   // v165: once per run (it was four service calls each time)
   const email = (Session.getActiveUser().getEmail() || '').toLowerCase();
   if (!email) throw new Error('ACCESS: Could not read your Google account. Sign in to Google, open the app link again and approve the permission prompt.');
   const u = usersCached_().filter(function (r) {
@@ -9,7 +11,9 @@ function currentUser_() {
   const role = normRole_(u.Role);
   const perms = effectivePerms_(role);
   if (typeof voiceHasAccess_ === 'function' && perms.indexOf('voice_call') < 0) { try { if (voiceHasAccess_(email)) perms.push('voice_call'); } catch (e) { } }
-  return { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: perms };
+  _curUser_ = { email: email, name: String(u.Name), role: role, recruiter: String(u.Recruiter_Name || u.Name), perms: perms };
+  _perfUser_ = _curUser_;
+  return Object.assign({}, _curUser_, { perms: perms.slice() });
 }
 
 /** A plausible e-mail address, lower-cased and trimmed; '' when it is not one. */

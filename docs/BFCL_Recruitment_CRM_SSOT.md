@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.21 (drift check of 8 Nov 2026 applied; see `2026-11-08_DRIFT_REPORT.md` for what was found) |
-| **Describes app version** | **v164** (`BUILD_ID` 164, 8 Nov 2026; v159 was the first release after v158) |
+| **Describes app version** | **v165** (`BUILD_ID` 165, 8 Nov 2026; v159 was the first release after v158) |
 | **Database schema version** | **50** (Script Property `SCHEMA_V`) |
 | **Owner** | Ankit Choudhary (Admin, CRM product owner) |
 | **Business owner** | Jaspal Bhanker, Sr GM-HR (Head of HR) |
@@ -1349,6 +1349,11 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
 ### 2026-11-08
+
+**v165 — Speed: measured, and the first low-risk fixes** (no schema change; `Perf.gs`, `Db.gs`, `Admin.gs`, `Api.gs`, `Main.gs`, `Index.html`, `Auth.gs`, `Compliance.gs`, `VoiceScreen.gs`, `History.gs`, `PosRec.gs`, `Pipeline.gs`, `Kpi.gs`, `Tasks.gs`, `App.html`)
+- **Measurement:** long lock waits and holds (1 s or more), lock time-outs (counted per day), 18 busy server calls taking 800 ms or more, and each scheduled job step's last 10 durations. They go to the execution log as JSON lines and to Admin → Tools → *Slow calls on the server*. Roles only, never who.
+- **Faster:** a pipeline board reads only the stage history since its oldest card. The KPI scorecard's cache depends only on the tables it reads, so card moves and the daily log no longer throw it away, and only one person rebuilds it at a time (the others see the last result). The to-do list keeps the heavy computed part apart from the done/snooze state, so a click no longer rebuilds it for everyone. Table version stamps last 6 hours (was 1). The signed-in user, the settings and the tag map are worked out once per call. The voice and history sheet checks run once per 6 hours. The Do Not Disturb register and the recruiter tags are cached, and the register is still read fresh before any real call. The first page carries its start-up data (one server round trip fewer), and the app starts before the web fonts finish. Pure reads and the My day autosave no longer clear the page's remembered results. The pipeline position search waits for a pause in typing.
+- **Not changed:** numbers, data and permissions. Tests: harness runs of the real scorecard and events code (unchanged results), the to-do cache, the history slice, the settings memo and the timing wrapper.
 
 **v164 — Split credit between tagged recruiters (date-gated)** (no schema change; `PosRec.gs`, `Kpi.gs`, `Api.gs`, `DayReview.gs`, `Pipeline.gs`, `Tasks.gs`, `Dashboard.gs`, `Db.gs`, `Admin.gs`, `Compliance.gs`, `Config.gs`, `E2E.gs`; §9.8, ADR-078)
 - New Setting `SPLIT_CREDIT_FROM` (empty = off). Card events credit the card's recruiter; Timely closure, fulfilment, offer backout and the dashboard credit each tagged recruiter from their own start; funnel entries per recruiter; card-level to-dos to the card's recruiter. Team totals count a position once.

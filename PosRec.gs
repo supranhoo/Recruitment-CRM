@@ -53,11 +53,13 @@ function posRecRows_() {
 }
 /** {Line_ID: [tagged recruiter names]} for the active tags. */
 function posRecMap_() {
+  if (_tables.__prmap) return _tables.__prmap;   // v165: built once per run
   const m = {};
   posRecRows_().forEach(function (r) {
     if (String(r.Status) !== 'Active' || String(r.Role) !== 'Tagged') return;
     (m[String(r.Line_ID)] = m[String(r.Line_ID)] || []).push(String(r.Recruiter));
   });
+  _tables.__prmap = m;
   return m;
 }
 function posRecTagged_(lineId) { return posRecMap_()[String(lineId)] || []; }

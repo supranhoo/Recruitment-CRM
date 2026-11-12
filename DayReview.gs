@@ -264,7 +264,8 @@ function dayData_(date, onlyRecruiter) {
 }
 
 /** Recruiters see their own day; the head and admin can see everyone. */
-function apiDaySummary(date) {
+function apiDaySummary(date) { return timed_('apiDaySummary', apiDaySummaryRun_, arguments); }
+function apiDaySummaryRun_(date) {
   const u = currentUser_(); ensureSchema_();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error('Pick a date.');
   const past = date < ymd_(new Date());

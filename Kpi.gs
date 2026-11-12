@@ -524,23 +524,34 @@ function computeKpis_(fy) {
 }
 
 /** Cached per financial year; the cache is refreshed after data changes or on request. */
-function apiKpi(fy, fresh) {
+function apiKpi(fy, fresh) { return timed_('apiKpi', apiKpiRun_, arguments); }
+function apiKpiRun_(fy, fresh) {
   currentUser_();
   fy = Number(fy) || kpiCurrentFy_();
   const props = PropertiesService.getScriptProperties();
-  const dirtyAt = (props.getProperty('DASH_DIRTY_AT') || '0') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0') + '|' + ymd_(new Date()) + '|' + splitFrom_();   // a new day can make a position due (v153); the split-credit date changes who is credited (v164)
+  /* v165: the result depends only on these tables, the explicit KPI flag (set-up changes), the day and the split-credit date.
+     Stage moves and the daily log no longer throw it away. */
+  const dirtyAt = tableStamps_(KPI_TABLES_).join('.') + '|' + (props.getProperty('KPI_DIRTY_AT') || '0') + '|' + ymd_(new Date()) + '|' + splitFrom_();   // a new day can make a position due (v153); the split-credit date changes who is credited (v164)
   const key = 'kpi_b' + BUILD_ID + '_' + dbTag_() + '_' + fy;   // the release number is part of the key, so a release never serves a result saved by older code
   if (!fresh) {
     /* The result is kept in pieces (cacheBigPut_), so it is cached however large it grows; a piece that is missing counts as no cache. */
     const hit = cacheBigGet_(key);
-    if (hit) { try { const o = JSON.parse(hit); if (o.dirtyAt === dirtyAt) return o; } catch (e) { } }
+    let old = null;
+    if (hit) { try { old = JSON.parse(hit); if (old.dirtyAt === dirtyAt) { perfLog_('cache', { what: 'kpi', hit: true }); return old; } } catch (e) { old = null; } }
+    /* Someone else is rebuilding it right now: show the last result, marked as being updated, instead of rebuilding it twice. */
+    const busy = 'kpi_busy_' + dbTag_() + '_' + fy;
+    try { if (old && CacheService.getScriptCache().get(busy)) { old.stale = true; return old; } CacheService.getScriptCache().put(busy, '1', 120); } catch (e) { }
   }
+  perfLog_('cache', { what: 'kpi', hit: false });
   const o = computeKpis_(fy);
   o.dirtyAt = dirtyAt;
   o.builtAt = fmt_(new Date(), TZ, 'd MMM yyyy, HH:mm');
   cacheBigPut_(key, JSON.stringify(o), 21600);
+  try { CacheService.getScriptCache().remove('kpi_busy_' + dbTag_() + '_' + fy); } catch (e) { }
   return o;
 }
+/** Every table computeKpis_ reads (its cache is keyed on their version stamps). */
+const KPI_TABLES_ = ['MRF', 'Candidates', 'BGV_Cases', 'Observations', 'Audit_Checks', 'Position_Recruiters', 'M_Recruiters', 'KPI_Targets', 'KPI_Scoring', 'TAT_Exemptions', 'TAT_Rules', 'M_Grades', 'Settings'];
 
 function kpiCurrentFy_() {
   const d = new Date(); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
