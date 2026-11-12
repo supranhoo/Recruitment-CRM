@@ -3963,7 +3963,7 @@ function kpiNextMonth(m) { const [y, mm] = m.split('-').map(Number), t = y * 12 
 function kpiCellText(c, count, unit) {
   if (!c) return '–';
   const sc = c.score == null ? '–' : c.score;
-  return count ? `${c.num} ${unit} · score ${sc}` : c.pct == null ? '–' : c.missed != null ? `${c.pct}% (${c.worked - c.missed}/${c.worked} worked on) · score ${sc}` : `${c.pct}% (${c.num}/${c.den}) · score ${sc}`;
+  return count ? `${c.num} ${unit} · score ${sc}` : c.pct == null ? '–' : c.missed != null ? `${c.pct}% (${c.worked - c.missed}/${c.worked} achieved) · score ${sc}` : `${c.pct}% (${c.num}/${c.den}) · score ${sc}`;
 }
 
 async function renderKpiTargets(el, setup) {
@@ -4270,7 +4270,7 @@ async function viewAdmin(v) {
 
 /** The KPIs placed by their target days and level (Timely closure, M-level, W-level): each has a worked-on line and a reconciliation. */
 const KPI_TAT = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
-const KPI_WORKED_BASIS = ['TIMELY_CLOSURE', 'M_FULFILMENT'];   // scored on positions worked on (v153, v157); W-level on time \u00f7 due
+const KPI_WORKED_BASIS = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];   // scored on positions worked on (v153, v157); W-level on time \u00f7 due
 const KPI_PCT_DEFAULT_RULES = [{ min: 100, score: 5 }, { min: 95, score: 4 }, { min: 90, score: 3 }, { min: 85, score: 2 }, { min: 80, score: 1 }];
 const KPI_NOTES = {
   OFFER_BACKOUT: 'Candidates who backed out ÷ positions worked on in the month × 100 · lower is better · not scored',
@@ -4315,10 +4315,10 @@ async function viewKpi(v, fresh) {
     }
     if (c.pct == null && kpi === 'OFFER_BACKOUT') return c.num ? `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>\u2013</b><span class="frac">${c.num} backout${c.num === 1 ? '' : 's'}, no position worked on</span></td>` : '<td class="kcell empty-cell">\u2013</td>';
     /* A position that falls due later this month and has not joined is not counted yet (v153). */
-    const later = c.notDue ? `<span class="frac" title="Falls due later this month and has not joined yet: counted once it joins or its due date passes">${c.notDue} not yet due</span>` : '';
-    if (c.missed != null) {   // Timely closure (v153): positions worked on without a TAT miss ÷ positions worked on
+    const later = '';
+    if (c.missed != null) {
       if (c.pct == null) return c.den || c.notDue ? `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>\u2013</b><span class="frac">${c.num} of ${c.den} due on time</span>${later}</td>` : '<td class="kcell empty-cell">\u2013</td>';
-      return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.pct}%</b><span class="frac" title="Positions worked on in the month without a TAT miss / positions worked on">${c.worked - c.missed}/${c.worked}</span>${scoreBadge(c.score)}<span class="frac" title="Positions that fell due in the month: how many missed the TAT, and how many joined on time">${c.missed} missed \u00b7 ${c.num} of ${c.den} due on time</span>${later}</td>`;
+      return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.pct}%</b><span class="frac" title="Positions achieved in the month / positions worked on in it. Every position worked on is Achieved or Missed.">${c.worked - c.missed}/${c.worked}</span>${scoreBadge(c.score)}<span class="frac" title="Missed = joined late, or past TAT and not filled at the month end">${c.missed} missed \u00b7 ${c.workedOk} joined on time</span>${later}</td>`;
     }
     if (c.pct == null) return c.worked ? `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>\u2013</b><span class="frac">${c.workedOk} of ${c.worked} worked on</span>${later}</td>` : '<td class="kcell empty-cell">\u2013</td>';
     return `<td class="kcell" data-k="${kpi}" data-m="${m}" tabindex="0"><b>${c.pct}%</b><span class="frac">${c.num}/${c.den}</span>${scoreBadge(c.score)}${c.worked ? `<span class="frac" title="Positions worked on in the month, and how many joined on time in it">${c.workedOk} of ${c.worked} worked on</span>` : ''}${later}</td>`;
@@ -4326,19 +4326,27 @@ async function viewKpi(v, fresh) {
   v.innerHTML = `
     <div class="page-head"><div><h1>KPI scorecard</h1>
       <p>Monthly results against each recruiter's own targets${isLead() ? ' (<a href="#" id="kpiSetup">see or change them in Admin \u2192 KPI targets</a>)' : ''}. Click any month to see the positions behind the number.</p></div>
-      <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button></div></div>
+      <div class="refresh"><span class="stamp">Calculated ${esc(k.builtAt)}</span><button class="btn" id="kpiRefresh">Recalculate</button>${isLead() ? '<button class="btn" id="kpiOldNew" title="Timely closure, M-level and W-level: the percentage under the rule used before version 166 next to the new one, for every recruiter and month">Old rule vs new rule (CSV)</button>' : ''}</div></div>
     <div class="filters">
       <div class="field"><label for="kfy">Financial year</label><select id="kfy">${opts([fyNow() - 1, fyNow()].map(y => [y, `FY ${y}-${String(y + 1).slice(2)}`]), f.fy, false)}</select></div>
       <div class="field"><label for="krec">Recruiter</label><select id="krec">${opts([['TEAM_TOTAL', 'Whole team']].concat(recs.map(r => [r, r])), f.rec, false)}</select></div>
     </div>
     <div class="table-wrap"><table class="ktable"><thead><tr><th class="kname">KPI</th>${k.months.map(m => `<th class="num">${monthLabel(m)}</th>`).join('')}</tr></thead><tbody>
-      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc([noteOf(kpi) || tgt(kpi), KPI_WORKED_BASIS.includes(kpi) ? 'worked on without a TAT miss \u00f7 worked on' : ''].filter(Boolean).join(' \u00b7 '))}</span></th>
+      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc([noteOf(kpi) || tgt(kpi), KPI_WORKED_BASIS.includes(kpi) ? 'achieved \u00f7 worked on' : ''].filter(Boolean).join(' \u00b7 '))}</span></th>
         ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
     </tbody></table></div>
     <p class="legend">Score: ${esc(bandsLegend)}. A position falls due on its start date + TAT, with notice beyond ${grace} days and approved exemptions added; when the offer went out within the TAT, the notice runs from the offer, so the position is due on the later of that date and the offer date + its notice period. Timely closure (${teamDays('TIMELY_CLOSURE')} days, all levels) and M-level fulfilment (${teamDays('M_FULFILMENT')} days) = positions worked on in the month without a TAT miss \u00f7 positions worked on; a miss is a position that fell due in the month and joined after its due date or has not joined, counted once, in that month. W-level fulfilment (${teamDays('W_FULFILMENT')} days) = positions joined on time \u00f7 positions due in the month (a position filled early or on time counts in the month it joins; a late or unfilled one in the month it fell due); its small line \u201cof N worked on\u201d counts every position worked on in the month, due or not. A position that falls due later in the current month is not counted until it joins or its due date passes. An M-level or W-level position is also part of Timely closure, which has its own ${teamDays('TIMELY_CLOSURE')} days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Admin \u2192 KPI targets); tracker accuracy shows only for months with an audit sample.</p>`;
   $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
   if ($('#kpiSetup')) $('#kpiSetup').onclick = e => { e.preventDefault(); (S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() }).tab = 'kpit'; go('admin'); };
   $('#krec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('kpi', false); };   // the data holds every recruiter: no server call
+  if ($('#kpiOldNew')) $('#kpiOldNew').onclick = () => {
+    const rows = [];
+    Object.keys(k.data).sort().forEach(rec => ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'].forEach(kp => k.months.forEach(m => {
+      const c = (k.data[rec][kp] || {})[m]; if (!c || !c.worked) return;
+      rows.push([rec === 'TEAM_TOTAL' ? 'Whole team' : rec, k.defs[kp].name, monthLabel(m), c.worked, c.oldMissed == null ? '' : c.oldMissed, c.oldPct == null ? '' : c.oldPct, c.missed, c.pct == null ? '' : c.pct, c.oldPct == null || c.pct == null ? '' : Math.round((c.pct - c.oldPct) * 10) / 10]);
+    })));
+    csvSave(`kpi-old-vs-new-rule-fy${f.fy}.csv`, ['Recruiter', 'KPI', 'Month', 'Positions worked on', 'Missed (old rule)', '% (old rule)', 'Missed (new rule)', '% (new rule)', 'Change in % points'], rows);
+  };
   $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
   $$('.kcell[data-k]', v).forEach(td => {
     const open = () => kpiDrill(k, f, td.dataset.k, td.dataset.m);
@@ -4379,17 +4387,17 @@ function kpiDrill(k, f, kpi, m) {
     head = `<th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>TAT start</th><th>${due ? 'Due by' : 'Joined'}</th><th class="num">${due ? 'Allowed' : 'Days'}</th><th>Result</th>`;
     rows = c.items.sort((a, b) => a.ok - b.ok).map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} · ${esc(i.grade)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}
       <td class="nw">${fmtDate(i.receipt)}<span class="sub">${esc(TAT_START_NOTE[i.from || 'approved'] || '')}${i.from === 'assigned' && i.appr ? ' (MRF approved ' + fmtDate(i.appr) + ')' : ''}${i.recv ? ' \u00b7 MRF received ' + fmtDate(i.recv) : ''}</span></td><td class="nw">${fmtDate(due ? i.due : i.doj)}${due && i.doj ? `<span class="sub">joined ${fmtDate(i.doj)}</span>` : ''}</td>
-      <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}${why(i) ? `<span class="sub" title="${esc(i.reasons || '')}">${esc(why(i))}</span>` : ''}</td><td>${i.ok ? '<span class="ok">Within TAT</span>' : `<span class="miss">${due && !i.doj ? 'Not filled (' + esc(i.status) + ')' : 'Missed'}</span>`}</td></tr>`);
+      <td class="num">${due ? i.allowed : `${i.days} / ${i.allowed}`}${why(i) ? `<span class="sub" title="${esc(i.reasons || '')}">${esc(why(i))}</span>` : ''}</td><td>${i.ok ? '<span class="ok">Achieved: joined on time</span>' : `<span class="miss">${i.why === 'overdue' || (due && !i.doj) ? 'Missed: past TAT, not filled' : 'Missed: joined late'}</span>`}</td></tr>`);
     const nd = (c.notDueItems || []).slice().sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : 0);
     if (nd.length) notDueHtml = `<h3 style="margin:18px 0 4px;font-size:15px">Not yet due (${nd.length})</h3><p class="hint" style="margin-top:0">These fall due later this month and have not joined yet. Each is counted once it joins or its due date passes.</p>
       <div class="table-wrap"><table><thead><tr><th>Position</th>${team ? '<th>Recruiter</th>' : ''}<th>TAT start</th><th>Due by</th><th class="num">Allowed</th></tr></thead><tbody>${nd.map(i => `<tr><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)} \u00b7 ${esc(i.status)}</span></td>${team ? `<td>${esc(i.recruiter)}</td>` : ''}<td class="nw">${fmtDate(i.receipt)}</td><td class="nw">${fmtDate(i.due)}</td><td class="num">${i.allowed}${why(i) ? `<span class="sub">${esc(why(i))}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
   }
   const drawer = openDrawer(`${k.defs[kpi].name} · ${monthLabel(m)}`, `
     ${KPI_TAT.includes(kpi) ? '<p style="margin:12px 0 0"><button class="btn" id="kpiRecon">Where are all the positions of this month?</button></p>' : ''}
-    <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : (c.pct == null ? '\u2013' : c.pct + '%')}</b></div>${c.missed != null ? `<div>Worked on without a TAT miss / worked on<b>${c.worked - c.missed} / ${c.worked}</b></div><div>Due this month: on time / due<b>${c.num} / ${c.den}</b></div>` : `<div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / positions worked on' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div>`}<div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
+    <div class="readout" style="margin-top:12px"><div>${esc(who)}<b>${k.defs[kpi].count ? c.num + ' ' + esc(k.defs[kpi].unit) : (c.pct == null ? '\u2013' : c.pct + '%')}</b></div>${c.missed != null ? `<div>Achieved / worked on<b>${c.worked - c.missed} / ${c.worked}</b></div><div>Missed<b>${c.missed}</b></div>` : `<div>${k.defs[kpi].count ? 'Checked' : kpi === 'OFFER_BACKOUT' ? 'Backouts / positions worked on' : 'Within TAT / counted'}<b>${k.defs[kpi].count ? c.den : c.num + ' / ' + c.den}</b></div>`}<div>Score<b>${c.score == null ? '—' : c.score + ' / 5'}</b></div></div>
     ${kpi === 'OFFER_BACKOUT' ? `<p style="margin:12px 0 0"><button class="btn" id="kpiWorked">See the positions worked on this month</button></p><p class="hint">Rate = candidates who backed out in the month \u00f7 positions worked on in the month \u00d7 100. A position is worked on in the month if its recruiter clock started by the month end and it had not joined before the month began; it is the same count as the \u201cof N worked on\u201d line of Timely closure.</p>` : ''}
-    ${c.missed != null ? `<p class="hint">Rate = positions worked on in the month without a TAT miss \u00f7 positions worked on \u00d7 100. A miss is a position that fell due this month and joined after its due date or has not joined; it counts once, in the month it fell due. The table lists the positions due this month (${c.missed} missed); \u201cWhere are all the positions of this month?\u201d lists every position worked on.</p>` : ''}
-    ${c.items.length ? '' : kpi === 'OFFER_BACKOUT' ? '<p class="empty">No candidate backed out this month.</p>' : (c.notDueItems || []).length ? '<p class="empty">Nothing has fallen due yet this month.</p>' : '<p class="empty">Nothing to count this month.</p>'}
+    ${c.missed != null ? `<p class="hint">Rate = positions achieved in the month \u00f7 positions worked on in it \u00d7 100. Every position worked on is Achieved (joined on time, or still within its TAT at the month end) or Missed (joined late, or past its TAT and not filled). A position past its TAT is a miss in every month until it is filled. The table lists this month\u2019s misses and joinings; \u201cWhere are all the positions of this month?\u201d lists every position.</p>` : ''}
+    ${c.items.length ? '' : kpi === 'OFFER_BACKOUT' ? '<p class="empty">No candidate backed out this month.</p>' : c.missed != null && c.worked ? '<p class="empty">No misses and no joinings this month: every position worked on was within its TAT at the month end.</p>' : '<p class="empty">Nothing to count this month.</p>'}
     <div class="table-wrap" style="margin-top:14px"><table><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table></div>
     ${notDueHtml}`);
   if ($('#kpiRecon', drawer)) $('#kpiRecon', drawer).onclick = () => kpiReconDialog(m, f.rec, kpi, k.defs[kpi].name);
@@ -4427,10 +4435,10 @@ async function reconExcel(r, kpi, kpiName) {
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
-  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined'],
-    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined', 'Due by', 'Result this month'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj, i.due, i.result || ''])));
   const d = cpDlg(`<h2 id="cpTitle">${esc(kpiName || r.name || 'KPI')}: all positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
-    <p class="hint">Positions whose clock started on or before the month end and which had not ended before it. Status is as of today. ${KPI_WORKED_BASIS.includes(kpi || 'TIMELY_CLOSURE') ? 'Worked on = the rows down to \u201cCounted in another month\u201d; the rate is those without a miss (all of them except \u201cfilled late\u201d and \u201coverdue\u201d) \u00f7 worked on.' : 'The first three rows are the KPI\u2019s count; a position not yet due is counted once it joins or its due date passes.'}</p>
+    <p class="hint">Every position worked on in the month (its clock started on or before the month end and it had not joined before the month began) is Achieved or Missed, as it stood at the month end (today, in the current month). Rate = the two Achieved rows \u00f7 the four rows.</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
     ${r.buckets.map(b => `<tr data-b="${esc(b.key)}"><td>${esc(b.title)}<span class="sub">${esc(b.note)}</span></td><td class="num">${b.items.length ? `<button type="button" class="linklike" data-open="${esc(b.key)}">${b.items.length}</button>` : 0}</td></tr>`).join('')}
     <tr style="font-weight:600"><td>Total</td><td class="num">${r.total}</td></tr></tbody></table></div>
@@ -4439,8 +4447,8 @@ async function kpiReconDialog(month, rec, kpi, kpiName) {
   const root = d || document;
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
-    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th></tr></thead><tbody>
-      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td></tr>`).join('')}</tbody></table></div>`;
+    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th><th>Due by</th><th>This month</th></tr></thead><tbody>
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
   const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);

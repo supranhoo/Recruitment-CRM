@@ -9,7 +9,7 @@ HTML template; the browser calls the `api*` functions in the `.gs` files through
 `Users` sheet. Tables are read and written only through `Db.gs`
 (`readTable_`, `insert_`, `update_`, `nextId_`, `audit_`). Schema upgrades run
 step by step in `Compliance.gs:ensureSchema_` (`SCHEMA_VERSION` '50'). The release
-number is `Config.gs:BUILD_ID` ('165'). Files in `.html` (`Index.html`,
+number is `Config.gs:BUILD_ID` ('166'). Files in `.html` (`Index.html`,
 `App.html`, `Styles.html`) are the page and are outside this contract. Business
 rules and decisions are in [docs/BFCL_Recruitment_CRM_SSOT.md](./docs/BFCL_Recruitment_CRM_SSOT.md);
 [README.md](./README.md) holds the human-written setup and release notes.
