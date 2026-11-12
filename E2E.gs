@@ -158,6 +158,15 @@ function e2eRun_(trash) {
   mv('D8 technical interview', 'Technical', { date: today, by: 'Jaspal Bhanker', result: 'Selected' });
   t('D9 interview written to candidate', function () { _tables = {}; return apiGetCandidate(c1.Candidate_ID).Tech_Result === 'Selected'; });
   mv('D10 HR interview', 'HR', { date: today, by: 'Randhir Singh', result: 'Selected' });
+  t('D10y sharing several screened candidates: the picker lists complete screenings, a batch read returns them, an incomplete one is refused', function () {
+    const L = readTable_(T.MRF.name).rows.filter(function (l) { return String(l.Line_ID) === String(L1.Line_ID); })[0];
+    const list = apiScreeningCandidates(L1.Line_ID);
+    if (!list || !list.rows || list.max !== 15) return false;
+    if (!list.rows.length) return 'no completed screening on this copy: nothing to share';
+    const ids = list.rows.slice(0, 2).map(function (r) { return r.appId; }), B = apiScreeningBatch(L1.Line_ID, ids);
+    let refused = ''; try { apiScreeningBatch(L1.Line_ID, []); } catch (e) { refused = e.message; }
+    return B.rows.length === ids.length && B.hod && /at least one/.test(refused) ? B.rows.length + ' candidate(s) read in one call' : false;
+  });
   t('D10x stage tabs: the timeline of a card (lead only) shows where each step was updated', function () {
     _tables = {}; const tl = apiAppTimeline(A), tb = tl.tabs;
     const dept = tb.dept.facts.some(function (f) { return f[0] === 'Confirmed by (department)' && f[1] === 'E2E HOD'; }) && tb.dept.facts.some(function (f) { return f[0] === 'Department\u2019s decision' && f[1] === 'Suitable'; });

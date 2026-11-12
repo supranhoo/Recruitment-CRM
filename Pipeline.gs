@@ -1299,6 +1299,85 @@ function apiCandidateScreenings(candId) {
     .sort(function (a, b) { return ms_(b.Updated_At || b.Created_At) - ms_(a.Updated_At || a.Created_At); }).map(function (s) { return scrClient_(s, true); });
 }
 
+/* ---------------- Sharing several screened candidates with the department in one go (v169) ---------------- */
+const SHARE_BATCH_MAX_ = 15;
+const SHARE_FIT_ORDER_ = { Strong: 0, Good: 1, Borderline: 2, Weak: 3, Incomplete: 4, 'Not eligible': 5 };
+/** The candidates of a position that can be shared: active cards with a complete screening (the picker's list). */
+function apiScreeningCandidates(lineId) {
+  const u = currentUser_(); ensureSchema_();
+  requireOnPosition_(u, lineId);
+  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[String(c.Candidate_ID)] = c; });
+  const scr = {}; readTable_(T.SCR.name).rows.forEach(function (r) { scr[String(r.App_ID)] = r; });
+  const rows = readTable_(T.APP.name).rows.filter(function (a) { return String(a.Line_ID) === String(lineId) && String(a.Status) === 'Active' && scr[String(a.App_ID)] && String(scr[String(a.App_ID)].Status) === 'Complete'; })
+    .map(function (a) {
+      const s = scr[String(a.App_ID)], c = cands[String(a.Candidate_ID)] || {};
+      return { appId: String(a.App_ID), name: String(c.Name || ''), stage: String(a.Stage), band: String(s.Band), pct: Number(s.Score_Pct) || 0, met: Number(s.Met) || 0, total: Number(s.Total) || 0,
+        sharedOn: ymd_(s.Shared_On), sharedWith: String(s.Shared_With || ''), hasCv: !!c.CV_File_URL, ko: String(s.Band) === 'Not eligible' };
+    });
+  rows.sort(function (a, b) { return (SHARE_FIT_ORDER_[a.band] == null ? 9 : SHARE_FIT_ORDER_[a.band]) - (SHARE_FIT_ORDER_[b.band] == null ? 9 : SHARE_FIT_ORDER_[b.band]) || b.pct - a.pct || a.name.localeCompare(b.name); });
+  return { lineId: String(lineId), rows: rows, max: SHARE_BATCH_MAX_ };
+}
+/** The chosen candidates of one position with their full screenings (questions, answers, note), the department head and the final questions, in one read. */
+function apiScreeningBatch(lineId, appIds) {
+  const u = currentUser_(); ensureSchema_();
+  const line = requireOnPosition_(u, lineId);
+  const ids = shareBatchIds_(appIds);
+  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[String(c.Candidate_ID)] = c; });
+  const scr = {}; readTable_(T.SCR.name).rows.forEach(function (r) { scr[String(r.App_ID)] = r; });
+  const apps = {}; readTable_(T.APP.name).rows.forEach(function (a) { apps[String(a.App_ID)] = a; });
+  const fin = sqFinalFor_(lineId), st = pdocState_(lineId);
+  const rows = ids.map(function (id) {
+    const a = apps[id];
+    if (!a || String(a.Line_ID) !== String(lineId)) throw new Error('One of the candidates is not on this position. Reload the page.');
+    if (String(a.Status) !== 'Active') throw new Error('One of the candidates is no longer active on this position.');
+    const s = scr[id];
+    if (!s || String(s.Status) !== 'Complete') throw new Error('Complete the screening of every candidate before sharing.');
+    const c = cands[String(a.Candidate_ID)] || {};
+    return { appId: id, stage: String(a.Stage), cand: { id: String(c.Candidate_ID || ''), name: String(c.Name || ''), designation: String(c.Current_Designation || ''), company: String(c.Current_Company || ''),
+        exp: expYears_(c), education: String(c.Education || ''), location: String(c.Current_Location || ''), hasCv: !!c.CV_File_URL }, screening: scrClient_(s, true) };
+  });
+  return { line: { id: String(line.Line_ID), mrf: String(line.MRF_No || ''), position: String(line.Position), grade: String(line.Grade || ''), dept: String(line.Dept) }, hod: hodOf_(line.Dept),
+    finalVersion: fin ? Number(fin.Version) : 0, jdVersion: st.jdFinal ? st.jdFinalVersion : 0, rows: rows, recruiter: String(line.Recruiter || ''), max: SHARE_BATCH_MAX_ };
+}
+/** The ids to work on: 1 to 15 distinct, as text. */
+function shareBatchIds_(appIds) {
+  const seen = {}, ids = [];
+  (appIds || []).forEach(function (x) { const id = String(x || '').trim(); if (id && !seen[id]) { seen[id] = 1; ids.push(id); } });
+  if (!ids.length) throw new Error('Choose at least one candidate.');
+  if (ids.length > SHARE_BATCH_MAX_) throw new Error('Share at most ' + SHARE_BATCH_MAX_ + ' candidates at a time.');
+  return ids;
+}
+/**
+ * Records that the chosen candidates were sent to the department together, and moves their cards to Shared with dept when asked.
+ * Everything is checked first (completed screening, a reason for each knock-out candidate), then written under one lock.
+ * d = { sharedWith, reasons: { appId: reason }, move }.
+ */
+function apiScreeningSharedBatch(lineId, appIds, d) {
+  const u = currentUser_(); ensureSchema_();
+  d = d || {};
+  requireOnPosition_(u, lineId);
+  const ids = shareBatchIds_(appIds), reasons = d.reasons || {};
+  return withLock_(function () {
+    const plan = ids.map(function (id) {
+      const app = appOf_(id);
+      if (String(app.Line_ID) !== String(lineId)) throw new Error('One of the candidates is not on this position. Reload the page.');
+      const s = scrOf_(id);
+      if (!s || String(s.Status) !== 'Complete') throw new Error('Complete the screening of every candidate before sharing.');
+      const reason = clean_(String(reasons[id] || '').trim()).slice(0, 500);
+      if (String(s.Band) === 'Not eligible' && !reason) throw new Error('A candidate did not meet a knock-out requirement. Enter the reason for sharing that candidate anyway.');
+      return { id: id, app: app, s: s, reason: reason };
+    });
+    const who = clean_(String(d.sharedWith || '')).slice(0, 200);
+    plan.forEach(function (x) {
+      update_(T.SCR, x.s.Screen_ID, { Shared_On: new Date(), Shared_With: who, Share_Reason: x.reason }, u);
+      if (d.move && STAGES.indexOf(String(x.app.Stage)) < STAGES.indexOf('Shared')) {
+        apiMoveStage(x.id, 'Shared', { note: 'Shared with ' + (who || 'the department') + ' together with ' + (plan.length - 1) + ' other candidate' + (plan.length === 2 ? '' : 's') + ': CV and screening (' + x.s.Band + ')' + (x.reason ? '. Reason: ' + x.reason : '') });
+      }
+    });
+    return { shared: plan.length };
+  });
+}
+
 /**
  * A candidate's experience as plain years for messages (v168): the number of years, without a unit. A date-formatted cell
  * (the number 3 shown as 2 Jan 1900) comes back as a Date, so it is turned back into its day number; text such as "6 years"
