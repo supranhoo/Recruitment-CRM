@@ -3152,31 +3152,31 @@ const PDF_C = { navy: [31, 58, 95], ink: [31, 39, 51], muted: [91, 103, 120], so
 const PDF_RATE = { M: [PDF_C.green, PDF_C.greenbg], P: [PDF_C.amber, PDF_C.amberbg], G: [PDF_C.red, PDF_C.redbg] };
 const PDF_BAND = { Strong: [PDF_C.green, PDF_C.greenbg], Good: [PDF_C.green, PDF_C.greenbg], Borderline: [PDF_C.amber, PDF_C.amberbg], Weak: [PDF_C.red, PDF_C.redbg], 'Not eligible': [PDF_C.red, PDF_C.redbg], Incomplete: [PDF_C.muted, PDF_C.soft] };
 function pdfFrame(doc, footer) {
-  const n = doc.getNumberOfPages();
+  const n = doc.getNumberOfPages(), RT = Math.round(doc.internal.pageSize.getWidth()) - 12, BT = Math.round(doc.internal.pageSize.getHeight()) - 8;   // 198 and 289 on a portrait A4; wider on a landscape page (v169)
   for (let i = 1; i <= n; i++) {
     doc.setPage(i);
     try { doc.addImage('data:image/jpeg;base64,' + JDM_LOGO, 'JPEG', 12, 7, 18, 12); } catch (e) { }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...PDF_C.navy); doc.text('Bihar Foundry & Castings Ltd', 198, 12, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...PDF_C.muted); doc.text('Human Resources \u00b7 Talent Acquisition', 198, 16, { align: 'right' });
-    doc.setDrawColor(...PDF_C.line); doc.setLineWidth(0.3); doc.line(12, 21, 198, 21);
-    doc.setFontSize(7); doc.text(footer, 12, 289); doc.text('Page ' + i + ' of ' + n, 198, 289, { align: 'right' });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...PDF_C.navy); doc.text('Bihar Foundry & Castings Ltd', RT, 12, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...PDF_C.muted); doc.text('Human Resources \u00b7 Talent Acquisition', RT, 16, { align: 'right' });
+    doc.setDrawColor(...PDF_C.line); doc.setLineWidth(0.3); doc.line(12, 21, RT, 21);
+    doc.setFontSize(7); doc.text(footer, 12, BT); doc.text('Page ' + i + ' of ' + n, RT, BT, { align: 'right' });
   }
 }
 function pdfTitle(doc, kind, title, sub, boxes) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...PDF_C.muted); doc.text(kind.toUpperCase(), 12, 29);
   doc.setFontSize(15); doc.setTextColor(...PDF_C.navy);
-  const tw = 196 - 12 - boxes.length * 27;
+  const RT = Math.round(doc.internal.pageSize.getWidth()) - 12, tw = RT - 2 - 12 - boxes.length * 27;
   const lines = doc.splitTextToSize(title, tw - 4); doc.text(lines[0], 12, 36);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...PDF_C.muted); doc.text(doc.splitTextToSize(sub, tw - 4)[0], 12, 41.5);
   boxes.forEach((b, i) => {
-    const x = 198 - (boxes.length - i) * 27, fill = b[2] || PDF_C.soft;
+    const x = RT - (boxes.length - i) * 27, fill = b[2] || PDF_C.soft;
     doc.setFillColor(...fill); doc.setDrawColor(...PDF_C.line); doc.rect(x, 25, 27, 18, 'FD');
     doc.setFont('helvetica', 'bold'); doc.setFontSize(6); doc.setTextColor(...PDF_C.muted); doc.text(String(b[0]).toUpperCase(), x + 2, 29);
     doc.setFont('helvetica', b[3] ? 'bold' : 'normal'); doc.setFontSize(7.5); doc.setTextColor(...(b[3] || PDF_C.ink)); doc.text(doc.splitTextToSize(String(b[1]), 23).slice(0, 3), x + 2, 33.5);
   });
 }
 function pdfStrip(doc, y, cells) {
-  const w = 186 / cells.length;
+  const w = (Math.round(doc.internal.pageSize.getWidth()) - 24) / cells.length;
   cells.forEach((c, i) => {
     const x = 12 + i * w;
     doc.setFillColor(...(c[3] || PDF_C.soft)); doc.rect(x + (i ? 0.8 : 0), y, w - (i ? 0.8 : 0), 13, 'F');
@@ -3186,10 +3186,10 @@ function pdfStrip(doc, y, cells) {
   return y + 13;
 }
 function pdfHead(doc, y, text, note) {
-  if (y > 262) { doc.addPage(); y = 28; }
+  if (y > Math.round(doc.internal.pageSize.getHeight()) - 35) { doc.addPage(); y = 28; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...PDF_C.navy); doc.text(text, 12, y);
   if (note) { const w = doc.getTextWidth(text); doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...PDF_C.muted); doc.text(note, 12 + w + 3, y); }
-  doc.setDrawColor(...PDF_C.navy); doc.setLineWidth(0.4); doc.line(12, y + 1.6, 198, y + 1.6);
+  doc.setDrawColor(...PDF_C.navy); doc.setLineWidth(0.4); doc.line(12, y + 1.6, Math.round(doc.internal.pageSize.getWidth()) - 12, y + 1.6);
   return y + 4;
 }
 const PDF_TABLE = { theme: 'grid', margin: { left: 12, right: 12, top: 26, bottom: 14 }, styles: { font: 'helvetica', fontSize: 7.8, cellPadding: 1.6, textColor: PDF_C.ink, lineColor: PDF_C.line, lineWidth: 0.2, valign: 'middle' },
@@ -3538,6 +3538,152 @@ function buildEml(to, subject, body, atts) {
     '--' + bound, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(text)), ''].join(crlf);
   atts.forEach(a => { m += crlf + ['--' + bound, 'Content-Type: ' + (a.mime || 'application/octet-stream') + ';' + crlf + ' ' + fname(a.name).replace(/^filename/, 'name'), 'Content-Transfer-Encoding: base64', 'Content-Disposition: attachment;' + crlf + ' ' + fname(a.name), '', b64(a.bytes), ''].join(crlf); });
   return m + crlf + '--' + bound + '--' + crlf;
+}
+/* ---------------- Sharing several screened candidates in one go (v169) ---------------- */
+const SHARE_FIT_ORDER = { Strong: 0, Good: 1, Borderline: 2, Weak: 3, Incomplete: 4, 'Not eligible': 5 }, SHARE_BLOCK = 5, SHARE_CUT = 38;
+const shareShort = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; };
+/**
+ * The comparison as data: candidates ordered by fit, the questions of the newest question list, and for every question and candidate the rating,
+ * the answer and a short form of it. A candidate screened on older questions is matched by question number and text; what they were not asked
+ * is "not asked". rows = [{ appId, cand, screening }] as returned by apiScreeningBatch.
+ */
+function screeningMatrix_(rows) {
+  const order = r => { const res = sqScoreC(r.screening.items, r.screening.answers); return [SHARE_FIT_ORDER[res.band] == null ? 9 : SHARE_FIT_ORDER[res.band], -res.pct, String(r.cand.name || '')]; };
+  const list = rows.map(r => ({ r, res: sqScoreC(r.screening.items, r.screening.answers) })).sort((a, b) => { const x = order(a.r), y = order(b.r); return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2]); });
+  const newest = list.reduce((m, c) => (c.r.screening.sqVersion || 0) > (m.r.screening.sqVersion || 0) ? c : m, list[0]);
+  const base = newest.r.screening.items, version = newest.r.screening.sqVersion || 0;
+  const cands = list.map((c, i) => {
+    const sc = c.r.screening, v = sc.sqVersion || 0;
+    return { n: i + 1, appId: c.r.appId, name: c.r.cand.name, cand: c.r.cand, res: c.res, band: c.res.band, version: v, older: v !== version, note: sc.note || '', shareReason: sc.shareReason || '', on: sc.on, by: sc.by, answers: sc.answers, items: sc.items };
+  });
+  const long = [];
+  const cell = (it, c) => {
+    const mine = c.items.find(x => x.id === it.id && x.label === it.label);
+    if (!mine) return { asked: false, rate: '', text: '', short: '' };
+    const a = (c.answers[it.id] || {}).a, text = a == null ? '' : String(a).replace(/\u20b9\s*/g, 'Rs '), rate = sqRateC(mine, c.answers[it.id]);   // the PDF font has no rupee sign
+    if (text.length > SHARE_CUT) long.push({ id: it.id, label: it.label, n: c.n, name: c.name, text });
+    return { asked: true, rate, text, short: shareShort(text, SHARE_CUT) };
+  };
+  const sections = ['E', 'R', 'P'].map(sec => ({ sec, items: base.filter(i => i.sec === sec).map(it => ({ it, cells: cands.map(c => cell(it, c)) })) })).filter(s => s.items.length);
+  const blocks = []; for (let k = 0; k < cands.length; k += SHARE_BLOCK) blocks.push(cands.slice(k, k + SHARE_BLOCK).map(c => c.n - 1));
+  const lab = (c, st) => c.items.filter(i => i.sec !== 'P' && sqRateC(i, c.answers[i.id]) === st).map(i => i.label);
+  cands.forEach(c => { c.strengths = strengthsOf(c.items, c.answers, 5); c.gaps = lab(c, 'G'); c.partly = lab(c, 'P'); });
+  const olderN = cands.filter(c => c.older).length;
+  return { cands, sections, blocks, long, version, olderN };
+}
+/** The one landscape PDF: overview, the question-by-candidate tables (5 candidates across), summary, the full text of shortened answers. */
+async function pdfScreeningBatch(B, M) {
+  const JsPDF = await pdfLib(); const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const W = Math.round(doc.internal.pageSize.getWidth()), usable = W - 24, L = B.line;
+  const bands = ['Strong', 'Good', 'Borderline', 'Weak', 'Not eligible'].map(b => [b, M.cands.filter(c => c.band === b).length]).filter(x => x[1]).map(x => x[1] + ' ' + x[0].toLowerCase()).join(' · ');
+  pdfTitle(doc, 'Candidate screening comparison', L.position, [L.grade, L.dept, L.mrf || L.id].filter(Boolean).join(' · '),
+    [['Candidates', String(M.cands.length)], ['Questions', 'v' + M.version + (B.jdVersion ? ' (JD v' + B.jdVersion + ')' : '')], ['Compared on', fmtDate(ymdLocal(new Date()))]]);
+  let y = pdfStrip(doc, 48, [[M.cands.length + ' candidates', bands || '—'], [(M.cands.filter(c => c.band === 'Strong' || c.band === 'Good').length) + ' good or strong', 'overall fit'], [M.sections.reduce((s, x) => s + x.items.length, 0) + ' questions', 'eligibility, role fit, practical details'],
+    [M.olderN ? M.olderN + ' on older questions' : 'All on v' + M.version, M.olderN ? 'marked in their column' : 'the same question list']]);
+  y = pdfHead(doc, y + 6, 'Overview', 'Ordered by fit. Green meets, amber partly, red gap.');
+  const bandCell = c => { const k = PDF_BAND[c.band] || PDF_BAND.Incomplete; return { content: bandText(c.band) + (c.band === 'Not eligible' ? '' : '  ' + c.res.pct + '%'), styles: { fontStyle: 'bold', textColor: k[0], fillColor: k[1] } }; };
+  doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [['#', 'Candidate', 'Experience · education', 'Now at', 'Fit', 'Criteria met', 'Knock-outs', 'Gaps · partly', 'Screened']],
+    body: M.cands.map(c => [{ content: String(c.n), styles: { fontStyle: 'bold', textColor: PDF_C.navy, fillColor: PDF_C.soft, halign: 'center' } }, c.name + (c.older ? '\n(older questions v' + c.version + ')' : ''),
+      [c.cand.exp ? c.cand.exp + ' yrs' : '', c.cand.education].filter(Boolean).join(' · ') || '—', [c.cand.designation, c.cand.company].filter(Boolean).join(', ') || '—', bandCell(c),
+      c.res.met + ' of ' + c.res.total, c.res.koMet + ' of ' + c.res.koTotal, c.res.gaps + ' · ' + c.res.partly, fmtDate(c.on) + (c.by ? '\n' + String(c.by).split('@')[0] : '')]),
+    columnStyles: { 0: { cellWidth: 8 }, 1: { cellWidth: 46 }, 2: { cellWidth: 44 }, 3: { cellWidth: 50 }, 4: { cellWidth: 34 }, 5: { cellWidth: 22 }, 6: { cellWidth: 22 }, 7: { cellWidth: 22 } } }));
+  y = doc.lastAutoTable.finalY + 3;
+  M.cands.filter(c => c.band === 'Not eligible' && c.shareReason).forEach(c => { doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...PDF_C.red); doc.text(doc.splitTextToSize('Candidate ' + c.n + ' did not meet a knock-out; shared because: ' + c.shareReason, usable)[0], 12, y + 3); y += 4; });
+  const rateTag = (c, k) => !k.asked ? { content: '–  not asked', styles: { textColor: PDF_C.muted, fillColor: PDF_C.soft, fontSize: 6.8, halign: 'center' } }
+    : { content: (RATE_LABEL[k.rate] || 'Not rated').toUpperCase() + (k.short ? '\n' + k.short : ''), styles: { textColor: (PDF_RATE[k.rate] || [PDF_C.muted])[0], fillColor: (PDF_RATE[k.rate] || [0, PDF_C.soft])[1], fontSize: 6.9 } };
+  M.blocks.forEach((blk, bi) => {
+    const part = M.blocks.length > 1 ? ' · candidates ' + (blk[0] + 1) + '–' + (blk[blk.length - 1] + 1) : '';
+    M.sections.forEach((S, si) => {
+      if (si === 0) { doc.addPage(); y = 28; } else y = doc.lastAutoTable.finalY + 7;   // the sections of one block follow each other; pdfHead starts a page when there is no room
+      const title = { E: 'Eligibility', R: 'Role fit', P: 'Practical details' }[S.sec], withNeed = S.sec === 'E', fixed = withNeed ? [8, 56, 40] : [8, 70], cw = (usable - fixed.reduce((a, b) => a + b, 0)) / blk.length;
+      y = pdfHead(doc, y, title + part, S.sec === 'E' ? 'Red number: knock-out requirement' : S.sec === 'P' ? 'Not scored' : 'Must-have questions are marked');
+      const head = ['#', withNeed ? 'Requirement' : S.sec === 'R' ? 'Asked about' : 'Detail'].concat(withNeed ? ['Needed'] : []).concat(blk.map(i => M.cands[i].n + '  ' + shareShort(M.cands[i].name, 22) + (M.cands[i].older ? '\n(older v' + M.cands[i].version + ')' : '')));
+      const cs = {}; fixed.forEach((w, k) => { cs[k] = { cellWidth: w }; }); blk.forEach((_, k) => { cs[fixed.length + k] = { cellWidth: cw }; });
+      doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [head], columnStyles: cs, styles: Object.assign({}, PDF_TABLE.styles, { fontSize: 7.2, cellPadding: 1.3, valign: 'top' }),
+        body: S.items.map(x => [{ content: x.it.id, styles: { fontStyle: 'bold', textColor: x.it.ko ? PDF_C.red : PDF_C.navy, fillColor: x.it.ko ? PDF_C.redbg : PDF_C.soft } }, x.it.label + (x.it.imp === 'M' ? '  (must)' : '')]
+          .concat(withNeed ? [{ content: x.it.need || '', styles: { textColor: PDF_C.muted, fontSize: 6.8 } }] : [])
+          .concat(blk.map(i => S.sec === 'P' ? (x.cells[i].asked ? x.cells[i].short || '—' : { content: '–  not asked', styles: { textColor: PDF_C.muted } }) : rateTag(M.cands[i], x.cells[i])))) }));
+    });
+    // summary of this block
+    doc.addPage(); y = 28; y = pdfHead(doc, y, 'Summary' + part, 'Strengths, gaps and the recruiter’s note');
+    const cw2 = (usable - 22) / blk.length, bl = a => a.length ? a.map(x => '• ' + shareShort(x, 60)).join('\n') : '—', cs2 = { 0: { cellWidth: 22 } }; blk.forEach((_, k) => { cs2[1 + k] = { cellWidth: cw2 }; });
+    const row = (label, f, colr) => [{ content: label, styles: { fontStyle: 'bold', textColor: colr || PDF_C.navy, fillColor: PDF_C.soft } }].concat(blk.map(i => f(M.cands[i])));
+    doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [[''].concat(blk.map(i => M.cands[i].n + '  ' + shareShort(M.cands[i].name, 24)))], columnStyles: cs2, styles: Object.assign({}, PDF_TABLE.styles, { fontSize: 7.2, cellPadding: 1.6, valign: 'top' }),
+      body: [row('Fit', c => bandText(c.band) + (c.band === 'Not eligible' ? '' : ' (' + c.res.pct + '%)')), row('Strengths', c => bl(c.strengths), PDF_C.green), row('Gaps', c => bl(c.gaps), PDF_C.red), row('Partly', c => bl(c.partly), PDF_C.amber), row('Recruiter’s note', c => c.note ? shareShort(c.note, 240) : '—')] }));
+  });
+  if (M.long.length) {
+    doc.addPage(); y = pdfHead(doc, 28, 'Full answers', 'Answers that are shortened in the tables above');
+    doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [['#', 'Question', 'Candidate', 'Answer']], columnStyles: { 0: { cellWidth: 9 }, 1: { cellWidth: 60 }, 2: { cellWidth: 40 } }, styles: Object.assign({}, PDF_TABLE.styles, { fontSize: 7.2, valign: 'top' }),
+      body: M.long.map(x => [{ content: x.id, styles: { fontStyle: 'bold', textColor: PDF_C.navy, fillColor: PDF_C.soft } }, x.label, x.n + '  ' + x.name, x.text]) }));
+  }
+  pdfFrame(doc, 'BFCL · Screening comparison · ' + (L.mrf || L.id) + ' · Confidential');
+  return { blob: doc.output('blob'), name: fileSafe('Screening comparison - ' + L.position + ' - ' + (L.mrf || L.id)) + '.pdf' };
+}
+/** The message to the department: one line per candidate. */
+function shareBatchBody(B, M, first, due, who) {
+  const lines = M.cands.map(c => c.n + '. ' + c.name + ' (' + [c.cand.exp ? c.cand.exp + ' yrs' : '', c.cand.education].filter(Boolean).join(', ') + '): ' + bandText(c.band) + ', ' + c.res.met + ' of ' + c.res.total + ' criteria met' +
+    (c.band === 'Not eligible' ? '; did not meet a knock-out' + (c.shareReason ? ' (' + c.shareReason + ')' : '') : '') + (c.older ? ' (screened on older questions)' : ''));
+  return 'Dear ' + first + ',\n\nPlease find attached the screening comparison and the CVs of ' + M.cands.length + ' candidates for ' + B.line.position + ' (' + (B.line.mrf || B.line.id) + ').\n\n' + lines.join('\n') +
+    '\n\nThe comparison lists every screening question with each candidate’s answer and rating.\n\nKindly share your feedback on each candidate (shortlist or not suitable) by ' + fmtDate(due) + '.\n\nRegards,\n' + who;
+}
+async function openShareBatch(lineId, after) {
+  let d = $('#shareDialog');
+  if (!d) { document.body.insertAdjacentHTML('beforeend', '<dialog id="shareDialog" class="pm-dialog share-dialog" aria-labelledby="shTitle"></dialog>'); d = $('#shareDialog'); }
+  d.innerHTML = '<p class="muted">Preparing…</p>'; if (!d.open) d.showModal();
+  let C; try { C = await api('apiScreeningCandidates', lineId); } catch (e) { d.innerHTML = `<p class="miss">${esc(e)}</p><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`; $$('[data-close]', d).forEach(b => b.onclick = () => d.close()); return; }
+  if (C.rows.length < 1) { d.innerHTML = `<h2 id="shTitle">Share candidates with the department</h2><p class="hint">No candidate of this position has a completed screening yet. Complete the screening first; the department receives the CV with the screening.</p><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`; $$('[data-close]', d).forEach(b => b.onclick = () => d.close()); return; }
+  d.innerHTML = `<div class="sh-head"><h2 id="shTitle">Share candidates with the department</h2><p class="sub">Tick the candidates to send together. They go in one message with one comparison of all the screening questions and answers, and each CV.</p></div>
+    <div class="sh-pick" role="group" aria-label="Candidates with a completed screening">${C.rows.map(r => `<label class="sh-pr${r.ko ? ' ko' : ''}"><input type="checkbox" class="shp" value="${esc(r.appId)}"${!r.ko && !r.sharedOn && ['Sourced', 'Screened'].includes(r.stage) ? ' checked' : ''}>
+      <span class="sh-pn">${esc(r.name)}</span><span class="fit-chip fit-bg-${fitClass(r.band)}">${esc(bandText(r.band))}${r.ko ? '' : ' ' + r.pct + '%'}</span><span class="sub">${esc(r.stage)} · ${r.met} of ${r.total} met${r.hasCv ? '' : ' · <b class="miss">no CV</b>'}${r.sharedOn ? ' · shared ' + esc(fmtDate(r.sharedOn)) : ''}</span></label>`).join('')}</div>
+    <p class="hint" id="shpHint"></p>
+    <div class="sh-foot"><span></span><div><button class="btn" data-close>Close</button><button class="btn primary" id="shpGo" disabled>Continue</button></div></div>`;
+  $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+  const picks = () => $$('.shp:checked', d).map(x => x.value), upd = () => { const n = picks().length; $('#shpGo', d).disabled = n < 1 || n > C.max; $('#shpHint', d).textContent = n > C.max ? 'Choose at most ' + C.max + ' candidates.' : n + ' selected.'; };
+  $$('.shp', d).forEach(x => x.onchange = upd); upd();
+  $('#shpGo', d).onclick = async e => {
+    e.target.disabled = true; const ids = picks(); d.innerHTML = '<p class="muted">Preparing the comparison…</p>';
+    let B; try { B = await api('apiScreeningBatch', lineId, ids); } catch (err) { d.innerHTML = `<p class="miss">${esc(err)}</p><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`; $$('[data-close]', d).forEach(b => b.onclick = () => d.close()); return; }
+    shareBatchDialog(d, B, after);
+  };
+}
+function shareBatchDialog(d, B, after) {
+  const M = screeningMatrix_(B.rows), first = B.hod.name ? B.hod.name.split(' ')[0] : 'Sir / Madam', due = ymdLocal(new Date(Date.now() + 24 * 3600000));
+  const kos = M.cands.filter(c => c.band === 'Not eligible'), noCv = M.cands.filter(c => !c.cand.hasCv);
+  const subject = 'Candidates for ' + (B.line.mrf ? B.line.mrf + ' ' : '') + B.line.position + ': ' + M.cands.length + ' profiles';
+  d.innerHTML = `<div class="sh-head"><h2 id="shTitle">Share ${M.cands.length} candidate${M.cands.length === 1 ? '' : 's'} with the department</h2><p class="sub">${esc(B.line.mrf || '')} ${esc(B.line.position)}${B.hod.name ? ' · to ' + esc(B.hod.name) + ' (HOD)' : ''}</p></div>
+    <div class="sh-lab">Attachments</div>
+    <div class="sh-files"><div class="sh-file"><span class="sh-ic">PDF</span><div>Screening comparison – ${M.cands.length} candidates<small>every question with each candidate’s answer and rating, generated now</small></div></div>
+      ${M.cands.map(c => `<div class="sh-file${c.cand.hasCv ? '' : ' off'}"><span class="sh-ic">${c.cand.hasCv ? 'CV' : '!'}</span><div>${c.cand.hasCv ? 'CV – ' + esc(c.name) : esc(c.name) + ': no CV on the candidate record'}<small>${c.cand.hasCv ? 'from the candidate record' : 'upload it in the candidate profile first'}</small></div></div>`).join('')}</div>
+    ${M.olderN ? `<div class="note">${M.olderN} candidate${M.olderN === 1 ? ' was' : 's were'} screened on older questions. The comparison follows the newest questions (v${M.version}); older screenings are marked and show “not asked” where a question is new.</div>` : ''}
+    <div class="sh-lab">Message</div>
+    <div class="sh-mail"><label><span>To</span><input id="shTo" value="${esc(B.hod.email)}" placeholder="HOD email (add it in Admin → HOD contacts)"></label>
+      <label><span>Subject</span><input id="shSubj" value="${esc(subject)}"></label><textarea id="shBody" rows="12">${esc(shareBatchBody(B, M, first, due, S.boot.user.name || ''))}</textarea></div>
+    ${kos.map(c => `<div class="field wide sh-reason"><label for="shW${c.n}">Reason for sharing ${esc(c.name)}, who did not meet a knock-out</label><input id="shW${c.n}" class="shw" data-app="${esc(c.appId)}" placeholder="Recorded with the screening"></div>`).join('')}
+    <p class="hint sh-hint" id="shSize"></p>
+    <div class="sh-foot"><label class="sh-ck"><input type="checkbox" id="shMove" checked> Move to “Shared with dept” (cards not there yet)</label>
+      <div><button class="btn" data-close>Close</button><button class="btn" id="shDl">Download files</button><button class="btn" id="shCopy">Copy message</button><button class="btn" id="shOut">Open in Outlook (web)</button><button class="btn primary" id="shEml">Open in Outlook app</button></div></div>`;
+  $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+  $('#shSize', d).textContent = noCv.length ? noCv.length + ' candidate' + (noCv.length === 1 ? ' has' : 's have') + ' no CV on the record: the draft carries the comparison and the other CVs. ' : '';
+  let recorded = false;
+  const reasons = () => { const o = {}; $$('.shw', d).forEach(x => { o[x.dataset.app] = x.value.trim(); }); return o; };
+  const need = () => { const miss = $$('.shw', d).find(x => !x.value.trim()); if (miss) { toast('Enter the reason for sharing a candidate who did not meet a knock-out.', true); miss.focus(); return false; } return true; };
+  const progress = t => { $('#shSize', d).textContent = t; };
+  const cvs = async () => { const out = []; let k = 0; for (const c of M.cands) { if (!c.cand.hasCv) continue; progress('Preparing the CVs: ' + (++k) + ' of ' + M.cands.filter(x => x.cand.hasCv).length + '…'); const cv = await api('apiGetCv', c.cand.id); const ext = (String(cv.name).match(/\.[a-z0-9]+$/i) || [''])[0]; out.push({ name: fileSafe('CV - ' + c.n + ' ' + c.name) + ext, mime: cv.mime || 'application/octet-stream', bytes: b64Bytes(cv.b64) }); } return out; };
+  const record = async () => {
+    if (recorded) return; recorded = true;
+    try { await api('apiScreeningSharedBatch', B.line.id, M.cands.map(c => c.appId), { sharedWith: B.hod.name ? B.hod.name + ' (HOD)' : $('#shTo', d).value, reasons: reasons(), move: $('#shMove', d).checked }); toast($('#shMove', d).checked ? 'Recorded as shared. Cards moved to Shared with dept.' : 'Recorded as shared.'); if (after) after(); }
+    catch (e) { recorded = false; toast(e, true); }
+  };
+  const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (err) { toast(err, true); } btn.disabled = false; };
+  $('#shDl', d).onclick = e => busy(e.target, async () => { const p = await pdfScreeningBatch(B, M); saveBlob(p.blob, p.name); for (const f of await cvs()) saveBlob(new Blob([f.bytes], { type: f.mime }), f.name); progress(''); });
+  $('#shCopy', d).onclick = async () => { if (!need()) return; copyText('Subject: ' + $('#shSubj', d).value + '\n\n' + $('#shBody', d).value); await record(); };
+  $('#shOut', d).onclick = e => { if (!need()) return; const url = MS_BASE + 'outlook.office.com/mail/deeplink/compose?to=' + encodeURIComponent($('#shTo', d).value) + '&subject=' + encodeURIComponent($('#shSubj', d).value) + '&body=' + encodeURIComponent($('#shBody', d).value);
+    window.open(url, '_blank', 'noopener'); return busy(e.target, async () => { const p = await pdfScreeningBatch(B, M); saveBlob(p.blob, p.name); for (const f of await cvs()) saveBlob(new Blob([f.bytes], { type: f.mime }), f.name); progress(''); await record(); }); };
+  $('#shEml', d).onclick = e => { if (!need()) return; return busy(e.target, async () => {
+    const p = await pdfScreeningBatch(B, M), atts = [{ name: p.name, mime: 'application/pdf', bytes: new Uint8Array(await p.blob.arrayBuffer()) }].concat(await cvs()), total = atts.reduce((s, a) => s + a.bytes.length, 0);
+    saveBlob(new Blob([buildEml($('#shTo', d).value, $('#shSubj', d).value, $('#shBody', d).value, atts)], { type: 'message/rfc822' }), fileSafe('Share - ' + B.line.position + ' - ' + (B.line.mrf || B.line.id) + ' - ' + M.cands.length + ' candidates') + '.eml');
+    progress('Draft saved (' + (total / 1048576).toFixed(1) + ' MB attached)' + (total > 20 * 1048576 ? '. Over 20 MB: many mail systems refuse messages this large, send the files separately.' : '.'));
+    toast('Draft saved. Open the file with Outlook; the comparison and the CVs are attached.'); await record(); }); };
 }
 function STAGE_BEFORE_SHARED(stage) { return ['Sourced', 'Screened'].includes(stage); }
 async function loadScreenHistory(cand, body) {
@@ -7791,7 +7937,7 @@ async function viewPipeline(v) {
       ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
       <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d, v], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span>${v ? `<button class="linkbtn rview" data-rview="${v[0]}">${v[1]}</button>` : ''}</div></div>`).join('')}</div>
-        <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button>' : ''}${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}</div></section>
+        <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button>' : ''}${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}${canWork ? '<button class="btn" id="pShareMany" title="Send several screened candidates to the department in one message, with one comparison of all their screening answers">Share candidates with department</button>' : ''}</div></section>
       ${closedSt ? `<div class="note warn-note">${P.line.Position_Status === 'On Hold' ? 'On hold' : 'Closed without a hire (' + esc(P.line.Position_Status) + ')'}${P.line.Closure_Reason ? ': ' + esc(P.line.Closure_Reason) : ''}. This board is read-only${P.line.Position_Status === 'On Hold' ? ' until the position is resumed' : ''}.${P.line.Position_Status === 'On Hold' && owns ? ' <button class="btn sm" id="pResume">Resume position</button>' : ''}</div>` : ''}
       <div id="pTasks"></div>
       <div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
@@ -7837,6 +7983,7 @@ async function viewPipeline(v) {
     if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.closed = true; $('#pClosed').checked = true; gotoLine(P.line.Parent_Line_ID); };
     if ($('#pAdd')) $('#pAdd').onclick = addToPipelineDialog;
     if ($('#pBatch')) $('#pBatch').onclick = () => voiceBatchDialog(P, () => renderBoard());
+    if ($('#pShareMany')) $('#pShareMany').onclick = () => openShareBatch(P.line.Line_ID, async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } });
     if (!canEdit) return;
     $('#pQs').onclick = questionsDialog;
     $('#pJdMake').onclick = () => openJdMaker(f.line, '', async () => { try { await refreshLine(f.line); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); } });
