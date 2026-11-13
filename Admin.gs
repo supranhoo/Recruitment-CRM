@@ -200,6 +200,8 @@ function dataChecks_() {
     { const probs = [], stx2 = positionStatus_(l), apx = ymd_(l.Approved_On), asx = ymd_(l.Assigned_On), tsx = tatStart_(l), cx = ymd_(l.TAT_Start_From);
       if (rec && tsx && tsx < rec && !cx) probs.push('TAT start ' + tsx + ' is before the MRF received date ' + rec);
       if (rec && cx && cx < rec && !String(l.Parent_Line_ID || '').trim()) probs.push('carried start ' + cx + ' on a position that is not a replacement');
+      if (String(l.Parent_Line_ID || '').trim() && !asx) probs.push('a replacement with no assigned date, so a handover cannot restart the recruiter clock');
+      if (cx && asx && asx < cx && String(l.Parent_Line_ID || '').trim()) probs.push('assigned ' + asx + ' is before the carried original start ' + cx);
       if (apx && asx && asx < apx) probs.push('assigned ' + asx + ' is before approved ' + apx);
       if (rec && apx && apx < rec) probs.push('approved ' + apx + ' is before received ' + rec);
       if (ymd_(l.No_Vacancy_Date) && stx2 !== 'No Vacancy') probs.push('a No vacancy date on a ' + stx2 + ' position');

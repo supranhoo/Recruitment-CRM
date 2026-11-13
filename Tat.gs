@@ -64,10 +64,19 @@ function positionStatus_(l) {
 
 /** Recruiter clock: from the position assigned date; falls back to the MRF approved date, then the MRF received date. */
 function tatStart_(l) {
-  return ymd_(l.TAT_Start_From) || ymd_(l.Assigned_On) || ymd_(l.Approved_On) || ymd_(l.Receipt_Date);
+  const carried = ymd_(l.TAT_Start_From), asg = ymd_(l.Assigned_On);
+  if (carried && asg) return asg > carried ? asg : carried;   // v179: a handover on a replacement restarts the recruiter's clock, like any reassignment
+  return carried || asg || ymd_(l.Approved_On) || ymd_(l.Receipt_Date);
+}
+/** Which date the recruiter clock starts from: 'carried' (the original MRF's start), 'assigned', 'approved' or 'received'. */
+function tatStartBasis_(l) {
+  const carried = ymd_(l.TAT_Start_From), asg = ymd_(l.Assigned_On);
+  if (carried && (!asg || asg <= carried)) return 'carried';
+  if (asg) return 'assigned';
+  return ymd_(l.Approved_On) ? 'approved' : 'received';
 }
 /** Position clock (TA Lead, Head of HR, Admin views): from the MRF approved date, else the MRF received date. */
-function posStart_(l) {
+function posStart_(l) {   // a replacement carries the original's start (policy 9.5); the recruiter clock restarts at a handover (tatStart_, ADR-081)
   return ymd_(l.TAT_Start_From) || ymd_(l.Approved_On) || ymd_(l.Receipt_Date);
 }
 

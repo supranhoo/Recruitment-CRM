@@ -1297,11 +1297,12 @@ function previewTat(d) {
     if (days !== '') r = ACTIVE.includes(s) ? (days > fin ? 'Overdue' : days >= rule.risk * fin ? 'At risk' : 'On track') : (days > fin ? 'Missed' : 'Achieved');
     return { std: rule.std, ex, fin, days, r, version: rule.version, notice, extra, paused, byOffer: a.byOffer, offer: a.byOffer ? offer : '', ndays };
   };
-  const start = d.TAT_Start_From || d.Assigned_On || d.Approved_On || d.Receipt_Date, pstart = d.TAT_Start_From || d.Approved_On || d.Receipt_Date;
+  const car = String(d.TAT_Start_From || '').slice(0, 10), asg = String(d.Assigned_On || '').slice(0, 10);
+  const start = car && asg ? (asg > car ? asg : car) : (car || asg || d.Approved_On || d.Receipt_Date), pstart = d.TAT_Start_From || d.Approved_On || d.Receipt_Date;
   const rc = clock(start, false), pc = clock(pstart, true);
   return { Position_Status: s, Standard_TAT: rc.std, Exemption_Days: rc.ex, Final_TAT: rc.fin, Days_Taken: rc.days, TAT_Result: rc.r, _rule: rc.version, _rc: rc, _pc: pc,
     Pos_Final_TAT: pc.fin, Pos_Days_Taken: pc.days, Pos_TAT_Result: pc.r, _pstart: pstart, _prule: pc.version,
-    _start: start, _hold: hold, _basis: d.TAT_Start_From ? 'original MRF start' : d.Assigned_On ? 'position assigned' : d.Approved_On ? 'MRF approved' : 'MRF received' };
+    _start: start, _hold: hold, _basis: car && (!asg || asg <= car) ? 'original MRF start' : asg ? 'position assigned' : d.Approved_On ? 'MRF approved' : 'MRF received' };
 }
 
 /** Grades for the position form: active grades plus the one the position already has. Only grade and band are shown. */
