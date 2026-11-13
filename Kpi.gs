@@ -217,7 +217,7 @@ function kpiRecon_(month, recruiter, kpi) {
     }
     const it = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
       receipt: receipt, doj: doj };
-    Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end));
+    Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end, cr));
     out[bucket].push(it);
   };
   readTable_(T.MRF.name).rows.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
@@ -234,17 +234,29 @@ function kpiStartSource_(l) {
  * TAT figures the scorecard used (target days, allowed days, due date, days taken to DOJ for KRA, achieved or missed). DOJ for KRA =
  * the actual joining date, else the review month's last day (today, in the current month); days taken run to it, less on-hold and paused days.
  */
-function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
+/** v176: hold days of a position inside [start, end) from its hold ranges (each day once); with no ranges recorded, the stored total (it cannot be bounded). */
+function kpiHoldDaysIn_(l, start, end) {
+  const rs = holdRanges_(l); if (!rs.length) return Number(l.Hold_Days) || 0;
+  const seen = {}; let n = 0;
+  rs.forEach(function (r) { let d = r[0] < start ? start : r[0], g = 0; while (d <= r[1] && d < end && g++ < 4000) { if (!seen[d]) { seen[d] = true; n++; } d = addDays_(d, 1); } });
+  return n;
+}
+function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd, cr) {
   const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
   const cutoff = monthEnd > today ? today : monthEnd, fin = clk.doj || clk.end, dojKra = fin && fin <= cutoff ? fin : cutoff;   // v166: a later joining does not count in this month
-  const closed = clk.doj || clk.end || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
+  // v176: the closing day of a position by its own status (the No vacancy / Not needed date fields also hold dates of earlier or other statuses)
+  const closed = clk.doj || (status === 'Closed' ? ymd_(l.Internal_Effective_Date) : status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date)
+    : status === 'Replaced' ? ymd_(l.Replaced_On) : status === 'Removed' ? ymd_(l.Not_Needed_Date) : '');
+  const finished = !!fin && fin <= cutoff;
+  const holdD = !clk.receipt ? '' : finished ? clk.hold : kpiHoldDaysIn_(l, clk.receipt, dojKra), pausedD = !clk.receipt ? '' : finished ? clk.paused : pausedDays_(l, clk.ex.pauses, clk.receipt, dojKra);
   const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed', closedok: 'Achieved', closedlate: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
   const remark = String(l.Remarks || '');
-  return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
+  return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date) : '', nn: status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : '', holdOn: status === 'On Hold' ? ymd_(l.Not_Needed_Date) : '',
+    rcv: ymd_(l.Receipt_Date), apprOn: ymd_(l.Approved_On), asgOn: ymd_(l.Assigned_On), carried: ymd_(l.TAT_Start_From), credit: cr ? 'Tagged' : 'Lead', exApproved: d ? clk.ex.days : '', exOther: d ? Math.max(0, d.allowed - d.std - clk.ex.days) : '',
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: d ? d.std : '', allowed: d ? d.allowed : '', exm: d ? d.allowed - d.std : '',
-    logic: clk.receipt ? kpiStartSource_(l) + (clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
-    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
+    logic: clk.receipt ? (cr ? 'Assigned (tagged recruiter)' : kpiStartSource_(l)) + (clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
+    days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - holdD - pausedD) : '', result: res };
 }
 function apiKpiRecon(month, recruiter, kpi) {
   currentUser_();
