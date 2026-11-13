@@ -170,11 +170,13 @@ const KPI_RECON_BUCKETS_ = [
   ['ontime', 'Achieved: joined on time', 'Joined in this month within the allowed days.'],
   ['within', 'Achieved: within TAT at month end', 'Not joined by the end of this month (today, in the current month) and its due date had not passed.'],
   ['late', 'Missed: joined late', 'Joined in this month after the allowed days.'],
+  ['closedok', 'Achieved: closed without a hire within TAT', 'Marked Not needed or No vacancy in this month, within the allowed days (v174).'],
+  ['closedlate', 'Missed: closed without a hire after TAT', 'Marked Not needed or No vacancy in this month, after the allowed days (v174).'],
   ['overdue', 'Missed: past TAT, not filled', 'Its due date had passed by the end of this month and nobody had joined yet. It is a miss in every month until it is filled.'],
   ['nostart', 'Joined but no start date', 'The position has no assigned, approved or received date, so it cannot be timed. Fix the date on the position.'],
   ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
-  ['nohire', 'Closed without a hire', 'Not needed, no vacancy or on hold.'],
+  ['nohire', 'Closed without a hire', 'On hold, or Not needed / No vacancy with no closing date entered. Not counted.'],
   ['replaced', 'Replaced after a backout, or removed', 'The replacement line carries the vacancy.']
 ];
 
@@ -234,14 +236,14 @@ function kpiStartSource_(l) {
  */
 function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd) {
   const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
-  const cutoff = monthEnd > today ? today : monthEnd, dojKra = clk.doj && clk.doj <= cutoff ? clk.doj : cutoff;   // v166: a later joining does not count in this month
-  const closed = clk.doj || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
-  const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
+  const cutoff = monthEnd > today ? today : monthEnd, fin = clk.doj || clk.end, dojKra = fin && fin <= cutoff ? fin : cutoff;   // v166: a later joining does not count in this month
+  const closed = clk.doj || clk.end || ymd_(l.Internal_Effective_Date) || ymd_(l.No_Vacancy_Date) || ymd_(l.Not_Needed_Date) || ymd_(l.Replaced_On);
+  const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed', closedok: 'Achieved', closedlate: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: ymd_(l.No_Vacancy_Date), nn: ymd_(l.Not_Needed_Date),
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: d ? d.std : '', allowed: d ? d.allowed : '', exm: d ? d.allowed - d.std : '',
-    logic: clk.receipt ? kpiStartSource_(l) + ' to DOJ' + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
+    logic: clk.receipt ? kpiStartSource_(l) + (clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
     days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - clk.hold - clk.paused) : '', result: res };
 }
 function apiKpiRecon(month, recruiter, kpi) {
@@ -259,20 +261,29 @@ function kpiClocks_() {
   return { grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, exCtx: { exempt: exemptIndex_() }, exToday: ymd_(new Date()), ruleCtx: tatContext_() };
 }
 /** A line that can be worked on for the Timely closure KPI: Open, Offered or Closed, not filled internally. */
-function kpiWorkable_(l, status) { return ['Open', 'Offered', 'Closed'].indexOf(status) >= 0 && String(l.Fill_Type || '') !== 'Internal'; }
+function kpiWorkable_(l, status) { return (['Open', 'Offered', 'Closed'].indexOf(status) >= 0 || !!kpiClosedOn_(l, status)) && String(l.Fill_Type || '') !== 'Internal'; }
+/**
+ * v174: the day a position was closed without a hire (Not needed or No vacancy date), or '' (a joined position, another status, or no date).
+ * Until that day the position was being worked on; the day acts like a joining date for the clock.
+ */
+function kpiClosedOn_(l, status) {
+  if (ymd_(l.Actual_DOJ)) return '';
+  const d = status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date) : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
+}
 /** Worked on in the month: the clock started by the month end and the position had not ended (joined) before the month start. */
 function kpiWorkedIn_(clk, month) {
   const start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
-  return !!clk.receipt && clk.receipt <= end && !(clk.doj && clk.doj < start);
+  return !!clk.receipt && clk.receipt <= end && !(clk.doj && clk.doj < start) && !(clk.end && clk.end < start);
 }
 /** The recruiter-clock numbers of one position line, as used by every KPI. */
 function kpiLineClock_(l, k, startOverride) {
-  const receipt = startOverride || tatStart_(l), doj = ymd_(l.Actual_DOJ);
+  const receipt = startOverride || tatStart_(l), doj = ymd_(l.Actual_DOJ), end = kpiClosedOn_(l, positionStatus_(l));
   const ex = exemptFor_(k.exCtx, l, 'r'), notice = noticeExt_(l, receipt ? ruleFor_(k.ruleCtx, l.Grade, receipt).grace : k.grace), hold = Number(l.Hold_Days) || 0;
-  const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || k.exToday) : 0;
+  const paused = receipt ? pausedDays_(l, ex.pauses, receipt, doj || end || k.exToday) : 0;
   /* v167: the standard days of the position's own grade, from the TAT rule in force on the day its clock started (Admin > TAT rules). */
   const std = receipt ? Number(ruleFor_(k.ruleCtx, l.Grade, receipt).std) || 0 : 0;
-  return { receipt: receipt, doj: doj, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday, std: std };
+  return { receipt: receipt, doj: doj, end: end, ex: ex, notice: notice, hold: hold, paused: paused, offer: tatOffer_(l), noticeDays: Number(l.Notice_Period_Days) || 0, today: k.exToday, std: std };
 }
 /**
  * Timely closure / M-level fulfilment placement of a line: the month it counts in and whether it was on time, or null when the
@@ -289,23 +300,25 @@ function kpiTargetFor_(l, kpi, targets, rec, clk) {
 function kpiMonthStatus_(clk, d, month, today) {
   const end = addDays_(addDays_(month + '-28', 4).slice(0, 8) + '01', -1), cut = today && end > today ? today : end;
   if (clk.doj && clk.doj <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: ok ? 'ontime' : 'late', cut: cut }; }
+  if (!clk.doj && clk.end && clk.end <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: ok ? 'closedok' : 'closedlate', cut: cut }; }   // v174: closed without a hire: the closing day is judged like a joining
   const ok = d.due >= cut;
   return { ok: ok, why: ok ? 'within' : 'overdue', cut: cut };
 }
 function kpiDue_(l, kpi, targets, rec, clk, status, flatDays) {
-  if (!clk.receipt || ['Open', 'Offered', 'Closed'].indexOf(status) < 0 || String(l.Fill_Type || '') === 'Internal') return null;
+  if (!clk.receipt || (['Open', 'Offered', 'Closed'].indexOf(status) < 0 && !(clk.end && ['Not Needed', 'No Vacancy'].indexOf(status) >= 0)) || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
   // Notice beyond the grace is always added (v151); an offer sent within the TAT runs the full notice from the offer (v152).
   /* v167: the days are the grade's own TAT rule (clk.std); the KPI target only says which levels count. flatDays = the target's single
      number, as before v167, used only for the comparison download (and when a clock carries no grade days). */
   const std = !flatDays && clk.std ? clk.std : t.days;
-  const a = tatAllowed_(clk.receipt, std + clk.ex.days, clk.notice, clk.noticeDays, clk.hold, clk.paused, clk.offer), allowed = a.allowed;
-  const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = clk.doj ? clk.doj.slice(0, 7) : '';
-  const days = clk.doj ? Math.max(0, daysBetween_(clk.receipt, clk.doj) - clk.hold - clk.paused) : '';
-  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, std: std, days: days, ok: !!clk.doj && days <= allowed,
+  const shut = !clk.doj && !!clk.end;   // closed without a hire (v174): nobody joins, so the notice period plays no part
+  const a = tatAllowed_(clk.receipt, std + clk.ex.days, shut ? 0 : clk.notice, shut ? 0 : clk.noticeDays, clk.hold, clk.paused, shut ? '' : clk.offer), allowed = a.allowed;
+  const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = (clk.doj || clk.end) ? (clk.doj || clk.end).slice(0, 7) : '';
+  const days = (clk.doj || clk.end) ? Math.max(0, daysBetween_(clk.receipt, clk.doj || clk.end) - clk.hold - clk.paused) : '';
+  return { month: filledM && filledM <= dueM ? filledM : dueM, due: due, allowed: allowed, std: std, days: days, ok: !!(clk.doj || clk.end) && days <= allowed,
     byOffer: a.byOffer, offer: a.byOffer ? clk.offer : '',
-    notDue: !clk.doj && !!clk.today && due >= clk.today };   // not joined and the due date is today or later: not a miss yet (v153)
+    notDue: !clk.doj && !clk.end && !!clk.today && due >= clk.today };   // not joined and the due date is today or later: not a miss yet (v153)
 }
 
 function computeKpis_(fy) {
@@ -362,6 +375,7 @@ function computeKpis_(fy) {
         if (st.why !== 'within') {
           const it = Object.assign({ due: d.due, allowed: d.allowed, std: d.std, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
           if (st.why === 'overdue') it.doj = '';   // in this month it had not joined yet
+          if (st.why === 'closedok' || st.why === 'closedlate') { it.doj = ''; it.closedOn = clk.end; it.closedAs = status; }   // v174: closed without a hire
           if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
           else if (clk.notice) it.notice = clk.notice;
           c.items.push(it);
