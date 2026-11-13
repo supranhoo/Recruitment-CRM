@@ -98,7 +98,7 @@ function viewData(v, key, call, again, label, opts) {
 const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeline', 'apiTasksForLine', 'apiBgvFor', 'apiCtcFor', 'apiGetCandidate', 'apiSearchCandidates', 'apiMyTasks', 'apiTaskSummary',
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
   'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch', 'apiPosRecList',
-  'apiGetDoc', 'apiGetCv', 'apiSuggestForLine', 'apiBgvReports', 'apiDeptDelays', 'apiOrganogram', 'apiListPanel', 'apiJdmOverview', 'apiCtcList', 'apiCtcGet', 'apiCtcRules',
+  'apiGetDoc', 'apiGetCv', 'apiSuggestForLine', 'apiBgvReports', 'apiDeptDelays', 'apiReassignReport', 'apiOrganogram', 'apiListPanel', 'apiJdmOverview', 'apiCtcList', 'apiCtcGet', 'apiCtcRules',
   'apiDocFlow', 'apiTatRules', 'apiCandidateHistory', 'apiListUsers', 'apiListJds', 'apiAuditLog', 'apiAdminInfo', 'apiTaskAdmin']);
 /* Writes that change nothing another page shows: they do not throw the remembered pages away. */
 const QUIET_WRITES = new Set(['apiSaveDaySummary']);
@@ -205,7 +205,7 @@ function apiCall(fn, args) {
     run[fn](...args);
   });
 }
-const SK_HEADS = {"org": ["Organogram", "Approved against existing manpower by division, department and grade."], "bgv": ["BGV tracker", "Background verification of new hires: previous employers and the current employer, owned by the position\u2019s recruiter."], "ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
+const SK_HEADS = {"reassign": ["Reassigned positions", "Positions that changed recruiter: how long each recruiter held them, what was achieved meanwhile, and the original start and joining dates."], "org": ["Organogram", "Approved against existing manpower by division, department and grade."], "bgv": ["BGV tracker", "Background verification of new hires: previous employers and the current employer, owned by the position\u2019s recruiter."], "ctc": ["CTC calculator", "Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand."], "depts": ["Department delays", "How long departments take to give CV feedback and validate JDs and screening questions, and how much TAT that costs."], "jdm": ["JD Master", "The BFCL job-description library: job profiles, responsibilities, skills and the Skill Competency Framework, used to build and check JDs for MRFs."], "overview": ["Recruitment overview", "Position status and turnaround against the policy TAT (W levels 20 days, M levels 50 days, plus notice beyond 30 days)."], "positions": ["Positions", "One row per position line from each MRF. Update the approval, offer and joining details as they happen; status and TAT recalculate on save."], "daily": ["Daily log", "Log each day's sourcing and interview counts per position. These replace the date columns in the tracker and feed the funnel reports."], "candidates": ["Candidates", "The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists."], "panel": ["Interview panel", "The master list of people who sit on interview panels, and a log of when they were unavailable."], "admin": ["Admin", "Data checks, change history and database tools."], "kpi": ["KPI scorecard", "Monthly results against each recruiter's own targets (set in the KPI_Targets sheet). Click any month to see the positions behind the number."], "compliance": ["Compliance", "Process observations and the monthly tracker audit. Both feed the KPI scorecard."], "myday": ["My day", "Your note and task list save automatically. Log CV and interview counts per position below; offers, joinings and the work you do in the app are picked up on their own."], "review": ["Daily review", "What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app."], "reconcile": ["Switch-over check", "From the switch-over date, offers, joinings and backouts come only from the candidate pipeline. These open and offered positions have typed details that do not match the pipeline yet."], "pipeline": ["Candidate pipeline", "Every candidate for a position, stage by stage, from CV received to onboarding. Click a candidate to move them on, record the details of that step, or log a joining follow-up."]};
 function skb(w, h, x) { return `<span class="sk" style="width:${w};height:${h}px;${x || ''}"></span>`; }
 function skw(a, b) { return (a + Math.floor(Math.random() * (b - a + 1))) + '%'; }
 function skHead(view, right) {
@@ -360,6 +360,7 @@ const NAV_ICON = {
   kpi: '<path d="M3.5 20.5h17"/><rect x="5" y="11" width="3" height="7" rx=".8"/><rect x="10.5" y="6" width="3" height="12" rx=".8"/><rect x="16" y="13.5" width="3" height="4.5" rx=".8"/>',
   org: '<rect x="9" y="3" width="6" height="4.5" rx="1"/><rect x="3" y="16.5" width="6" height="4.5" rx="1"/><rect x="15" y="16.5" width="6" height="4.5" rx="1"/><path d="M12 7.5V12M6 16.5V12h12v4.5"/>',
   depts: '<path d="M4 20V9l4-3v14M10 20V4l5 3v13M17 20v-8l3 2v6"/><path d="M3 20.5h18"/>',
+  reassign: '<path d="M4 8h13"/><path d="m14 4 4 4-4 4"/><path d="M20 16H7"/><path d="m10 12-4 4 4 4"/>',
   compliance: '<path d="M12 3 4.5 6v5.6c0 4.6 3.1 7.8 7.5 9.4 4.4-1.6 7.5-4.8 7.5-9.4V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
   panel: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h3"/>',
   jdm: '<path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14.5 3.5V8H19"/><path d="M10 12h6M10 15.5h6M10 19h3.5"/><path d="M4.5 7v14h11"/>',
@@ -373,7 +374,7 @@ function buildRail(user) {
   const lead = (user.perms || []).includes('lead');
   const groups = [
     ['Daily work', [['overview', 'Overview'], ['myday', 'My day'], lead && ['review', 'Daily review'], ['positions', 'Positions'], ['pipeline', 'Pipeline'], ['candidates', 'Candidates'], ['bgv', 'BGV tracker'], (user.perms || []).includes('ctc_use') && ['ctc', 'CTC calculator'], ['daily', 'Daily log']]],
-    ['Reports', [['policy', 'Policy search'], ['kpi', 'KPI scorecard'], ['org', 'Organogram'], ['depts', 'Dept delays'], ['compliance', 'Compliance']]],
+    ['Reports', [['policy', 'Policy search'], ['kpi', 'KPI scorecard'], ['org', 'Organogram'], ['depts', 'Dept delays'], lead && ['reassign', 'Reassigned positions'], ['compliance', 'Compliance']]],
     ['Setup', [['panel', 'Interview panel'], ['jdm', 'JD Master'], lead && ['admin', 'Admin']]]];
   const initials = String(user.name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
   late('#rail').innerHTML = `<div class="rail-head"><div class="brand" aria-label="BFCL Recruitment"><span class="brand-mark" aria-hidden="true"></span><span class="lbl brand-text" aria-hidden="true"><b>BFCL</b><small>Recruitment</small></span></div>
@@ -394,7 +395,7 @@ function setRail(mini, save) {
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
-const VIEWS = { org: viewOrg, depts: viewDepts, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, policy: viewPolicy, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
+const VIEWS = { org: viewOrg, depts: viewDepts, reassign: viewReassign, reconcile: viewReconcile, overview: viewOverview, pipeline: viewPipeline, myday: viewMyDay, review: viewDailyReview, kpi: viewKpi, compliance: viewCompliance, positions: viewPositions, daily: viewDaily, candidates: viewCandidates, panel: viewPanel, jdm: viewJdm, policy: viewPolicy, admin: viewAdmin, ctc: viewCtc, bgv: viewBgv };
 function go(view, push) {
   if (!VIEWS[view]) view = 'overview';
   S.view = view; S.candStale = true;
@@ -5769,6 +5770,75 @@ async function renderOrgAdmin(el) {
     const btn = $('#orgMapSave', el); busy(btn, true, 'Saving…');
     try { await api('apiOrgSaveMap', list); toast('Mapping saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save mapping'); }
   };
+}
+
+/* ---------------- Reassigned positions (Reports, leads) ---------------- */
+function reassignRows_(r) {
+  const M = ['recv', 'rev', 'shared', 'short', 'intv', 'sel', 'offers', 'joined', 'backouts'];
+  const toD = v => v ? new Date(v + 'T00:00:00') : '';
+  const phead = ['MRF', 'Position', 'Grade', 'Department', 'Status', 'Current recruiter', 'Reassignments', 'Original MRF received', 'Original TAT start', 'Original joining date', 'Original joined candidate', 'Latest joining date', 'Latest joined candidate', 'Chain', 'Days with lead recruiters', 'Working days', 'History note'];
+  const prow = r.positions.map(p => [p.mrf, p.position, p.grade, p.dept, p.status, p.recruiter, p.reassigned, toD(p.received), toD(p.start), toD(p.firstJoin && p.firstJoin.on), p.firstJoin ? p.firstJoin.who : '', toD(p.lastJoin && p.lastJoin.on), p.lastJoin ? p.lastJoin.who : '',
+    p.chain.map(c => c.mrf + ' (' + c.status + ')').join(' → '), p.totals.days, p.totals.workDays, p.incomplete ? 'Earlier recruiters not recorded' : '']);
+  const shead = ['MRF', 'Position', 'Recruiter', 'Role', 'From', 'Until (exclusive)', 'Days', 'Days on hold', 'Working days', 'CVs received', 'CVs reviewed', 'Shared with dept', 'Shortlisted', 'Interviews', 'Selected', 'Offers', 'Joined', 'Backouts', 'CVs received / working day', 'CVs reviewed / working day', 'Interviews / working day', 'Source'];
+  const srow = [];
+  r.positions.forEach(p => p.stints.forEach(s => srow.push([p.mrf, p.position, s.name, s.role, toD(s.from), s.active ? 'still with them' : toD(s.to), s.days, s.hold, s.workDays].concat(M.map(m => s.counts[m]), [s.perDay.recv, s.perDay.rev, s.perDay.intv, s.source]))));
+  return { phead, prow, shead, srow };
+}
+async function reassignExcel(r) {
+  const x = reassignRows_(r), file = 'reassigned-positions-' + r.from + '-to-' + r.to;
+  const iso = v => v instanceof Date ? v.toISOString().slice(0, 10) : v;
+  try { await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js'); } catch (e) {
+    csvSave(file + '-stints.csv', x.shead, x.srow.map(a => a.map(iso)));
+    toast('The Excel library could not be loaded, so the stints were saved as a CSV file instead.'); return;
+  }
+  const wb = XLSX.utils.book_new(), mk = (head, rows) => {
+    const ws = XLSX.utils.aoa_to_sheet([head].concat(rows), { cellDates: true });
+    Object.keys(ws).forEach(a => { if (a[0] !== '!' && ws[a].t === 'd') ws[a].z = 'd-mmm-yy'; });
+    ws['!cols'] = head.map(h => ({ wch: Math.max(11, Math.min(34, h.length + 2)) }));
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: head.length - 1 } }) }; ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+    return ws;
+  };
+  XLSX.utils.book_append_sheet(wb, mk(x.phead, x.prow), 'Positions'); XLSX.utils.book_append_sheet(wb, mk(x.shead, x.srow), 'Stints');
+  XLSX.writeFile(wb, file + '.xlsx', { cellDates: true });
+}
+async function viewReassign(v) {
+  const now = new Date(), fy = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  const f = S.rsF = S.rsF || { from: fy + '-04-01', to: today(), rec: '' };
+  v.innerHTML = `<div class="page-head"><div><h1>Reassigned positions</h1><p>${esc(SK_HEADS.reassign[1])}</p></div><div class="actions"><button class="btn" id="rsXls" disabled>Download Excel (2 sheets)</button></div></div>
+    <div class="filters"><div class="field"><label for="rsFrom">Reassigned from</label><input id="rsFrom" type="date" value="${f.from}" max="${today()}"></div>
+      <div class="field"><label for="rsTo">to</label><input id="rsTo" type="date" value="${f.to}" max="${today()}"></div>
+      <div class="field"><label for="rsRec">Recruiter (any stint)</label><select id="rsRec"><option value="">All</option></select></div></div>
+    <div id="rsBody">${skRows(8, 6)}</div>`;
+  let R = null;
+  const n = x => x == null ? '—' : x;
+  const draw = () => {
+    const body = late('#rsBody');
+    if (!R.positions.length) { body.innerHTML = '<div class="empty">No position was reassigned in this period.</div>'; return; }
+    body.innerHTML = `<p class="hint">A stint runs from the day the recruiter got the position up to, but not including, the day it moved on (that day belongs to the new recruiter); the current one includes today. Working days are Monday to Saturday less days on hold. Rates are per working day. Offers, joinings and backouts are counted on their dates; the other columns are the Daily log (before the switch-over) or the pipeline moves, as in the Daily review. ${R.truncated ? `<b>Showing the first ${R.positions.length} of ${R.total}: narrow the dates.</b>` : ''}</p>
+      <div class="table-wrap"><table class="rsx-table"><thead><tr><th>MRF · position</th><th>Original MRF received</th><th>Original TAT start</th><th>Original joined</th><th>Latest joined</th><th class="num">Reassigned</th><th class="num">Days with lead recruiters</th></tr></thead><tbody>
+      ${R.positions.map((p, i) => `<tr class="rsx-row" data-i="${i}" tabindex="0" role="button" aria-expanded="false"><td><b>${esc(p.mrf)}</b> · ${esc(p.position)}<span class="sub">${esc(p.grade)} · ${esc(p.dept)} · ${esc(p.status)} · now ${esc(p.recruiter)}${p.chain.length > 1 ? ' · chain ' + esc(p.chain.map(c => c.mrf).join(' → ')) : ''}</span></td>
+        <td>${esc(fmtDate(p.received) || '—')}</td><td>${esc(fmtDate(p.start) || '—')}</td>
+        <td>${p.firstJoin ? esc(fmtDate(p.firstJoin.on)) + `<span class="sub">${esc(p.firstJoin.who)}</span>` : 'Not joined'}</td>
+        <td>${p.lastJoin ? esc(fmtDate(p.lastJoin.on)) + `<span class="sub">${esc(p.lastJoin.who)}</span>` : '—'}</td>
+        <td class="num">${p.reassigned}</td><td class="num">${p.totals.days}${p.incomplete ? '<span class="sub">earlier recruiters not recorded</span>' : ''}</td></tr>
+        <tr class="rsx-det" id="rsd${i}" hidden><td colspan="7"><table class="rsx-sub"><thead><tr><th>Recruiter</th><th>From</th><th>Until</th><th class="num">Days</th><th class="num">On hold</th><th class="num">Working</th><th class="num">Recv</th><th class="num">Rev</th><th class="num">Shared</th><th class="num">Short</th><th class="num">Intv</th><th class="num">Sel</th><th class="num">Offers</th><th class="num">Joined</th><th class="num">Backouts</th><th class="num">CVs/day</th><th class="num">Rev/day</th><th class="num">Intv/day</th></tr></thead><tbody>
+        ${p.stints.map(s => `<tr><td>${esc(s.name)}<span class="sub">${esc(s.role)}${s.source !== 'stint record' ? ' · ' + esc(s.source) : ''}</span></td><td>${esc(fmtDate(s.from))}</td><td>${s.active ? 'still with them' : esc(fmtDate(s.to))}</td><td class="num">${s.days}</td><td class="num">${s.hold}</td><td class="num">${s.workDays}</td>
+          ${['recv', 'rev', 'shared', 'short', 'intv', 'sel', 'offers', 'joined', 'backouts'].map(m => `<td class="num">${s.counts[m]}</td>`).join('')}<td class="num">${n(s.perDay.recv)}</td><td class="num">${n(s.perDay.rev)}</td><td class="num">${n(s.perDay.intv)}</td></tr>`).join('')}
+        </tbody></table></td></tr>`).join('')}</tbody></table></div>`;
+    $$('#rsBody .rsx-row').forEach(tr => { const t = () => { const d = $('#rsd' + tr.dataset.i), open = d.hidden; d.hidden = !open; tr.setAttribute('aria-expanded', String(open)); }; tr.onclick = t; tr.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); t(); } }; });
+  };
+  const load = async () => {
+    late('#rsBody').innerHTML = skRows(8, 6); late('#rsXls').disabled = true;
+    try { R = await api('apiReassignReport', { from: f.from, to: f.to, recruiter: f.rec }); } catch (e) { late('#rsBody').innerHTML = `<div class="empty">${esc(e)} <button class="btn sm" id="rsRetry">Try again</button></div>`; const b = $('#rsRetry'); if (b) b.onclick = load; return; }
+    if (!$('#rsBody')) return;
+    const sel = $('#rsRec'); if (sel) sel.innerHTML = '<option value="">All</option>' + (R.recruiters || []).map(x => `<option ${x === f.rec ? 'selected' : ''}>${esc(x)}</option>`).join('');
+    late('#rsXls').disabled = !R.positions.length; draw();
+  };
+  $('#rsFrom').onchange = e => { f.from = e.target.value; load(); };
+  $('#rsTo').onchange = e => { f.to = e.target.value; load(); };
+  $('#rsRec').onchange = e => { f.rec = e.target.value; load(); };
+  $('#rsXls').onclick = () => { if (R) reassignExcel(R); };
+  load();
 }
 
 async function viewDepts(v) {
