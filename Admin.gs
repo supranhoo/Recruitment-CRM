@@ -177,6 +177,7 @@ function dataChecks_() {
   const c8 = add('notice_edoj', 'Expected joining later than offer + notice', 'The expected joining date is more than 14 days after the offer date plus the notice period: the notice or the date is probably wrong.', 'MRF');
   const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
   const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
+  const c12 = add('closed_nodate', 'Not needed / No vacancy without a closing date', 'The date the position was marked Not needed or No vacancy is blank, so the KPI cannot count the months it was worked on. Add the date on the position.', 'MRF');
   const c11 = add('exp_cell', 'Experience stored as a date or an impossible number', 'The experience cell holds a date, a millisecond number, a negative number or more than 70 years. The app reads the years shown, but correct the cell so the candidate form and imports show it.', 'CAND');
   try {
     const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
@@ -194,6 +195,7 @@ function dataChecks_() {
     if (doj && positionStatus_(l) === 'Open') c10.items.push({ id: l.Line_ID, label: label, detail: 'Joining date ' + doj + ' but Offer sent is not Yes' });
     else if (doj && !tatStart_(l)) c10.items.push({ id: l.Line_ID, label: label, detail: 'Joined ' + doj + ' but no start date' });
     if (doj && ((offer && doj < offer) || (rec && doj < rec) || (asg && doj < asg))) c3.items.push({ id: l.Line_ID, label: label, detail: 'MRF ' + rec + (asg ? ' \u00b7 assigned ' + asg : '') + ' \u00b7 offer ' + (offer || '\u2014') + ' \u00b7 joined ' + doj });
+    { const stx = positionStatus_(l); if ((stx === 'Not Needed' || stx === 'No Vacancy') && !kpiClosedOn_(l, stx) && !ymd_(l.Actual_DOJ)) c12.items.push({ id: l.Line_ID, label: label, detail: stx + ' but no ' + (stx === 'Not Needed' ? 'Not needed' : 'No vacancy') + ' date' }); }
     const nd = Number(l.Notice_Period_Days) || 0, edoj = ymd_(l.EDOJ);
     if (positionStatus_(l) === 'Offered' && offer && nd > 0 && edoj) {
       const lim = addDays_(offer, nd), late = daysBetween_(lim, edoj);
