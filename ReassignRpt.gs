@@ -7,7 +7,7 @@
  * The still-active stint includes today. Working days are Monday to Saturday, less the days the position was on hold.
  */
 const REASSIGN_MAX_ = 300;
-const REASSIGN_METRICS_ = ['recv', 'rev', 'shared', 'short', 'intv', 'sel', 'offers', 'joined', 'backouts'];
+const REASSIGN_METRICS_ = ['recv', 'rev', 'screened', 'shared', 'short', 'intv', 'sel', 'offers', 'joined', 'backouts'];
 
 function rsDay_(v) { return ymd_(v) || ''; }
 
@@ -59,6 +59,27 @@ function rsCountIndex_(from, to) {
     add(String(ev.line), ev.day, m, 1);
   });
   return idx;
+}
+
+/**
+ * { Line_ID: { day: n } } of completed screenings (v173). A screening counts once, on the day it was first completed: the first Audit_Log row
+ * that set its Status to Complete, else the day it was created (a screening saved already complete has no such row).
+ */
+function rsScreenedDays_(scrRows, auditRows) {
+  const first = {};
+  auditRows.forEach(function (a) {
+    if (String(a.Sheet) !== 'Screenings' || String(a.Field) !== 'Status' || String(a.New_Value) !== 'Complete') return;
+    const id = String(a.Record_ID), day = rsDay_(a.Timestamp);
+    if (day && (!first[id] || day < first[id])) first[id] = day;
+  });
+  const out = {};
+  scrRows.forEach(function (r) {
+    if (String(r.Status) !== 'Complete') return;
+    const day = first[String(r.Screen_ID)] || rsDay_(r.Created_At); if (!day) return;
+    const l = out[String(r.Line_ID)] = out[String(r.Line_ID)] || {};
+    l[day] = (l[day] || 0) + 1;
+  });
+  return out;
 }
 
 /** The stints of a position, oldest first: [{name, role, from, to (exclusive, '' while active), active, source}]. */
@@ -124,7 +145,7 @@ function reassignBuild_(d) {
       Object.keys(cnt).forEach(function (day) { if (day >= from && day < end) Object.keys(cnt[day]).forEach(function (m) { c[m] += cnt[day][m]; }); });
       Object.keys(dated).forEach(function (m) { if (dated[m] && dated[m] >= from && dated[m] < end) c[m] += 1; });
       const days = rsDays_(from, end), work = rsWorkDays_(from, end, holds), hold = rsHoldDays_(from, end, holds);
-      const per = {}; ['recv', 'rev', 'shared', 'short', 'intv'].forEach(function (m) { per[m] = work > 0 ? Math.round(c[m] / work * 10) / 10 : null; });
+      const per = {}; ['recv', 'rev', 'screened', 'shared', 'short', 'intv'].forEach(function (m) { per[m] = work > 0 ? Math.round(c[m] / work * 10) / 10 : null; });
       return { name: s.name, role: s.role, from: from, to: s.to, active: !!s.active && !s.to, days: days, hold: hold, workDays: work, counts: c, perDay: per, source: s.source };
     });
     const ch = rsChain_(l, byId, childOf, d.cands);
@@ -149,8 +170,10 @@ function apiReassignReport(opts) {
   if (to < from) throw new Error('The end date is before the start date.');
   const lines = readTable_(T.MRF.name).rows;
   const prRows = posRecRows_();
-  const auditRows = readTableFrom_('Audit_Log', 'Timestamp', '').rows.filter(function (a) { return String(a.Sheet) === T.MRF.name && String(a.Field) === 'Recruiter'; });
+  const auditRows = readTableFrom_('Audit_Log', 'Timestamp', '').rows.filter(function (a) { return (String(a.Sheet) === T.MRF.name && String(a.Field) === 'Recruiter') || (String(a.Sheet) === 'Screenings' && String(a.Field) === 'Status'); });
   const counts = rsCountIndex_('2025-04-01', today);
+  const scr = rsScreenedDays_(readTable_(T.SCR.name).rows, auditRows);
+  Object.keys(scr).forEach(function (line) { const c = counts[line] = counts[line] || {}; Object.keys(scr[line]).forEach(function (day) { const d = c[day] = c[day] || {}; d.screened = (d.screened || 0) + scr[line][day]; }); });
   const ids = []; lines.forEach(function (l) { if (rsDay_(l.Actual_DOJ) && l.Candidate_ID) ids.push(l.Candidate_ID); });
   const cands = candNames_(ids);
   const r = reassignBuild_({ lines: lines, prRows: prRows, auditRows: auditRows, counts: counts, cands: cands, today: today, from: from, to: to, recruiter: String(opts.recruiter || ''), lineId: String(opts.lineId || '') });
