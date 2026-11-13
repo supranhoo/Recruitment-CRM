@@ -1236,7 +1236,7 @@ function apiScreening(appId) {
   return { appId: String(appId), stage: String(app.Stage), status: String(app.Status), canEdit: canEditLine_(u, line) && String(app.Status) === 'Active',
     line: { id: String(line.Line_ID), mrf: String(line.MRF_No || ''), position: String(line.Position), grade: String(line.Grade || ''), dept: String(line.Dept) },
     cand: { id: String(cand.Candidate_ID || ''), name: String(cand.Name || ''), designation: String(cand.Current_Designation || ''), company: String(cand.Current_Company || ''),
-      exp: expYears_(cand), education: String(cand.Education || ''), location: String(cand.Current_Location || ''), hasCv: !!cand.CV_File_URL },
+      exp: expYearsText_(cand), education: String(cand.Education || ''), location: String(cand.Current_Location || ''), hasCv: !!cand.CV_File_URL },
     finalItems: fin ? sqParse_(String(fin.Content)) : null, finalVersion: fin ? Number(fin.Version) : 0, jdVersion: st.jdFinal ? st.jdFinalVersion : 0,
     screening: cur, newerQuestions: !!(cur && fin && cur.sqVersion && Number(fin.Version) !== cur.sqVersion), hod: hodOf_(line.Dept), recruiter: String(line.Recruiter || '') };
 }
@@ -1334,7 +1334,7 @@ function apiScreeningBatch(lineId, appIds) {
     if (!s || String(s.Status) !== 'Complete') throw new Error('Complete the screening of every candidate before sharing.');
     const c = cands[String(a.Candidate_ID)] || {};
     return { appId: id, stage: String(a.Stage), cand: { id: String(c.Candidate_ID || ''), name: String(c.Name || ''), designation: String(c.Current_Designation || ''), company: String(c.Current_Company || ''),
-        exp: expYears_(c), education: String(c.Education || ''), location: String(c.Current_Location || ''), hasCv: !!c.CV_File_URL }, screening: scrClient_(s, true) };
+        exp: expYearsText_(c), education: String(c.Education || ''), location: String(c.Current_Location || ''), hasCv: !!c.CV_File_URL }, screening: scrClient_(s, true) };
   });
   return { line: { id: String(line.Line_ID), mrf: String(line.MRF_No || ''), position: String(line.Position), grade: String(line.Grade || ''), dept: String(line.Dept) }, hod: hodOf_(line.Dept),
     finalVersion: fin ? Number(fin.Version) : 0, jdVersion: st.jdFinal ? st.jdFinalVersion : 0, rows: rows, recruiter: String(line.Recruiter || ''), max: SHARE_BATCH_MAX_ };
@@ -1383,10 +1383,9 @@ function apiScreeningSharedBatch(lineId, appIds, d) {
  * (the number 3 shown as 2 Jan 1900) comes back as a Date, so it is turned back into its day number; text such as "6 years"
  * loses its unit because the screens add " yrs". Total_Exp_Years is preferred over Experience; blank stays blank.
  */
-function expYears_(cand) {
-  const one = function (v) {
-    if (v instanceof Date && !isNaN(v)) return String(Math.round((Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()) - Date.UTC(1899, 11, 30)) / 86400000));
-    return String(v == null ? '' : v).trim().replace(/\s*(years?|yrs?)\.?$/i, '').trim();
-  };
-  return one(cand.Total_Exp_Years) || one(cand.Experience);
+function expYearsText_(cand) {
+  const n = expNumber_(cand.Total_Exp_Years);
+  if (n != null) return String(n);
+  const m = expNumber_(cand.Experience);
+  return m != null ? String(m) : '';
 }

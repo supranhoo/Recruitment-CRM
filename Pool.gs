@@ -21,8 +21,8 @@ function poolSchema_() {
 
 /** Years of experience: the number field, else the first number in the old free-text field ("6 years", "6.5 yrs", "8 months"). */
 function expYears_(c) {
-  const n = Number(c.Total_Exp_Years);
-  if (c.Total_Exp_Years !== '' && c.Total_Exp_Years != null && !isNaN(n)) return n;
+  const n = expNumber_(c.Total_Exp_Years);
+  if (n != null) return n;
   const t = String(c.Relevant_Experience || '').toLowerCase(), m = t.match(/(\d+(?:\.\d+)?)/);
   if (!m) return null;
   const v = Number(m[1]);

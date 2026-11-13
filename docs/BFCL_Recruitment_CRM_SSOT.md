@@ -1354,6 +1354,14 @@ Context: Timely closure alone showed "N of M worked on" and the position reconci
 
 All times IST. Every version was published to the same fixed deployment URL. *(inferred)* marks contents reconstructed from session notes rather than an explicit release note. Schema numbers are given where recorded. Entries that were headed "Unreleased" before v100 are part of deployment version 99 or earlier. Entries from v100 on carry their release number. The entries dated 7 and 8 Nov 2026 that follow (plan editor, joining date correction, voice screening releases, candidate history) were merged one by one without a new release number and went live together as **v159** (`BUILD_ID` 159, PR #98); their own dates are the dates they were merged.
 
+### 2026-11-13
+
+**v170 — Experience showed as "-2208748870000 yrs" in the share message: two functions named `expYears_`** (no schema change; `Db.gs`, `Pool.gs`, `Pipeline.gs`, `CvProfile.gs`, `.github/`)
+
+- **Cause.** Apps Script puts all `.gs` files in one global scope and the later file wins a name clash. `Pool.gs` already had `expYears_` (`Number(Total_Exp_Years)`); v168 added another in `Pipeline.gs`, so the Pool one ran everywhere and the v168 fix never reached production. A date-formatted experience cell (the number 5 shown as 4 Jan 1900) is read as a Date and `Number(Date)` is its milliseconds. The same wrong years also fed the pool search and ranking, the Archive index and the CV profile's stated-vs-counted check.
+- **Fix.** One shared `expNumber_` (`Db.gs`): a Date, or a number or text of 1,000,000 or more (a millisecond date), becomes the spreadsheet day number (5 here); "6 years" and "6.5 yrs" give the number; blank, no number, negative or above 70 give nothing. `Pool.gs` `expYears_` and `CvProfile.gs` read through it; the message helper is renamed `expYearsText_` so it cannot be overridden. No stored data changes.
+- **Guard.** `.github/scripts/dup-names.js` fails the deploy `check` job when two files declare the same top-level function or const with different bodies (identical copies, such as `panelKey_`, are allowed).
+
 ### 2026-11-12
 
 **v169 — Share several screened candidates with the department in one go** (no schema change; `Pipeline.gs`, `App.html`, `Styles.html`)
