@@ -177,7 +177,7 @@ const KPI_RECON_BUCKETS_ = [
   ['notarget', 'No KPI target', 'No KPI_Targets row covers this recruiter and grade level.'],
   ['internal', 'Filled internally', 'Internal fills have no joining date and are not part of this KPI.'],
   ['nohire', 'Closed without a hire', 'On hold, or Not needed / No vacancy with no closing date entered. Not counted.'],
-  ['replaced', 'Replaced after a backout, or removed', 'The replacement line carries the vacancy.']
+  ['replaced', 'Replaced after a backout, or removed', 'Replaced: the replacement MRF carries the vacancy and the original TAT start, so it is counted there (see Counted through). Removed: created in error.']
 ];
 
 /**
@@ -186,7 +186,7 @@ const KPI_RECON_BUCKETS_ = [
  * start (ended = joined, closed without a hire, replaced or filled internally). Status is as of today. Uses the same placement
  * (`kpiDue_`) as the scorecard, so the first three rows add up to the cell.
  */
-function kpiRecon_(month, recruiter, kpi) {
+function kpiRecon_(month, recruiter, kpi, noVia) {
   kpi = kpi || 'TIMELY_CLOSURE';
   const targets = kpiTargets_(), clocks = kpiClocks_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
   const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
@@ -221,10 +221,31 @@ function kpiRecon_(month, recruiter, kpi) {
     out[bucket].push(it);
   };
   readTable_(T.MRF.name).rows.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
+  if (!noVia) kpiReconVia_(month, kpi, out, want);
   const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
 }
 
+/**
+ * v178: a Replaced original is not counted (Policy 9.5: the replacement MRF carries the vacancy and the original TAT start), so each such
+ * row names the replacement that carries it and that replacement's result this month. Follows Replaced_By to the live end of the chain.
+ */
+function kpiReconVia_(month, kpi, out, want) {
+  const byId = {}; readTable_(T.MRF.name).rows.forEach(function (l) { byId[String(l.Line_ID)] = l; });
+  const index = function (o) { const m = {}; KPI_RECON_BUCKETS_.forEach(function (b) { o[b[0]].forEach(function (it) { m[String(it.id)] = { it: it, title: b[1], key: b[0] }; }); }); return m; };
+  let mine = index(out), full = null;
+  out.replaced.forEach(function (it) {
+    const l = byId[String(it.id)]; if (!l || !String(l.Replaced_By || '').trim()) return;
+    const mrfs = []; let cur = l, g = 0;
+    while (cur && String(cur.Replaced_By || '').trim() && g++ < 10) { const nx = byId[String(cur.Replaced_By)]; if (!nx) break; mrfs.push(String(nx.MRF_No || nx.Line_ID)); cur = nx; }
+    if (!mrfs.length || cur === l) return;
+    let f = mine[String(cur.Line_ID)];
+    if (!f && want) { if (!full) { const r = kpiRecon_(month, '', kpi, true), o2 = {}; r.buckets.forEach(function (b) { o2[b.key] = b.items; }); full = index(o2); } f = full[String(cur.Line_ID)]; }
+    it.via = mrfs.join(' \u2192 ');
+    it.viaResult = f ? (f.it.result || 'Not counted') : 'Not in this list';
+    it.viaWhere = f ? f.title : 'Not in this list for ' + month + ' (' + positionStatus_(cur) + ')';
+  });
+}
 /** Where a position's TAT clock starts from (the same order as tatStart_), as text for the tracker report. */
 function kpiStartSource_(l) {
   return ymd_(l.TAT_Start_From) ? 'Original MRF start' : ymd_(l.Assigned_On) ? 'Assigned' : ymd_(l.Approved_On) ? 'MRF approved' : 'MRF received';
