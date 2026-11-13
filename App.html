@@ -4594,13 +4594,14 @@ const KPI_PDF_GROUPS = [
   ['Not counted in this KPI', 'Worked on but outside this score: no start date, no KPI target, internal fill, on hold, replaced or removed.', ['nostart', 'notarget', 'internal', 'nohire', 'replaced']]];
 const KPI_PDF_ACH = ['ontime', 'within', 'closedok'], KPI_PDF_MISS = ['late', 'overdue', 'closedlate'];
 /** The structure of the report from a reconciliation result r (pure, so it can be tested): counts, shares and the grouped rows. */
-function kpiSupportModel_(r, cell) {
+function kpiSupportModel_(r, cell, who) {
   const by = {}; r.buckets.forEach(b => { by[b.key] = b; });
   const n = ks => ks.reduce((t, k) => t + (by[k] ? by[k].items.length : 0), 0);
   const ach = n(KPI_PDF_ACH), miss = n(KPI_PDF_MISS), worked = ach + miss;
   const groups = KPI_PDF_GROUPS.map(g => ({ title: g[0], note: g[1], buckets: g[2].filter(k => by[k] && by[k].items.length).map(k => ({ key: k, title: by[k].title, note: by[k].note, items: by[k].items })), count: n(g[2]) })).filter(g => g.count);
   const pct = worked ? Math.round(1000 * ach / worked) / 10 : null;
-  const team = !!r.buckets.some(b => b.items.some(i => i.recruiter)) && new Set([].concat(...r.buckets.map(b => b.items.map(i => i.recruiter)))).size > 1;
+  // v181: the Recruiter column follows the selected view: Whole team shows it, one recruiter does not (it is not guessed from the data)
+  const team = who ? who === 'Whole team' : !!r.buckets.some(b => b.items.some(i => i.recruiter)) && new Set([].concat(...r.buckets.map(b => b.items.map(i => i.recruiter)))).size > 1;
   const total = r.buckets.reduce((t, b) => t + b.items.length, 0);
   const carried = r.buckets.reduce((t, b) => t + b.items.filter(i => i.via).length, 0);
   return { ach, miss, worked, pct, groups, team, total: total, counted: worked, carried,
@@ -4608,7 +4609,7 @@ function kpiSupportModel_(r, cell) {
 }
 const kpiDateText_ = v => v ? fmtDate(v) : '—';
 async function pdfKpiSupport(r, ctx) {
-  const M = kpiSupportModel_(r, ctx.cell), JsPDF = await pdfLib(), doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const M = kpiSupportModel_(r, ctx.cell, ctx.who), JsPDF = await pdfLib(), doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
   const W = Math.round(doc.internal.pageSize.getWidth()), usable = W - 24, mlabel = monthLabel(r.month), kname = ctx.kpiName || r.name || 'KPI';
   const sc = M.score == null ? '—' : M.score + ' / 5', pct = M.cellPct != null ? M.cellPct : M.pct;
   pdfTitle(doc, 'KPI support report', kname + ' · ' + mlabel, (ctx.who || 'Whole team') + ' · every position behind the score',
@@ -4617,7 +4618,8 @@ async function pdfKpiSupport(r, ctx) {
   y = pdfHead(doc, y + 6, 'How the score was reached', 'Rate = achieved ÷ worked on × 100');
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...PDF_C.ink);
   const para = ['A position is worked on in a month if its recruiter clock started on or before the month end and it had not joined (or been closed without a hire) before the month began. The clock runs from the TAT start shown for each position (the MRF approved date, the assigned date, or the original MRF start carried over for a replacement), less days on hold and approved paused days.',
-    'Allowed days = the grade’s standard TAT + approved exemption days + the notice period beyond the grace (or, for an offer sent within the TAT, the notice runs from the offer). Each position is judged at the month end (today, in the current month): joined within the allowed days is Achieved, joined late is Missed; not joined and still inside the due date is Achieved (pending); not joined and past the due date is Missed in every month until it is filled; a position closed as Not needed or No vacancy is judged by the closing date as if it were the joining date.'];
+    'Allowed days = the grade’s standard TAT + approved exemption days + the notice period beyond the grace (or, for an offer sent within the TAT, the notice runs from the offer). Each position is judged at the month end (today, in the current month): joined within the allowed days is Achieved, joined late is Missed; not joined and still inside the due date is Achieved (pending); not joined and past the due date is Missed in every month until it is filled; a position closed as Not needed or No vacancy is judged by the closing date as if it were the joining date.',
+    'Each position is counted once, under its lead recruiter (recruiters tagged on a position see it only in their own view). A replacement MRF carries the original TAT start, but when the position is handed to another recruiter that recruiter\u2019s clock starts on the handover day; the team figure therefore charges the current holder from that day.'];
   para.forEach(t => { const ls = doc.splitTextToSize(t, usable); doc.text(ls, 12, y + 4); y += ls.length * 3.6 + 2.5; });
   if (M.cellWorked != null && (M.cellWorked !== M.worked || M.cellMissed !== M.miss)) { doc.setTextColor(...PDF_C.red); doc.text('Note: the scorecard cell shows ' + M.cellWorked + ' worked on and ' + M.cellMissed + ' missed; this list has ' + M.worked + ' and ' + M.miss + '.', 12, y + 3); y += 6; }
   y = pdfHead(doc, y + 5, 'Summary by position status');
@@ -4657,7 +4659,7 @@ async function kpiSupportPdf(month, rec, kpi, kpiName, cell, who, btn, recon) {
 
 /** What each column of the tracker report is and where it comes from (the "Column guide" sheet), so a figure can be checked against the position. */
 const RECON_COLUMN_GUIDE = [['MRF No.', 'The position\u2019s MRF number.'], ['Review Month', 'The month this list is for (MM-YYYY).'], ['MRF Receipt date', 'The date the MRF was received (Position \u2192 MRF received). It is NOT the TAT start: see TAT start.'], ['Position / Level / Dept', 'Position name, grade and department as recorded on the position.'],
-  ['Recruiter', 'The recruiter credited in this row: the position\u2019s lead recruiter, or a tagged recruiter (see Credit row).'], ['No.of positions/Resource', 'Number of resources on the MRF line.'], ['Approved', 'The position\u2019s approval status (Approved, Not Needed, No Vacancy, On Hold, ...).'],
+  ['Recruiter', 'The recruiter credited in this row: the position\u2019s lead recruiter, or a tagged recruiter (see Credit row). The Whole team list has the lead recruiter\u2019s rows only, so each position appears once; a recruiter\u2019s own list also has the positions they are tagged on. A replacement handed to another recruiter starts that recruiter\u2019s clock on the handover day.'], ['No.of positions/Resource', 'Number of resources on the MRF line.'], ['Approved', 'The position\u2019s approval status (Approved, Not Needed, No Vacancy, On Hold, ...).'],
   ['No vanacy marked date', 'The date the position was marked No Vacancy; shown only while the position is No Vacancy.'], ['Not needed marked date', 'The date the position was marked Not Needed; shown only while the position is Not Needed. (An On Hold position shows its hold date in Position Status.)'],
   ['Offer sent / Offer letter date / EDOJ as per Offer', 'Offer details recorded on the position.'], ['DOJ for KRA', 'The actual joining date; for a position closed without a hire, the closing date; for an open position, the last day of the review month (today, in the current month). Days taken run to this date.'],
   ['Actual DOJ', 'The actual joining date recorded on the position.'], ['Position Status', 'Open, Offered, Closed, Not Needed, No Vacancy, Replaced, On Hold or Removed, as of today.'],
