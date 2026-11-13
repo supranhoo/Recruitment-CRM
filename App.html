@@ -4635,7 +4635,7 @@ async function pdfKpiSupport(r, ctx) {
       [18, 26, 17, 16, 22, 24, 20].forEach(w => { cs[k++] = { cellWidth: w }; });
       doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [head], columnStyles: cs, styles: Object.assign({}, PDF_TABLE.styles, { fontSize: 6.9, cellPadding: 1.3, valign: 'top' }),
         body: sorted.map((i, ix) => [{ content: String(ix + 1), styles: { halign: 'center', textColor: PDF_C.muted } }, i.mrf, i.position + (i.dept ? '\n' + i.dept : ''), i.grade].concat(M.team ? [i.recruiter] : []).concat([
-          i.status, kpiDateText_(i.receipt) + '\n' + (i.logic || ''), kpiDateText_(i.due), (i.allowed !== '' && i.allowed != null ? i.allowed + ' d' : '—') + (i.exm ? '\n(std ' + i.std + ' + ' + i.exm + ')' : ''),
+          i.status, kpiDateText_(i.receipt) + '\n' + (i.logic || '') + (i.rcv && i.rcv !== i.receipt ? '\nMRF received ' + kpiDateText_(i.rcv) : ''), kpiDateText_(i.due), (i.allowed !== '' && i.allowed != null ? i.allowed + ' d' : '—') + (i.exm ? '\n(std ' + i.std + ' + ' + i.exm + ')' : ''),
           i.doj ? 'Joined\n' + kpiDateText_(i.doj) : i.closed ? (i.nn ? 'Not needed\n' : i.nv ? 'No vacancy\n' : 'Closed\n') + kpiDateText_(i.closed) : 'Not joined',
           (i.odate ? 'Offer\n' + kpiDateText_(i.odate) : 'No offer') + (i.edoj ? '\nEDOJ\n' + kpiDateText_(i.edoj) : '') + (i.notice ? '\nNotice ' + i.notice + ' d' : ''), resCol(i), { content: String(i.rmk || '').slice(0, 220), styles: { fontSize: 6.3, textColor: PDF_C.muted } }])) }));
     });
@@ -4653,20 +4653,34 @@ async function kpiSupportPdf(month, rec, kpi, kpiName, cell, who, btn, recon) {
   finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
 }
 
+/** What each column of the tracker report is and where it comes from (the "Column guide" sheet), so a figure can be checked against the position. */
+const RECON_COLUMN_GUIDE = [['MRF No.', 'The position\u2019s MRF number.'], ['Review Month', 'The month this list is for (MM-YYYY).'], ['MRF Receipt date', 'The date the MRF was received (Position \u2192 MRF received). It is NOT the TAT start: see TAT start.'], ['Position / Level / Dept', 'Position name, grade and department as recorded on the position.'],
+  ['Recruiter', 'The recruiter credited in this row: the position\u2019s lead recruiter, or a tagged recruiter (see Credit row).'], ['No.of positions/Resource', 'Number of resources on the MRF line.'], ['Approved', 'The position\u2019s approval status (Approved, Not Needed, No Vacancy, On Hold, ...).'],
+  ['No vanacy marked date', 'The date the position was marked No Vacancy; shown only while the position is No Vacancy.'], ['Not needed marked date', 'The date the position was marked Not Needed; shown only while the position is Not Needed. (An On Hold position shows its hold date in Position Status.)'],
+  ['Offer sent / Offer letter date / EDOJ as per Offer', 'Offer details recorded on the position.'], ['DOJ for KRA', 'The actual joining date; for a position closed without a hire, the closing date; for an open position, the last day of the review month (today, in the current month). Days taken run to this date.'],
+  ['Actual DOJ', 'The actual joining date recorded on the position.'], ['Position Status', 'Open, Offered, Closed, Not Needed, No Vacancy, Replaced, On Hold or Removed, as of today.'],
+  ['Position closed on', 'Closed: the joining date (or the internal effective date); Not Needed: the Not needed date; No Vacancy: the No vacancy date; Replaced: the replacement date. Blank for open, offered and on-hold positions.'],
+  ['Notice Period / Backout / Final Remark', 'Notice days, backout date and remarks recorded on the position.'], ['Standard TAT', 'The grade\u2019s standard TAT in force on the day the clock started (Admin \u2192 TAT rules).'],
+  ['Exemption days', 'Final allowed TAT minus Standard TAT: approved exemptions + notice beyond the grace (or the notice from an offer sent within the TAT). Split in the last two columns.'], ['Final allowed TAT', 'Days allowed before the position is late (excludes days on hold and approved pauses, which move the due date).'],
+  ['TAT logic', 'Where the clock starts (original MRF start, assigned, MRF approved or MRF received) and what it runs to (joining date or closing date).'], ['Days taken', 'Days from the TAT start to DOJ for KRA, less the days on hold and approved pauses that fell before that date.'],
+  ['TAT achieved/Missed', 'Achieved or Missed as the scorecard judged the position this month; Not counted if it is outside the score.'], ['Where it sits', 'The row of the reconciliation the position is in.'], ['Due by', 'TAT start + allowed days + days on hold and paused.'],
+  ['TAT start', 'The date the recruiter clock starts: the original MRF start carried over (replacements), else the position assigned date, else the MRF approved date, else the MRF received date. It can differ from the MRF receipt date.'], ['Counted in', 'The KPI this list belongs to.'],
+  ['MRF approved on / Position assigned on / Original MRF start (carried)', 'The dates the TAT start is chosen from, so a TAT start that differs from the MRF receipt date can be explained.'],
+  ['Approved exemption days / Notice / offer extension (days)', 'The two parts of Exemption days: approved TAT exemptions, and the notice beyond the grace (or from the offer).'], ['Credit row', 'Lead = the position\u2019s lead recruiter; Tagged = a recruiter tagged on the position, counted from the day they were tagged.']];
 /** The tracker-style report of a reconciliation (v155): the sheet's columns in its order, then Where it sits, Due by, TAT start and Counted in. */
 const RECON_REPORT_HEAD = ['MRF No.', 'Review Month', 'MRF Receipt date', 'Position', 'Level', 'Dept', 'Recruiter', 'No.of positions/Resource', 'Approved', 'No vanacy marked date', 'Not needed marked date', 'Offer sent',
   'Offer letter date', 'EDOJ as per Offer', 'DOJ for KRA', 'Actual DOJ', 'Position Status', 'Position closed on', 'Notice Period', 'Backout', 'Final Remark', 'Standard TAT', 'Exemption days', 'Final allowed TAT', 'TAT logic',
-  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in'];
-const RECON_DATE_COLS = [2, 9, 10, 12, 13, 14, 15, 17, 19, 28, 29];   // 0-based columns that hold dates
+  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in', 'MRF approved on', 'Position assigned on', 'Original MRF start (carried)', 'Approved exemption days', 'Notice / offer extension (days)', 'Credit row'];
+const RECON_DATE_COLS = [2, 9, 10, 12, 13, 14, 15, 17, 19, 28, 29, 31, 32, 33];   // 0-based columns that hold dates
 function reconReport(r, kpiName) {
   const mm = r.month.slice(5, 7) + '-' + r.month.slice(0, 4), toD = v => v ? new Date(v + 'T00:00:00Z') : '';
   const rows = [];
-  r.buckets.forEach(b => b.items.forEach(i => rows.push([i.mrf, mm, i.receipt, i.position, i.grade, i.dept, i.recruiter, i.nres, i.appr, i.nv, i.nn, i.osent, i.odate, i.edoj, i.dojKra, i.doj, i.status, i.closed, i.notice, i.bo, i.rmk,
-    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || ''].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
+  r.buckets.forEach(b => b.items.forEach(i => rows.push([i.mrf, mm, i.rcv, i.position, i.grade, i.dept, i.recruiter, i.nres, i.appr, i.nv, i.nn, i.osent, i.odate, i.edoj, i.dojKra, i.doj, i.status + (i.holdOn ? ' (on hold since ' + fmtDate(i.holdOn) + ')' : ''), i.closed, i.notice, i.bo, i.rmk,
+    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || '', i.apprOn, i.asgOn, i.carried, i.exApproved, i.exOther, i.credit].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
   return { head: RECON_REPORT_HEAD, rows };
 }
 async function reconExcel(r, kpi, kpiName) {
-  const rep = reconReport(r, kpiName), plain = [['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined']].concat(r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const rep = reconReport(r, kpiName), plain = [['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'TAT start', 'Joined']].concat(r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
   const file = `kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${r.month}`;
   try { await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js'); } catch (e) {
     csvSave(file + '-tracker.csv', rep.head, rep.rows.map(x => x.map((v, k) => v instanceof Date ? v.toISOString().slice(0, 10) : v)));
@@ -4677,15 +4691,16 @@ async function reconExcel(r, kpi, kpiName) {
   s2['!cols'] = rep.head.map((h, k) => ({ wch: k === 20 ? 60 : k === 3 || k === 24 ? 28 : Math.max(10, Math.min(22, h.length + 2)) }));
   s2['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rep.rows.length, c: rep.head.length - 1 } }) }; s2['!freeze'] = { xSplit: 0, ySplit: 1 };
   s1['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 30 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-  XLSX.utils.book_append_sheet(wb, s1, 'Positions'); XLSX.utils.book_append_sheet(wb, s2, 'Tracker report');
+  const s3 = XLSX.utils.aoa_to_sheet([['Column', 'Source and rule']].concat(RECON_COLUMN_GUIDE)); s3['!cols'] = [{ wch: 34 }, { wch: 120 }];
+  XLSX.utils.book_append_sheet(wb, s1, 'Positions'); XLSX.utils.book_append_sheet(wb, s2, 'Tracker report'); XLSX.utils.book_append_sheet(wb, s3, 'Column guide');
   XLSX.writeFile(wb, file + '.xlsx', { cellDates: true });
 }
 
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
-  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'Start', 'Joined', 'Due by', 'Result this month'],
-    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj, i.due, i.result || ''])));
+  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'MRF received', 'TAT start', 'Joined', 'Due by', 'Result this month'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.rcv, i.receipt, i.doj, i.due, i.result || ''])));
   const d = cpDlg(`<h2 id="cpTitle">${esc(kpiName || r.name || 'KPI')}: all positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
     <p class="hint">Every position worked on in the month (its clock started on or before the month end and it had not joined before the month began) is Achieved or Missed, as it stood at the month end (today, in the current month). Rate = the two Achieved rows \u00f7 the four rows.</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
@@ -4696,8 +4711,8 @@ async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   const root = d || document;
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
-    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>Started</th><th>Joined</th><th>Due by</th><th>This month</th></tr></thead><tbody>
-      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
+    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT start</th><th>Joined</th><th>Due by</th><th>This month</th></tr></thead><tbody>
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}${i.rcv && i.rcv !== i.receipt ? `<span class="sub">MRF received ${fmtDate(i.rcv)}</span>` : ''}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
   const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);
