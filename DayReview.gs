@@ -337,7 +337,7 @@ function daySnapTouch_(table, changes, created, rec) {
 function cvCompare_(from, to) {
   const v2 = funnelV2_(), byEmail = recruiterByEmail_(), days = {}, recs = {};
   const day = function (d) { return days[d] = days[d] || { day: d, typed: 0, cards: 0, added: 0, people: [] }; };
-  const rec = function (r) { r = String(r || 'Unassigned').trim() || 'Unassigned'; return recs[r] = recs[r] || { recruiter: r, typed: 0, cards: 0, added: 0 }; };
+  const rec = function (r) { r = String(r || 'Unassigned').trim() || 'Unassigned'; return recs[r] = recs[r] || { recruiter: r, typed: 0, cards: 0, added: 0, cardsOpen: 0 }; };
   readTableFrom_(T.FUNNEL.name, 'Entry_Date', from).rows.forEach(function (e) {
     const d = ymd_(e.Entry_Date), n = Number(e.CV_Sourced) || 0;
     if (!d || d < from || d > to || !n) return;
@@ -345,7 +345,7 @@ function cvCompare_(from, to) {
   });
   pipelineEvents_(from, to).forEach(function (ev) {
     if (ev.metric !== 'Sourced') return;
-    const o = day(ev.day); o.cards++; rec(ev.recruiter).cards++;
+    const o = day(ev.day); o.cards++; rec(ev.recruiter).cards++; if (ev.day < v2) rec(ev.recruiter).cardsOpen++;   // typed is compared with cards only on days typing was still open
     o.people.push({ name: ev.name, position: ev.position, mrf: ev.mrf, recruiter: String(ev.recruiter || ''), time: ev.time });
   });
   readTableFrom_(T.CAND.name, 'Created_At', from).rows.forEach(function (c) {
@@ -355,8 +355,8 @@ function cvCompare_(from, to) {
   });
   const rows = Object.keys(days).sort().map(function (d) { const o = days[d]; o.diff = o.typed - o.cards; o.typingOpen = d < v2; return o; });
   const tot = function (list) { return list.reduce(function (s, o) { return { typed: s.typed + o.typed, cards: s.cards + o.cards, added: s.added + o.added }; }, { typed: 0, cards: 0, added: 0 }); };
-  const t = tot(rows); t.diff = t.typed - t.cards;
-  const recRows = Object.keys(recs).map(function (r) { const o = recs[r]; o.diff = o.typed - o.cards; return o; })
+  const t = tot(rows); t.diff = rows.filter(function (o) { return o.typingOpen; }).reduce(function (s2, o) { return s2 + o.diff; }, 0);
+  const recRows = Object.keys(recs).map(function (r) { const o = recs[r]; o.diff = o.typed - o.cardsOpen; return o; })
     .filter(function (o) { return o.typed || o.cards || o.added; }).sort(function (a, b) { return a.recruiter.localeCompare(b.recruiter); });
   return { from: from, to: to, funnelV2: v2, days: rows, recruiters: recRows, totals: t };
 }

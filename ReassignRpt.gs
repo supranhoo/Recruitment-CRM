@@ -19,7 +19,7 @@ function rsWorkDays_(from, to, holds) {
   let n = 0, d = from, guard = 0;
   while (d && to && d < to && guard++ < 4000) {
     const p = d.split('-'), wd = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay();
-    if (wd !== 0 && !holds.some(function (h) { return d >= h[0] && d <= h[1]; })) n++;
+    if (wd !== 0 && !holds.some(function (h) { return d >= h[0] && d < h[1]; })) n++;   // a hold range is [from, resume): the resume day is a working day
     d = addDays_(d, 1);
   }
   return n;
@@ -27,7 +27,7 @@ function rsWorkDays_(from, to, holds) {
 function rsHoldDays_(from, to, holds) {
   let n = 0, d = from, guard = 0;
   while (d && to && d < to && guard++ < 4000) {
-    if (holds.some(function (h) { return d >= h[0] && d <= h[1]; })) n++;
+    if (holds.some(function (h) { return d >= h[0] && d < h[1]; })) n++;
     d = addDays_(d, 1);
   }
   return n;
@@ -84,7 +84,7 @@ function rsScreenedDays_(scrRows, auditRows) {
 
 /** The stints of a position, oldest first: [{name, role, from, to (exclusive, '' while active), active, source}]. */
 function rsStints_(line, prRows, auditRows, today) {
-  const start = tatStart_(line) || rsDay_(line.Receipt_Date);
+  const start = posStart_(line) || rsDay_(line.Receipt_Date);   // not tatStart_: Assigned_On is reset to the reassignment day, which would make an earlier recruiter's stint start later than it ended
   const own = prRows.filter(function (r) { return String(r.Line_ID) === String(line.Line_ID); }).map(function (r) {
     return { name: String(r.Recruiter || '').trim(), role: String(r.Role), from: rsDay_(r.Assigned_On) || start, to: rsDay_(r.Ended_On), active: String(r.Status) === 'Active', source: 'stint record', by: String(r.Created_By || '') };
   }).filter(function (s) { return s.name; });
@@ -117,7 +117,7 @@ function rsChain_(line, byId, childOf, cands) {
     .sort(function (a, b) { return a.on < b.on ? -1 : a.on > b.on ? 1 : 0; });
   return {
     chain: chain.map(function (l) { return { mrf: String(l.MRF_No || ''), status: positionStatus_(l), line: String(l.Line_ID) }; }),
-    received: rsDay_(root.Receipt_Date), start: tatStart_(root) || rsDay_(root.Receipt_Date),
+    received: rsDay_(root.Receipt_Date), start: posStart_(root) || rsDay_(root.Receipt_Date),
     firstJoin: joins[0] || null, lastJoin: joins.length > 1 && joins[joins.length - 1].on !== joins[0].on ? joins[joins.length - 1] : null
   };
 }

@@ -473,7 +473,7 @@ function apiProfileExport(ids) {
     p = cvProfileClean_(p);
     const d = cvDerive_(p, c), a = apps[id];
     const edu = p.education.slice().reverse().map(function (e) { return [e.level, e.discipline].filter(String).join(' ') + (e.year ? ' ' + e.year : ''); }).join('; ');
-    rows.push({ id: id, name: String(c.Name || ''), role: String(c.Current_Designation || p.current.role || ''), exp: d.stated !== null ? d.stated : (d.counted.years === null ? '' : d.counted.years),
+    rows.push({ id: id, name: String(c.Name || ''), role: String(c.Current_Designation || p.current.role || ''), exp: expNumber_(c.Total_Exp_Years) !== null ? expNumber_(c.Total_Exp_Years) : d.stated !== null ? d.stated : (d.counted.years === null ? '' : d.counted.years),
       location: String(c.Current_Location || ''), skills: p.skills.filter(function (s) { return s.cat === 'Technical' || s.cat === 'Functional'; }).slice(0, 12).map(function (s) { return s.skill; }).join(', '),
       employer: String(c.Current_Company || p.current.employer || ''), education: edu, certifications: p.certifications.map(function (x) { return x.name; }).join('; '),
       status: a ? String(a.Stage) + ' (' + String(a.Status) + ')' : 'Not in a pipeline', confidence: d.confidence.score, risks: d.risks.filter(function (x) { return x.level !== 'info'; }).length, reviewed: r.Reviewed_By ? 'Yes' : 'No' });

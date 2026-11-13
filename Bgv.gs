@@ -929,7 +929,7 @@ function bgvAgg_(list, cfg, today) {
   const start = [], ver = [], rev = [], within = [];
   list.forEach(function (c) {
     const due = bgvDay_(c.Due_Date), init = bgvDay_(c.Initiated_On), rep = bgvDay_(c.Report_On), trig = bgvDay_(c.Trigger_Date), closed = bgvDay_(c.Closed_On), rd = bgvDay_(c.Result_Due);
-    if (init) { if (due && init > due) o.late++; else o.onTime++; if (trig) start.push(daysBetween_(trig, init)); }
+    if (init) { if (due && init > due) o.late++; else o.onTime++; if (trig) start.push(Math.max(0, daysBetween_(trig, init))); }   // v177: a check started before the trigger date is 0 days to start, not minus days (which hid late starts in the average)
     else if (due && today > due) o.overdue++; else o.pending++;
     if (init && rep) { const d = daysBetween_(init, rep); ver.push(d); within.push(d <= cfg.vendorTatDays ? 1 : 0); }
     if (rep && closed) rev.push(daysBetween_(rep, closed));
@@ -990,7 +990,7 @@ function bgvWeekly_() {
   const red = open.filter(function (c) { return bgvRagFor_(c, cfg, today).rag === 'Red'; });
   const by = {}; red.forEach(function (c) { by[c.Recruiter] = (by[c.Recruiter] || 0) + 1; });
   const excl = open.filter(function (c) { return !!bgvExcl_(c); });
-  return { open: open.length, red: red.length, excl: excl.length, exclOver: excl.filter(function (c) { return bgvExcl_(c).over; }).length, withEmp: open.filter(function (c) { return !!bgvHold_(c); }).length, na: all.length - open.length, decide: open.filter(bgvNeedsDecision_).length,
+  return { open: open.length, red: red.length, excl: excl.length, exclOver: excl.filter(function (c) { return bgvExcl_(c).over; }).length, withEmp: open.filter(function (c) { return !!bgvHold_(c) && !bgvExcl_(c); }).length, na: all.length - open.length, decide: open.filter(bgvNeedsDecision_).length,
     byRecruiter: Object.keys(by).map(function (k) { return { recruiter: k, red: by[k] }; }).sort(function (a, b) { return b.red - a.red; }).slice(0, 8) };
 }
 

@@ -756,7 +756,7 @@ function apiMonthMissed(month, recruiter) {
     r.prev = prevBy[r.recruiter.toLowerCase()] || 0; r.change = r.missed - r.prev; return r;
   });
   const items = {};
-  rows.forEach(function (r) { items[r.recruiter] = (cur.items[r.recruiter] || []).slice(0, 100).map(function (i) { i.notes = notes[i.key] || []; return i; }); });
+  rows.forEach(function (r) { items[r.recruiter] = (cur.items[r.recruiter] || []).slice(0, 500).map(function (i) { i.notes = notes[i.key] || []; return i; }); });
   const all = readTable_('M_Recruiters').rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Recruiter); });
   const none = lead && !who ? all.filter(function (n) { return !cur.rows.some(function (r) { return r.recruiter.toLowerCase() === n.toLowerCase(); }); }).length : 0;
   return { month: String(month), prev: prev, rows: rows, items: items, carried: cur.carried, none: none, partial: idx === nowIdx,

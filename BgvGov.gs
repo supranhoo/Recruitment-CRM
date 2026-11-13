@@ -128,7 +128,7 @@ function bgvRetentionList_(today) {
     if (non && back && back > ref) ref = back;
     const due = non ? bgvAddMonths_(ref, Number(cfg.retentionNonJoinerMonths) || 6) : bgvAddMonths_(ref, 12 * (Number(cfg.retentionReportYears) || 3));
     out.push({ id: String(c.Case_ID), type: String(c.Type), candidate: String(c.Candidate_Name || ''), position: String(c.Position || ''), recruiter: String(c.Recruiter || ''),
-      status: st, kind: non ? 'Did not join' : 'Report', closed: ref, due: due, files: BGV_FILE_COLS_.filter(function (k) { return String(c[k] || ''); }).length, late: due <= today ? daysBetween_(due, today) : -daysBetween_(today, due) });
+      status: st, kind: non ? 'Did not join' : 'Report', closed: ymd_(c.Closed_On), backout: non && back ? back : '', due: due, files: BGV_FILE_COLS_.filter(function (k) { return String(c[k] || ''); }).length, late: due <= today ? daysBetween_(due, today) : -daysBetween_(today, due) });
   });
   out.sort(function (a, b) { return a.due < b.due ? -1 : a.due > b.due ? 1 : a.id < b.id ? -1 : 1; });
   return out;

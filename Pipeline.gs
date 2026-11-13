@@ -1217,12 +1217,34 @@ function hodOf_(dept) {
   const h = readTable_('M_Departments').rows.filter(function (d) { return String(d.Dept).trim() === String(dept || '').trim(); })[0] || {};
   return { name: String(h.HOD_Name || ''), email: String(h.HOD_Email || '') };
 }
+/**
+ * v177: when and by whom a screening was completed. Updated_At / Updated_By move on every later write (sharing it with the department, a re-save),
+ * so they are not the screening date: the first Audit_Log row that set Status to Complete is, else the day it was created already complete.
+ */
+function scrDoneIdx_(from) {
+  const store = typeof _tables === 'object' && _tables ? _tables : (scrDoneIdx_.c = scrDoneIdx_.c || {}), key = '__scrdone_' + from;
+  if (store[key]) return store[key];
+  const m = {};
+  try {
+    readTableFrom_('Audit_Log', 'Timestamp', from).rows.forEach(function (a) {   // only the tail of the log from the day the screening was created
+      if (String(a.Sheet) !== T.SCR.name || String(a.Field) !== 'Status' || String(a.New_Value) !== 'Complete') return;
+      const id = String(a.Record_ID), t = a.Timestamp instanceof Date ? a.Timestamp.getTime() : 0;
+      if (!m[id] || t < m[id].t) m[id] = { t: t, on: ymd_(a.Timestamp), by: String(a.User || '') };
+    });
+  } catch (e) { }
+  return store[key] = m;
+}
+function scrDone_(s, withDetail) {
+  const dn = withDetail && String(s.Status) === 'Complete' && ymd_(s.Created_At) ? scrDoneIdx_(ymd_(s.Created_At))[String(s.Screen_ID)] : null;
+  if (dn) return dn;
+  return String(s.Status) === 'Complete' ? { by: String(s.Created_By || s.Updated_By || ''), on: ymd_(s.Created_At || s.Updated_At) } : { by: String(s.Updated_By || s.Created_By || ''), on: ymd_(s.Updated_At || s.Created_At) };
+}
 function scrClient_(s, withDetail) {
   if (!s) return null;
   const o = { id: String(s.Screen_ID), appId: String(s.App_ID), lineId: String(s.Line_ID), mrf: String(s.MRF_No || ''), position: String(s.Position || ''), sqVersion: Number(s.SQ_Version) || 0, jdVersion: String(s.JD_Version || ''),
     band: String(s.Band), pct: Number(s.Score_Pct) || 0, met: Number(s.Met) || 0, partly: Number(s.Partly) || 0, gaps: Number(s.Gaps) || 0, total: Number(s.Total) || 0,
     koFailed: String(s.KO_Failed || '') ? String(s.KO_Failed).split(',') : [], status: String(s.Status), sharedOn: ymd_(s.Shared_On), sharedWith: String(s.Shared_With || ''), shareReason: String(s.Share_Reason || ''),
-    by: String(s.Updated_By || s.Created_By || ''), on: ymd_(s.Updated_At || s.Created_At), note: String(s.Note || '') };
+    by: scrDone_(s, withDetail).by, on: scrDone_(s, withDetail).on, note: String(s.Note || '') };
   if (withDetail) { try { o.items = JSON.parse(String(s.Items_JSON || '[]')); } catch (e) { o.items = []; } try { o.answers = JSON.parse(String(s.Answers_JSON || '{}')); } catch (e) { o.answers = {}; } o.result = sqScore_(o.items, o.answers); }
   return o;
 }
@@ -1384,8 +1406,6 @@ function apiScreeningSharedBatch(lineId, appIds, d) {
  * loses its unit because the screens add " yrs". Total_Exp_Years is preferred over Experience; blank stays blank.
  */
 function expYearsText_(cand) {
-  const n = expNumber_(cand.Total_Exp_Years);
-  if (n != null) return String(n);
-  const m = expNumber_(cand.Experience);
-  return m != null ? String(m) : '';
+  const n = expYears_(cand);   // Pool.gs: Total_Exp_Years (a date-formatted cell is read back as years), else the years in Relevant_Experience ("6 years", "8 months")
+  return n != null ? String(n) : '';
 }
