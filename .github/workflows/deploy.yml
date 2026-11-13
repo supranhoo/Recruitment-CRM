@@ -46,6 +46,8 @@ jobs:
           '
           node --check "$RUNNER_TEMP/chk/app.js"
           echo "Syntax OK"
+      - name: Duplicate names gate (one global scope, the later file silently wins)
+        run: node .github/scripts/dup-names.js
 
       - name: Guard the deploy steps (an older copy of this file must never be merged again)
         run: |

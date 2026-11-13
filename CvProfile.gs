@@ -304,7 +304,7 @@ function cvDerive_(p, cand, opts) {
   const doneAll = jobs.filter(function (j) { return !j.e.current; });
   const avg = doneAll.length ? Math.round(doneAll.reduce(function (a, j) { return a + j.months; }, 0) / doneAll.length) : null;
   // stated vs counted experience
-  const stated = p.statedExp != null ? p.statedExp : (cand.Total_Exp_Years !== undefined && cand.Total_Exp_Years !== '' && !isNaN(Number(cand.Total_Exp_Years)) ? Number(cand.Total_Exp_Years) : null);
+  const stated = p.statedExp != null ? p.statedExp : expNumber_(cand.Total_Exp_Years);
   const countedYears = dated ? Math.round(union / 12 * 10) / 10 : null;
   if (!dated) risks.push({ level: 'info', text: 'No dated employment history was found, so gaps, tenure and counted experience cannot be checked.' });
   if (dated && !exact) risks.push({ level: 'info', text: 'Some jobs have years only (no months); gaps and counted experience for those are approximate and gaps around them are not reported.' });

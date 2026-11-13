@@ -172,6 +172,28 @@ function ymd_(v) {
   return String(v).slice(0, 10);
 }
 
+/**
+ * Years of experience as a number from whatever a sheet cell holds (v170). A date-formatted cell (the number 5 shown as 4 Jan 1900)
+ * is read back as a Date, and Number(Date) is its epoch milliseconds (-2208748870000); both are turned back into the spreadsheet day
+ * number. A number or numeric text of 1,000,000 or more is such a millisecond value. "6 years", "6.5 yrs" and "6" give the number;
+ * blank, text without a number, a negative value or more than 70 years give null. Every reader of Total_Exp_Years uses this.
+ */
+function expNumber_(v) {
+  if (v == null || v === '') return null;
+  const day0 = Date.UTC(1899, 11, 30);
+  let n;
+  if (v instanceof Date) {
+    if (isNaN(v)) return null;
+    n = Math.round((Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()) - day0) / 86400000);
+  } else {
+    const m = String(v).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+    if (!m) return null;
+    n = Number(m[0]);
+    if (Math.abs(n) >= 1e6) n = Math.round((n - day0) / 86400000);
+  }
+  return isNaN(n) || n < 0 || n > 70 ? null : n;
+}
+
 /** Converts Dates to yyyy-MM-dd strings so objects can cross google.script.run. */
 function toClient_(o) {
   const out = {};
