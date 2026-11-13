@@ -469,6 +469,7 @@ function apiGetCandidateRun_(id) {
     throw new Error('Candidate ' + id + ' was not found.');
   }
   const o = toClient_(r); delete o._row;
+  try { o.Exp_Years_Text = expYearsText_(r); } catch (e) { }   // v177: the experience as plain years for screening papers (a date-formatted cell is read back correctly)
   try { const d = voiceDncFor_(voiceDncMap_(), r.Mobile); if (d) o._dnc = { why: d.why, when: d.when, by: d.by }; } catch (e) { }
   return o;
 }

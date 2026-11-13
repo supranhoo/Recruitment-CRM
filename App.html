@@ -3624,7 +3624,7 @@ async function pdfScreeningBatch(B, M) {
 function shareBatchBody(B, M, first, due, who) {
   const lines = M.cands.map(c => c.n + '. ' + c.name + ' (' + [c.cand.exp ? c.cand.exp + ' yrs' : '', c.cand.education].filter(Boolean).join(', ') + '): ' + bandText(c.band) + ', ' + c.res.met + ' of ' + c.res.total + ' criteria met' +
     (c.band === 'Not eligible' ? '; did not meet a knock-out' + (c.shareReason ? ' (' + c.shareReason + ')' : '') : '') + (c.older ? ' (screened on older questions)' : ''));
-  return 'Dear ' + first + ',\n\nPlease find attached the screening comparison and the CVs of ' + M.cands.length + ' candidates for ' + B.line.position + ' (' + (B.line.mrf || B.line.id) + ').\n\n' + lines.join('\n') +
+  return 'Dear ' + first + ',\n\nPlease find attached the screening comparison' + (M.cands.filter(c => c.cand.hasCv).length === M.cands.length ? ' and the CVs of ' + M.cands.length + ' candidates' : M.cands.filter(c => c.cand.hasCv).length ? ' and the CVs of ' + M.cands.filter(c => c.cand.hasCv).length + ' of the ' + M.cands.length + ' candidates (the others have no CV on file)' : ' of ' + M.cands.length + ' candidates (no CVs are on file)') + ' for ' + B.line.position + ' (' + (B.line.mrf || B.line.id) + ').\n\n' + lines.join('\n') +
     '\n\nThe comparison lists every screening question with each candidate’s answer and rating.\n\nKindly share your feedback on each candidate (shortlist or not suitable) by ' + fmtDate(due) + '.\n\nRegards,\n' + who;
 }
 async function openShareBatch(lineId, after) {
@@ -3698,7 +3698,7 @@ async function loadScreenHistory(cand, body) {
   const act = body.querySelector('.drawer-actions'); if (act) act.before(host); else body.appendChild(host);
   $$('[data-hpdf]', host).forEach(b => b.onclick = async () => {
     const s = H[+b.dataset.hpdf]; b.disabled = true;
-    try { const p = await pdfScreening({ screening: s, cand: { name: cand.Name, designation: cand.Current_Designation, company: cand.Current_Company, exp: cand.Total_Exp_Years || '', education: cand.Education }, line: { position: s.position, grade: '', mrf: s.mrf, id: s.lineId } }); saveBlob(p.blob, p.name); }
+    try { const p = await pdfScreening({ screening: s, cand: { name: cand.Name, designation: cand.Current_Designation, company: cand.Current_Company, exp: cand.Exp_Years_Text || '', education: cand.Education }, line: { position: s.position, grade: '', mrf: s.mrf, id: s.lineId } }); saveBlob(p.blob, p.name); }
     catch (e) { toast(e, true); } b.disabled = false;
   });
 }
@@ -4636,8 +4636,8 @@ async function pdfKpiSupport(r, ctx) {
       doc.autoTable(Object.assign({}, PDF_TABLE, { startY: y, head: [head], columnStyles: cs, styles: Object.assign({}, PDF_TABLE.styles, { fontSize: 6.9, cellPadding: 1.3, valign: 'top' }),
         body: sorted.map((i, ix) => [{ content: String(ix + 1), styles: { halign: 'center', textColor: PDF_C.muted } }, i.mrf, i.position + (i.dept ? '\n' + i.dept : ''), i.grade].concat(M.team ? [i.recruiter] : []).concat([
           i.status, kpiDateText_(i.receipt) + '\n' + (i.logic || '') + (i.rcv && i.rcv !== i.receipt ? '\nMRF received ' + kpiDateText_(i.rcv) : ''), kpiDateText_(i.due), (i.allowed !== '' && i.allowed != null ? i.allowed + ' d' : '—') + (i.exm ? '\n(std ' + i.std + ' + ' + i.exm + ')' : ''),
-          i.doj ? 'Joined\n' + kpiDateText_(i.doj) : i.closed ? (i.nn ? 'Not needed\n' : i.nv ? 'No vacancy\n' : 'Closed\n') + kpiDateText_(i.closed) : 'Not joined',
-          (i.odate ? 'Offer\n' + kpiDateText_(i.odate) : 'No offer') + (i.edoj ? '\nEDOJ\n' + kpiDateText_(i.edoj) : '') + (i.notice ? '\nNotice ' + i.notice + ' d' : ''), resCol(i), { content: String(i.rmk || '').slice(0, 220), styles: { fontSize: 6.3, textColor: PDF_C.muted } }])) }));
+          i.dojIn ? 'Joined\n' + kpiDateText_(i.dojIn) : i.closed ? ({ 'Not Needed': 'Not needed', 'No Vacancy': 'No vacancy', Replaced: 'Replaced', Removed: 'Removed' }[i.status] || 'Closed') + '\n' + kpiDateText_(i.closed) : i.doj ? 'Not joined by month end\n(joined ' + kpiDateText_(i.doj) + ' later)' : 'Not joined',
+          (i.odate && i.osent === 'Yes' ? 'Offer\n' + kpiDateText_(i.odate) : i.odate ? 'Offer withdrawn\n(was ' + kpiDateText_(i.odate) + ')' : 'No offer') + (i.edoj && i.osent === 'Yes' ? '\nEDOJ\n' + kpiDateText_(i.edoj) : '') + (i.notice ? '\nNotice ' + i.notice + ' d' : ''), resCol(i), { content: String(i.rmk || '').slice(0, 220), styles: { fontSize: 6.3, textColor: PDF_C.muted } }])) }));
     });
   });
   pdfFrame(doc, 'BFCL · KPI support · ' + kname + ' · ' + mlabel + ' · ' + (ctx.who || 'Whole team') + ' · Confidential');
@@ -4680,7 +4680,7 @@ function reconReport(r, kpiName) {
   return { head: RECON_REPORT_HEAD, rows };
 }
 async function reconExcel(r, kpi, kpiName) {
-  const rep = reconReport(r, kpiName), plain = [['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'TAT start', 'Joined']].concat(r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.doj])));
+  const rep = reconReport(r, kpiName), plain = [['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'TAT start', 'Joined']].concat(r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.receipt, i.dojIn])));
   const file = `kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${r.month}`;
   try { await loadScript(CDN_NPM + 'xlsx@0.18.5/dist/xlsx.full.min.js'); } catch (e) {
     csvSave(file + '-tracker.csv', rep.head, rep.rows.map(x => x.map((v, k) => v instanceof Date ? v.toISOString().slice(0, 10) : v)));
@@ -4699,8 +4699,8 @@ async function reconExcel(r, kpi, kpiName) {
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
-  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'MRF received', 'TAT start', 'Joined', 'Due by', 'Result this month'],
-    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.rcv, i.receipt, i.doj, i.due, i.result || ''])));
+  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'MRF received', 'TAT start', 'Joined by month end', 'Due by', 'Result this month'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.rcv, i.receipt, i.dojIn, i.due, i.result || ''])));
   const d = cpDlg(`<h2 id="cpTitle">${esc(kpiName || r.name || 'KPI')}: all positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
     <p class="hint">Every position worked on in the month (its clock started on or before the month end and it had not joined before the month began) is Achieved or Missed, as it stood at the month end (today, in the current month). Rate = the two Achieved rows \u00f7 the four rows.</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
@@ -4711,8 +4711,8 @@ async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   const root = d || document;
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
-    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT start</th><th>Joined</th><th>Due by</th><th>This month</th></tr></thead><tbody>
-      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}${i.rcv && i.rcv !== i.receipt ? `<span class="sub">MRF received ${fmtDate(i.rcv)}</span>` : ''}</td><td class="nw">${fmtDate(i.doj) || '\u2014'}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
+    $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT start</th><th>Joined by month end</th><th>Due by</th><th>This month</th></tr></thead><tbody>
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}${i.rcv && i.rcv !== i.receipt ? `<span class="sub">MRF received ${fmtDate(i.rcv)}</span>` : ''}</td><td class="nw">${fmtDate(i.dojIn) || '\u2014'}${i.doj && !i.dojIn ? `<span class="sub">joined later, ${fmtDate(i.doj)}</span>` : ''}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
   const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);
@@ -5057,7 +5057,7 @@ async function viewMonthMissed(v) {
   if ($('#mmCsv')) $('#mmCsv').onclick = () => csvSave(`missed-todos-${r.month}.csv`, ['Recruiter', 'Missed', 'Still open', 'Closed late', 'Avg days late', 'Chased', 'Most missed', 'Change vs ' + P],
     r.rows.map(x => [x.recruiter, x.missed, x.open, x.late, x.avgLate, x.chased, x.kinds.map(k => k.title + ' x' + k.n).join('; '), x.change]));
   if ($('#mmCsv2')) $('#mmCsv2').onclick = () => csvSave(`missed-todos-details-${r.month}.csv`, ['Recruiter', 'Kind', 'To-do', 'Became critical', 'Closed', 'Days late', 'Chased'],
-    [].concat(...r.rows.map(x => (r.items[x.recruiter] || []).map(i => [x.recruiter, i.kind, i.context, i.critOn, i.open ? 'still open' : i.closedOn, i.daysLate, i.chases]))));
+    [].concat(...r.rows.map(x => (r.items[x.recruiter] || []).map(i => [x.recruiter, i.kind, i.context, i.critOn, i.open ? 'still open' : i.closedOn, i.daysLate, i.chases]).concat((r.items[x.recruiter] || []).length < x.missed ? [[x.recruiter, '', '(' + (x.missed - (r.items[x.recruiter] || []).length) + ' more missed to-dos are not listed)', '', '', '', '']] : []))));
 }
 async function viewDailyReview(v) {
   const f = S.review = S.review || { date: daysAgo(1), rec: '' };
@@ -5247,11 +5247,11 @@ async function cvCompareDialog(from, to) {
     <div class="filters"><div class="field"><label for="cvFrom">From</label><input id="cvFrom" type="date" value="${esc(r.from)}" max="${today()}"></div><div class="field"><label for="cvTo">To</label><input id="cvTo" type="date" value="${esc(r.to)}" max="${today()}"></div>
       <div class="field" style="justify-content:flex-end"><button class="btn" id="cvGo">Show</button></div><div class="field" style="justify-content:flex-end"><button class="btn" id="cvCsv">Download CSV</button></div></div>
     <h3 style="margin:12px 0 6px;font-size:15px">By day</h3>
-    <div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Typed</th><th class="num">Pipeline (cards created)</th><th class="num">Typed minus pipeline</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Typed</th><th class="num">Pipeline (cards created)</th><th class="num" title="Only days on which typing was still open are compared: from the funnel start date nothing is typed">Typed minus pipeline (typing days)</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
       ${r.days.map(o => `<tr style="cursor:default"><td class="nw">${esc(fmtDate(o.day))}${o.typingOpen ? '' : '<span class="sub">typing closed</span>'}</td><td class="num">${o.typed}</td><td class="num">${o.cards ? `<button type="button" class="linklike" data-day="${esc(o.day)}">${o.cards}</button>` : 0}</td><td class="num ${o.diff > 0 ? 'miss' : ''}">${o.typingOpen ? o.diff : '\u2013'}</td><td class="num">${o.added}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing in this range.</td></tr>'}
       <tr style="font-weight:600"><td>Total</td><td class="num">${n(r.totals.typed)}</td><td class="num">${n(r.totals.cards)}</td><td class="num">${n(r.totals.diff)}</td><td class="num">${n(r.totals.added)}</td></tr></tbody></table></div>
     <h3 style="margin:14px 0 6px;font-size:15px">By recruiter</h3>
-    <div class="table-wrap"><table><thead><tr><th>Recruiter</th><th class="num">Typed</th><th class="num">Pipeline</th><th class="num">Typed minus pipeline</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Recruiter</th><th class="num">Typed</th><th class="num">Pipeline</th><th class="num" title="Only days on which typing was still open are compared: from the funnel start date nothing is typed">Typed minus pipeline (typing days)</th><th class="num">Candidates added in the app</th></tr></thead><tbody>
       ${r.recruiters.map(o => `<tr style="cursor:default"><td>${esc(o.recruiter)}</td><td class="num">${o.typed}</td><td class="num">${o.cards}</td><td class="num">${o.diff}</td><td class="num">${o.added}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing in this range.</td></tr>'}</tbody></table></div>
     <div id="cvList"></div>
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
@@ -5861,7 +5861,7 @@ async function renderOrgAdmin(el) {
 /* ---------------- Reassigned positions (Reports, leads) ---------------- */
 function reassignRows_(r) {
   const M = ['recv', 'rev', 'screened', 'shared', 'short', 'intv', 'sel', 'offers', 'joined', 'backouts'];
-  const toD = v => v ? new Date(v + 'T00:00:00') : '';
+  const toD = v => v ? new Date(v + 'T00:00:00Z') : '';   // UTC midnight: the CSV fallback (toISOString) and the workbook then show the same day in IST
   const phead = ['MRF', 'Position', 'Grade', 'Department', 'Status', 'Current recruiter', 'Reassignments', 'Original MRF received', 'Original TAT start', 'Original joining date', 'Original joined candidate', 'Latest joining date', 'Latest joined candidate', 'Chain', 'Days with lead recruiters', 'Working days', 'History note'];
   const prow = r.positions.map(p => [p.mrf, p.position, p.grade, p.dept, p.status, p.recruiter, p.reassigned, toD(p.received), toD(p.start), toD(p.firstJoin && p.firstJoin.on), p.firstJoin ? p.firstJoin.who : '', toD(p.lastJoin && p.lastJoin.on), p.lastJoin ? p.lastJoin.who : '',
     p.chain.map(c => c.mrf + ' (' + c.status + ')').join(' → '), p.totals.days, p.totals.workDays, p.incomplete ? 'Earlier recruiters not recorded' : '']);
@@ -5974,7 +5974,7 @@ async function viewDepts(v) {
         </tbody></table></div>` : '<div class="empty">No positions in this period.</div>'}</section>
       <section class="panel" style="margin-top:18px"><div class="dp-h"><h2>Positions: time to final JD and questions${f.dept ? ' · ' + esc(f.dept) + ' <button class="linklike" id="dpAll">show all departments</button>' : ''}</h2>
         <label class="hint"><input type="checkbox" id="dpDelayed" ${f.delayed ? 'checked' : ''}> Only delayed (over 3 days, or TAT lost)</label><button class="btn sm" id="dpCsvP">Download CSV</button></div>
-        ${shown.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Position</th><th>Recruiter</th><th>Assigned</th><th>To final JD</th><th>To final questions</th><th>CV feedback</th><th class="num">Days waiting on dept</th><th class="num">TAT lost</th><th>TAT</th></tr></thead><tbody>
+        ${shown.length ? `<div class="table-wrap"><table class="dp-table"><thead><tr><th>Position</th><th>Recruiter</th><th>TAT start</th><th>To final JD</th><th>To final questions</th><th>CV feedback</th><th class="num">Days waiting on dept</th><th class="num">TAT lost</th><th>TAT</th></tr></thead><tbody>
           ${shown.map(p => `<tr data-line="${esc(p.line)}"><td>${esc(p.position)}<span class="sub">${esc(p.mrf)} · ${esc(p.dept)} · ${esc(p.status)}</span></td><td>${esc(p.recruiter)}</td><td class="nw">${fmtDate(p.assigned)}</td>
             <td><b class="${p.jd && p.jd.total > 3 ? 'miss' : ''}">${phaseTxt(p.jd)}</b><span class="sub">${phaseSub(p.jd)}</span></td>
             <td><b class="${p.sq && p.sq.total > 3 ? 'miss' : ''}">${phaseTxt(p.sq)}</b><span class="sub">${p.sq ? phaseSub(p.sq) : p.jd && !p.jd.final ? 'after the JD is final' : ''}</span></td>
@@ -5999,7 +5999,7 @@ async function viewDepts(v) {
     const tag = `${r.from}-to-${r.to}`;
     $('#dpCsvD').onclick = () => csvSave(`department-delays-${tag}.csv`, ['Department', 'HOD', 'Positions', 'CV feedback avg h', 'CV feedback median h', 'CVs reviewed', 'CVs late', 'CVs waiting now', 'Oldest CV waiting h', 'JD/questions reply avg days', 'Replies', 'Awaiting now', 'Oldest awaiting days', 'Days waiting', 'TAT lost days', 'Share of TAT %', 'Past TAT'],
       depts.map(d => [d.dept, d.hod, d.positions, d.cvAvgH, d.cvMedH, d.cvN, d.cvOver, d.cvPending, d.cvOldestH, d.docAvgD, d.docN, d.docPending, d.docOldestD, d.waitDays, d.lossDays, d.share, d.pastTat]));
-    $('#dpCsvP').onclick = () => csvSave(`department-delays-positions-${tag}.csv`, ['MRF', 'Position', 'Department', 'Recruiter', 'Status', 'Assigned', 'Days to final JD', 'JD recruiter days', 'JD department days', 'JD rounds', 'JD final', 'Days to final questions', 'Questions recruiter days', 'Questions department days', 'Question rounds', 'CVs reviewed', 'CVs waiting', 'Days waiting on dept', 'TAT lost days', 'TAT result', 'Days taken', 'Final TAT'],
+    $('#dpCsvP').onclick = () => csvSave(`department-delays-positions-${tag}.csv`, ['MRF', 'Position', 'Department', 'Recruiter', 'Status', 'TAT start', 'Days to final JD', 'JD recruiter days', 'JD department days', 'JD rounds', 'JD final', 'Days to final questions', 'Questions recruiter days', 'Questions department days', 'Question rounds', 'CVs reviewed', 'CVs waiting', 'Days waiting on dept', 'TAT lost days', 'TAT result', 'Days taken', 'Final TAT'],
       shown.map(p => [p.mrf, p.position, p.dept, p.recruiter, p.status, p.assigned].concat(p.jd ? [p.jd.total, p.jd.recruiter, p.jd.dept, p.jd.rounds, p.jd.final ? 'Yes' : 'No'] : ['', '', '', '', ''], p.sq ? [p.sq.total, p.sq.recruiter, p.sq.dept, p.sq.rounds] : ['', '', '', ''], [p.cvDone.length, p.cvPending.length, p.waitDays, p.lossDays, p.tatResult, p.daysTaken, p.finalTat])));
     $('#dpCsvW').onclick = () => csvSave(`waiting-on-departments-${today()}.csv`, ['Waiting for', 'MRF', 'Position', 'Department', 'Recruiter', 'Since', 'Waiting'], pend.map(x => [x.what, x.p.mrf, x.p.position, x.p.dept, x.p.recruiter, x.since, x.wait]));
     $('#dpCsvR').onclick = () => csvSave(`recruiter-time-waiting-${tag}.csv`, ['Recruiter', 'Positions', 'Days waiting on departments', 'Beyond norms', 'Share of TAT %', 'Waiting now'], r.recruiters.map(x => [x.recruiter, x.positions, x.waitDays, x.lossDays, x.share, x.cvPending + x.docPending]));
@@ -6360,7 +6360,7 @@ async function bgvGovernTab(el, B, v) {
       <div class="filters"><div class="field"><label for="auFrom">From</label><input id="auFrom" type="date" value="${daysAgo(90)}" max="${today()}"></div><div class="field"><label for="auTo">To</label><input id="auTo" type="date" value="${today()}" max="${today()}"></div>
         <div class="field"><label for="auCase">One case <span class="opt">(optional)</span></label><input id="auCase" placeholder="BGV-00012" maxlength="12"></div><div class="field"><label>&nbsp;</label><button class="btn primary" id="auGo">Download CSV</button></div></div></section>` : ''}`;
   if ($('#gvSync')) $('#gvSync').onclick = async e => { busy(e.target, true, 'Syncing…'); try { await api('apiBgvDriveSync'); toast('Drive access synced.'); bgvGovernTab(el, B, v); } catch (err) { toast(err, true); busy(e.target, false, 'Sync Drive access now'); } };
-  $('#gvCsv').onclick = () => csvSave(`bgv-retention-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'Recruiter', 'Kept as', 'Closed', 'Keep until', 'Files', 'Status'], R.due.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.due, x.files, 'Due']).concat(R.upcoming.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.due, x.files, 'Due within 60 days'])));
+  $('#gvCsv').onclick = () => csvSave(`bgv-retention-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'Recruiter', 'Kept as', 'Case closed on', 'Backout on', 'Keep until', 'Files', 'Case status', 'Retention'], R.due.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.backout || '', x.due, x.files, x.status, 'Due']).concat(R.upcoming.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.backout || '', x.due, x.files, x.status, 'Due within 60 days'])));
   if ($('#gvPurge')) {
     const picks = () => $$('.gv-pick', el).filter(b => b.checked).map(b => b.value), sync = () => { const n = picks().length; $('#gvPurge').disabled = !n; late('#gvPurge').textContent = n ? `Purge ${n} now` : 'Purge now'; };
     $$('.gv-pick', el).forEach(b => b.onchange = sync); $('#gvAll').onchange = e => { $$('.gv-pick', el).forEach(b => { b.checked = e.target.checked; }); sync(); };
@@ -7507,7 +7507,7 @@ async function ctcSaved(el, R, v) {
   if ($('#csWait')) $('#csWait').onclick = () => { f.status = 'Pending approval'; $('#csSt').value = f.status; draw(); };
   $('#csQ').oninput = debounce(e => { f.q = e.target.value; draw(); }, 150);
   $('#csSt').onchange = e => { f.status = e.target.value; draw(); };
-  $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Candidate', 'Position', 'Designation', 'Grade', 'Basis', 'Target', 'Total CTC', 'Gross', 'Net', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
+  $('#csCsv').onclick = () => csvSave(`ctc-calculations-${today()}.csv`, ['Ref', 'Status', 'Name', 'Candidate', 'Position', 'Designation', 'Grade', 'Basis', 'Target / month', 'Total CTC / month', 'Gross / month', 'Net / month', 'Rules', 'Re-run of', 'Superseded by', 'Made by', 'Made on', 'Issued by', 'Issued on', 'Letter'],
     L.rows.map(r => [r.id, r.status, r.name, r.candidate, r.position, r.designation, r.grade, basisLabel(r.basis), r.target, r.totalCtc, r.gross, r.net, r.version, r.rerunOf, r.supersededBy, r.by, r.at, r.issuedBy, r.issuedAt, r.letter]));
   draw();
 }
