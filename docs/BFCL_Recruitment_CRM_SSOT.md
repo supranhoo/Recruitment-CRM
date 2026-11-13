@@ -1356,6 +1356,8 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-11-13
 
+**v171 — Data check "Experience stored as a date or an impossible number"** (no schema change; `Admin.gs`). Lists candidates whose `Total_Exp_Years` cell is a date, a millisecond-sized number, negative or above 70, with the years the app reads from it (via `expNumber_`), so the cells can be corrected once. Read-only.
+
 **v170 — Experience showed as "-2208748870000 yrs" in the share message: two functions named `expYears_`** (no schema change; `Db.gs`, `Pool.gs`, `Pipeline.gs`, `CvProfile.gs`, `.github/`)
 
 - **Cause.** Apps Script puts all `.gs` files in one global scope and the later file wins a name clash. `Pool.gs` already had `expYears_` (`Number(Total_Exp_Years)`); v168 added another in `Pipeline.gs`, so the Pool one ran everywhere and the v168 fix never reached production. A date-formatted experience cell (the number 5 shown as 4 Jan 1900) is read as a Date and `Number(Date)` is its milliseconds. The same wrong years also fed the pool search and ranking, the Archive index and the CV profile's stated-vs-counted check.

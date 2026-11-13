@@ -177,6 +177,7 @@ function dataChecks_() {
   const c8 = add('notice_edoj', 'Expected joining later than offer + notice', 'The expected joining date is more than 14 days after the offer date plus the notice period: the notice or the date is probably wrong.', 'MRF');
   const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
   const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
+  const c11 = add('exp_cell', 'Experience stored as a date or an impossible number', 'The experience cell holds a date, a millisecond number, a negative number or more than 70 years. The app reads the years shown, but correct the cell so the candidate form and imports show it.', 'CAND');
   try {
     const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
     funnelDuplicates_().forEach(function (g) { g.extra.forEach(function (e) { const l = lm[e.Line_ID] || {}; c9.items.push({ id: e.Entry_ID, label: String(l.MRF_No || e.Line_ID) + ' \u00b7 ' + String(l.Position || '') + ' (' + String(e.Recruiter || '') + ') \u00b7 ' + ymd_(e.Entry_Date), detail: (funnelSame_(g.keep, e) ? 'Identical to ' : 'Different numbers from ') + g.keep.Entry_ID }); }); });
@@ -210,6 +211,14 @@ function dataChecks_() {
       if (seen[k] && seen[k] !== c.Candidate_ID) c6.items.push({ id: c.Candidate_ID, label: label, detail: 'Same ' + (k[0] === 'm' ? 'mobile' : 'email') + ' as ' + seen[k] });
       else seen[k] = c.Candidate_ID;
     });
+    const ev = c.Total_Exp_Years;
+    if (ev != null && ev !== '') {
+      const raw = ev instanceof Date ? NaN : Number(String(ev).replace(/,/g, '')), isNum = !isNaN(raw) && /^\s*-?[\d.,]+\s*$/.test(String(ev));
+      if (ev instanceof Date || (isNum && (raw < 0 || raw > 70))) {
+        const rd = expNumber_(ev);
+        c11.items.push({ id: c.Candidate_ID, label: label, detail: 'Stored as ' + (ev instanceof Date ? ymd_(ev) : String(ev)) + '; the app reads ' + (rd == null ? 'no experience' : rd + ' years') });
+      }
+    }
     if (/selected/i.test(String(c.HR_Result)) && !c.Line_ID && String(c.Created_By) !== 'migration') c7.items.push({ id: c.Candidate_ID, label: label, detail: 'HR result Selected' });
   });
   const rc = {
