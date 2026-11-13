@@ -246,6 +246,19 @@ function kpiReconVia_(month, kpi, out, want) {
     it.viaWhere = f ? f.title : 'Not in this list for ' + month + ' (' + positionStatus_(cur) + ')';
   });
 }
+/**
+ * v182: a position handed to another recruiter after it had started (a replacement keeps the original start; the new holder's clock starts at the
+ * handover day, v179). Returns {handOn, heldDays, prevRec}: the handover day, the days before it that are charged to no recruiter, and the previous lead
+ * when Position_Recruiters has it. {} when there was no handover.
+ */
+function kpiHandover_(l) {
+  const carried = ymd_(l.TAT_Start_From), asg = ymd_(l.Assigned_On);
+  if (!carried || !asg || asg <= carried) return {};
+  const store = typeof _tables === 'object' && _tables ? _tables : (kpiHandover_.c = kpiHandover_.c || {});
+  if (!store.__kpiprev) { const m = {}; try { posRecRows_().forEach(function (r) { if (String(r.Role) !== 'Lead' || !ymd_(r.Ended_On)) return; (m[String(r.Line_ID)] = m[String(r.Line_ID)] || []).push({ name: String(r.Recruiter || ''), end: ymd_(r.Ended_On) }); }); } catch (e) { } store.__kpiprev = m; }
+  let prev = ''; (store.__kpiprev[String(l.Line_ID)] || []).forEach(function (s) { if (s.end <= asg && (!prev || s.end >= prev.end)) prev = s; });
+  return { handOn: asg, heldDays: daysBetween_(carried, asg), prevRec: prev ? prev.name : '' };
+}
 /** Where a position's TAT clock starts from (the same order as tatStart_), as text for the tracker report. */
 function kpiStartSource_(l) {
   return { carried: 'Original MRF start', assigned: 'Assigned', approved: 'MRF approved', received: 'MRF received' }[tatStartBasis_(l)];
@@ -273,7 +286,7 @@ function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd, cr
   const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed', closedok: 'Achieved', closedlate: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date) : '', nn: status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : '', holdOn: status === 'On Hold' ? ymd_(l.Not_Needed_Date) : '',
-    dojIn: clk.doj && clk.doj <= cutoff ? clk.doj : '', rcv: ymd_(l.Receipt_Date), apprOn: ymd_(l.Approved_On), asgOn: ymd_(l.Assigned_On), carried: ymd_(l.TAT_Start_From), credit: cr ? 'Tagged' : 'Lead', exApproved: d ? clk.ex.days : '', exOther: d ? Math.max(0, d.allowed - d.std - clk.ex.days) : '',
+    dojIn: clk.doj && clk.doj <= cutoff ? clk.doj : '', handOn: cr ? '' : kpiHandover_(l).handOn || '', heldDays: cr ? '' : kpiHandover_(l).heldDays == null ? '' : kpiHandover_(l).heldDays, prevRec: cr ? '' : kpiHandover_(l).prevRec || '', rcv: ymd_(l.Receipt_Date), apprOn: ymd_(l.Approved_On), asgOn: ymd_(l.Assigned_On), carried: ymd_(l.TAT_Start_From), credit: cr ? 'Tagged' : 'Lead', exApproved: d ? clk.ex.days : '', exOther: d ? Math.max(0, d.allowed - d.std - clk.ex.days) : '',
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: d ? d.std : '', allowed: d ? d.allowed : '', exm: d ? d.allowed - d.std : '',
     logic: clk.receipt ? (cr ? 'Assigned (tagged recruiter)' : kpiStartSource_(l)) + (clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
@@ -385,7 +398,7 @@ function computeKpis_(fy) {
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
     // Where the TAT start comes from, so the drill-down can say which date it is (the MRF approved date, not the received date).
-    if (cr) brief.credit = 'tagged';
+    if (cr) brief.credit = 'tagged'; else Object.assign(brief, kpiHandover_(l));   // v182: a handed-over position says from when the holder is charged
     const startFrom = cr ? 'assigned' : tatStartBasis_(l) === 'assigned' && ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : tatStartBasis_(l);
     if (startFrom !== 'approved') brief.from = startFrom;   // the usual case (counted from the MRF approved date) is left out to keep the result small
     if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
