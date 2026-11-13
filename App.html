@@ -4601,7 +4601,8 @@ function kpiSupportModel_(r, cell) {
   const pct = worked ? Math.round(1000 * ach / worked) / 10 : null;
   const team = !!r.buckets.some(b => b.items.some(i => i.recruiter)) && new Set([].concat(...r.buckets.map(b => b.items.map(i => i.recruiter)))).size > 1;
   const total = r.buckets.reduce((t, b) => t + b.items.length, 0);
-  return { ach, miss, worked, pct, groups, team, total: total, counted: worked,
+  const carried = r.buckets.reduce((t, b) => t + b.items.filter(i => i.via).length, 0);
+  return { ach, miss, worked, pct, groups, team, total: total, counted: worked, carried,
     score: cell && cell.score != null ? cell.score : null, cellPct: cell && cell.pct != null ? cell.pct : null, cellWorked: cell && cell.worked != null ? cell.worked : null, cellMissed: cell && cell.missed != null ? cell.missed : null };
 }
 const kpiDateText_ = v => v ? fmtDate(v) : '—';
@@ -4611,7 +4612,7 @@ async function pdfKpiSupport(r, ctx) {
   const sc = M.score == null ? '—' : M.score + ' / 5', pct = M.cellPct != null ? M.cellPct : M.pct;
   pdfTitle(doc, 'KPI support report', kname + ' · ' + mlabel, (ctx.who || 'Whole team') + ' · every position behind the score',
     [['Score', sc, M.score != null && M.score >= 4 ? PDF_C.greenbg : M.score != null && M.score <= 1 ? PDF_C.redbg : PDF_C.soft, PDF_C.navy], ['Rate', pct == null ? '—' : pct + '%'], ['Generated', fmtDate(ymdLocal(new Date()))]]);
-  let y = pdfStrip(doc, 48, [[M.worked + ' worked on', 'positions in ' + mlabel], [M.ach + ' achieved', 'joined on time, within TAT or closed within TAT', PDF_C.green, PDF_C.greenbg], [M.miss + ' missed', 'joined late, past TAT or closed after TAT', M.miss ? PDF_C.red : PDF_C.muted, M.miss ? PDF_C.redbg : PDF_C.soft], [(M.total - M.worked) + ' not counted', 'listed for completeness']]);
+  let y = pdfStrip(doc, 48, [[M.worked + ' worked on', 'positions in ' + mlabel], [M.ach + ' achieved', 'joined on time, within TAT or closed within TAT', PDF_C.green, PDF_C.greenbg], [M.miss + ' missed', 'joined late, past TAT or closed after TAT', M.miss ? PDF_C.red : PDF_C.muted, M.miss ? PDF_C.redbg : PDF_C.soft], [(M.total - M.worked) + ' not counted', (M.carried ? M.carried + ' carried by a replacement MRF' : 'listed for completeness')]]);
   y = pdfHead(doc, y + 6, 'How the score was reached', 'Rate = achieved ÷ worked on × 100');
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...PDF_C.ink);
   const para = ['A position is worked on in a month if its recruiter clock started on or before the month end and it had not joined (or been closed without a hire) before the month began. The clock runs from the TAT start shown for each position (the MRF approved date, the assigned date, or the original MRF start carried over for a replacement), less days on hold and approved paused days.',
@@ -4629,7 +4630,7 @@ async function pdfKpiSupport(r, ctx) {
       if (bi) y = doc.lastAutoTable.finalY + 6;
       y = pdfHead(doc, y + (bi ? 0 : 5), b.title + ' · ' + b.items.length, b.note);
       const sorted = b.items.slice().sort((a, c) => (a.recruiter || '').localeCompare(c.recruiter || '') || String(a.mrf).localeCompare(String(c.mrf), undefined, { numeric: true }));
-      const resCol = i => ({ content: (i.result || '') + (i.days !== '' && i.days != null ? '\n' + i.days + ' of ' + i.allowed + ' d' : ''), styles: { fontStyle: 'bold', textColor: i.result === 'Achieved' ? PDF_C.green : i.result === 'Missed' ? PDF_C.red : PDF_C.muted } });
+      const resCol = i => ({ content: (i.result || '') + (i.via ? '\nCounted through ' + i.via + '\n' + (i.viaWhere || i.viaResult) : '') + (i.days !== '' && i.days != null ? '\n' + i.days + ' of ' + i.allowed + ' d' : ''), styles: { fontStyle: 'bold', textColor: i.result === 'Achieved' ? PDF_C.green : i.result === 'Missed' ? PDF_C.red : PDF_C.muted } });
       const head = ['#', 'MRF', 'Position'].concat(['Grade']).concat(M.team ? ['Recruiter'] : []).concat(['Status', 'TAT start · basis', 'Due by', 'Allowed', 'Joined / closed', 'Offer · EDOJ', 'Result', 'Remark']);
       const cs = {}; let k = 0; [8, 14, 44, 10].concat(M.team ? [17] : []).forEach(w => { cs[k++] = { cellWidth: w }; });
       [18, 26, 17, 16, 22, 24, 20].forEach(w => { cs[k++] = { cellWidth: w }; });
@@ -4666,17 +4667,17 @@ const RECON_COLUMN_GUIDE = [['MRF No.', 'The position\u2019s MRF number.'], ['Re
   ['TAT achieved/Missed', 'Achieved or Missed as the scorecard judged the position this month; Not counted if it is outside the score.'], ['Where it sits', 'The row of the reconciliation the position is in.'], ['Due by', 'TAT start + allowed days + days on hold and paused.'],
   ['TAT start', 'The date the recruiter clock starts: the original MRF start carried over (replacements), else the position assigned date, else the MRF approved date, else the MRF received date. It can differ from the MRF receipt date.'], ['Counted in', 'The KPI this list belongs to.'],
   ['MRF approved on / Position assigned on / Original MRF start (carried)', 'The dates the TAT start is chosen from, so a TAT start that differs from the MRF receipt date can be explained.'],
-  ['Approved exemption days / Notice / offer extension (days)', 'The two parts of Exemption days: approved TAT exemptions, and the notice beyond the grace (or from the offer).'], ['Credit row', 'Lead = the position\u2019s lead recruiter; Tagged = a recruiter tagged on the position, counted from the day they were tagged.']];
+  ['Approved exemption days / Notice / offer extension (days)', 'The two parts of Exemption days: approved TAT exemptions, and the notice beyond the grace (or from the offer).'], ['Counted through (replacement MRF) / Replacement result this month', 'For a position replaced after a backout: the replacement MRF (or the chain of them) that carries the vacancy and the original TAT start, and where that replacement sits this month (e.g. Missed: past TAT, not filled). The original itself is not counted, so the vacancy is judged once.'], ['Credit row', 'Lead = the position\u2019s lead recruiter; Tagged = a recruiter tagged on the position, counted from the day they were tagged.']];
 /** The tracker-style report of a reconciliation (v155): the sheet's columns in its order, then Where it sits, Due by, TAT start and Counted in. */
 const RECON_REPORT_HEAD = ['MRF No.', 'Review Month', 'MRF Receipt date', 'Position', 'Level', 'Dept', 'Recruiter', 'No.of positions/Resource', 'Approved', 'No vanacy marked date', 'Not needed marked date', 'Offer sent',
   'Offer letter date', 'EDOJ as per Offer', 'DOJ for KRA', 'Actual DOJ', 'Position Status', 'Position closed on', 'Notice Period', 'Backout', 'Final Remark', 'Standard TAT', 'Exemption days', 'Final allowed TAT', 'TAT logic',
-  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in', 'MRF approved on', 'Position assigned on', 'Original MRF start (carried)', 'Approved exemption days', 'Notice / offer extension (days)', 'Credit row'];
+  'Days taken', 'TAT achieved/Missed', 'Where it sits', 'Due by', 'TAT start', 'Counted in', 'MRF approved on', 'Position assigned on', 'Original MRF start (carried)', 'Approved exemption days', 'Notice / offer extension (days)', 'Credit row', 'Counted through (replacement MRF)', 'Replacement result this month'];
 const RECON_DATE_COLS = [2, 9, 10, 12, 13, 14, 15, 17, 19, 28, 29, 31, 32, 33];   // 0-based columns that hold dates
 function reconReport(r, kpiName) {
   const mm = r.month.slice(5, 7) + '-' + r.month.slice(0, 4), toD = v => v ? new Date(v + 'T00:00:00Z') : '';
   const rows = [];
   r.buckets.forEach(b => b.items.forEach(i => rows.push([i.mrf, mm, i.rcv, i.position, i.grade, i.dept, i.recruiter, i.nres, i.appr, i.nv, i.nn, i.osent, i.odate, i.edoj, i.dojKra, i.doj, i.status + (i.holdOn ? ' (on hold since ' + fmtDate(i.holdOn) + ')' : ''), i.closed, i.notice, i.bo, i.rmk,
-    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || '', i.apprOn, i.asgOn, i.carried, i.exApproved, i.exOther, i.credit].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
+    i.std, i.exm, i.allowed, i.logic, i.days, i.result, b.title, i.due, i.receipt, kpiName || r.name || '', i.apprOn, i.asgOn, i.carried, i.exApproved, i.exOther, i.credit, i.via || '', i.via ? i.viaWhere || '' : ''].map((v, k) => RECON_DATE_COLS.includes(k) ? toD(v) : v == null ? '' : v))));
   return { head: RECON_REPORT_HEAD, rows };
 }
 async function reconExcel(r, kpi, kpiName) {
@@ -4699,8 +4700,8 @@ async function reconExcel(r, kpi, kpiName) {
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
 async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   let r; try { r = await api('apiKpiRecon', month, rec, kpi || 'TIMELY_CLOSURE'); } catch (e) { toast(e, true); return; }
-  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'MRF received', 'TAT start', 'Joined by month end', 'Due by', 'Result this month'],
-    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.rcv, i.receipt, i.dojIn, i.due, i.result || ''])));
+  const csv = () => csvSave(`kpi-positions-${(kpi || 'TIMELY_CLOSURE').toLowerCase()}-${month}.csv`, ['Where', 'MRF', 'Position', 'Grade', 'Recruiter', 'Status', 'MRF received', 'TAT start', 'Joined by month end', 'Due by', 'Result this month', 'Counted through', 'Replacement result this month'],
+    r.buckets.flatMap(b => b.items.map(i => [b.title, i.mrf, i.position, i.grade, i.recruiter, i.status, i.rcv, i.receipt, i.dojIn, i.due, i.result || '', i.via || '', i.via ? i.viaWhere || '' : ''])));
   const d = cpDlg(`<h2 id="cpTitle">${esc(kpiName || r.name || 'KPI')}: all positions of ${esc(monthLabel(month))} \u00b7 ${r.total}</h2>
     <p class="hint">Every position worked on in the month (its clock started on or before the month end and it had not joined before the month began) is Achieved or Missed, as it stood at the month end (today, in the current month). Rate = the two Achieved rows \u00f7 the four rows.</p>
     <div class="table-wrap"><table><thead><tr><th>Where it sits</th><th class="num">Positions</th></tr></thead><tbody>
@@ -4712,7 +4713,7 @@ async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
   $$('[data-open]', root).forEach(b => b.onclick = () => {
     const bk = r.buckets.find(x => x.key === b.dataset.open);
     $('#krList', root).innerHTML = `<h3 style="margin:14px 0 6px;font-size:15px">${esc(bk.title)}</h3><div class="table-wrap"><table><thead><tr><th>Position</th><th>Recruiter</th><th>Status</th><th>TAT start</th><th>Joined by month end</th><th>Due by</th><th>This month</th></tr></thead><tbody>
-      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}${i.rcv && i.rcv !== i.receipt ? `<span class="sub">MRF received ${fmtDate(i.rcv)}</span>` : ''}</td><td class="nw">${fmtDate(i.dojIn) || '\u2014'}${i.doj && !i.dojIn ? `<span class="sub">joined later, ${fmtDate(i.doj)}</span>` : ''}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
+      ${bk.items.map(i => `<tr style="cursor:default"><td>${esc(i.position)}<span class="sub">${esc(i.mrf)} \u00b7 ${esc(i.grade)}</span></td><td>${esc(i.recruiter)}</td><td>${esc(i.status)}${i.via ? `<span class="sub">Counted through ${esc(i.via)}: ${esc(i.viaWhere || i.viaResult)}</span>` : ''}</td><td class="nw">${fmtDate(i.receipt) || '\u2014'}${i.rcv && i.rcv !== i.receipt ? `<span class="sub">MRF received ${fmtDate(i.rcv)}</span>` : ''}</td><td class="nw">${fmtDate(i.dojIn) || '\u2014'}${i.doj && !i.dojIn ? `<span class="sub">joined later, ${fmtDate(i.doj)}</span>` : ''}</td><td class="nw">${fmtDate(i.due) || '\u2014'}</td><td>${i.result === 'Achieved' ? '<span class="ok">Achieved</span>' : i.result === 'Missed' ? '<span class="miss">Missed</span>' : esc(i.result || '\u2014')}</td></tr>`).join('')}</tbody></table></div>`;
   });
   const cb = $('#krCsv', root); if (cb) cb.onclick = csv;
   const xb = $('#krXls', root); if (xb) xb.onclick = () => reconExcel(r, kpi, kpiName);
