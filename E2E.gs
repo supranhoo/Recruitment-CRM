@@ -37,6 +37,10 @@ function e2eRun_(trash) {
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 8 && !!k.defs.W_FULFILMENT ? 'fy ' + fy : false; });
   t('A6 data checks', function () { return apiDataChecks().length === 16; });
+  t('A6b a handover on a replacement restarts the recruiter clock, the position clock keeps the original start', function () {
+    const l = { Receipt_Date: '2026-08-21', Approved_On: '2026-08-21', Assigned_On: '2026-10-30', TAT_Start_From: '2026-08-21' };
+    return tatStart_(l) === '2026-10-30' && posStart_(l) === '2026-08-21' && tatStartBasis_(l) === 'assigned' && tatStart_(Object.assign({}, l, { Assigned_On: '2026-08-21' })) === '2026-08-21' ? 'ok' : false;
+  });
   t('A7 change history', function () { return Array.isArray(apiAuditLog({})); });
   t('A8 panel members', function () { return apiListPanelMembers().length >= 60; });
   t('A9 panel unavailability list', function () { return Array.isArray(apiListPanel()); });

@@ -248,7 +248,7 @@ function kpiReconVia_(month, kpi, out, want) {
 }
 /** Where a position's TAT clock starts from (the same order as tatStart_), as text for the tracker report. */
 function kpiStartSource_(l) {
-  return ymd_(l.TAT_Start_From) ? 'Original MRF start' : ymd_(l.Assigned_On) ? 'Assigned' : ymd_(l.Approved_On) ? 'MRF approved' : 'MRF received';
+  return { carried: 'Original MRF start', assigned: 'Assigned', approved: 'MRF approved', received: 'MRF received' }[tatStartBasis_(l)];
 }
 /**
  * The tracker-style fields of one position of the reconciliation (v155), for the Excel report: the MRF columns as recorded plus the
@@ -386,7 +386,7 @@ function computeKpis_(fy) {
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
     // Where the TAT start comes from, so the drill-down can say which date it is (the MRF approved date, not the received date).
     if (cr) brief.credit = 'tagged';
-    const startFrom = cr ? 'assigned' : ymd_(l.TAT_Start_From) ? 'carried' : ymd_(l.Assigned_On) ? (ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : 'assigned') : ymd_(l.Approved_On) ? 'approved' : 'received';
+    const startFrom = cr ? 'assigned' : tatStartBasis_(l) === 'assigned' && ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : tatStartBasis_(l);
     if (startFrom !== 'approved') brief.from = startFrom;   // the usual case (counted from the MRF approved date) is left out to keep the result small
     if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
     if (ymd_(l.Receipt_Date) && ymd_(l.Receipt_Date) !== receipt) brief.recv = ymd_(l.Receipt_Date);

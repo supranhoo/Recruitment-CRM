@@ -567,7 +567,7 @@ function createReplacement_(line, app, when, reason, u) {
   const c = readTable_(T.CAND.name).rows.filter(function (x) { return x.Candidate_ID === app.Candidate_ID; })[0] || {};
   obj.MRF_No = replacementMrfNo_(line);
   obj.Parent_Line_ID = line.Line_ID;
-  obj.TAT_Start_From = parseYmd_(tatStart_(line));
+  obj.TAT_Start_From = parseYmd_(posStart_(line) || tatStart_(line));   // the position's own start; the recruiter clock restarts at a handover (v179)
   obj.Approval_Status = 'Approved';
   obj.Offer_Sent = 'No';
   obj.Vacancy_Reason = 'Replacement';
