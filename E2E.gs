@@ -513,6 +513,12 @@ function e2eRun_(trash) {
   t('I4 Net target gives at least the net', function () { const r = apiCtcCalc({ basis: 'net', target: 30000, codes: ctcSample }); return r.totals.net >= 30000 && r.totals.net - 30000 < 5 ? 'net ' + r.totals.net : false; });
   err('I5 CTC needs a target amount', function () { apiCtcCalc({ basis: 'gross', target: 0 }); }, /target amount/);
   t('I6 CTC calculator is admin-only at launch', function () { return can_({ role: ROLES.ADMIN }, 'ctc_use') && !can_({ role: ROLES.HEAD }, 'ctc_use') && !can_({ role: ROLES.TALEAD }, 'ctc_use') && !can_({ role: ROLES.RECRUITER }, 'ctc_use'); });
+  t('I8 Bonus / PLI on Basic switch: Bonus up to 21,000 Basic, PLI above', function () {
+    const E = ctcEngine_(), cfg = ctcSeedConfig_(); cfg.limit = { basis: 'basic' };
+    const at = function (g) { const r = E.solve(cfg, { basis: 'gross', target: g, codes: { basic: '1', bonus: '2', pli: '2', pf: '1', esic: '0' }, amounts: {} }); const o = {}; r.lines.forEach(function (l) { o[l.id] = l.monthly; }); return o; };
+    const a = at(42000), b = at(42002);
+    return a.basic === 21000 && a.bonus > 0 && a.pli === 0 && b.basic === 21001 && b.pli > 0 && b.bonus === 0 && E.validate(cfg).length === 0;
+  });
   t('I7 page engine script intact', function () { new Function(ctcEngineScript_() + '; return CTC_ENGINE.solve;'); return true; });
   const ctcPdf = Utilities.base64Encode(Utilities.newBlob('%PDF-1.4\n' + new Array(400).join('x') + '\n%%EOF').getBytes());
   const ctcA = t('I8 save a CTC draft without name or grade', function () { const r = apiCtcSave({ basis: 'gross', target: 72080, codes: ctcSample, designation: 'E2E Guard' }); return r.status === 'Draft' && r.result.totals.totalCtc === 83082 ? r : false; });

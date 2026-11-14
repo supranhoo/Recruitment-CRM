@@ -42,9 +42,12 @@ function ctcEngine_() {
     const list = Array.isArray(base) ? base : [base];
     return list.reduce(function (s, b) { return s + (BASES[b] ? (ctx[b] || 0) : (vals[b] || 0)); }, 0);
   }
-  function holds(when, vals, ctx) {
+  /** The switch cfg.limit: Bonus and PLI (items) are tested on Gross (default) or on Basic. */
+  function limitOf(cfg) { const l = cfg && cfg.limit || {}; return { basis: l.basis === 'basic' ? 'basic' : 'gross', items: Array.isArray(l.items) ? l.items : ['bonus', 'pli'] }; }
+  function onBasic(cfg, c) { const l = limitOf(cfg); return l.basis === 'basic' && !!c && l.items.indexOf(c.id) >= 0; }
+  function holds(when, vals, ctx, basic) {
     if (!when) return true;
-    return test(baseOf(when.of || 'gross', vals, ctx), when.op, Number(when.value));
+    return test(baseOf(basic ? 'basic' : (when.of || 'gross'), vals, ctx), when.op, Number(when.value));
   }
   function codeOf(cfg, inp, flag) {
     const f = cfg.flags[flag] || {};
@@ -60,7 +63,7 @@ function ctcEngine_() {
     if (c.kind === 'choice') {
       const code = codeOf(cfg, inp, c.flag);
       const o = (c.values || {})[code];
-      if (!o || !holds(o.when, vals, ctx)) return 0;
+      if (!o || !holds(o.when, vals, ctx, onBasic(cfg, c))) return 0;
       if (o.amount !== undefined) return rnd(Number(o.amount) || 0);
       let x = baseOf(o.base, vals, ctx) * o.pct / 100;
       if (o.cap !== undefined && o.cap !== null && o.cap !== '') x = Math.min(x, Number(o.cap));
@@ -127,7 +130,7 @@ function ctcEngine_() {
   }
 
   /** Gross bands: every gross threshold in the rules starts a new band (sheet: Solver J9:L22). */
-  function bands(cfg) {
+  function bands(cfg, inp) {
     const starts = { 0: 1 };
     const add = function (w) {
       if (!w || (w.of && w.of !== 'gross')) return;
@@ -150,6 +153,20 @@ function ctcEngine_() {
         if (w && w.of === 'basic') shares.forEach(function (p) { starts[Math.floor(Number(w.value) / p) + (w.op === '<' ? 0 : 1)] = 1; });
       });
     });
+    /* Bonus / PLI tested on Basic: the Gross at which Basic crosses the threshold is a band edge (found by search, so it
+       works whether Basic is a share of Gross, of Total CTC or fixed). */
+    if (inp) cfg.components.forEach(function (c) {
+      if (!onBasic(cfg, c)) return;
+      Object.keys(c.values || {}).forEach(function (k) {
+        const w = c.values[k].when; if (!w) return;
+        const n = Number(w.value); if (!isFinite(n)) return;
+        const above = w.op === '>' || w.op === '<=';   /* edge at the first Gross whose Basic is above n (or at n or more) */
+        const crossed = function (g) { const b = settle(cfg, inp, g).values.basic || 0; return above ? b > n : b >= n; };
+        if (!crossed(CAP) || crossed(0)) return;
+        let lo = 0, hi = CAP; while (lo < hi) { const m = Math.floor((lo + hi) / 2); if (crossed(m)) hi = m; else lo = m + 1; }
+        starts[lo] = 1;
+      });
+    });
     const s = Object.keys(starts).map(Number).filter(function (n) { return n >= 0 && n <= CAP; }).sort(function (a, b) { return a - b; });
     return s.map(function (lo, i) { return [lo, i + 1 < s.length ? s[i + 1] - 1 : CAP]; });
   }
@@ -164,7 +181,7 @@ function ctcEngine_() {
     const memo = {};
     const at = function (g) { return memo[g] || (memo[g] = settle(cfg, inp, g)); };
     const val = function (g) { return at(g)[key]; };
-    const bs = bands(cfg);
+    const bs = bands(cfg, inp);
     let G;
     if (basis === 'net') {
       let b = bs.filter(function (x) { return val(x[1]) >= target; })[0] || bs[bs.length - 1];
@@ -185,6 +202,13 @@ function ctcEngine_() {
     return report(cfg, inp, r, basis, target, G);
   }
 
+  function swapGross(t) { return String(t || '').replace(/\bGross\b/g, 'Basic'); }
+  /** A choice's note; Bonus and PLI say Basic when the switch is on Basic. */
+  function noteOf(cfg, flag) {
+    const f = (cfg.flags || {})[flag] || {};
+    return f.note && onBasic(cfg, { id: flag }) ? swapGross(f.note) : (f.note || '');
+  }
+
   /** The result as the page and the letter show it. */
   function report(cfg, inp, r, basis, target, G) {
     const achieved = r[BASIS_KEY[basis]];
@@ -199,8 +223,9 @@ function ctcEngine_() {
     (cfg.explain || []).forEach(function (e) {
       if (e.of && r.values[e.of]) return;
       if (e.flag && codeOf(cfg, inp, e.flag) === '0') return;
-      if (e.ifGross && !test(g, e.ifGross.op, Number(e.ifGross.value))) return;
-      notes.push(e.text);
+      const bs = e.of && e.ifGross && onBasic(cfg, { id: e.of });
+      if (e.ifGross && !test(bs ? (r.values.basic || 0) : g, e.ifGross.op, Number(e.ifGross.value))) return;
+      notes.push(bs ? swapGross(e.text) : e.text);
     });
     const warnings = cfg.components.filter(function (c) { return c.kind === 'balancing' && (r.values[c.id] || 0) < 0; }).map(function (c) {
       return c.label + ' comes out negative (' + r.values[c.id] + '): the chosen allowances add up to more than this gross allows. Lower the allowances or raise the target.';
@@ -263,6 +288,10 @@ function ctcEngine_() {
       seen[c.id] = true;
     });
     if (bal !== 1) errs.push('Exactly one earning must balance the gross (Other allowances).');
+    if (cfg.limit) {
+      if (['gross', 'basic'].indexOf(cfg.limit.basis) < 0) errs.push('Bonus and PLI: the amount that decides must be Gross or Basic.');
+      if (cfg.limit.items !== undefined && (!Array.isArray(cfg.limit.items) || cfg.limit.items.some(function (x) { return !ids[x] || ids[x].section !== 'annual'; }))) errs.push('Bonus and PLI: the items that follow the switch must be annual items of the rules.');
+    }
     Object.keys(cfg.flags).forEach(function (k) {
       const f = cfg.flags[k];
       if (!f.options || !f.options.length) errs.push('Choice "' + (f.label || k) + '" has no options.');
@@ -271,7 +300,7 @@ function ctcEngine_() {
     return errs;
   }
 
-  return { solve: solve, structure: structure, settle: settle, bands: bands, validate: validate, round: xround, roundUp: xroundup };
+  return { solve: solve, structure: structure, settle: settle, bands: bands, validate: validate, noteOf: noteOf, round: xround, roundUp: xroundup };
 }
 
 /** The engine's source, embedded in Index.html so the page computes exactly like the server. */
@@ -748,6 +777,7 @@ function ctcDiff_(a, b) {
     (cfg.notes || []).forEach(function (n, i) { walk(['Term ' + (n.id || i + 1)], { English: n.en, Hindi: n.hi, 'only when paid': n.when ? labelOf(cfg, n.when) : '' }); });
     (cfg.explain || []).forEach(function (e, i) { put(['Explanation ' + (i + 1)], e.text); });
     walk(['Letter'], cfg.letter || {});
+    out['Bonus and PLI \u203a decided on'] = (cfg.limit && cfg.limit.basis) || 'gross';
     return out;
   };
   const A = flat(a), B = flat(b), out = [];

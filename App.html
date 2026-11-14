@@ -7162,7 +7162,7 @@ function ctcCalc(el, R, v) {
   if (!canCodes && !f.rerunOf) f.codes = Object.fromEntries(fk.map(k => [k, String(flags[k].default)]));
   const grades = (S.boot.grades || []).filter(g => g.active);
   const allDesig = [...new Set(grades.flatMap(g => g.designations || []))].sort();
-  const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${flags[k].note ? `<span class="hint">${esc(flags[k].note)}</span>` : ''}</div>`;
+  const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${CTC_ENGINE.noteOf(cfg, k) ? `<span class="hint">${esc(CTC_ENGINE.noteOf(cfg, k))}</span>` : ''}</div>`;
   const struct = fk.filter(k => flags[k].group === 'structure'), allow = fk.filter(k => flags[k].group === 'allowance');
   const hasStipend = cfg.components.some(c => c.id === 'stipend');
   el.innerHTML = `${f.rerunOf ? `<div class="ctc-status info">Re-run of <b>${esc(f.rerunOf.id)}</b> (worked out on rules ${esc(f.rerunOf.version)}). The changes against it are listed under the structure. <button class="linklike" id="ccRerunX">Stop comparing</button></div>` : ''}
@@ -7801,10 +7801,11 @@ function ctcDraftEditor(el, R, v, head) {
   if (!S.ctcDraft || S.ctcDraft.id !== R.draft.id) S.ctcDraft = { id: R.draft.id, cfg: JSON.parse(JSON.stringify(R.draft.config)), dirty: false, changes: R.draft.changes, sub: 'items', onlyChanged: true };
   const D = S.ctcDraft, cfg = D.cfg, old = R.active.config;
   const secs = cfg.sections, lbl = {}; cfg.components.forEach(c => { lbl[c.id] = c.label; });
+  const limB = () => (cfg.limit || {}).basis === 'basic' ? 'basic' : 'gross', limItems = () => (cfg.limit || {}).items || ['bonus', 'pli'];
   const baseTxt = b => [].concat(b || []).map(x => ({ gross: 'Gross', gross_ctc: 'Gross CTC', total_ctc: 'Total CTC' })[x] || lbl[x] || x).join(' + ');
   const numIn = (p, val, w, ph) => `<input class="rs-n" data-p="${p}" data-t="num" value="${val === undefined || val === null ? '' : esc(val)}" inputmode="decimal" ${w ? `style="width:${w}px"` : ''} ${ph ? `placeholder="${ph}"` : ''}>`;
   const txtIn = (p, val, cls) => `<input class="rs-t ${cls || ''}" data-p="${p}" data-t="text" value="${esc(val || '')}">`;
-  const cond = (p, w) => w ? `<span class="rs-cond">only when ${esc(baseTxt(w.of || 'gross'))} is <select data-p="${p}.op" data-t="text">${opts(CTC_OPS, w.op, false)}</select> ${numIn(p + '.value', w.value, 90)}</span>` : '';
+  const cond = (p, w, c) => w ? `<span class="rs-cond">only when ${esc(c && limItems().includes(c.id) && limB() === 'basic' ? 'Basic' : baseTxt(w.of || 'gross'))} is <select data-p="${p}.op" data-t="text">${opts(CTC_OPS, w.op, false)}</select> ${numIn(p + '.value', w.value, 90)}</span>` : '';
   const kindTxt = c => ({ input: 'Amount typed for each person', fixed: 'Fixed amount', pct: 'Share of ' + baseTxt(c.of), choice: 'Chosen for each person', slab: 'Slab by ' + baseTxt(c.of || 'gross'), balancing: 'Balancing figure: Gross minus the other earnings' })[c.kind];
   const optLabel = (flag, code) => ((cfg.flags[flag] || {}).options || []).find(o => String(o.code) === String(code));
   const card = (c, i) => {
@@ -7818,7 +7819,7 @@ function ctcDraftEditor(el, R, v, head) {
       body = `<table class="rs-tab"><thead><tr><th>Option</th><th>${amountOnly ? 'Amount (₹)' : 'Works out as'}</th>${allowance ? '<th></th>' : ''}</tr></thead><tbody>
         ${codes.map(k => { const o = c.values[k], ol = optLabel(c.flag, k), fi = (fl.options || []).indexOf(ol), VP = `${P}.values.${k}`;
           return `<tr><td>${ol ? txtIn(`flags.${c.flag}.options.${fi}.label`, ol.label, 'rs-wide') : esc(k)}</td>
-            <td>${o.amount !== undefined ? numIn(VP + '.amount', o.amount, 110) : `${numIn(VP + '.pct', o.pct, 70)} % of ${esc(baseTxt(o.base))}${o.cap !== undefined ? `, max ₹ ${numIn(VP + '.cap', o.cap, 90)}` : ''} ${cond(VP + '.when', o.when)}`}</td>
+            <td>${o.amount !== undefined ? numIn(VP + '.amount', o.amount, 110) : `${numIn(VP + '.pct', o.pct, 70)} % of ${esc(baseTxt(o.base))}${o.cap !== undefined ? `, max ₹ ${numIn(VP + '.cap', o.cap, 90)}` : ''} ${cond(VP + '.when', o.when, c)}`}</td>
             ${allowance ? `<td>${String(k) !== '0' ? `<button class="icon-btn sm" data-delopt="${i}:${esc(k)}" aria-label="Remove option" title="Remove option">✕</button>` : ''}</td>` : ''}</tr>`; }).join('')}
         </tbody></table>${allowance ? `<div class="rs-row"><span class="hint">Add an option:</span> ₹ <input id="rsAdd_${i}" inputmode="numeric" style="width:110px"> <button class="btn sm" data-addopt="${i}">Add</button></div>` : ''}
         ${codes.length < (fl.options || []).length ? `<p class="hint">Other options of “${esc(fl.label)}” add nothing here.</p>` : ''}`;
@@ -7840,7 +7841,12 @@ function ctcDraftEditor(el, R, v, head) {
       ${s === 'earning' ? `<div class="rs-card rs-new"><b>Add an allowance</b><div class="rs-row"><label>Name <input id="rsNewName" maxlength="60" placeholder="e.g. Shift allowance"></label>
         <label>Monthly amounts to choose from (₹) <input id="rsNewAmts" placeholder="e.g. 1000, 1500, 2000" style="width:220px"></label><button class="btn sm" id="rsNewAdd">Add allowance</button></div>
         <span class="hint">It is added before Other allowances, which keeps balancing the Gross. The recruiter picks one of the amounts (or None).</span></div>` : ''}</section>`).join('');
-  const choices = () => `<p class="hint">Names of the choices shown on the calculator and their preselected option. Option names are edited with each item.</p>
+  const limitCard = () => { const limBasis = limB(), B = limBasis === 'basic', nm = B ? 'Basic' : 'Gross', pr = [['gross', 'Gross salary (as now)'], ['basic', 'Basic']];
+    return `<section class="rs-card${((old.limit || {}).basis || 'gross') !== limBasis ? ' changed' : ''}"><div class="rs-head"><b>Bonus and Performance Linked Incentive: which amount decides</b></div>
+      <div class="rs-row"><label>Decided on <select data-p="limit.basis" data-t="text">${opts(pr, limBasis, false)}</select></label></div>
+      <p class="hint">Bonus is paid only when ${nm} is ${esc(opText(cfg, 'bonus'))}; the Performance Linked Incentive only when ${nm} is ${esc(opText(cfg, 'pli'))}. The amounts are set per option on the Items tab. ESIC, Conveyance and Medical stay on Gross.${B ? ' With Basic, a structure with no Basic (stipend) counts as Basic 0.' : ''}</p></section>`; };
+  const opText = (c0, id) => { const c = c0.components.find(x => x.id === id), w = c && Object.values(c.values || {}).map(o => o.when).find(Boolean); return w ? `${(CTC_OPS.find(o => o[0] === w.op) || [0, w.op])[1]} ₹${Number(w.value).toLocaleString('en-IN')}` : '(no limit set)'; };
+  const choices = () => limitCard() + `<p class="hint">Names of the choices shown on the calculator and their preselected option. Option names are edited with each item.</p>
     <div class="table-wrap"><table class="rs-tab"><thead><tr><th>Choice</th><th>Preselected</th><th>Note under it</th></tr></thead><tbody>
     ${Object.keys(cfg.flags).map(k => { const f = cfg.flags[k]; return `<tr><td>${txtIn(`flags.${k}.label`, f.label, 'rs-wide')}</td>
       <td><select data-p="flags.${k}.default" data-t="code">${opts(f.options.map(o => [String(o.code), o.label]), String(f.default), false)}</select></td>
@@ -7909,7 +7915,7 @@ function ctcDraftEditor(el, R, v, head) {
         if (t === 'code') { const f = cfg.flags[inp.dataset.p.split('.')[1]]; const o = f.options.find(x => String(x.code) === raw); val = o ? o.code : raw; }
         if (t === 'text' && /\.when$/.test(inp.dataset.p) && inp.tagName === 'SELECT' && /^notes\./.test(inp.dataset.p)) val = raw || undefined;
         if (t === 'text' && /\.(note|subheading)$/.test(inp.dataset.p) && !raw) val = undefined;
-        setP(inp.dataset.p, val); mark(); refreshProblems();
+        setP(inp.dataset.p, val); mark(); refreshProblems(); if (inp.dataset.p === 'limit.basis') draw();
       };
       inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', on);
     });
