@@ -513,6 +513,14 @@ function e2eRun_(trash) {
   t('I4 Net target gives at least the net', function () { const r = apiCtcCalc({ basis: 'net', target: 30000, codes: ctcSample }); return r.totals.net >= 30000 && r.totals.net - 30000 < 5 ? 'net ' + r.totals.net : false; });
   err('I5 CTC needs a target amount', function () { apiCtcCalc({ basis: 'gross', target: 0 }); }, /target amount/);
   t('I6 CTC calculator is admin-only at launch', function () { return can_({ role: ROLES.ADMIN }, 'ctc_use') && !can_({ role: ROLES.HEAD }, 'ctc_use') && !can_({ role: ROLES.TALEAD }, 'ctc_use') && !can_({ role: ROLES.RECRUITER }, 'ctc_use'); });
+  t('I9 letter choice (Production / Support) needed for a letter, prints only its term', function () {
+    const E = ctcEngine_(), cfg = ctcSeedConfig_();
+    cfg.flags.dept_type = { label: 'Employee is onboarded for', group: 'letter', letter: true, required: true, options: [{ code: 'P', label: 'Production' }, { code: 'S', label: 'Support' }] };
+    cfg.notes.push({ id: 'p', en: 'P', only: { flag: 'dept_type', code: 'P' } }, { id: 's', en: 'S', only: { flag: 'dept_type', code: 'S' } });
+    const shown = function (c) { return cfg.notes.filter(function (n) { return E.noteShown(n, {}, { dept_type: c }); }).map(function (n) { return n.id; }).join(); };
+    return E.validate(cfg).length === 0 && E.letterMissing(cfg, { codes: {} }).length === 1 && E.letterMissing(cfg, { codes: { dept_type: 'P' } }).length === 0
+      && shown('P').indexOf('p') >= 0 && shown('P').indexOf('s') < 0 && shown('S').indexOf('s') >= 0 && shown('').indexOf('p') < 0;
+  });
   t('I8 Bonus / PLI on Basic switch: Bonus up to 21,000 Basic, PLI above', function () {
     const E = ctcEngine_(), cfg = ctcSeedConfig_(); cfg.limit = { basis: 'basic' };
     const at = function (g) { const r = E.solve(cfg, { basis: 'gross', target: g, codes: { basic: '1', bonus: '2', pli: '2', pf: '1', esic: '0' }, amounts: {} }); const o = {}; r.lines.forEach(function (l) { o[l.id] = l.monthly; }); return o; };

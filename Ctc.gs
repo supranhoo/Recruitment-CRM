@@ -209,6 +209,23 @@ function ctcEngine_() {
     return f.note && onBasic(cfg, { id: flag }) ? swapGross(f.note) : (f.note || '');
   }
 
+  /** Letter choices (flags marked letter): they decide letter text only, never a rupee. Returns the labels of required ones not chosen. */
+  function letterMissing(cfg, inp) {
+    const out = [];
+    Object.keys(cfg.flags || {}).forEach(function (k) {
+      const f = cfg.flags[k]; if (!f.letter || !f.required) return;
+      const v = inp && inp.codes ? inp.codes[k] : '';
+      if (v === undefined || v === '' || !f.options.some(function (o) { return String(o.code) === String(v); })) out.push(f.label || k);
+    });
+    return out;
+  }
+  /** Whether a letter term prints: its item is paid (when) and its letter choice matches (only). */
+  function noteShown(n, paid, codes) {
+    if (n.when && !(paid[n.when] > 0)) return false;
+    if (n.only && String((codes || {})[n.only.flag]) !== String(n.only.code)) return false;
+    return true;
+  }
+
   /** The result as the page and the letter show it. */
   function report(cfg, inp, r, basis, target, G) {
     const achieved = r[BASIS_KEY[basis]];
@@ -288,6 +305,12 @@ function ctcEngine_() {
       seen[c.id] = true;
     });
     if (bal !== 1) errs.push('Exactly one earning must balance the gross (Other allowances).');
+    (cfg.notes || []).forEach(function (n, i) {
+      if (!n.only) return;
+      const f = cfg.flags[n.only.flag];
+      if (!f) errs.push('Term ' + (i + 1) + ': it is tied to a choice that does not exist.');
+      else if (!f.options.some(function (o) { return String(o.code) === String(n.only.code); })) errs.push('Term ' + (i + 1) + ': it is tied to an option that does not exist.');
+    });
     if (cfg.limit) {
       if (['gross', 'basic'].indexOf(cfg.limit.basis) < 0) errs.push('Bonus and PLI: the amount that decides must be Gross or Basic.');
       if (cfg.limit.items !== undefined && (!Array.isArray(cfg.limit.items) || cfg.limit.items.some(function (x) { return !ids[x] || ids[x].section !== 'annual'; }))) errs.push('Bonus and PLI: the items that follow the switch must be annual items of the rules.');
@@ -295,12 +318,13 @@ function ctcEngine_() {
     Object.keys(cfg.flags).forEach(function (k) {
       const f = cfg.flags[k];
       if (!f.options || !f.options.length) errs.push('Choice "' + (f.label || k) + '" has no options.');
+      else if (f.required && (f.default === undefined || f.default === '')) { /* a letter choice with no preselected option: it must be chosen for each letter */ }
       else if (f.default !== undefined && !f.options.some(function (o) { return String(o.code) === String(f.default); })) errs.push('Choice "' + (f.label || k) + '": the default is not one of its options.');
     });
     return errs;
   }
 
-  return { solve: solve, structure: structure, settle: settle, bands: bands, validate: validate, noteOf: noteOf, round: xround, roundUp: xroundup };
+  return { solve: solve, structure: structure, settle: settle, bands: bands, validate: validate, noteOf: noteOf, letterMissing: letterMissing, noteShown: noteShown, round: xround, roundUp: xroundup };
 }
 
 /** The engine's source, embedded in Index.html so the page computes exactly like the server. */
@@ -550,11 +574,20 @@ function apiCtcSave(d) {
   /* Editing a draft that is a re-run keeps its link to the original. */
   const rerunOf = d.rerunOf ? String(d.rerunOf) : (d.id ? String(ctcRow_(d.id).Rerun_Of || '') : '');
   if (rerunOf && !ctcCanSee_(u, ctcRow_(rerunOf))) throw new Error('You can re-run only your own calculations.');
+  const sentCodes = inp.codes;
   if (!can_(u, 'ctc_codes')) {
     /* Without ctc_codes the structure is the rules' preselected options, or that of the calculation being re-run. */
     const from = rerunOf ? JSON.parse(String(ctcRow_(rerunOf).Inputs_JSON || '{}')) : {};
     inp.codes = from.codes || {}; inp.amounts = from.amounts || {};
   }
+  /* A letter choice (Production or Support) decides letter text only, so everyone may make it. */
+  Object.keys(act.config.flags).forEach(function (k) {
+    const f = act.config.flags[k]; if (!f.letter) return;
+    const v = sentCodes[k];
+    if (v === undefined || v === '') { delete inp.codes[k]; return; }
+    if (!f.options.some(function (o) { return String(o.code) === String(v); })) throw new Error('"' + (f.label || k) + '": choose one of the listed options.');
+    inp.codes[k] = String(v);
+  });
   const r = ctcEngine_().solve(act.config, inp);
   if (r.status === 'unsettled') throw new Error('The structure did not settle, so it cannot be saved. Check the Basic choice.');
   if ((r.warnings || []).length) throw new Error(r.warnings[0]);
@@ -596,6 +629,11 @@ function ctcFinish_(u, r, id, lang, url, extra, from) {
   }
   return ctcOut_(rec, true);
 }
+/** A letter needs every required letter choice (e.g. Production or Support) made. */
+function ctcLetterReady_(r) {
+  const miss = ctcEngine_().letterMissing(ctcActive_().config, JSON.parse(String(r.Inputs_JSON || '{}')));
+  if (miss.length) throw new Error('Choose ' + miss.join(', ') + ' on the calculator before making the letter.');
+}
 function ctcSameRules_(r) {
   const act = ctcActive_();
   if (String(r.Rule_Version) !== act.id) throw new Error('The CTC rules changed to ' + act.id + ' after this was saved. Re-run it on the new rules first.');
@@ -614,7 +652,7 @@ function apiCtcIssue(id, d) {
   if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can issue it.');
   if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is already ' + String(r.Status).toLowerCase() + '.');
   if (ctcApprovalOn_() && !can_(u, 'ctc_approve')) throw new Error('Letters need approval before they are issued. Submit it for approval.');
-  ctcSameRules_(r);
+  ctcSameRules_(r); ctcLetterReady_(r);
   const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : 'en';
   return ctcFinish_(u, r, id, lang, ctcStoreLetter_(r, id, d.pdf), null, 'Draft');
 }
@@ -628,7 +666,7 @@ function apiCtcSubmit(id, d) {
   if (can_(u, 'ctc_approve')) throw new Error('You can approve letters, so you can issue this one yourself.');
   if (String(r.Created_By).toLowerCase() !== u.email) throw new Error('Only the person who made this calculation can submit it.');
   if (String(r.Status) !== 'Draft') throw new Error('Calculation ' + id + ' is ' + String(r.Status).toLowerCase() + ' and cannot be submitted.');
-  ctcSameRules_(r);
+  ctcSameRules_(r); ctcLetterReady_(r);
   const lang = CTC_LANGS_.indexOf((d || {}).language) >= 0 ? d.language : 'en';
   const rec = update_(CTC_CALCS_, id, { Status: 'Pending approval', Language: lang, Submitted_By: u.email, Submitted_At: new Date(), Decision_Note: '' }, u, function (x) {
     if (String(x.Status) !== 'Draft') throw new Error('Calculation ' + id + ' was changed meanwhile. Reload and try again.');
@@ -657,7 +695,7 @@ function apiCtcReview(id, d) {
     return ctcOut_(update_(CTC_CALCS_, id, { Status: 'Draft', Decided_By: u.email, Decided_At: new Date(), Decision_Note: note.slice(0, 500), Submitted_By: '', Submitted_At: '' }, u), true);
   }
   if (action !== 'Approve') throw new Error('Choose Approve or Return.');
-  ctcSameRules_(r);
+  ctcSameRules_(r); ctcLetterReady_(r);
   const lang = CTC_LANGS_.indexOf(d.language) >= 0 ? d.language : (CTC_LANGS_.indexOf(String(r.Language)) >= 0 ? String(r.Language) : 'en');
   return ctcFinish_(u, r, id, lang, ctcStoreLetter_(r, id, d.pdf), { Decided_By: u.email, Decided_At: new Date(), Decision_Note: '' }, 'Pending approval');
 }
@@ -774,7 +812,7 @@ function ctcDiff_(a, b) {
       });
     });
     Object.keys(cfg.flags).forEach(function (k) { const f = cfg.flags[k]; walk(['Choice: ' + (f.label || k)], { label: f.label, default: f.default, options: f.options, note: f.note }); });
-    (cfg.notes || []).forEach(function (n, i) { walk(['Term ' + (n.id || i + 1)], { English: n.en, Hindi: n.hi, 'only when paid': n.when ? labelOf(cfg, n.when) : '' }); });
+    (cfg.notes || []).forEach(function (n, i) { walk(['Term ' + (n.id || i + 1)], { English: n.en, Hindi: n.hi, 'only when paid': n.when ? labelOf(cfg, n.when) : '', 'shown for': n.only ? n.only.flag + ' = ' + n.only.code : '' }); });
     (cfg.explain || []).forEach(function (e, i) { put(['Explanation ' + (i + 1)], e.text); });
     walk(['Letter'], cfg.letter || {});
     out['Bonus and PLI \u203a decided on'] = (cfg.limit && cfg.limit.basis) || 'gross';
