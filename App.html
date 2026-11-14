@@ -7840,6 +7840,8 @@ function ctcDraftEditor(el, R, v, head) {
           <td>${!last && c.slabs.length > 2 ? `<button class="icon-btn sm" data-delslab="${i}:${j}" aria-label="Remove slab" title="Remove slab">✕</button>` : ''}</td></tr>`; }).join('')}</tbody></table>
         <div class="rs-row"><button class="btn sm" data-addslab="${i}">Add a slab</button></div>`;
     }
+    if (c.id === 'mediclaim' && cfg.components.findIndex(x => x.id === 'esic_ee') >= 0 && cfg.components.findIndex(x => x.id === 'esic_ee') < i)
+      body += `<div class="rs-row"><label class="chk"><input type="checkbox" data-unlessesic="${i}" ${c.unless && c.unless.of === 'esic_ee' ? 'checked' : ''}> Not deducted when ESIC is deducted <span class="hint">(an employee covered under ESIC has no Mediclaim)</span></label></div>`;
     const changed = JSON.stringify(c) !== JSON.stringify(old.components.find(x => x.id === c.id) || null) || (c.flag && JSON.stringify(fl) !== JSON.stringify(old.flags[c.flag] || null));
     return `<div class="rs-card${changed ? ' changed' : ''}"><div class="rs-head">${txtIn(P + '.label', c.label, 'rs-name')}<span class="hint">${esc(kindTxt(c))}</span>${changed ? '<span class="badge rs-ch">Changed</span>' : ''}
       ${allowance ? `<button class="btn sm" data-delcomp="${i}">Remove allowance</button>` : ''}</div>${body}</div>`;
@@ -7888,8 +7890,10 @@ function ctcDraftEditor(el, R, v, head) {
       rows.push({ bl, t, a, n, items, ch: items.length > 0 || ['totalCtc', 'grossCtc', 'gross', 'net'].some(k => a.totals[k] !== n.totals[k]) });
     }));
     const shown = D.onlyChanged ? rows.filter(r => r.ch) : rows;
+    const unlessNew = JSON.stringify(cfg.components.map(c => c.unless || null)) !== JSON.stringify(old.components.map(c => c.unless || null)) && String((cfg.flags.esic || {}).default) === '0' && !(base && base.codes.esic && base.codes.esic !== '0');
+    const esicHint = unlessNew ? `<div class="ctc-status info">The \u201cnot deducted when ESIC is deducted\u201d rule shows only for structures with ESIC. ESIC is \u201cNot applicable\u201d in the choices used here, so choose ESIC on the Calculator tab first to see what changes.</div>` : '';
     const cell = (x, y) => x === y ? `${inr(y)}` : `${inr(y)} <b class="${y < x ? 'miss' : 'up'}">${y > x ? '+' : '−'}${inr(Math.abs(y - x)).slice(1)}</b>`;
-    return `<p class="hint">${rows.filter(r => r.ch).length} of ${rows.length} sample targets change. Choices used: ${base ? 'the ones set on the Calculator tab' : 'the preselected ones'}. Monthly amounts; the change is against ${esc(R.active.id)}.</p>
+    return `${esicHint}<p class="hint">${rows.filter(r => r.ch).length} of ${rows.length} sample targets change. Choices used: ${base ? 'the ones set on the Calculator tab' : 'the preselected ones'}. Monthly amounts; the change is against ${esc(R.active.id)}.</p>
       <label class="hint"><input type="checkbox" id="rsOnly" ${D.onlyChanged ? 'checked' : ''}> Only targets that change</label>
       <div class="table-wrap" style="margin-top:8px"><table class="ctc-table"><thead><tr><th>Target</th><th class="num">Gross</th><th class="num">Net in-hand</th><th class="num">Gross CTC</th><th class="num">Total CTC</th><th>Items that change</th></tr></thead><tbody>
       ${shown.length ? shown.map(r => `<tr class="${r.ch ? '' : 'nil'}"><td class="nw">${esc(r.bl)} ${inr(r.t)}</td>${['gross', 'net', 'grossCtc', 'totalCtc'].map(k => `<td class="num">${cell(r.a.totals[k], r.n.totals[k])}</td>`).join('')}<td class="rs-items">${esc(r.items.join(' \u00b7 ')) || '<span class="sub">none</span>'}</td></tr>`).join('') : '<tr class="nil"><td colspan="6">No sample target changes. The change may affect only choices not used here, the letter or labels.</td></tr>'}
@@ -7960,6 +7964,11 @@ function ctcDraftEditor(el, R, v, head) {
       cfg.components.splice(cfg.components.findIndex(c => c.kind === 'balancing'), 0, { id, label: name, section: 'earning', kind: 'choice', flag: id, values });
       mark(); draw(); toast(`${name} added. Save the draft to keep it.`);
     };
+    $$('[data-unlessesic]', el).forEach(b => b.onchange = () => {
+      const c = cfg.components[+b.dataset.unlessesic]; cfg.explain = cfg.explain || [];
+      if (b.checked) { c.unless = { of: 'esic_ee', op: '>', value: 0 }; if (!cfg.explain.some(x => x.ifOff && x.of === c.id)) cfg.explain.push({ ifOff: true, of: c.id, text: 'No ' + c.label + ' deduction: the employee is covered under ESIC.' }); }
+      else { delete c.unless; cfg.explain = cfg.explain.filter(x => !(x.ifOff && x.of === c.id)); }
+      mark(); draw(); });
     if ($('#rsDeptOn')) $('#rsDeptOn').onclick = () => {
       cfg.flags.dept_type = { label: 'Employee is onboarded for', group: 'letter', letter: true, required: true, options: [{ code: 'P', label: 'Production department' }, { code: 'S', label: 'Support function' }] };
       cfg.notes = cfg.notes || [];
