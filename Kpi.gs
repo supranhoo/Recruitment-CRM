@@ -46,6 +46,7 @@ const KPI_COUNT_DEFAULTS_ = {
   BGV: { steps: [{ max: 0, score: 5 }, { max: 1, score: 2 }], otherwise: 0 },
   TRACKER_ACCURACY: { steps: [{ max: 0, score: 5 }], otherwise: 0 }
 };
+let _kpiHandoverOff_ = null;   // true/false overrides the setting for one call (the impact preview)
 let _kpiDraft_ = null;   // a change being previewed: its rows are laid over the saved ones for one call (set and cleared by apiKpiPreview)
 function kpiDefaultRules_(kpi) {
   return JSON.parse(JSON.stringify(KPI_DEFS[kpi] && KPI_DEFS[kpi].count ? KPI_COUNT_DEFAULTS_[kpi] : KPI_PERCENT_DEFAULT_));
@@ -170,6 +171,8 @@ const KPI_RECON_BUCKETS_ = [
   ['ontime', 'Achieved: joined on time', 'Joined in this month within the allowed days.'],
   ['within', 'Achieved: within TAT at month end', 'Not joined by the end of this month (today, in the current month) and its due date had not passed.'],
   ['late', 'Missed: joined late', 'Joined in this month after the allowed days.'],
+  ['handok', 'Achieved: handed over within TAT', 'The position was handed to another recruiter in this month, within the allowed days of this recruiter\u2019s stretch (v183).'],
+  ['handlate', 'Missed: TAT ran out while with this recruiter', 'This recruiter\u2019s stretch ended by a handover after the allowed days, or the TAT ran out while they held the vacancy (v183).'],
   ['closedok', 'Achieved: closed without a hire within TAT', 'Marked Not needed or No vacancy in this month, within the allowed days (v174).'],
   ['closedlate', 'Missed: closed without a hire after TAT', 'Marked Not needed or No vacancy in this month, after the allowed days (v174).'],
   ['overdue', 'Missed: past TAT, not filled', 'Its due date had passed by the end of this month and nobody had joined yet. It is a miss in every month until it is filled.'],
@@ -191,6 +194,23 @@ function kpiRecon_(month, recruiter, kpi, noVia) {
   const targets = kpiTargets_(), clocks = kpiClocks_(), start = month + '-01', end = addDays_(addDays_(start.slice(0, 8) + '28', 4).slice(0, 8) + '01', -1);
   const want = recruiter && recruiter !== 'TEAM_TOTAL' ? String(recruiter).trim().toLowerCase() : '';
   const out = {}; KPI_RECON_BUCKETS_.forEach(function (b) { out[b[0]] = []; });
+  const allLines = readTable_(T.MRF.name).rows, plan = kpiStretchPlan_(allLines), cand = {}, skipReplaced = {};
+  const COUNTED = ['ontime', 'within', 'late', 'overdue', 'closedok', 'closedlate', 'handok', 'handlate'];
+  // v183: the earlier holders' stretches of this month (the original line's row moves from "Not counted" into its first holder's list)
+  const srows = [];
+  plan.stretches.forEach(function (vs) {
+    const rec = vs.holder; if (want && rec.toLowerCase() !== want) return;
+    const l = vs.vline, clk = kpiStretchClock_(vs, clocks);
+    if (!kpiWorkedIn_(clk, month)) return;
+    const d = kpiDue_(l, kpi, targets, rec, clk, 'Handed over');
+    let bucket;
+    if (!d) { const t = kpiTargetFor_(l, kpi, targets, rec, clk); if (t && !levelMatch_(t.levels, l.Grade)) return; bucket = 'notarget'; }
+    else bucket = kpiMonthStatus_(clk, d, month, clk.today).why;
+    const it = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: 'Handed over', receipt: vs.from, doj: '' };
+    Object.assign(it, kpiReconRow_(l, 'Handed over', clk, d, bucket, kpi, targets, rec, end, null), { stretchFrom: vs.from, stretchTo: vs.to, handTo: vs.next, handOn: '', heldDays: '', prevRec: '' });
+    srows.push({ bucket: bucket, it: it, chain: vs.chain, rec: rec });
+    if (vs.idx === 0) skipReplaced[vs.chain + '|' + rec.toLowerCase()] = true;
+  });
   const reconLine = function (l, cr) {
     const rec = cr ? cr.name : (String(l.Recruiter || 'Unassigned').trim() || 'Unassigned');
     if (want && rec.toLowerCase() !== want) return;
@@ -215,12 +235,21 @@ function kpiRecon_(month, recruiter, kpi, noVia) {
       else if (String(l.Fill_Type || '') === 'Internal') bucket = 'internal';
       else return;
     }
+    if (bucket === 'replaced' && skipReplaced[String(l.Line_ID) + '|' + rec.toLowerCase()]) return;   // v183: counted as its first holder's stretch
     const it = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: status,
       receipt: receipt, doj: doj };
     Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end, cr));
     out[bucket].push(it);
+    const ck = !cr && plan.chainOf[String(l.Line_ID)];
+    if (ck && COUNTED.indexOf(bucket) >= 0) (cand[ck + '|' + rec.toLowerCase()] = cand[ck + '|' + rec.toLowerCase()] || []).push({ bucket: bucket, it: it, live: true });
   };
-  readTable_(T.MRF.name).rows.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
+  allLines.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
+  srows.forEach(function (s) { out[s.bucket].push(s.it); if (COUNTED.indexOf(s.bucket) >= 0) (cand[s.chain + '|' + s.rec.toLowerCase()] = cand[s.chain + '|' + s.rec.toLowerCase()] || []).push({ bucket: s.bucket, it: s.it, live: false }); });
+  Object.keys(cand).forEach(function (key) {   // one row per holder and vacancy: the worst result wins, else the live line, else the latest
+    const a = cand[key]; if (a.length < 2) return;
+    const pick = a.filter(function (e) { return e.it.result === 'Missed'; })[0] || a.filter(function (e) { return e.live; })[0] || a[a.length - 1];
+    a.forEach(function (e) { if (e !== pick) out[e.bucket] = out[e.bucket].filter(function (x) { return x !== e.it; }); });
+  });
   if (!noVia) kpiReconVia_(month, kpi, out, want);
   const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
@@ -245,6 +274,71 @@ function kpiReconVia_(month, kpi, out, want) {
     it.viaResult = f ? (f.it.result || 'Not counted') : 'Not in this list';
     it.viaWhere = f ? f.title : 'Not in this list for ' + month + ' (' + positionStatus_(cur) + ')';
   });
+}
+/** v183: Settings KPI_HANDOVER_STRETCH = Off turns the stretch rule off (the rollback); the impact preview overrides it for one call. */
+function kpiHandoverOff_() {
+  if (_kpiHandoverOff_ !== null) return !!_kpiHandoverOff_;
+  return /^(off|no|0|false)$/i.test(String(settings_().KPI_HANDOVER_STRETCH || '').trim());
+}
+/**
+ * v183: each holder of an unfilled vacancy is judged for their own stretch. For every vacancy chain (an original line and its replacements, or a
+ * single line) whose lead recruiter changed before anything joined, the Audit_Log changes of the Recruiter field give the holders in order. Every
+ * holder except the last (who is judged on the live line, v179) gets a stretch {holder, from, to, next, line}: from the vacancy start for the first
+ * holder, from the handover day for later ones, to the next handover. The clock and allowed days come from the line that carried the stretch (the
+ * original for the first, the live line for the rest). A chain whose last holder is not the live line's recruiter, or without recorded changes, gets no
+ * stretches and behaves as before. Returns { stretches, chainOf: {Line_ID: chain root id} }.
+ */
+function kpiStretchPlan_(lines) {
+  const store = typeof _tables === 'object' && _tables ? _tables : (kpiStretchPlan_.c = kpiStretchPlan_.c || {});
+  if (store.__kpistr && store.__kpistrOff === kpiHandoverOff_()) return store.__kpistr;
+  const out = { stretches: [], chainOf: {} };
+  store.__kpistr = out; store.__kpistrOff = kpiHandoverOff_();
+  if (store.__kpistrOff) return out;
+  const byId = {}, childOf = {};
+  lines.forEach(function (l) { byId[String(l.Line_ID)] = l; const p = String(l.Parent_Line_ID || '').trim(); if (p) childOf[p] = l; });
+  const recChg = {}, asgOld = {};
+  let rows = []; try { rows = readTableFrom_('Audit_Log', 'Timestamp', '2025-04-01').rows; } catch (e) { rows = []; }
+  rows.forEach(function (a) {
+    if (String(a.Sheet) !== T.MRF.name) return;
+    const id = String(a.Record_ID), f = String(a.Field), day = ymd_(a.Timestamp); if (!day) return;
+    if (f === 'Recruiter') { const o = String(a.Old_Value || '').trim(), n = String(a.New_Value || '').trim(); if (o && n && o.toLowerCase() !== n.toLowerCase()) (recChg[id] = recChg[id] || []).push({ day: day, from: o, to: n }); }
+    else if (f === 'Assigned_On') { const o = String(a.Old_Value || '').slice(0, 10); if (/^\d{4}-\d{2}-\d{2}$/.test(o)) (asgOld[id] = asgOld[id] || []).push({ day: day, v: o }); }
+  });
+  lines.forEach(function (root) {
+    const p0 = String(root.Parent_Line_ID || '').trim(); if (p0 && byId[p0]) return;   // not the start of a chain
+    const chain = [root]; let cur = root, g = 0;
+    while (g++ < 10 && childOf[String(cur.Line_ID)] && chain.indexOf(childOf[String(cur.Line_ID)]) < 0) { cur = childOf[String(cur.Line_ID)]; chain.push(cur); }
+    const live = chain[chain.length - 1];
+    const doj = chain.map(function (l) { return ymd_(l.Actual_DOJ); }).filter(Boolean).sort()[0] || '';
+    const ev = [].concat.apply([], chain.map(function (l) { return recChg[String(l.Line_ID)] || []; })).filter(function (e) { return !doj || e.day < doj; }).sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : 0; });
+    if (!ev.length) return;
+    const oldAsg = [].concat.apply([], chain.map(function (l) { return asgOld[String(l.Line_ID)] || []; })).sort(function (a, b) { return a.day < b.day ? -1 : 1; })[0];
+    const rootMoved = !!(recChg[String(root.Line_ID)] || []).length;
+    let lastFrom = (rootMoved ? (oldAsg ? oldAsg.v : posStart_(root)) : tatStart_(root)) || posStart_(root);
+    if (!lastFrom) return;
+    let holder = ev[0].from; const sts = [];
+    ev.forEach(function (e) { if (e.to.toLowerCase() === holder.toLowerCase()) return; if (e.day > lastFrom) sts.push({ holder: holder, from: lastFrom, to: e.day, next: e.to }); holder = e.to; lastFrom = e.day; });
+    if (!sts.length || holder.toLowerCase() !== String(live.Recruiter || '').trim().toLowerCase()) return;
+    const la = ymd_(live.Assigned_On), last = sts[sts.length - 1];
+    if (la && la > last.from && daysBetween_(last.to, la) >= -7 && daysBetween_(last.to, la) <= 7) last.to = la;   // the live clock starts on its assigned day
+    const rid = String(root.Line_ID); let any = false;
+    sts.forEach(function (st, i) {
+      const src = i === 0 ? root : live;
+      if (String(src.Fill_Type || '') === 'Internal') return;
+      st.chain = rid; st.idx = i;
+      st.vline = Object.assign({}, src, { Line_ID: rid + '~' + i, MRF_No: root.MRF_No, Recruiter: st.holder, Actual_DOJ: '', Replaced_By: '', Backout_Date: '' });
+      out.stretches.push(st); any = true;
+    });
+    if (any) chain.forEach(function (l) { out.chainOf[String(l.Line_ID)] = rid; });
+  });
+  return out;
+}
+/** The clock of one stretch: the line\'s numbers from the stretch start, ended by the handover (judged like a closure, but the notice still counts). */
+function kpiStretchClock_(vs, k) {
+  const clk = kpiLineClock_(vs.vline, k, vs.from);
+  clk.end = vs.to; clk.doj = ''; clk.handover = true;
+  clk.hold = kpiHoldDaysIn_(vs.vline, vs.from, vs.to); clk.paused = pausedDays_(vs.vline, clk.ex.pauses, vs.from, vs.to);
+  return clk;
 }
 /**
  * v182: a position handed to another recruiter after it had started (a replacement keeps the original start; the new holder's clock starts at the
@@ -277,19 +371,20 @@ function kpiHoldDaysIn_(l, start, end) {
 }
 function kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, monthEnd, cr) {
   const t = clk.receipt ? kpiTargetFor_(l, kpi, targets, rec, clk) : null, today = clk.today || ymd_(new Date());
-  const cutoff = monthEnd > today ? today : monthEnd, fin = clk.doj || clk.end, dojKra = fin && fin <= cutoff ? fin : cutoff;   // v166: a later joining does not count in this month
+  const cutoff = monthEnd > today ? today : monthEnd;   // v166: a later joining does not count in this month
   // v176: the closing day of a position by its own status (the No vacancy / Not needed date fields also hold dates of earlier or other statuses)
   const closed = clk.doj || (status === 'Closed' ? ymd_(l.Internal_Effective_Date) : status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date)
     : status === 'Replaced' ? ymd_(l.Replaced_On) : status === 'Removed' ? ymd_(l.Not_Needed_Date) : '');
+  const fin = clk.doj || clk.end || (status === 'Replaced' || status === 'Removed' ? closed : ''), dojKra = fin && fin <= cutoff ? fin : cutoff;   // v183: a Replaced or Removed row runs to its own end, not to the month end
   const finished = !!fin && fin <= cutoff;
   const holdD = !clk.receipt ? '' : finished ? clk.hold : kpiHoldDaysIn_(l, clk.receipt, dojKra), pausedD = !clk.receipt ? '' : finished ? clk.paused : pausedDays_(l, clk.ex.pauses, clk.receipt, dojKra);
-  const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed', closedok: 'Achieved', closedlate: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
+  const res = { ontime: 'Achieved', within: 'Achieved', late: 'Missed', overdue: 'Missed', closedok: 'Achieved', closedlate: 'Missed', handok: 'Achieved', handlate: 'Missed' }[bucket] || 'Not counted';   // v166: a counted position is Achieved or Missed in every month
   const remark = String(l.Remarks || '');
   return { dept: String(l.Dept || ''), nres: l.No_Of_Positions == null ? '' : String(l.No_Of_Positions), appr: String(l.Approval_Status || ''), nv: status === 'No Vacancy' ? ymd_(l.No_Vacancy_Date) : '', nn: status === 'Not Needed' ? ymd_(l.Not_Needed_Date) : '', holdOn: status === 'On Hold' ? ymd_(l.Not_Needed_Date) : '',
     dojIn: clk.doj && clk.doj <= cutoff ? clk.doj : '', handOn: cr ? '' : kpiHandover_(l).handOn || '', heldDays: cr ? '' : kpiHandover_(l).heldDays == null ? '' : kpiHandover_(l).heldDays, prevRec: cr ? '' : kpiHandover_(l).prevRec || '', rcv: ymd_(l.Receipt_Date), apprOn: ymd_(l.Approved_On), asgOn: ymd_(l.Assigned_On), carried: ymd_(l.TAT_Start_From), credit: cr ? 'Tagged' : 'Lead', exApproved: d ? clk.ex.days : '', exOther: d ? Math.max(0, d.allowed - d.std - clk.ex.days) : '',
     osent: String(l.Offer_Sent || ''), odate: ymd_(l.Offer_Date), edoj: ymd_(l.EDOJ), closed: closed, notice: Number(l.Notice_Period_Days) || '', bo: ymd_(l.Backout_Date),
     rmk: remark.length > 600 ? remark.slice(0, 600) + '\u2026' : remark, std: d ? d.std : '', allowed: d ? d.allowed : '', exm: d ? d.allowed - d.std : '',
-    logic: clk.receipt ? (cr ? 'Assigned (tagged recruiter)' : kpiStartSource_(l)) + (clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
+    logic: clk.receipt ? (clk.handover ? 'Stretch start' : cr ? 'Assigned (tagged recruiter)' : kpiStartSource_(l)) + (clk.handover ? ' to handover' : clk.end && !clk.doj ? ' to closing date' : ' to DOJ') + (d && d.byOffer ? ' \u00b7 notice from the offer' : '') : '', dojKra: clk.receipt ? dojKra : '', due: d ? d.due : '',
     days: clk.receipt ? Math.max(0, daysBetween_(clk.receipt, dojKra) - holdD - pausedD) : '', result: res };
 }
 function apiKpiRecon(month, recruiter, kpi) {
@@ -307,7 +402,7 @@ function kpiClocks_() {
   return { grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, exCtx: { exempt: exemptIndex_() }, exToday: ymd_(new Date()), ruleCtx: tatContext_() };
 }
 /** A line that can be worked on for the Timely closure KPI: Open, Offered or Closed, not filled internally. */
-function kpiWorkable_(l, status) { return (['Open', 'Offered', 'Closed'].indexOf(status) >= 0 || !!kpiClosedOn_(l, status)) && String(l.Fill_Type || '') !== 'Internal'; }
+function kpiWorkable_(l, status) { return (['Open', 'Offered', 'Closed', 'Handed over'].indexOf(status) >= 0 || !!kpiClosedOn_(l, status)) && String(l.Fill_Type || '') !== 'Internal'; }
 /**
  * v174: the day a position was closed without a hire (Not needed or No vacancy date), or '' (a joined position, another status, or no date).
  * Until that day the position was being worked on; the day acts like a joining date for the clock.
@@ -346,19 +441,19 @@ function kpiTargetFor_(l, kpi, targets, rec, clk) {
 function kpiMonthStatus_(clk, d, month, today) {
   const end = addDays_(addDays_(month + '-28', 4).slice(0, 8) + '01', -1), cut = today && end > today ? today : end;
   if (clk.doj && clk.doj <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: ok ? 'ontime' : 'late', cut: cut }; }
-  if (!clk.doj && clk.end && clk.end <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: ok ? 'closedok' : 'closedlate', cut: cut }; }   // v174: closed without a hire: the closing day is judged like a joining
+  if (!clk.doj && clk.end && clk.end <= cut) { const ok = d.days <= d.allowed; return { ok: ok, why: clk.handover ? (ok ? 'handok' : 'handlate') : (ok ? 'closedok' : 'closedlate'), cut: cut }; }   // v174: closed without a hire: the closing day is judged like a joining
   const ok = d.due >= cut;
   return { ok: ok, why: ok ? 'within' : 'overdue', cut: cut };
 }
 function kpiDue_(l, kpi, targets, rec, clk, status, flatDays) {
-  if (!clk.receipt || (['Open', 'Offered', 'Closed'].indexOf(status) < 0 && !(clk.end && ['Not Needed', 'No Vacancy'].indexOf(status) >= 0)) || String(l.Fill_Type || '') === 'Internal') return null;
+  if (!clk.receipt || (['Open', 'Offered', 'Closed'].indexOf(status) < 0 && !(clk.end && ['Not Needed', 'No Vacancy', 'Handed over'].indexOf(status) >= 0)) || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
   if (!t || !levelMatch_(t.levels, l.Grade)) return null;
   // Notice beyond the grace is always added (v151); an offer sent within the TAT runs the full notice from the offer (v152).
   /* v167: the days are the grade's own TAT rule (clk.std); the KPI target only says which levels count. flatDays = the target's single
      number, as before v167, used only for the comparison download (and when a clock carries no grade days). */
   const std = !flatDays && clk.std ? clk.std : t.days;
-  const shut = !clk.doj && !!clk.end;   // closed without a hire (v174): nobody joins, so the notice period plays no part
+  const shut = !clk.doj && !!clk.end && !clk.handover;   // closed without a hire (v174): nobody joins, so the notice period plays no part
   const a = tatAllowed_(clk.receipt, std + clk.ex.days, shut ? 0 : clk.notice, shut ? 0 : clk.noticeDays, clk.hold, clk.paused, shut ? '' : clk.offer), allowed = a.allowed;
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = (clk.doj || clk.end) ? (clk.doj || clk.end).slice(0, 7) : '';
   const days = (clk.doj || clk.end) ? Math.max(0, daysBetween_(clk.receipt, clk.doj || clk.end) - clk.hold - clk.paused) : '';
@@ -386,23 +481,26 @@ function computeKpis_(fy) {
   const bucket = bucketMain;
   const inFy = function (m) { return months.indexOf(m) >= 0; };
   const clocks = kpiClocks_(), nowMonth = ymd_(new Date()).slice(0, 7);
+  const plan = kpiStretchPlan_(lines), pend = {};   // v183: stretches of earlier holders, and the one-entry-per-holder merge
 
-  const doLine = function (l, cr) {
+  const doLine = function (l, cr, vs) {
     const bucket = cr ? bucketExtra : bucketMain;   // a tagged recruiter's credit goes to their own cells; the lead's goes exactly where it always did
-    const rec = cr ? cr.name : (String(l.Recruiter || 'Unassigned').trim() || 'Unassigned');
-    const receipt = cr ? cr.from : tatStart_(l), doj = ymd_(l.Actual_DOJ);
-    const status = positionStatus_(l);
+    const rec = vs ? vs.holder : cr ? cr.name : (String(l.Recruiter || 'Unassigned').trim() || 'Unassigned');
+    const receipt = vs ? vs.from : cr ? cr.from : tatStart_(l), doj = vs ? '' : ymd_(l.Actual_DOJ);
+    const status = vs ? 'Handed over' : positionStatus_(l);
+    const ck = cr ? '' : (vs ? vs.chain : plan.chainOf[String(l.Line_ID)]) || '';
     // Recruiter clock adjustments, as on the TAT screens: approved exemptions that apply to the recruiter, notice beyond
     // the grace (unless the Head of HR rejected it) and on-hold / paused days, which are not counted against the recruiter.
-    const clk = kpiLineClock_(l, clocks, cr ? cr.from : ''), ex = clk.ex, hold = clk.hold, paused = clk.paused;
+    const clk = vs ? kpiStretchClock_(vs, clocks) : kpiLineClock_(l, clocks, cr ? cr.from : ''), ex = clk.ex, hold = clk.hold, paused = clk.paused;
     const brief = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), receipt: receipt, doj: doj,
       hold: hold, paused: paused, extra: ex.days, reasons: ex.reasons.join('; ') };
     // Where the TAT start comes from, so the drill-down can say which date it is (the MRF approved date, not the received date).
-    if (cr) brief.credit = 'tagged'; else Object.assign(brief, kpiHandover_(l));   // v182: a handed-over position says from when the holder is charged
+    if (cr) brief.credit = 'tagged'; else if (!vs) Object.assign(brief, kpiHandover_(l));   // v182: a handed-over position says from when the holder is charged
     const startFrom = cr ? 'assigned' : tatStartBasis_(l) === 'assigned' && ymd_(l.Assigned_On) === ymd_(l.Approved_On) ? 'approved' : tatStartBasis_(l);
     if (startFrom !== 'approved') brief.from = startFrom;   // the usual case (counted from the MRF approved date) is left out to keep the result small
     if (startFrom === 'assigned' && ymd_(l.Approved_On)) brief.appr = ymd_(l.Approved_On);
     if (ymd_(l.Receipt_Date) && ymd_(l.Receipt_Date) !== receipt) brief.recv = ymd_(l.Receipt_Date);
+    if (vs) { brief.from = 'stretch'; brief.stretchFrom = vs.from; brief.stretchTo = vs.to; brief.handTo = vs.next; delete brief.recv; }   // v183: an earlier holder\u2019s stretch
 
     // 1 + 2 + 3. Timely closure (all levels), M-level and W-level fulfilment (v166): every position worked on in a month is either
     // Achieved or Missed in that month (kpiMonthStatus_). Rate = achieved \u00f7 worked on. Each KPI counts only the positions of its own
@@ -414,28 +512,37 @@ function computeKpis_(fy) {
       months.forEach(function (m) {
         if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
         const c = bucket(rec, kpi, m), st = kpiMonthStatus_(clk, d, m, clocks.exToday);
-        if (dFlat && kpiMonthStatus_(clk, dFlat, m, clocks.exToday).ok) c.oNum = (c.oNum || 0) + 1;
-        c.worked++; c.den++;
-        if (st.ok) c.num++;
-        if (st.why === 'ontime') c.workedOk++;
-        if (st.why !== 'within') {
-          const it = Object.assign({ due: d.due, allowed: d.allowed, std: d.std, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
-          if (st.why === 'overdue') it.doj = '';   // in this month it had not joined yet
-          if (st.why === 'closedok' || st.why === 'closedlate') { it.doj = ''; it.closedOn = clk.end; it.closedAs = status; }   // v174: closed without a hire
-          if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
-          else if (clk.notice) it.notice = clk.notice;
-          c.items.push(it);
-        }
-        if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
+        const apply = function () {
+          if (dFlat && kpiMonthStatus_(clk, dFlat, m, clocks.exToday).ok) c.oNum = (c.oNum || 0) + 1;
+          c.worked++; c.den++;
+          if (st.ok) c.num++;
+          if (st.why === 'ontime') c.workedOk++;
+          if (st.why !== 'within') {
+            const it = Object.assign({ due: d.due, allowed: d.allowed, std: d.std, days: st.why === 'overdue' ? '' : d.days, ok: st.ok, why: st.why, status: status }, brief);
+            if (st.why === 'overdue') it.doj = '';   // in this month it had not joined yet
+            if (st.why === 'closedok' || st.why === 'closedlate') { it.doj = ''; it.closedOn = clk.end; it.closedAs = status; }   // v174: closed without a hire
+            if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
+            else if (clk.notice) it.notice = clk.notice;
+            c.items.push(it);
+          }
+          if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
+        };
+        if (ck) { const key = rec + '|' + ck + '|' + kpi + '|' + m; (pend[key] = pend[key] || []).push({ ok: st.ok, live: !vs, apply: apply }); }   // v183: one entry per holder, vacancy and month
+        else apply();
       });
     });
 
     // 3. Offer backout rate (v150) — candidates who backed out in the month ÷ positions worked on in the month × 100.
     // The backout is counted in the month of its date, for the position's recruiter; the positions worked on are counted in the loop above.
-    const backM = ymd_(l.Backout_Date).slice(0, 7);
+    const backM = vs ? '' : ymd_(l.Backout_Date).slice(0, 7);
     if (backM && inFy(backM)) { const c = bucket(rec, 'OFFER_BACKOUT', backM); c.num++; c.items.push(Object.assign({ event: 'Backout', date: ymd_(l.Backout_Date) }, brief)); }
   };
   lines.forEach(function (l) { doLine(l, null); posTaggedCredits_(l).forEach(function (cr) { doLine(l, cr); }); });
+  plan.stretches.forEach(function (vs) { doLine(vs.vline, null, vs); });   // v183: the earlier holders\u2019 stretches
+  Object.keys(pend).forEach(function (key) {   // a holder counts once per vacancy and month: the worst result wins, else the live line, else the latest
+    const a = pend[key], pick = a.filter(function (e) { return !e.ok; })[0] || a.filter(function (e) { return e.live; })[0] || a[a.length - 1];
+    pick.apply();
+  });
 
   // ---- Compliance KPIs (scored from KPI_CAPTURE_FROM onward) ----
   const s = settings_();

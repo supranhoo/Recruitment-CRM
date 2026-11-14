@@ -308,3 +308,42 @@ function apiKpiSave(draft, confirm) {
     return out;
   });
 }
+
+
+/* ---------------- Handover rule (v183): impact preview and switch ---------------- */
+
+/**
+ * Each holder of an unfilled vacancy is judged for their own stretch (Kpi.gs kpiStretchPlan_). This lists every scorecard cell that the rule changes for a
+ * financial year (rule off against rule on) and the stretches it adds, so the effect on past months is seen before it is relied on. Leads; read only.
+ */
+function apiKpiHandoverPreview(fy) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can see this.');
+  fy = Number(fy) || kpiCurrentFy_();
+  const enabled = !kpiHandoverOff_(); let before, after, plan;
+  try {
+    _kpiHandoverOff_ = true; _tables = {}; before = computeKpis_(fy).data;
+    _kpiHandoverOff_ = false; _tables = {}; after = computeKpis_(fy).data; plan = kpiStretchPlan_(readTable_(T.MRF.name).rows);
+  } finally { _kpiHandoverOff_ = null; _tables = {}; }
+  const changes = [], pick = function (c) { return c ? { worked: c.worked || 0, missed: c.missed != null ? c.missed : (c.den - c.num), pct: c.pct == null ? null : c.pct, score: c.score == null ? null : c.score } : { worked: 0, missed: 0, pct: null, score: null }; };
+  Object.keys(after).forEach(function (rec) {
+    KPI_TAT_.forEach(function (k) {
+      const a = after[rec][k] || {}, b = (before[rec] || {})[k] || {};
+      Object.keys(a).forEach(function (m) {
+        const x = pick(b[m]), y = pick(a[m]);
+        if (x.worked !== y.worked || x.missed !== y.missed || x.pct !== y.pct || x.score !== y.score) changes.push({ recruiter: rec === 'TEAM_TOTAL' ? 'Whole team' : rec, kpi: KPI_DEFS[k].name, month: m, before: x, after: y });
+      });
+    });
+  });
+  const byId = {}; readTable_(T.MRF.name).rows.forEach(function (l) { byId[String(l.Line_ID)] = l; });
+  const stretches = plan.stretches.map(function (s) { return { mrf: String(s.vline.MRF_No || ''), position: String(s.vline.Position || ''), holder: s.holder, from: s.from, to: s.to, next: s.next }; });
+  return { fy: fy, enabled: enabled, canEdit: can_(u, 'kpi_edit'), changes: changes.slice(0, 600), changeCount: changes.length, stretches: stretches };
+}
+/** Switches the handover rule on or off (Head of HR, Admin). Off restores the earlier way of counting. */
+function apiKpiHandoverSet(on) {
+  const u = currentUser_(); ensureSchema_(); kpiEditGuard_(u);
+  const v = on ? 'On' : 'Off';
+  withLock_(function () { setSetting_('KPI_HANDOVER_STRETCH', v, 'Each holder of an unfilled vacancy is judged for their own stretch (v183). Off = the earlier way.'); audit_(u, 'Settings', 'KPI_HANDOVER_STRETCH', 'Update', 'Value', '', v); });
+  try { PropertiesService.getScriptProperties().setProperty('KPI_DIRTY_AT', String(Date.now())); dropStale_('Settings'); } catch (e) { }
+  return { enabled: !!on };
+}

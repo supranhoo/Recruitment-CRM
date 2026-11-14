@@ -574,6 +574,7 @@ function createReplacement_(line, app, when, reason, u) {
   obj.Remarks = 'Replacement for ' + (line.MRF_No || line.Line_ID) + ' after ' + (c.Name || app.Candidate_ID) + ' backed out on ' + ymd_(when) + (reason ? ' (' + reason + ')' : '') + '.';
   Object.assign(obj, storedTat_(computeTat_(obj, tatContext_())));
   const repl = insert_(T.MRF, obj, u);
+  try { posRecSetLead_(repl.Line_ID, repl.Recruiter, u); } catch (e) { console.error('Replacement lead row: ' + e); }   // v183: the replacement records its holder like any position, so later handovers have a history
   update_(T.MRF, line.Line_ID, { Replaced_By: repl.Line_ID, Replaced_On: when, Backout_Date: when, Candidate_ID: app.Candidate_ID }, u);
   const moved = [];
   readTable_(T.APP.name, true).rows.forEach(function (a) {
