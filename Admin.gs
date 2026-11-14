@@ -176,6 +176,8 @@ function dataChecks_() {
   const c7 = add('selected_unlinked', 'Selected candidates not linked to a position', 'Link them so the position shows who filled it. Only records entered through the app are checked.', 'CAND');
   const c8 = add('notice_edoj', 'Expected joining later than offer + notice', 'The expected joining date is more than 14 days after the offer date plus the notice period: the notice or the date is probably wrong.', 'MRF');
   const c9 = add('daily_dup', 'Daily log entries logged twice for one position and day', 'Their counts are added up, so the day is counted twice. Identical copies can be removed with the button; entries with different numbers need a person to decide.', 'FUNNEL');
+  const c14 = add('handover_history', 'Handover without a recorded recruiter change', 'The assigned date is later than the carried original start, but the change log has no recruiter change for the vacancy, so the earlier holder cannot be judged for their stretch (v183). Check the position history or correct the assigned date.', 'MRF');
+  const stretchPlan = kpiStretchPlan_(readTable_(T.MRF.name).rows);
   const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
   const c13 = add('dates_disagree', 'Position dates do not agree', 'The TAT start is before the MRF received date, the approved / assigned dates are out of order, or a No vacancy / Not needed date sits on a position with another status. The KPI reports use these dates: correct the position.', 'MRF');
   const c12 = add('closed_nodate', 'Not needed / No vacancy without a closing date', 'The date the position was marked Not needed or No vacancy is blank, so the KPI cannot count the months it was worked on. Add the date on the position.', 'MRF');
@@ -206,7 +208,8 @@ function dataChecks_() {
       if (rec && apx && apx < rec) probs.push('approved ' + apx + ' is before received ' + rec);
       if (ymd_(l.No_Vacancy_Date) && stx2 !== 'No Vacancy') probs.push('a No vacancy date on a ' + stx2 + ' position');
       if (ymd_(l.Not_Needed_Date) && ['Not Needed', 'On Hold', 'Removed'].indexOf(stx2) < 0) probs.push('a Not needed / hold date on a ' + stx2 + ' position');
-      if (probs.length) c13.items.push({ id: l.Line_ID, label: label, detail: probs.join('; ') }); }
+      if (probs.length) c13.items.push({ id: l.Line_ID, label: label, detail: probs.join('; ') });
+      const ho = kpiHandover_(l); if (ho.handOn && !kpiHandoverOff_() && !stretchPlan.chainOf[String(l.Line_ID)]) c14.items.push({ id: l.Line_ID, label: label, detail: 'Handed over on ' + ho.handOn + ' but no recruiter change is recorded: the earlier holder is not judged' }); }
     const nd = Number(l.Notice_Period_Days) || 0, edoj = ymd_(l.EDOJ);
     if (positionStatus_(l) === 'Offered' && offer && nd > 0 && edoj) {
       const lim = addDays_(offer, nd), late = daysBetween_(lim, edoj);
