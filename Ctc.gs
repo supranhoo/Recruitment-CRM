@@ -55,15 +55,18 @@ function ctcEngine_() {
     return v === undefined || v === null ? '' : String(v);
   }
   /** One component's monthly amount. */
+  /** "Skip when": a component (or option) with `unless` is nil while that item's amount meets the test, e.g. no Mediclaim while ESIC is deducted. */
+  function skipped(u, vals, ctx) { return !!u && test(baseOf(u.of, vals, ctx), u.op, Number(u.value)); }
   function evalComp(cfg, c, inp, vals, ctx) {
     const rnd = c.round === 'up' ? xroundup : xround;
+    if (skipped(c.unless, vals, ctx)) return 0;
     if (c.kind === 'input') return xround(Number((inp.amounts || {})[c.id]) || 0);
     if (c.kind === 'fixed') return holds(c.when, vals, ctx) ? Number(c.amount) || 0 : 0;
     if (c.kind === 'pct') return holds(c.when, vals, ctx) ? rnd(baseOf(c.of, vals, ctx) * c.pct / 100) : 0;
     if (c.kind === 'choice') {
       const code = codeOf(cfg, inp, c.flag);
       const o = (c.values || {})[code];
-      if (!o || !holds(o.when, vals, ctx, onBasic(cfg, c))) return 0;
+      if (!o || !holds(o.when, vals, ctx, onBasic(cfg, c)) || skipped(o.unless, vals, ctx)) return 0;
       if (o.amount !== undefined) return rnd(Number(o.amount) || 0);
       let x = baseOf(o.base, vals, ctx) * o.pct / 100;
       if (o.cap !== undefined && o.cap !== null && o.cap !== '') x = Math.min(x, Number(o.cap));
@@ -167,6 +170,32 @@ function ctcEngine_() {
         starts[lo] = 1;
       });
     });
+    /* A component skipped while another item is deducted (Mediclaim while ESIC): the Gross where that item switches on or
+       off is a band edge, found by search inside each band so the jump is never missed. */
+    const conds = [];
+    if (inp) cfg.components.forEach(function (c) {
+      if (c.unless && !BASES[c.unless.of]) conds.push(c.unless);
+      Object.keys(c.values || {}).forEach(function (k) { const u = c.values[k].unless; if (u && !BASES[u.of]) conds.push(u); });
+    });
+    if (conds.length) {
+      const memo = {}, at = function (g) { return memo[g] || (memo[g] = settle(cfg, inp, g)); };
+      const truth = function (u, g) { return test(at(g).values[u.of] || 0, u.op, Number(u.value)); };
+      for (let pass = 0; pass < 3; pass++) {
+        const list = Object.keys(starts).map(Number).filter(function (n) { return n >= 0 && n <= CAP; }).sort(function (a, b) { return a - b; });
+        let changed = false;
+        list.forEach(function (lo, i) {
+          const hi = i + 1 < list.length ? list[i + 1] - 1 : CAP;
+          conds.forEach(function (u) {
+            const th = truth(u, hi);
+            if (truth(u, lo) === th || lo >= hi) return;
+            let a = lo, b = hi;
+            while (a < b) { const m = Math.floor((a + b) / 2); if (truth(u, m) === th) b = m; else a = m + 1; }
+            if (a > lo && !starts[a]) { starts[a] = 1; changed = true; }
+          });
+        });
+        if (!changed) break;
+      }
+    }
     const s = Object.keys(starts).map(Number).filter(function (n) { return n >= 0 && n <= CAP; }).sort(function (a, b) { return a - b; });
     return s.map(function (lo, i) { return [lo, i + 1 < s.length ? s[i + 1] - 1 : CAP]; });
   }
@@ -242,6 +271,11 @@ function ctcEngine_() {
       if (e.flag && codeOf(cfg, inp, e.flag) === '0') return;
       const bs = e.of && e.ifGross && onBasic(cfg, { id: e.of });
       if (e.ifGross && !test(bs ? (r.values.basic || 0) : g, e.ifGross.op, Number(e.ifGross.value))) return;
+      if (e.ifOff) {
+        /* nil only because the item it is skipped for is deducted (and it would otherwise have been paid) */
+        const oc = cfg.components.filter(function (x) { return x.id === e.of; })[0];
+        if (!oc || !oc.unless || !test(r.values[oc.unless.of] || 0, oc.unless.op, Number(oc.unless.value)) || !holds(oc.when, r.values, { gross: g })) return;
+      }
       notes.push(bs ? swapGross(e.text) : e.text);
     });
     const warnings = cfg.components.filter(function (c) { return c.kind === 'balancing' && (r.values[c.id] || 0) < 0; }).map(function (c) {
@@ -273,10 +307,10 @@ function ctcEngine_() {
       if ((c.kind === 'choice' || (c.kind === 'slab' && c.flag)) && !cfg.flags[c.flag]) errs.push(where + ': its choice "' + c.flag + '" is not defined.');
       const refs = [];
       const addRefs = function (b) { [].concat(b || []).forEach(function (x) { refs.push(x); }); };
-      addRefs(c.of); if (c.when) addRefs(c.when.of);
+      addRefs(c.of); if (c.when) addRefs(c.when.of); if (c.unless) addRefs(c.unless.of);
       Object.keys(c.values || {}).forEach(function (k) {
         const o = c.values[k];
-        addRefs(o.base); if (o.when) addRefs(o.when.of);
+        addRefs(o.base); if (o.when) addRefs(o.when.of); if (o.unless) addRefs(o.unless.of);
         if (o.amount === undefined && !(o.base && isFinite(Number(o.pct)))) errs.push(where + ', option ' + k + ': give an amount or a base and %.');
         if (o.pct !== undefined && !(Number(o.pct) >= 0 && Number(o.pct) <= 100)) errs.push(where + ', option ' + k + ': % must be 0 to 100.');
       });
@@ -764,6 +798,7 @@ function ctcCheck_(cfg) {
     txt(c.label, 'An item', 60);
     if (c.kind === 'fixed') num(c.amount, w);
     if (c.when) num(Number(c.when.value) === c.when.value ? c.when.value : NaN, w + ' condition');
+    if (c.unless) num(Number(c.unless.value) === c.unless.value ? c.unless.value : NaN, w + ' "not when" condition');
     Object.keys(c.values || {}).forEach(function (k) {
       const o = c.values[k], ow = w + ', option ' + k;
       if (o.amount !== undefined) num(o.amount, ow);

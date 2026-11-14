@@ -513,6 +513,13 @@ function e2eRun_(trash) {
   t('I4 Net target gives at least the net', function () { const r = apiCtcCalc({ basis: 'net', target: 30000, codes: ctcSample }); return r.totals.net >= 30000 && r.totals.net - 30000 < 5 ? 'net ' + r.totals.net : false; });
   err('I5 CTC needs a target amount', function () { apiCtcCalc({ basis: 'gross', target: 0 }); }, /target amount/);
   t('I6 CTC calculator is admin-only at launch', function () { return can_({ role: ROLES.ADMIN }, 'ctc_use') && !can_({ role: ROLES.HEAD }, 'ctc_use') && !can_({ role: ROLES.TALEAD }, 'ctc_use') && !can_({ role: ROLES.RECRUITER }, 'ctc_use'); });
+  t('I10 no Mediclaim while ESIC is deducted (rule switched on)', function () {
+    const E = ctcEngine_(), cfg = ctcSeedConfig_(), mc = cfg.components.filter(function (c) { return c.id === 'mediclaim'; })[0];
+    mc.unless = { of: 'esic_ee', op: '>', value: 0 };
+    const at = function (c, esic, g) { const r = E.solve(c, { basis: 'gross', target: g, codes: { basic: '1', bonus: '0', pli: '0', pf: '1', esic: esic, mediclaim: 'S' }, amounts: {} }); const o = {}; r.lines.forEach(function (l) { o[l.id] = l.monthly; }); return o; };
+    const a = at(cfg, '2', 30000), b = at(cfg, '2', 43000), c = at(cfg, '0', 30000), old = at(ctcSeedConfig_(), '2', 30000);
+    return E.validate(cfg).length === 0 && a.esic_ee > 0 && a.mediclaim === 0 && b.esic_ee === 0 && b.mediclaim > 0 && c.mediclaim > 0 && old.mediclaim > 0;
+  });
   t('I9 letter choice (Production / Support) needed for a letter, prints only its term', function () {
     const E = ctcEngine_(), cfg = ctcSeedConfig_();
     cfg.flags.dept_type = { label: 'Employee is onboarded for', group: 'letter', letter: true, required: true, options: [{ code: 'P', label: 'Production' }, { code: 'S', label: 'Support' }] };
