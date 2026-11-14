@@ -7119,6 +7119,8 @@ function ctcHikeDefaults() { let per = 'month'; try { per = localStorage.getItem
 /** "+25.0%" style hike of b over a; blank when a is not known. */
 function ctcPct(a, b) { if (!(a > 0)) return null; return Math.round((b - a) / a * 1000) / 10; }
 function ctcPctTxt(p) { return p === null ? '\u2014' : (p > 0 ? '+' : p < 0 ? '\u2212' : '') + Math.abs(p).toFixed(1) + '%'; }
+/** A choice's preselected code as text; a choice with none (a required letter choice) starts blank. */
+function ctcDef(f) { return f.default === undefined || f.default === null ? '' : String(f.default); }
 async function viewCtc(v) {
   if (!can('ctc_use')) { v.innerHTML = '<div class="empty">You do not have access to the CTC calculator.</div>'; return; }
   const R = await ctcRules();
@@ -7152,18 +7154,20 @@ async function viewCtc(v) {
 function ctcCalc(el, R, v) {
   const cfg = R.active.config;
   const flags = cfg.flags, fk = Object.keys(flags);
-  const defaults = () => ({ basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', codes: Object.fromEntries(fk.map(k => [k, String(flags[k].default)])), amounts: {} });
+  const defaults = () => ({ basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', codes: Object.fromEntries(fk.map(k => [k, flags[k].default === undefined ? '' : String(flags[k].default)])), amounts: {} });
   let f = S.ctcIn && S.ctcIn.version === R.active.id ? S.ctcIn : null;
   if (!f) { f = S.ctcIn = defaults(); f.version = R.active.id; }
   f.hike = f.hike || ctcHikeDefaults(); f.by = f.by || 'amount'; f.link = f.link || { candidateId: '', candidate: '', lineId: '', position: '' };
   const H = f.hike;
   const canCodes = ctcCan('ctc_codes'), canLetter = ctcCan('ctc_issue'), pvOn = !!S.ctcPreview;
   /* Without ctc_codes the structure is the rules' preselected options (or that of the calculation being re-run). */
-  if (!canCodes && !f.rerunOf) f.codes = Object.fromEntries(fk.map(k => [k, String(flags[k].default)]));
+  if (!canCodes && !f.rerunOf) f.codes = Object.fromEntries(fk.map(k => [k, flags[k].letter ? (f.codes[k] || '') : flags[k].default === undefined ? '' : String(flags[k].default)]));
   const grades = (S.boot.grades || []).filter(g => g.active);
   const allDesig = [...new Set(grades.flatMap(g => g.designations || []))].sort();
   const sel = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts(flags[k].options.map(o => [String(o.code), o.label]), f.codes[k], false)}</select>${CTC_ENGINE.noteOf(cfg, k) ? `<span class="hint">${esc(CTC_ENGINE.noteOf(cfg, k))}</span>` : ''}</div>`;
-  const struct = fk.filter(k => flags[k].group === 'structure'), allow = fk.filter(k => flags[k].group === 'allowance');
+  const struct = fk.filter(k => flags[k].group === 'structure' && !flags[k].letter), allow = fk.filter(k => flags[k].group === 'allowance' && !flags[k].letter), letterKeys = fk.filter(k => flags[k].letter);
+  const letterMissing = () => CTC_ENGINE.letterMissing(cfg, f);
+  const selLetter = k => `<div class="field"><label for="cc_${k}">${esc(flags[k].label)}</label><select id="cc_${k}" data-flag="${k}">${opts([['', 'Choose\u2026']].concat(flags[k].options.map(o => [String(o.code), o.label])), f.codes[k] || '', false)}</select>${flags[k].required && !f.codes[k] ? '<span class="hint miss">Required for the letter: it decides which term is printed.</span>' : '<span class="hint">Decides which term is printed on the letter. It does not change any amount.</span>'}</div>`;
   const hasStipend = cfg.components.some(c => c.id === 'stipend');
   el.innerHTML = `${f.rerunOf ? `<div class="ctc-status info">Re-run of <b>${esc(f.rerunOf.id)}</b> (worked out on rules ${esc(f.rerunOf.version)}). The changes against it are listed under the structure. <button class="linklike" id="ccRerunX">Stop comparing</button></div>` : ''}
     <div class="ctc">
@@ -7204,6 +7208,7 @@ function ctcCalc(el, R, v) {
         <details class="ctc-allow" ${allow.some(k => f.codes[k] !== String(flags[k].default)) ? 'open' : ''}><summary>Allowances <span id="ccAllowN" class="sub"></span></summary><div class="grid">${allow.map(sel).join('')}</div></details>`
         : `<h2>Structure <span class="opt">set by the admin</span></h2><dl class="ctc-sum">${struct.map(k => `<dt>${esc(flags[k].label)}</dt><dd>${esc((flags[k].options.find(o => String(o.code) === String(f.codes[k])) || {}).label || '')}</dd>`).join('')}
           ${allow.filter(k => String(f.codes[k]) !== '0').map(k => `<dt>${esc(flags[k].label)}</dt><dd>${esc((flags[k].options.find(o => String(o.code) === String(f.codes[k])) || {}).label || '')}</dd>`).join('')}</dl>`}
+        ${letterKeys.length ? `<h2>Letter</h2><div class="grid one" id="ccLetterKeys">${letterKeys.map(selLetter).join('')}</div>` : ''}
         <div class="ctc-actions"><button class="btn sm" id="ccReset">Start again</button></div>
       </section>
       <section class="ctc-out" id="ccOut" aria-live="polite"></section>
@@ -7276,7 +7281,8 @@ function ctcCalc(el, R, v) {
       <div class="ctc-bar"><span class="hint">${saved ? (saved.status === 'Draft' ? `Saved as draft <b>${esc(saved.id)}</b>.` : `<b>${esc(saved.id)}</b> is issued and locked. Changing any input starts a new calculation.`)
           : f.saved && f.saved.status === 'Draft' ? `Draft <b>${esc(f.saved.id)}</b> has unsaved changes.` : 'Not saved yet.'}</span>
         <button class="btn" id="ccSave" ${blocked || saved || pvOn ? 'disabled' : ''} ${pvOn ? 'title="Preview only"' : ''}>${f.saved && f.saved.status === 'Draft' ? 'Save changes' : 'Save draft'}</button>
-        ${canLetter ? `<button class="btn primary" id="ccLetter" ${blocked || pvOn ? 'disabled' : ''} ${pvOn ? 'title="Preview only"' : ''}>Letter…</button>` : ''}</div>
+        ${canLetter ? `<button class="btn primary" id="ccLetter" ${blocked || pvOn || letterMissing().length ? 'disabled' : ''} ${pvOn ? 'title="Preview only"' : letterMissing().length ? `title="Choose ${esc(letterMissing().join(', '))} first"` : ''}>Letter…</button>` : ''}</div>
+      ${canLetter && letterMissing().length ? `<p class="hint miss" style="margin:-8px 0 14px">Choose ${esc(letterMissing().join(', '))} on the left before making the letter.</p>` : ''}
       ${!canLetter ? '<p class="hint" style="margin:-8px 0 14px">You can work out and save calculations. Letters are made by the people who have access to issue them.</p>' : ''}
       ${ctcHikeHtml(H, r, askRes(), perN())}
       <section class="panel ctc-brk"><div class="dp-h"><h2>Salary structure${f.name ? ' · ' + esc(f.name) : ''}</h2>
@@ -7345,7 +7351,9 @@ function ctcCalc(el, R, v) {
   $('#ccDesig').oninput = e => { f.designation = e.target.value; redraw(); };
   $('#ccGrade').onchange = e => { f.grade = e.target.value; fillDesig(); redraw(); };
   if ($('#ccStipend')) $('#ccStipend').oninput = e => { f.amounts.stipend = e.target.value.replace(/[^\d]/g, ''); run(); };
-  $$('select[data-flag]', el).forEach(x => x.onchange = () => { f.codes[x.dataset.flag] = x.value; run(); });
+  $$('select[data-flag]', el).forEach(x => x.onchange = () => { f.codes[x.dataset.flag] = x.value;
+    if (flags[x.dataset.flag].letter) { const h = x.parentNode.querySelector('.hint'); if (h) { const need = flags[x.dataset.flag].required && !x.value; h.className = 'hint' + (need ? ' miss' : ''); h.textContent = need ? 'Required for the letter: it decides which term is printed.' : 'Decides which term is printed on the letter. It does not change any amount.'; } }
+    run(); });
   $('#ccReset').onclick = () => { S.ctcIn = null; S.ctcCfgSeen = null; ctcCalc(el, R, v); };
   if ($('#ccRerunX')) $('#ccRerunX').onclick = () => { f.rerunOf = null; ctcCalc(el, R, v); };
   run();
@@ -7418,7 +7426,7 @@ function ctcParseMoney(text) {
 function ctcNewInput(R) {
   const cfg = R.active.config, fk = Object.keys(cfg.flags);
   return { version: R.active.id, basis: cfg.defaultBasis || 'gross', target: '', name: '', designation: '', grade: '', by: 'amount', hike: ctcHikeDefaults(), amounts: {},
-    codes: Object.fromEntries(fk.map(k => [k, String(cfg.flags[k].default)])), link: { candidateId: '', candidate: '', lineId: '', position: '' } };
+    codes: Object.fromEntries(fk.map(k => [k, ctcDef(cfg.flags[k])])), link: { candidateId: '', candidate: '', lineId: '', position: '' } };
 }
 function ctcLineLabel(l) { return [l.MRF_No, l.Position].filter(Boolean).join(' · '); }
 function ctcFillFromLine(f, l) {
@@ -7558,7 +7566,7 @@ async function ctcOpen(id, R, v) {
     S.ctcIn = { version: R.active.id, basis: i.basis, target: String(i.target), name: i.name || '', designation: i.designation || '', grade: i.grade || '', codes: Object.assign({}, i.codes), amounts: Object.assign({}, i.amounts),
       by: i.by || 'amount', hike: Object.assign(ctcHikeDefaults(), i.hike || {}), link: { candidateId: c.candidateId || '', candidate: c.candidate || '', lineId: c.lineId || '', position: c.position || '' } };
     const cfg = R.active.config;
-    Object.keys(cfg.flags).forEach(k => { if (S.ctcIn.codes[k] === undefined) S.ctcIn.codes[k] = String(cfg.flags[k].default); });
+    Object.keys(cfg.flags).forEach(k => { if (S.ctcIn.codes[k] === undefined) S.ctcIn.codes[k] = ctcDef(cfg.flags[k]); });
     if (rerun) S.ctcIn.rerunOf = { id: c.id, version: c.version, result: c.result };
     else S.ctcIn.saved = Object.assign({}, c, { sig: ctcSig(S.ctcIn) });
     closeDrawer(); S.ctcTab = 'calc'; viewCtc(v);
@@ -7606,7 +7614,7 @@ function ctcLetterHtml(c, cfg, lang, draft) {
   const rows = s => r.lines.filter(l => l.section === s && l.monthly).map(l => `<tr><td>${esc(labelOf[l.id] || l.label)}</td><td class="n">${inr(l.monthly)}</td><td class="n">${inr(l.yearly)}</td></tr>`).join('');
   const sec = (s, totK, tot) => { const b = rows(s); return b ? `<tr class="s"><th colspan="3">${L(s)}</th></tr>${b}<tr class="t"><td>${L(totK)}</td><td class="n">${inr(tot)}</td><td class="n">${inr(tot * 12)}</td></tr>` : ''; };
   const val = {}; r.lines.forEach(l => { val[l.id] = l.monthly; });
-  const notes = (cfg.notes || []).filter(n => !n.when || val[n.when] > 0);
+  const notes = (cfg.notes || []).filter(n => CTC_ENGINE.noteShown(n, val, (c.inputs || {}).codes));
   const note = n => lang === 'en' ? esc(n.en) : lang === 'hi' ? `<span class="hi">${esc(n.hi || n.en)}</span>` : `${esc(n.en)}<br><span class="hi">${esc(n.hi || '')}</span>`;
   const acc = lang === 'en' ? esc(lt.accept.en) : lang === 'hi' ? `<span class="hi">${esc(lt.accept.hi || lt.accept.en)}</span>` : `${esc(lt.accept.en)} <span class="hi">/ ${esc(lt.accept.hi || '')}</span>`;
   const day = c.issuedAt ? c.issuedAt.split(',')[0] : fmtDate(today());
@@ -7849,14 +7857,19 @@ function ctcDraftEditor(el, R, v, head) {
   const choices = () => limitCard() + `<p class="hint">Names of the choices shown on the calculator and their preselected option. Option names are edited with each item.</p>
     <div class="table-wrap"><table class="rs-tab"><thead><tr><th>Choice</th><th>Preselected</th><th>Note under it</th></tr></thead><tbody>
     ${Object.keys(cfg.flags).map(k => { const f = cfg.flags[k]; return `<tr><td>${txtIn(`flags.${k}.label`, f.label, 'rs-wide')}</td>
-      <td><select data-p="flags.${k}.default" data-t="code">${opts(f.options.map(o => [String(o.code), o.label]), String(f.default), false)}</select></td>
+      <td><select data-p="flags.${k}.default" data-t="code">${opts((f.required ? [['', 'None: must be chosen']] : []).concat(f.options.map(o => [String(o.code), o.label])), f.default === undefined ? '' : String(f.default), false)}</select></td>
       <td>${txtIn(`flags.${k}.note`, f.note, 'rs-wide')}</td></tr>`; }).join('')}</tbody></table></div>`;
   const whenOpts = [['', 'Always']].concat(cfg.components.filter(c => c.section !== 'earning' || c.kind === 'choice').map(c => [c.id, 'Only when ' + c.label + ' is paid']));
-  const letter = () => { const L = cfg.letter = cfg.letter || {}; L.accept = L.accept || {}; return `<section class="rs-sec"><h3>Letter</h3><div class="grid">
+  const letterFlag = () => Object.keys(cfg.flags).find(k => cfg.flags[k].letter);
+  const shownOptsF = () => { const k = letterFlag(); return k ? [['', 'Shown for everyone']].concat(cfg.flags[k].options.map(o => [k + ':' + o.code, 'Only ' + o.label])) : null; };
+  const deptCard = () => { const k = letterFlag();
+    return `<section class="rs-sec"><h3>Production and Support terms</h3>${k ? `<p class="hint">On. The calculator asks \u201c${esc(cfg.flags[k].label)}\u201d (${cfg.flags[k].options.map(o => esc(o.label)).join(' / ')}) and the letter prints only the term set for the chosen one. Set a term\u2019s \u201cShown for\u201d below. The choice never changes an amount.</p><button class="btn sm" id="rsDeptOff">Turn off</button>`
+      : `<p class="hint">Add a choice to the calculator: is the employee onboarded for a production department or a support function? Each gets its own term on the letter, which you type below. The recruiter must choose before a letter can be made.</p><button class="btn sm" id="rsDeptOn">Turn on</button>`}</section>`; };
+  const letter = () => { const L = cfg.letter = cfg.letter || {}; L.accept = L.accept || {}; return deptCard() + `<section class="rs-sec"><h3>Letter</h3><div class="grid">
       <div class="field"><label>Company name</label>${txtIn('letter.company', L.company)}</div><div class="field"><label>Line under the name</label>${txtIn('letter.subheading', L.subheading)}</div>
       <div class="field"><label>Signatory</label>${txtIn('letter.signatory', L.signatory)}</div><div class="field"><label>Candidate signature line (English)</label>${txtIn('letter.accept.en', L.accept.en)}</div>
       <div class="field"><label>Candidate signature line (Hindi)</label>${txtIn('letter.accept.hi', L.accept.hi)}</div></div></section>
-    <section class="rs-sec"><h3>Terms on the letter</h3>${(cfg.notes || []).map((n, i) => `<div class="rs-card"><div class="rs-head"><b>Term ${i + 1}</b><select data-p="notes.${i}.when" data-t="text">${opts(whenOpts, n.when || '', false)}</select><button class="btn sm" data-delnote="${i}">Remove</button></div>
+    <section class="rs-sec"><h3>Terms on the letter</h3>${(cfg.notes || []).map((n, i) => `<div class="rs-card"><div class="rs-head"><b>Term ${i + 1}</b><select data-p="notes.${i}.when" data-t="text">${opts(whenOpts, n.when || '', false)}</select>${shownOptsF() ? `<select data-p="notes.${i}.only" data-t="text" aria-label="Shown for">${opts(shownOptsF(), n.only ? n.only.flag + ':' + n.only.code : '', false)}</select>` : ''}<button class="btn sm" data-delnote="${i}">Remove</button></div>
         <div class="grid"><div class="field"><label>English</label><textarea data-p="notes.${i}.en" data-t="text" rows="3">${esc(n.en)}</textarea></div><div class="field"><label>Hindi</label><textarea data-p="notes.${i}.hi" data-t="text" rows="3" class="hi">${esc(n.hi || '')}</textarea></div></div></div>`).join('')}
       <button class="btn sm" id="rsAddNote">Add a term</button></section>
     <section class="rs-sec"><h3>Explanations on the calculator</h3><p class="hint">Shown under the structure when an item comes out nil.</p>${(cfg.explain || []).map((x, i) => `<div class="rs-row">${txtIn(`explain.${i}.text`, x.text, 'rs-full')}</div>`).join('')}</section>`; };
@@ -7865,7 +7878,7 @@ function ctcDraftEditor(el, R, v, head) {
     if (errs.length) return `<div class="ctc-status bad">Fix the problems listed above before testing.</div>`;
     if (ctcBlank(cfg)) return `<div class="ctc-status bad">Fill in every amount, % and \u201cup to\u201d value before testing.</div>`;
     const base = S.ctcIn && S.ctcIn.codes ? S.ctcIn : null;
-    const codes = c => Object.fromEntries(Object.keys(c.flags).map(k => [k, base && base.codes[k] !== undefined ? base.codes[k] : String(c.flags[k].default)]));
+    const codes = c => Object.fromEntries(Object.keys(c.flags).map(k => [k, base && base.codes[k] !== undefined ? base.codes[k] : ctcDef(c.flags[k])]));
     const rows = [];
     [['gross', 'Gross salary'], ['total_ctc', 'Total CTC'], ['net', 'Net in-hand']].forEach(([b, bl]) => [12000, 18000, 21000, 25000, 35000, 50000, 72080, 100000, 200000].forEach(t => {
       const a = CTC_ENGINE.solve(old, { basis: b, target: t, codes: codes(old), amounts: {} }), n = CTC_ENGINE.solve(cfg, { basis: b, target: t, codes: codes(cfg), amounts: {} });
@@ -7914,6 +7927,7 @@ function ctcDraftEditor(el, R, v, head) {
         if (t === 'num') { const s = raw.replace(/[,\s₹]/g, ''); val = s === '' ? '' : Number(s); if (s !== '' && !isFinite(val)) val = NaN; }
         if (t === 'code') { const f = cfg.flags[inp.dataset.p.split('.')[1]]; const o = f.options.find(x => String(x.code) === raw); val = o ? o.code : raw; }
         if (t === 'text' && /\.when$/.test(inp.dataset.p) && inp.tagName === 'SELECT' && /^notes\./.test(inp.dataset.p)) val = raw || undefined;
+        if (t === 'text' && /^notes\.\d+\.only$/.test(inp.dataset.p)) { const [fl, cd] = raw.split(':'); const o = fl && cfg.flags[fl] ? cfg.flags[fl].options.find(x => String(x.code) === cd) : null; val = o ? { flag: fl, code: o.code } : undefined; }
         if (t === 'text' && /\.(note|subheading)$/.test(inp.dataset.p) && !raw) val = undefined;
         setP(inp.dataset.p, val); mark(); refreshProblems(); if (inp.dataset.p === 'limit.basis') draw();
       };
@@ -7946,6 +7960,12 @@ function ctcDraftEditor(el, R, v, head) {
       cfg.components.splice(cfg.components.findIndex(c => c.kind === 'balancing'), 0, { id, label: name, section: 'earning', kind: 'choice', flag: id, values });
       mark(); draw(); toast(`${name} added. Save the draft to keep it.`);
     };
+    if ($('#rsDeptOn')) $('#rsDeptOn').onclick = () => {
+      cfg.flags.dept_type = { label: 'Employee is onboarded for', group: 'letter', letter: true, required: true, options: [{ code: 'P', label: 'Production department' }, { code: 'S', label: 'Support function' }] };
+      cfg.notes = cfg.notes || [];
+      cfg.notes.push({ id: 'prod' + Date.now().toString(36), en: '', hi: '', only: { flag: 'dept_type', code: 'P' } }, { id: 'supp' + Date.now().toString(36), en: '', hi: '', only: { flag: 'dept_type', code: 'S' } });
+      mark(); draw(); toast('Turned on. Type the Production term and the Support term below, then save the draft.'); };
+    if ($('#rsDeptOff')) twoStep($('#rsDeptOff'), 'Click again to turn off', async () => { delete cfg.flags.dept_type; cfg.notes = (cfg.notes || []).filter(n => !(n.only && n.only.flag === 'dept_type')); mark(); draw(); });
     if ($('#rsAddNote')) $('#rsAddNote').onclick = () => { cfg.notes = cfg.notes || []; cfg.notes.push({ id: 'n' + Date.now().toString(36), en: '', hi: '' }); mark(); draw(); };
     $$('[data-delnote]', el).forEach(b => twoStep(b, 'Click again to remove', async () => { cfg.notes.splice(+b.dataset.delnote, 1); mark(); draw(); }));
     wireBench();
