@@ -43,7 +43,7 @@ function cvParseDate_(s, nowYear) {
 }
 function cvYmNum_(ym) { const p = String(ym).split('-'); return Number(p[0]) * 12 + Number(p[1]) - 1; }
 function cvNumYm_(n) { const y = Math.floor(n / 12), m = n % 12 + 1; return y + '-' + ('0' + m).slice(-2); }
-function cvYmLabel_(ym) { if (!ym) return ''; const p = String(ym).split('-'), n = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return n[Number(p[1]) - 1] + ' ' + p[0]; }
+function cvYmLabel_(ym) { if (!ym) return ''; const p = String(ym).split('-'); return MONTHS_SHORT_[Number(p[1]) - 1] + ' ' + p[0]; }
 
 /* ------------------------------------------------------------------ sections --------------------------------------- */
 

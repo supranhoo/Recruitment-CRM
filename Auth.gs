@@ -16,6 +16,8 @@ function currentUser_() {
   return Object.assign({}, _curUser_, { perms: perms.slice() });
 }
 
+/** Two names or e-mail addresses are the same when they match ignoring case and surrounding spaces (blank matches blank). */
+function sameName_(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(); }
 /** A plausible e-mail address, lower-cased and trimmed; '' when it is not one. */
 function cleanMail_(s) { const e = String(s == null ? '' : s).trim().toLowerCase(); return /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(e) ? e : ''; }
 /**
@@ -71,7 +73,7 @@ function requireEditorOrAdmin_() {
 
 /** Recruiters edit their own positions; Head and Admin edit all. */
 function canEditLine_(u, line) {
-  return isLead_(u) || String(line.Recruiter).trim().toLowerCase() === u.recruiter.trim().toLowerCase();
+  return isLead_(u) || sameName_(line.Recruiter, u.recruiter);
 }
 
 /** True when the user is on the position: its lead recruiter, a tagged recruiter, or a lead (TA Lead, Head of HR, Admin). */

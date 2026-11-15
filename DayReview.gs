@@ -522,7 +522,7 @@ function apiMyDayStatuses(who) {
   const u = currentUser_(); ensureSchema_();
   const rec = isLead_(u) && who ? String(who) : u.recruiter;
   const today = ymd_(new Date());
-  const lines = readTable_(T.MRF.name).rows.filter(function (l) { return String(l.Recruiter || '').trim().toLowerCase() === String(rec || '').trim().toLowerCase() && ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; });
+  const lines = readTable_(T.MRF.name).rows.filter(function (l) { return sameName_(l.Recruiter, rec) && ['Open', 'Offered'].indexOf(positionStatus_(l)) >= 0; });
   const map = dayStatusMap_(lines, today);
   return { date: today, list: dayStatusList_(), rows: lines.map(function (l) { return Object.assign({ line: String(l.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), grade: String(l.Grade || '') }, map[l.Line_ID]); })
     .sort(function (a, b) { return a.position.localeCompare(b.position); }) };

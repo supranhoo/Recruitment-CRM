@@ -238,7 +238,7 @@ function bgvTouchLine_(lineId) { try { withLock_(function () { bgvEnsureCases_(l
 
 /* ---------------------------------------------------------------- reading ----------------------------------- */
 
-function bgvIsOwner_(u, c) { return String(c.Recruiter || '').trim().toLowerCase() === String(u.recruiter || '').trim().toLowerCase(); }
+function bgvIsOwner_(u, c) { return sameName_(c.Recruiter, u.recruiter); }
 function bgvCanWork_(u, c) { return isLead_(u) || bgvIsOwner_(u, c); }
 function bgvRequireWork_(u, c) { if (!bgvCanWork_(u, c)) throw new Error('Only ' + c.Recruiter + ', a TA Lead or the Head of HR can work on this BGV case.'); }
 
@@ -893,26 +893,25 @@ function bgvTasks_(add) {
     const hold = bgvHold_(c);
     const st = String(c.Status), id = String(c.Case_ID), base = { recruiter: String(c.Recruiter || ''), line: String(c.Line_ID), app: String(c.App_ID || ''), open: { type: 'bgv', id: id } };
     const mk = function (kind, extra) { return Object.assign({ key: kind + '|' + id }, base, extra); };
-    const ms = function (v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; };
     const ex = bgvExcl_(c);
     if (ex && ex.releaseOn) {   // v158: excluded from the KRA: ask the former employer from 5 days before the release date; critical once it has passed
       add('bgv_release', mk('bgv_release', { title: 'Ask the former employer for the release / experience letter (excluded from the KRA)', context: lbl(c) + ' · release expected ' + ex.releaseOn + (ex.over ? ' (' + daysBetween_(ex.releaseOn, todayD) + ' days overdue)' : ''),
-        startMs: ms(parseYmd_(ex.releaseOn)) - 5 * 86400000, forceCritical: ex.over }));
+        startMs: ms_(parseYmd_(ex.releaseOn)) - 5 * 86400000, forceCritical: ex.over }));
     }
     if (ex || bgvTrack_(c).na || (hold && hold.until && hold.until >= todayD)) return;   // not tracked, excluded (only the release to-do above), or the employee has until a date still ahead
-    if (['Not started', 'Awaiting consent'].indexOf(st) >= 0 && !c.Consent_On && String(c.Legacy) !== 'Yes' && ms(c.Trigger_Date)) {
-      add('bgv_consent', mk('bgv_consent', { title: 'Get the candidate’s consent for BGV (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · start by ' + ymd_(c.Due_Date), startMs: ms(c.Trigger_Date) }));
+    if (['Not started', 'Awaiting consent'].indexOf(st) >= 0 && !c.Consent_On && String(c.Legacy) !== 'Yes' && ms_(c.Trigger_Date)) {
+      add('bgv_consent', mk('bgv_consent', { title: 'Get the candidate’s consent for BGV (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · start by ' + ymd_(c.Due_Date), startMs: ms_(c.Trigger_Date) }));
     }
-    if (['Initiated', 'In progress', 'Insufficiency'].indexOf(st) >= 0 && ms(c.Initiated_On)) {
-      const last = Math.max(ms(c.Initiated_On), logs[id] || 0), days = Math.floor((now - ms(c.Initiated_On)) / 86400000);
+    if (['Initiated', 'In progress', 'Insufficiency'].indexOf(st) >= 0 && ms_(c.Initiated_On)) {
+      const last = Math.max(ms_(c.Initiated_On), logs[id] || 0), days = Math.floor((now - ms_(c.Initiated_On)) / 86400000);
       add('bgv_chase', mk('bgv_chase', { title: (st === 'Insufficiency' ? 'Chase the candidate: BGV insufficiency' : 'Chase the vendor: BGV update') + ' (' + c.Type.toLowerCase() + ')',
-        context: lbl(c) + ' · started ' + days + ' day' + (days === 1 ? '' : 's') + ' ago' + (c.Vendor_Ref ? ' · ref ' + c.Vendor_Ref : ''), startMs: last, forceCritical: days > cfg.vendorTatDays, critAt: ms(c.Initiated_On) + (cfg.vendorTatDays + 1) * 86400000 }));
+        context: lbl(c) + ' · started ' + days + ' day' + (days === 1 ? '' : 's') + ' ago' + (c.Vendor_Ref ? ' · ref ' + c.Vendor_Ref : ''), startMs: last, forceCritical: days > cfg.vendorTatDays, critAt: ms_(c.Initiated_On) + (cfg.vendorTatDays + 1) * 86400000 }));
     }
     if (c.Type === BGV_TYPES_[0] && c.Result_Due && ['Initiated', 'In progress', 'Insufficiency'].indexOf(st) >= 0) {
-      add('bgv_result', mk('bgv_result', { title: 'Previous-employer BGV report is needed before joining', context: lbl(c) + ' · report needed by ' + ymd_(c.Result_Due), startMs: ms(c.Result_Due) - 86400000 }));
+      add('bgv_result', mk('bgv_result', { title: 'Previous-employer BGV report is needed before joining', context: lbl(c) + ' · report needed by ' + ymd_(c.Result_Due), startMs: ms_(c.Result_Due) - 86400000 }));
     }
-    if (['Report received', 'Under review'].indexOf(st) >= 0 && !bgvNeedsDecision_(c) && ms(c.Report_On)) {
-      add('bgv_review', mk('bgv_review', { title: 'Review the BGV report and close the case (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · report received ' + ymd_(c.Report_On), startMs: ms(c.Report_On) }));
+    if (['Report received', 'Under review'].indexOf(st) >= 0 && !bgvNeedsDecision_(c) && ms_(c.Report_On)) {
+      add('bgv_review', mk('bgv_review', { title: 'Review the BGV report and close the case (' + c.Type.toLowerCase() + ')', context: lbl(c) + ' · report received ' + ymd_(c.Report_On), startMs: ms_(c.Report_On) }));
     }
   });
 }

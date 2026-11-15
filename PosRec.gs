@@ -83,7 +83,7 @@ function posRecSetLead_(lineId, name, u) {
 function posRecEndAllFor_(name, u) {
   const today = new Date(); let n = 0;
   posRecRows_().forEach(function (r) {
-    if (String(r.Status) === 'Active' && String(r.Role) === 'Tagged' && String(r.Recruiter).trim().toLowerCase() === String(name).trim().toLowerCase()) { update_(PR_, r.PR_ID, { Status: 'Ended', Ended_On: today }, u); n++; }
+    if (String(r.Status) === 'Active' && String(r.Role) === 'Tagged' && sameName_(r.Recruiter, name)) { update_(PR_, r.PR_ID, { Status: 'Ended', Ended_On: today }, u); n++; }
   });
   return n;
 }

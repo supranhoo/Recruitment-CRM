@@ -20,7 +20,7 @@ function apiDeptDelays(opts) {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.from || '')) ? String(opts.from) : ymd_(new Date(now - 90 * DAY));
   if (from > to) throw new Error('The start date is after the end date.');
   const p0 = parseYmd_(from).getTime(), p1 = Math.min(parseYmd_(to).getTime() + DAY, now);
-  const lead = isLead_(u), mine = function (l) { return lead || String(l.Recruiter || '').trim().toLowerCase() === u.recruiter.trim().toLowerCase(); };
+  const lead = isLead_(u), mine = function (l) { return lead || sameName_(l.Recruiter, u.recruiter); };
   const dayMs = function (d) { return d instanceof Date ? d.getTime() : d ? parseYmd_(String(d).slice(0, 10)).getTime() : 0; };
 
   const lines = {};

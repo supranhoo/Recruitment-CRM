@@ -45,7 +45,6 @@ function routeOf_(line) {
   return g && fastLevels_().indexOf(g) >= 0 ? 'Fast-track' : 'Standard';
 }
 function isFast_(line) { return routeOf_(line) === 'Fast-track'; }
-function fastDocSections_() { return FAST_DOC_SECTIONS_; }
 
 /** The stage after `stage` on the fast-track route ('' at the end). A card that is on a skipped stage continues from the next fast stage. */
 function fastNext_(stage) {

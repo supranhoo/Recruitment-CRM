@@ -403,11 +403,13 @@ function panelMembers_(includeInactive) {
   const sh = ss_().getSheetByName(T.PM.name);
   if (!sh) return [];
   return readTable_(T.PM.name).rows.filter(function (r) { return includeInactive || String(r.Active) !== 'No'; })
-    .map(function (r) {
-      return { id: String(r.Panel_ID), name: String(r.Name), aliases: String(r.Aliases || ''), designation: String(r.Designation || ''),
-        department: String(r.Department || ''), email: String(r.Email || ''), roles: String(r.Roles || ''), active: String(r.Active || 'Yes'),
-        note: String(r.Note || '') };
-    }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    .map(panelOut_).sort(function (a, b) { return a.name.localeCompare(b.name); });
+}
+/** A Panel_Members row as the page gets it. */
+function panelOut_(r) {
+  return { id: String(r.Panel_ID), name: String(r.Name), aliases: String(r.Aliases || ''), designation: String(r.Designation || ''),
+    department: String(r.Department || ''), email: String(r.Email || ''), roles: String(r.Roles || ''), active: String(r.Active || 'Yes'),
+    note: String(r.Note || '') };
 }
 
 function panelKey_(s) { return String(s || '').toLowerCase().replace(/\b(sir|mr|mrs|ms|dr)\b\.?/g, '').replace(/[^a-z]/g, ''); }
@@ -451,7 +453,5 @@ function apiSavePanelMember(data) {
   } else {
     rec = insert_(T.PM, patch, u);
   }
-  return { id: String(rec.Panel_ID), name: String(rec.Name), aliases: String(rec.Aliases || ''), designation: String(rec.Designation || ''),
-    department: String(rec.Department || ''), email: String(rec.Email || ''), roles: String(rec.Roles || ''), active: String(rec.Active || 'Yes'),
-    note: String(rec.Note || '') };
+  return panelOut_(rec);
 }

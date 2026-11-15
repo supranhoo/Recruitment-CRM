@@ -124,14 +124,16 @@ function rsChain_(line, byId, childOf, cands) {
 
 /** The whole report from plain inputs (so it can be tested without sheets). d = {lines, prRows, auditRows, counts, cands, today, from, to, recruiter, lineId}. */
 function reassignBuild_(d) {
-  const byId = {}, childOf = {};
+  const byId = {}, childOf = {}, prBy = {}, auditBy = {};   // stint records and audit rows grouped by position once, in their original order
+  d.prRows.forEach(function (r) { const k = String(r.Line_ID); (prBy[k] = prBy[k] || []).push(r); });
+  d.auditRows.forEach(function (a) { const k = String(a.Record_ID); (auditBy[k] = auditBy[k] || []).push(a); });
   d.lines.forEach(function (l) { byId[String(l.Line_ID)] = l; });
   d.lines.forEach(function (l) { const p = String(l.Parent_Line_ID || '').trim(); if (p) childOf[p] = l; });
   const out = [];
   d.lines.forEach(function (l) {
     if (positionStatus_(l) === 'Removed') return;
     if (d.lineId && String(l.Line_ID) !== String(d.lineId)) return;
-    const st = rsStints_(l, d.prRows, d.auditRows, d.today), all = st.stints;
+    const st = rsStints_(l, prBy[String(l.Line_ID)] || [], auditBy[String(l.Line_ID)] || [], d.today), all = st.stints;
     if (all.length < 2) return;
     // in scope when a reassignment (a stint after the first) starts inside the range
     const inRange = all.slice(1).some(function (s) { return s.from >= d.from && s.from <= d.to; });

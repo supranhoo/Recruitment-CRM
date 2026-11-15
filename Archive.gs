@@ -71,15 +71,19 @@ function archiveIndex_() {
 }
 function archivedById_(id) { return archiveIndex_().filter(function (a) { return a.id === id; })[0] || null; }
 
+/** Adds the archived candidates among `ids` that are still missing from `out` (the archive index holds a name, mobile and e-mail for each). */
+function fillArchived_(out, want, ids) {
+  if (ids.some(function (id) { return !out[id]; })) {
+    archiveIndex_().forEach(function (a) { if (want[a.id] && !out[a.id]) out[a.id] = { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, _archived: true }; });
+  }
+  return out;
+}
 /** Candidate names for a set of IDs, falling back to the archive for archived candidates. */
 function candNames_(ids) {
   const out = {}, want = {};
   ids.forEach(function (id) { want[id] = true; });
   readTable_(T.CAND.name).rows.forEach(function (c) { if (want[c.Candidate_ID]) out[c.Candidate_ID] = c; });
-  if (ids.some(function (id) { return !out[id]; })) {
-    archiveIndex_().forEach(function (a) { if (want[a.id] && !out[a.id]) out[a.id] = { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, _archived: true }; });
-  }
-  return out;
+  return fillArchived_(out, want, ids);
 }
 
 /**
@@ -94,10 +98,7 @@ function candNamesSlim_(ids) {
   const out = {}, want = {};
   ids.forEach(function (id) { want[id] = true; });
   idx.forEach(function (e) { if (want[e.id]) out[e.id] = e.o; });
-  if (ids.some(function (id) { return !out[id]; })) {
-    archiveIndex_().forEach(function (a) { if (want[a.id] && !out[a.id]) out[a.id] = { Candidate_ID: a.id, Name: a.name, Mobile: a.mobile, Email: a.email, _archived: true }; });
-  }
-  return out;
+  return fillArchived_(out, want, ids);
 }
 
 /* ---------- last activity ---------- */

@@ -113,17 +113,17 @@ function perfNote_(what, t0, extra) {
  * Used for the growing sheets (daily activity, change history, stage history, candidates) so they stay fast.
  */
 const SMALL_SHEET_ROWS_ = 1000;
-function readTableFrom_(name, dateField, from) {
-  if (!from) return readTable_(name);
-  if (_tables[name]) return _tables[name];
+function readTableFrom_(name, dateField, from, fresh) {
+  if (!from) return readTable_(name, fresh);
+  if (_tables[name] && !fresh) return _tables[name];
   const key = name + '|' + dateField + '|' + from;
-  if (_tables[key]) return _tables[key];
+  if (_tables[key] && !fresh) return _tables[key];
   const sh = sheet_(name);
   const last = sh.getLastRow(), lc = sh.getLastColumn();
-  if (last < SMALL_SHEET_ROWS_) return readTable_(name);
+  if (last < SMALL_SHEET_ROWS_) return readTable_(name, fresh);
   const headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(String);
   const ci = headers.indexOf(dateField);
-  if (ci < 0) return readTable_(name);
+  if (ci < 0) return readTable_(name, fresh);
   const col = sh.getRange(2, ci + 1, last - 1, 1).getValues();
   let first = -1;
   for (let i = 0; i < col.length; i++) { const v = col[i][0]; if (v && ymd_(v) >= from) { first = i; break; } }
