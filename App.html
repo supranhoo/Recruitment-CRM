@@ -11,7 +11,6 @@ function unpack(p) { return p.rows.map(r => { const o = {}; p.cols.forEach((c, i
 const FRESH = new Map(), INFLIGHT = new Map();
 const cloneJson = d => JSON.parse(JSON.stringify(d));
 /** The version the server last gave for a fresh() request ('' when none): a different version after the next fresh() means the data changed. */
-function freshVersion(fn, ...args) { const h = FRESH.get(fn + JSON.stringify(args)); return h ? h.v : ''; }
 /** A copy of what fresh() remembered for this request, or null. Paint it at once, then call fresh() to check for changes. */
 function remembered(fn, ...args) { const h = FRESH.get(fn + JSON.stringify(args)); return h ? (PACKED.includes(fn) ? h.data : cloneJson(h.data)) : null; }
 function fresh(fn, ...args) {
@@ -220,7 +219,6 @@ function skTable(tmpl, heads, rows, cells) {
 }
 const skText = (a, b) => () => skb(skw(a, b), 13);
 const skTwo = () => skb(skw(50, 85), 13) + skb(skw(30, 60), 10);
-const skNum = () => skb('24px', 13, 'align-self:flex-end');
 function skRows(n, cols) {
   const c = cols || 4, cells = []; for (let i = 0; i < c; i++) cells.push(i ? skText(40, 85) : skTwo);
   return skTable(`repeat(${c},minmax(0,1fr))`, null, n || 5, cells);
@@ -278,8 +276,8 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDate(ymd) { if (!ymd) return ''; const p = String(ymd).split('-'); return p.length < 3 ? ymd : `${+p[2]} ${MONTHS[p[1]-1]} ${p[0]}`; }
-function today() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
-function daysAgo(n) { const d = new Date(Date.now() - n * 86400000); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function today() { return ymdLocal(new Date()); }
+function daysAgo(n) { return ymdLocal(new Date(Date.now() - n * 86400000)); }
 function can(p) { return ((S.boot && S.boot.user && S.boot.user.perms) || []).includes(p); }
 function isLead() { return can('lead'); }
 
@@ -479,7 +477,15 @@ function loadCandidates(force) {
   S.candStale = false;
   return fresh('apiListCandidates').then(c => (S.candidates = c.slice()));
 }
-function lineById(id) { return (S.positions || []).find(p => p.Line_ID === id); }
+let lineIdx = { arr: null, n: -1, map: null };
+function lineById(id) {
+  const a = S.positions || [];
+  if (lineIdx.arr !== a || lineIdx.n !== a.length) {
+    lineIdx = { arr: a, n: a.length, map: new Map() };
+    for (let i = a.length - 1; i >= 0; i--) lineIdx.map.set(a[i].Line_ID, a[i]);
+  }
+  return lineIdx.map.get(id);
+}
 function lineLabel(p) { return p ? `${p.MRF_No || '—'} · ${p.Position} · ${p.Dept}` : ''; }
 
 function tatView(p) {
@@ -1147,7 +1153,7 @@ async function viewOverview(v, fresh) {
       <div style="display:grid;gap:20px;grid-template-columns:minmax(0,1fr)">
         <section class="panel"><h2>Funnel, last 30 days</h2><div class="funnel">
           ${Object.keys(P_NAMES).map(key => [key, P_NAMES[key]]).map(([key, label]) => `<div class="frow"><span>${esc(label)}</span><div class="fbar"><span style="width:${100 * (d.funnel[key] || 0) / maxF}%"></span></div><span class="num">${d.funnel[key] || 0}</span></div>`).join('')}
-        </div><p class="hint">The Pipeline's own stages, counted from the candidates moved since ${fmtDate(S.boot.cutover || '2026-10-05')}. A candidate who passes several stages counts once in each.</p></section>
+        </div><p class="hint">The Pipeline's own stages, counted from the candidates moved since ${fmtDate(S.boot.cutover)}. A candidate who passes several stages counts once in each.</p></section>
         <section class="panel"><h2>By recruiter</h2><div class="table-wrap"><table>
           <thead><tr><th>Recruiter</th><th class="num">Open</th><th class="num">Offered</th><th class="num">Past TAT</th><th class="num">Joined 30d</th><th class="num">CVs 30d</th></tr></thead><tbody>
           ${d.recruiters.map(r => `<tr data-rec="${esc(r.recruiter)}"><td>${esc(r.recruiter)}</td><td class="num">${r.open}</td><td class="num">${r.offered}</td><td class="num">${r.overdue}</td><td class="num">${r.joined30}</td><td class="num">${r.cv30}</td></tr>`).join('')}
@@ -1316,7 +1322,7 @@ function desigOpts(grade, cur) {
   if (cur && !l.some(d => d.toLowerCase() === String(cur).toLowerCase())) l.unshift(cur);
   return l;
 }
-function pipelineLocked() { return !isLead() && today() >= (S.boot.cutover || '2026-10-05'); }
+function pipelineLocked() { return !isLead() && today() >= (S.boot.cutover); }
 function positionFields(isNew, p, orig) {
   const locked = k => !isNew && !isLead() && !!(orig && orig[k]);
   const pl = pipelineLocked(), plHint = 'Recorded from the candidate pipeline.';
@@ -1729,7 +1735,7 @@ function bindDailyForm(root, after) {
     const dt = ($('[name=Entry_Date]', f) || {}).value || today(), pk = pipedKeys(dt);
     $$('.dl-pipe', f).forEach(x => { const on = pk.includes(x.dataset.k); x.hidden = on; if (on) { const i = $('input', x); if (i) i.value = ''; } });
     const n = $('.dl-pipe-note', f);
-    if (n) { n.hidden = !pk.length; n.textContent = pk.length === METRICS.length ? `From ${fmtDate(S.boot.funnelV2 || FUNNEL_V2_FALLBACK)}, every count is taken from the candidates moved in the Pipeline. Log only remarks and the department feedback here.` : `From ${fmtDate(S.boot.cutover || '2026-10-05')}, HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Log only CVs sourced and reviewed here.`; }
+    if (n) { n.hidden = !pk.length; n.textContent = pk.length === METRICS.length ? `From ${fmtDate(S.boot.funnelV2)}, every count is taken from the candidates moved in the Pipeline. Log only remarks and the department feedback here.` : `From ${fmtDate(S.boot.cutover)}, HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline. Log only CVs sourced and reviewed here.`; }
   };
   if ($('[name=Entry_Date]', f)) $('[name=Entry_Date]', f).addEventListener('change', syncPipe);
   syncPipe();
@@ -1755,17 +1761,16 @@ function bindEntryEdits(root, rows, after) {
     bindDailyForm(d, () => { closeDrawer(); after(); });
   });
 }
-const FUNNEL_V2_FALLBACK = '2026-11-01';
 /** The Daily-log columns counted from the Pipeline on a day: all of them from the funnel start date, all but CVs sourced / reviewed from the switch-over, none before. */
 function pipedKeys(day) {
-  const d = String(day || today()), cut = S.boot.cutover || '2026-10-05', v2 = S.boot.funnelV2 || FUNNEL_V2_FALLBACK;
+  const d = String(day || today()), cut = S.boot.cutover, v2 = S.boot.funnelV2;
   if (d < cut) return [];
   return METRICS.map(m => m[0]).filter(k => d >= v2 || !['CV_Sourced', 'CV_Reviewed'].includes(k));
 }
 function funnelTable(rows, withPosition) {
   if (!rows.length) return '<div class="empty">No activity logged for this period.</div>';
   // From the switch-over each column is a Pipeline stage (the Pipeline board's names); earlier days keep the typed columns.
-  const cut = S.boot.cutover || '2026-10-05', v2 = S.boot.funnelV2 || FUNNEL_V2_FALLBACK;
+  const cut = S.boot.cutover, v2 = S.boot.funnelV2;
   const stageCols = Object.keys(P_NAMES).map(k => [k, P_NAMES[k], stageShort(k)]);
   const now = rows.filter(r => String(r.Entry_Date) >= cut), old = rows.filter(r => String(r.Entry_Date) < cut);
   return (now.length ? funnelTableCore(now, withPosition, stageCols, true)
@@ -1801,7 +1806,7 @@ document.addEventListener('click', e => {
 /** The day's grid on the Daily log page: one row per position, the day's numbers typed in the row. */
 async function dailyGrid(box, onRec, fixed) {
   // `fixed` ({ rec, date }) is the My day grid: one recruiter, one day, no pickers.
-  const cut = S.boot.cutover || '2026-10-05', st = fixed ? { date: fixed.date } : (S.dlGrid = S.dlGrid || {});
+  const cut = S.boot.cutover, st = fixed ? { date: fixed.date } : (S.dlGrid = S.dlGrid || {});
   if (!st.date) st.date = today();
   const dirty = () => $$('tr.dg-dirty', box).length;
   const guard = () => !dirty() || confirm('You have unsaved numbers. Discard them?');
@@ -1877,7 +1882,7 @@ async function viewDaily(v) {
   const load = async () => {
     const rows = await fresh('apiListFunnel', f.line ? { lineId: f.line, from: f.from, to: f.to } : { recruiter: f.recruiter, from: f.from, to: f.to });
     const tot = funnelTotals(rows);
-    late('#dailyList').innerHTML = (f.line ? `<div class="readout" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${(() => { const cut = S.boot.cutover || '2026-10-05', cur = rows.filter(r => String(r.Entry_Date) >= cut); return cur.length ? Object.keys(P_NAMES).map(k => `<div>${esc(P_NAMES[k])}<b>${cur.reduce((n, r) => n + (Number(r[k]) || 0), 0)}</b></div>`).join('') : METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join(''); })()}</div>` : '') + funnelTable(rows, true);
+    late('#dailyList').innerHTML = (f.line ? `<div class="readout" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${(() => { const cut = S.boot.cutover, cur = rows.filter(r => String(r.Entry_Date) >= cut); return cur.length ? Object.keys(P_NAMES).map(k => `<div>${esc(P_NAMES[k])}<b>${cur.reduce((n, r) => n + (Number(r[k]) || 0), 0)}</b></div>`).join('') : METRICS.map(([k, l]) => `<div>${l}<b>${tot[k]}</b></div>`).join(''); })()}</div>` : '') + funnelTable(rows, true);
     bindEntryEdits($('#dailyList'), rows, load);
   };
   $('#dffrom').onchange = e => { f.from = e.target.value; load(); };
@@ -2029,7 +2034,6 @@ async function openCandidate(id) {
 }
 
 /* ---- CV profile: history, education, skills with evidence, checks (rule-based; no AI) ---- */
-const CVP_LEVEL_ = { found: 'from CV', check: 'check' };
 function cvpDur(m) { if (m == null) return '—'; const y = Math.floor(m / 12), r = m % 12; return (y ? y + ' y ' : '') + (r || !y ? r + ' m' : '').trim(); }
 function cvpMonth(ym) { if (!ym) return ''; const p = ym.split('-'); return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+p[1] - 1] + ' ' + p[0]; }
 async function cvProfileSection(el, c) {
@@ -2964,7 +2968,7 @@ async function openJdMaker(lineId, templateId, after) {
   const fname = d => `${d.jdRef} - ${d.designation} - JD v${d.version}.docx`.replace(/[\\/:*?"<>|]/g, '-');
   $('#jmDl', body).onclick = async () => {
     const b = $('#jmDl', body); b.disabled = true;
-    try { const d = collect(), blob = await makeBlob(d), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fname(d); document.body.appendChild(a); a.click(); a.remove(); }
+    try { const d = collect(); saveBlob(await makeBlob(d), fname(d)); }
     catch (e) { toast(e, true); } b.disabled = false;
   };
   if ($('#jmSave', body)) $('#jmSave', body).onclick = async () => {
@@ -4468,8 +4472,7 @@ async function viewKpi(v, fresh) {
   const k = await viewData(v, 'kpi:' + f.fy, () => api('apiKpi', f.fy, !!fresh), () => viewKpi(v), 'KPI: figures shown', { force: !!fresh });
   const recs = Object.keys(k.data).filter(r => r !== 'TEAM_TOTAL').sort();
   const d = k.data[f.rec] || {};
-  const grace = k.grace || 30, nowM = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 7);
-  const inForce = (t, who) => t.kpi && t.recruiter === who && t.from <= nowM;
+  const grace = k.grace || 30, nowM = ymdLocal(new Date()).slice(0, 7);
   const tgt = kpi => {
     const who = f.rec === 'TEAM_TOTAL' ? '*' : f.rec.toLowerCase();
     /* the rule in force now: the newest version that has started; a recruiter's own row (unless it ended) wins over the team row */
@@ -4746,7 +4749,7 @@ async function kpiReconDialog(month, rec, kpi, kpiName, cell, who) {
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 function thisMonth() { return today().slice(0, 7); }
-function lastMonth() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 7); }
+function lastMonth() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return ymdLocal(d).slice(0, 7); }
 
 async function viewCompliance(v) {
   const f = S.compFilter = S.compFilter || { tab: 'obs', month: thisMonth(), rec: isLead() ? '' : S.boot.user.recruiter, auditMonth: lastMonth() };
@@ -5226,11 +5229,7 @@ function alertsDialog(a, tab) {
     if ($('#alRec', d)) $('#alRec', d).onchange = e => { f.rec = e.target.value; draw(); };
     const q = $('#alQ', d); q.oninput = debounce(() => { f.q = q.value.trim().toLowerCase(); const pos = q.selectionStart; draw(); const n = $('#alQ', d); n.focus(); n.setSelectionRange(pos, pos); }, 200);
     $$('[data-open]', d).forEach(b => b.onclick = () => { const x = list.find(y => y.app === b.dataset.open); d.close(); openAlertCard(x); });
-    $('#alCsv', d).onclick = () => {
-      const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-      const csv = [cols.map(c => c[0]).concat('App ID', 'Line ID').map(cell).join(',')].concat(list.map(x => cols.map(c => c[2](x)).concat(x.app, x.line).map(cell).join(','))).join('\r\n');
-      saveBlob(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `pipeline-alerts-${f.tab}-${a.today}.csv`);
-    };
+    $('#alCsv', d).onclick = () => csvSave(`pipeline-alerts-${f.tab}-${a.today}.csv`, cols.map(c => c[0]).concat('App ID', 'Line ID'), list.map(x => cols.map(c => c[2](x)).concat(x.app, x.line)));
   };
   draw();
   if (!d.open) d.showModal();
@@ -5262,7 +5261,7 @@ async function approvedDatesDialog(includeClosed) {
 }
 /** CV received: typed in the Daily log against the cards created, per day and recruiter (leads), to see what the switch to the pipeline changes. */
 async function cvCompareDialog(from, to) {
-  const st = cvCompareDialog.st = cvCompareDialog.st || { from: S.boot.cutover || '2026-10-05', to: today() };
+  const st = cvCompareDialog.st = cvCompareDialog.st || { from: S.boot.cutover, to: today() };
   if (from) st.from = from; if (to) st.to = to;
   let r; try { r = await api('apiCvReceivedCompare', st.from, st.to); } catch (e) { toast(e, true); return; }
   const n = x => Number(x || 0);
@@ -5294,7 +5293,6 @@ function csvSave(name, head, rows) {
   saveBlob(new Blob(['﻿' + [head].concat(rows).map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);
 }
 const ORG_GRADES = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'T', 'W1', 'W2', 'W3', 'W4', 'W5'];
-const ORG_ST = { full: 'Full', vacant: 'Vacant', over: 'Over-strength', unapproved: 'Not approved', mix: 'Grade mix differs' };
 const ORG_F = ['approved', 'existing', 'vacancy', 'excess', 'open', 'gap', 'covered', 'grossVacancy', 'grossExcess', 'upSeats', 'downSeats', 'upSteps', 'recheck'];
 const orgN = x => Number(x || 0).toLocaleString('en-IN');
 function orgZero() { const m = {}; ORG_F.forEach(k => { m[k] = 0; }); return m; }
@@ -5393,6 +5391,7 @@ function orgChartHtml(list, f) {
   const legend = `<div class="oc-legend"><span><i class="org-bar-key"></i>Bar: existing; the mark is the approved number</span><span><i class="org-dot ost-full"></i>Full</span><span><i class="org-dot ost-mix"></i>Grade mix differs (covered)</span><span><i class="org-dot ost-vacant"></i>Vacant</span><span><i class="org-dot ost-over"></i>Over-strength</span><span><i class="org-dot ost-unapproved"></i>Not approved</span><span><i class="oc-av none mini"></i>Not named</span></div>`;
   return `${bar}<div class="oc-frame" id="ocFrame" tabindex="0" aria-label="Organisation chart. Drag to move, use the buttons to zoom."><div id="ocZoom">${chart}</div></div>${legend}`;
 }
+let ocWin = null;
 function orgChartBind(root, f, redraw) {
   const frame = $('#ocFrame', root), zoom = $('#ocZoom', root), inner = $('#ocInner', root);
   if (!frame || !inner) return;
@@ -5418,9 +5417,9 @@ function orgChartBind(root, f, redraw) {
   frame.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); step(e.deltaY < 0 ? 0.1 : -0.1); } }, { passive: false });
   let drag = null, moved = false;
   frame.addEventListener('mousedown', e => { if (e.button !== 0 || e.target.closest('button')) return; drag = { x: e.clientX, y: e.clientY, l: frame.scrollLeft, t: frame.scrollTop }; moved = false; frame.classList.add('grab'); });
-  window.addEventListener('mousemove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true; frame.scrollLeft = drag.l - dx; frame.scrollTop = drag.t - dy; });
-  window.addEventListener('mouseup', () => { drag = null; frame.classList.remove('grab'); });
-  window.addEventListener('resize', debounce(() => { if (document.body.contains(frame) && !f.zoom) apply(); }, 150));
+  if (ocWin) { window.removeEventListener('mousemove', ocWin.mm); window.removeEventListener('mouseup', ocWin.mu); window.removeEventListener('resize', ocWin.rs); }
+  ocWin = { mm: e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true; frame.scrollLeft = drag.l - dx; frame.scrollTop = drag.t - dy; }, mu: () => { drag = null; frame.classList.remove('grab'); }, rs: debounce(() => { if (document.body.contains(frame) && !f.zoom) apply(); }, 150) };
+  window.addEventListener('mousemove', ocWin.mm); window.addEventListener('mouseup', ocWin.mu); window.addEventListener('resize', ocWin.rs);
 }
 function orgTable(list, f) {
   const rows = [];
@@ -5448,7 +5447,7 @@ function orgSubLine(s) { return `<b>${s.seats}</b> seat${s.seats === 1 ? '' : 's
 function orgNoteText(n) { return n ? `${esc(n.reason || 'No reason recorded')}${n.by ? ' · approved by ' + esc(n.by) : ''}${n.reviewOn ? ' · review on ' + esc(n.reviewOn) : ''}` : ''; }
 function orgNoteDialog(s, done) {
   const up = s.dir === 'Upgrade', n = s.note || {};
-  const dflt = () => { const d = new Date(); d.setMonth(d.getMonth() + 6); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const dflt = () => { const d = new Date(); d.setMonth(d.getMonth() + 6); return ymdLocal(d); };
   const b = openDrawer('Grade note', `<p><b>${esc(s.dept)}</b></p><p>${orgSubLine(s)}</p>
     <p class="hint">${up ? 'A seat filled at a higher grade costs more, so a short note is kept: why, who approved it, and when to look at it again. The seat does not show as vacant meanwhile.' : 'A seat filled at a lower grade needs no approval. A note is optional.'}</p>
     <div class="field" style="max-width:160px"><label for="onSeats">Seats</label><input id="onSeats" type="number" min="1" max="999" value="${esc(n.seats || s.seats)}"></div>
@@ -6411,11 +6410,10 @@ async function bgvGovernTab(el, B, v) {
 const VOICE_STATUS_CLASS_ = { Completed: 'ok', Started: '', Starting: '', Failed: 'miss', 'Blocked (Do Not Disturb)': 'miss', Cancelled: '' };
 async function renderVoiceAdmin(el) {
   let C; try { C = await api('apiVoiceConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready && (C.dndWritten || !C.dndRequired) ? 'ok' : ''}">${C.ready ? (C.dndWritten || !C.dndRequired ? 'Ready' : 'Do Not Disturb check not connected yet') : 'Not set up'}</span></div>
+  el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready ? 'ok' : ''}">${C.ready ? 'Ready' : 'Not set up'}</span></div>
       <p class="hint" style="margin-top:0">An AI voice agent calls the candidate and asks the position’s confirmed screening questions. The answers come back as a <b>draft</b> screening for the recruiter to check; nothing is completed or moved by the call. Candidates on the Do Not Disturb list are never called. This is visible to the Admin only. The API key is kept on the server and is never shown again.</p>
       ${C.missing.length ? `<div class="note warn-note"><b>Still to fill in:</b> ${esc(C.missing.join(', '))}.</div>` : ''}
-      ${C.dndWritten || !C.dndRequired ? '' : '<div class="note">The call itself is connected. The <b>Do Not Disturb check</b> is not connected yet, and it is required, so no call is placed. Use <b>Preview the call</b> on a candidate\u2019s card to check exactly what would be sent.</div>'}
-      ${C.resultsWritten && C.webhookUrl ? '' : C.resultsWritten ? '<div class="note"><b>Results:</b> no webhook address is set, so a call\u2019s transcript and answers will not come back. Set up the small receiver (docs\/voice-webhook in the repository) and paste its address below.</div>' : '<div class="note">Results coming back from the call (disposition, summary and answers) are not connected yet. A call can be placed once the Do Not Disturb check is connected, but its answers will not fill the draft screening yet.</div>'}
+      ${C.webhookUrl ? '' : '<div class="note"><b>Results:</b> no webhook address is set, so a call\u2019s transcript and answers will not come back. Set up the small receiver (docs\/voice-webhook in the repository) and paste its address below.</div>'}
       <div class="grid">
         <div class="field wide"><div class="rs-row"><label class="chk"><input type="checkbox" id="vcOn" ${C.enabled ? 'checked' : ''}> Allow calls (the Admin and people given voice access can start a call from a candidate’s card)</label></div></div>
         <div class="field"><label for="vcAgent">Agent id</label><input id="vcAgent" value="${esc(C.agentId)}" maxlength="100" autocomplete="off"></div>
@@ -8167,7 +8165,7 @@ async function viewPipeline(v) {
       }).join('')}</div>`;
     $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => { f.cardTab = 'work'; CARD_TL.delete(b.dataset.app); openApp(P.apps.find(a => a.App_ID === b.dataset.app)); });
     $('#pOpenPos').onclick = () => positionDrawer(lineById(f.line));
-    $('#pFlow').onclick = () => openDocFlow(f.line, async () => { try { await refreshLine(f.line); reload(await api('apiPipeline', f.line)); } catch (e) { } });
+    $('#pFlow').onclick = () => openDocFlow(f.line, async () => { try { const np = (await Promise.all([refreshLine(f.line), api('apiPipeline', f.line)]))[1]; reload(np); } catch (e) { } });
     $$('[data-rview]', $('#pBody')).forEach(b => b.onclick = () => {
       const k = b.dataset.rview;
       if (k === 'mrf') showFile(`MRF:${f.line}:MRF_Form_File`, () => api('apiGetDoc', 'MRF', f.line, 'MRF_Form_File'), b, 'View MRF', 'Hide MRF');
@@ -8201,9 +8199,9 @@ async function viewPipeline(v) {
     if ($('#pShareMany')) $('#pShareMany').onclick = () => openShareBatch(P.line.Line_ID, async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } });
     if (!canEdit) return;
     $('#pQs').onclick = questionsDialog;
-    $('#pJdMake').onclick = () => openJdMaker(f.line, '', async () => { try { await refreshLine(f.line); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); } });
+    $('#pJdMake').onclick = () => openJdMaker(f.line, '', async () => { try { const np = (await Promise.all([refreshLine(f.line), api('apiPipeline', f.line)]))[1]; reload(np); } catch (e) { toast(e, true); } });
     $('#pJd').onclick = () => openJdPicker(async file => {
-      try { await api('apiUseJd', [f.line], file.id); await refreshLine(f.line); toast(file.name + ' attached as the JD'); reload(await api('apiPipeline', f.line)); } catch (e) { toast(e, true); }
+      try { await api('apiUseJd', [f.line], file.id); const np = (await Promise.all([refreshLine(f.line), api('apiPipeline', f.line)]))[1]; toast(file.name + ' attached as the JD'); reload(np); } catch (e) { toast(e, true); }
     }, P.line.JD_File);
     $('#pPost').onclick = postsDialog;
   };
@@ -8663,7 +8661,7 @@ async function viewPipeline(v) {
   };
   showLine(f.line);   // not awaited: the page (heading, filters) is ready now and the board fills in
 }
-function daysAhead(n) { const d = new Date(); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function daysAhead(n) { const d = new Date(); d.setDate(d.getDate() + n); return ymdLocal(d); }
 
 async function openJdPicker(onPick, currentUrl) {
   let d = $('#jdDialog');

@@ -193,7 +193,7 @@ function apiBgvPurge(ids, reason) {
     bgvBlankColumn_(BGV_CASES_.name, 'Candidate_Name', inSet, '(purged)');
     bgvBlankColumn_(BGV_CASES_.name, 'Remarks', inSet, '');
     bgvBlankColumn_(BGV_CASES_.name, 'Decision_Note', inSet, '');
-    bgvBlankColumn_(BGV_CASES_.name, 'Purged_On', inSet, fmt_(new Date(), TZ, 'yyyy-MM-dd'));
+    bgvBlankColumn_(BGV_CASES_.name, 'Purged_On', inSet, ymd_(new Date()));
     bgvBlankColumn_(BGV_CASES_.name, 'Purged_By', inSet, u.email);
     ['Subject', 'Period', 'Finding'].forEach(function (col) { bgvBlankColumn_(BGV_CHECKS_.name, col, inSet, ''); });
     bgvBlankColumn_(BGV_LOG_.name, 'Note', inSet, '');

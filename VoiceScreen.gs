@@ -27,7 +27,6 @@ const VOICE_QUEUE_ = { name: 'Voice_Queue', id: 'Row_ID', prefix: 'VBQ-', width:
   cols: ['Row_ID', 'Batch_ID', 'App_ID', 'Line_ID', 'Candidate_ID', 'Status', 'Reason', 'Call_ID', 'Requested_By', 'Requested_At', 'Updated_At'] };
 const VOICE_BATCH_MAX_ = 30;
 const VOICE_DEFAULT_LIMIT_ = 20;
-const VOICE_STATUSES_ = ['Starting', 'Started', 'Completed', 'Failed', 'Blocked (Do Not Disturb)', 'Cancelled'];
 const VOICE_OPEN_STATUSES_ = ['Starting', 'Started'];
 const VOICE_KEY_PROP_ = 'VOICE_API_KEY';
 /** Workspace ids given by the provider's console; they are identifiers, not secrets. */
@@ -72,14 +71,8 @@ function voiceCfgOut_(c) {
   const m = voiceMissing_(c);
   return { enabled: c.enabled, agentId: c.agentId, agentVersion: c.agentVersion, connectionId: c.connectionId, fromNumber: c.fromNumber, dndRequired: c.dndRequired, orgId: c.orgId, workspaceId: c.workspaceId,
     ratePerMin: c.ratePerMin, queuePerMin: c.queuePerMin, callHours: c.callHours, openingLine: c.openingLine, entryState: c.entryState, webhookUrl: c.webhookUrl, questionsVar: c.questionsVar, maxQ: c.maxQ, listOnly: c.listOnly,
-    keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length, connected: voiceProviderConnected_(), dndWritten: voiceDndWritten_(), resultsWritten: voiceResultsWritten_() };
+    keySet: c.keySet, keyHint: c.keyHint, missing: m, ready: !m.length };
 }
-/** The call itself is written; the Do Not Disturb check and the way results come back are not. */
-function voicePlaceWritten_() { return true; }
-function voiceDndWritten_() { return true; }
-function voiceResultsWritten_() { return true; }
-/** True when a call can be placed with the Do Not Disturb rule honoured (the check, or the Admin has switched it off). */
-function voiceProviderConnected_() { return voicePlaceWritten_() && voiceDndWritten_(); }
 
 function apiVoiceConfig() {
   const u = currentUser_(); ensureSchema_(); requireVoiceAdmin_(u);
@@ -434,7 +427,6 @@ function voiceStartFor_(u, appId, opts) {
   const open = voiceCallsRows_(appId).filter(function (r) { return VOICE_OPEN_STATUSES_.indexOf(String(r.Status)) >= 0 && (Date.now() - new Date(r.Started_At).getTime()) < 30 * 60000; })[0];
   const missing = voiceMissing_(cfg), problems = missing.slice();
   if (open) problems.push('A call to this candidate is already in progress (' + open.Call_ID + ')');
-  if (cfg.dndRequired && !voiceDndWritten_()) problems.push('The Do Not Disturb check is not connected yet');
   if (fup && fup.listOnly && !cfg.questionsVar) problems.push('The questions variable is not set (Admin > Voice agent): the agent asks only the questions it is sent, so it would ask nothing');
   else if (fup && !cfg.questionsVar) problems.push('A follow-up call needs the questions variable to be set (Admin > Voice agent), and an agent version that has the call_mode variable (version 3 or later)');
   if (!fup && brief.plan.sent.length && !cfg.questionsVar) problems.push('This position has ' + brief.plan.sent.length + ' role-specific question' + (brief.plan.sent.length === 1 ? '' : 's') + ' but no questions variable is set (Admin > Voice agent), so the bot would ask only its standard questions');

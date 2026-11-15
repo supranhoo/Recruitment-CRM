@@ -158,8 +158,8 @@ function checkinVars_(name, role, joiningDate, today) {
   return { name: String(name || '').trim().split(/\s+/)[0] || '', role: role || '', joining_date: joiningDate ? fmtYmdLong_(joiningDate) : '', days_to_joining: days === '' || days < 0 ? '' : days };
 }
 function fmtYmdLong_(ymd) {
-  const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], p = String(ymd).split('-');
-  return p.length < 3 ? String(ymd) : (+p[2]) + ' ' + M[+p[1] - 1] + ' ' + p[0];
+  const p = String(ymd).split('-');
+  return p.length < 3 ? String(ymd) : (+p[2]) + ' ' + MONTHS_SHORT_[+p[1] - 1] + ' ' + p[0];
 }
 
 /** Sample dates shown in the editor's preview. */

@@ -384,7 +384,7 @@ function apiSaveFunnelRun_(data) {
   let entryId = data.Entry_ID;
   if (!entryId) {
     const day = ymd_(patch.Entry_Date);
-    const same = readTable_(T.FUNNEL.name, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')) && (!splitEntry || String(r.Recruiter || '').trim().toLowerCase() === entryWho.toLowerCase()); })[0];
+    const same = readTableFrom_(T.FUNNEL.name, 'Entry_Date', day, true).rows.filter(function (r) { return String(r.Line_ID) === String(patch.Line_ID) && ymd_(r.Entry_Date) === day && !FUNNEL_REMOVED_RE_.test(String(r.Remarks || '')) && (!splitEntry || String(r.Recruiter || '').trim().toLowerCase() === entryWho.toLowerCase()); })[0];
     if (same) {
       if (!isLead_(u) && String(same.Created_By).toLowerCase() !== u.email) throw new Error('An entry for this position and day already exists (logged by ' + String(same.Created_By) + '). Ask a TA Lead to change it.');
       entryId = same.Entry_ID;

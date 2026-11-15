@@ -9,7 +9,6 @@ function reconcileSchema_() {
 }
 
 function stageIdx_(s) { return STAGES.indexOf(String(s)); }
-function sameName_(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(); }
 
 /** Positions (open or offered) whose typed details disagree with the pipeline. recruiter '' = everyone. */
 function reconcileScan_(recruiter, includeReviewed) {

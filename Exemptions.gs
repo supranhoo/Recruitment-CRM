@@ -25,8 +25,8 @@ const TEXR_SEED_ = [
 const TEXR_ADDED_ = ['Delay in MRF Evidence', 'Other, if any'];
 /** The seed rows of TEXR_ADDED_ whose reason is not in the sheet yet (name compared trimmed, any case). `have` is a list of the reasons in the sheet. */
 function exemptReasonsMissing_(have) {
-  const names = {}; have.forEach(function (n) { names[String(n).replace(/\s+/g, ' ').trim().toLowerCase()] = true; });
-  return TEXR_SEED_.filter(function (r) { return TEXR_ADDED_.indexOf(r[0]) >= 0 && !names[String(r[0]).replace(/\s+/g, ' ').trim().toLowerCase()]; });
+  const names = {}; have.forEach(function (n) { names[desigKey_(n)] = true; });
+  return TEXR_SEED_.filter(function (r) { return TEXR_ADDED_.indexOf(r[0]) >= 0 && !names[desigKey_(r[0])]; });
 }
 const TEX_LOCK_DAYS_ = 5;
 const TEX_OPEN_ = ['Open', 'Offered', 'On Hold'];

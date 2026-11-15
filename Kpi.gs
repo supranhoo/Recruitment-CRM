@@ -165,8 +165,6 @@ function kpiTargets_() {
   }).concat(_kpiDraft_ && _kpiDraft_.targets ? _kpiDraft_.targets.map(function (d, j) { return Object.assign({}, d, { idx: 1e6 + j }); }) : []);
 }
 
-/** The TAT KPIs scored on positions worked on (worked − missed) ÷ worked: Timely closure (v153) and M-level fulfilment (v157). W-level stays on time ÷ due. */
-const KPI_WORKED_BASIS_ = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];   // v166: all three on positions worked on
 const KPI_RECON_BUCKETS_ = [
   ['ontime', 'Achieved: joined on time', 'Joined in this month within the allowed days.'],
   ['within', 'Achieved: within TAT at month end', 'Not joined by the end of this month (today, in the current month) and its due date had not passed.'],

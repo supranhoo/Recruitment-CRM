@@ -445,7 +445,6 @@ function computeTasks_() {
   return out;
 }
 
-function panelKey_(s) { return String(s || '').toLowerCase().replace(/\b(sir|mr|mrs|ms|dr)\b\.?/g, '').replace(/[^a-z]/g, ''); }
 function panelEmailIndex_() {
   const idx = {};
   readTable_(T.PM.name).rows.forEach(function (p) {
@@ -463,9 +462,9 @@ function taskState_() {
   return { table: t, map: map };
 }
 
-/** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
 /** The psychometric test needs no to-do once it is done, waived, or has a date (the KPI counts Waived as fine too). */
 function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychometric_Status || '')) || !!c.Psychometric_Date; }
+/** Tasks with their state applied, cached until the underlying data changes (or 10 minutes pass). */
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
   const stateStamps = tableStamps_(['Tasks', 'Task_Actions']).join('|');
@@ -533,7 +532,13 @@ function reconcileTasks_() {
       if (current[k] || s.Resolved_At) return;
       updates.push({ r: s._row, v: row(Object.assign({}, s, { Resolved_At: s.Done_At || now, Updated_At: now })) });
     });
-    updates.forEach(function (u) { sh.getRange(u.r, 1, 1, headers.length).setValues([u.v]); });
+    const byRow = {}; updates.forEach(function (u) { byRow[u.r] = u.v; });   // a row listed twice keeps its last values, as the one-by-one writes did
+    const rowsSorted = Object.keys(byRow).map(Number).sort(function (x, y) { return x - y; });
+    for (let i = 0; i < rowsSorted.length;) {
+      let j = i; while (j + 1 < rowsSorted.length && rowsSorted[j + 1] === rowsSorted[j] + 1) j++;   // one write per run of neighbouring rows
+      sh.getRange(rowsSorted[i], 1, j - i + 1, headers.length).setValues(rowsSorted.slice(i, j + 1).map(function (r) { return byRow[r]; }));
+      i = j + 1;
+    }
     if (appends.length) sh.getRange(sh.getLastRow() + 1, 1, appends.length, headers.length).setValues(appends);
     if (updates.length || appends.length) dropStale_(T.TASK.name);
     return { added: appends.length, updated: updates.length };

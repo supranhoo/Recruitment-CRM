@@ -195,10 +195,6 @@ function orgNum_(v) {
   const n = Number(String(v).replace(/,/g, '').trim());
   return isFinite(n) ? n : NaN;
 }
-function orgGap_(approved, existing, open) {
-  const vacancy = Math.max(0, approved - existing);
-  return { vacancy: vacancy, excess: Math.max(0, existing - approved), gap: Math.max(0, vacancy - open) };
-}
 /**
  * Status of a figure set { approved, existing, vacancy, excess, covered } where vacancy and excess are the residuals left
  * after grades have covered for each other. Grade mix alone (covered seats) is never a warning: it reads 'mix'.

@@ -17,7 +17,6 @@ function histSchema_() {
   });
 }
 function histCut_(v, n) { v = String(v == null ? '' : v); return v.length > n ? v.slice(0, n) + '…' : v; }
-function histMs_(v) { return v instanceof Date && !isNaN(v) ? v.getTime() : 0; }
 function histWhen_(v) { return v instanceof Date && !isNaN(v) ? fmt_(v, TZ, 'd MMM yyyy, HH:mm') : String(v == null ? '' : v); }
 function histJson_(v, fb) { try { const o = JSON.parse(String(v || '')); return o && typeof o === 'object' ? o : fb; } catch (e) { return fb; } }
 
@@ -38,12 +37,12 @@ function histBuild_(src) {
   const ev = [];
   (src.stage || []).forEach(function (h) {
     const moved = String(h.Outcome) === 'Moved';
-    ev.push({ kind: 'stage', ms: histMs_(h.Changed_At), at: histWhen_(h.Changed_At), by: String(h.Changed_By || ''), app: String(h.App_ID), position: label(appLine[String(h.App_ID)] || h.Line_ID),
+    ev.push({ kind: 'stage', ms: ms_(h.Changed_At), at: histWhen_(h.Changed_At), by: String(h.Changed_By || ''), app: String(h.App_ID), position: label(appLine[String(h.App_ID)] || h.Line_ID),
       from: String(h.From_Stage || ''), to: String(h.To_Stage || ''), outcome: String(h.Outcome || ''), note: String(h.Note || ''), moved: moved,
       title: moved ? 'Moved to another position' : String(h.From_Stage) === String(h.To_Stage) ? (String(h.Outcome) || 'Update') : String(h.To_Stage) });
   });
   (src.ivs || []).forEach(function (i) {
-    ev.push({ kind: 'interview', ms: histMs_(i.Start) || histMs_(i.Created_At), at: histWhen_(i.Start || i.Created_At), by: String(i.Created_By || ''), app: String(i.App_ID), position: label(i.Line_ID), origin: origin(i),
+    ev.push({ kind: 'interview', ms: ms_(i.Start) || ms_(i.Created_At), at: histWhen_(i.Start || i.Created_At), by: String(i.Created_By || ''), app: String(i.App_ID), position: label(i.Line_ID), origin: origin(i),
       title: String(i.Round || 'Interview') + ' interview', status: String(i.Status || ''), mode: String(i.Mode || ''), panel: String(i.Panel || ''), attendance: String(i.Attendance_Confirmed || ''),
       unavailable: String(i.Unavailable || ''), note: String(i.Notes || '') });
   });
@@ -55,29 +54,29 @@ function histBuild_(src) {
       const a = String(x.a == null ? '' : x.a).trim(); if (!a && !x.r) return;
       list.push({ q: histCut_(it.q || it.id, 160), a: histCut_(a, 300), r: String(x.r || '') });
     });
-    ev.push({ kind: 'screening', ms: histMs_(r.Updated_At) || histMs_(r.Created_At), at: histWhen_(r.Updated_At || r.Created_At), by: String(r.Updated_By || r.Created_By || ''), app: String(r.App_ID), position: label(r.Line_ID), origin: origin(r),
+    ev.push({ kind: 'screening', ms: ms_(r.Updated_At) || ms_(r.Created_At), at: histWhen_(r.Updated_At || r.Created_At), by: String(r.Updated_By || r.Created_By || ''), app: String(r.App_ID), position: label(r.Line_ID), origin: origin(r),
       title: 'Screening ' + (String(r.Status) === 'Complete' ? 'completed' : 'draft'), band: String(r.Band || ''), pct: Number(r.Score_Pct) || 0, met: Number(r.Met) || 0, total: Number(r.Total) || 0, gaps: Number(r.Gaps) || 0,
       sqVersion: Number(r.SQ_Version) || 0, note: String(r.Note || ''), answers: list, sharedWith: String(r.Shared_With || '') });
   });
   (src.calls || []).forEach(function (c) {
     const vars = histJson_(c.Final_Vars_JSON, {});
-    ev.push({ kind: 'voice', ms: histMs_(c.Started_At), at: histWhen_(c.Started_At), by: String(c.Started_By || ''), app: String(c.App_ID), position: label(c.Line_ID), origin: origin(c), call: String(c.Call_ID),
+    ev.push({ kind: 'voice', ms: ms_(c.Started_At), at: histWhen_(c.Started_At), by: String(c.Started_By || ''), app: String(c.App_ID), position: label(c.Line_ID), origin: origin(c), call: String(c.Call_ID),
       title: 'Voice screening call', status: String(c.Status || ''), outcome: String(c.Outcome || ''), secs: Math.round(Number(c.Duration_Sec) || 0), summary: histCut_(vars.call_summary, 800),
       disposition: String(vars.call_disposition || ''), answersText: histCut_(vars.screening_answers, 2500), transcript: histCut_(c.Transcript, HIST_TEXT_MAX_), recording: String(c.Recording_URL || ''), note: String(c.Status_Note || '') });
   });
   (src.fus || []).forEach(function (f) {
-    ev.push({ kind: 'followup', ms: histMs_(f.FU_Date) || histMs_(f.Created_At), at: histWhen_(f.FU_Date || f.Created_At), by: String(f.By || ''), app: String(f.App_ID), position: label(f.Line_ID), origin: origin(f),
+    ev.push({ kind: 'followup', ms: ms_(f.FU_Date) || ms_(f.Created_At), at: histWhen_(f.FU_Date || f.Created_At), by: String(f.By || ''), app: String(f.App_ID), position: label(f.Line_ID), origin: origin(f),
       title: 'Joining follow-up', mode: String(f.Mode || ''), response: String(f.Response || ''), risk: String(f.Risk || ''), next: histWhen_(f.Next_Date), note: String(f.Note || '') });
   });
   (src.audit || []).forEach(function (a) {
-    ev.push({ kind: 'change', ms: histMs_(a.At), at: histWhen_(a.At), by: String(a.By || ''), app: '', position: '', title: String(a.Label || a.Field), oldV: String(a.Old || ''), newV: String(a.New || '') });
+    ev.push({ kind: 'change', ms: ms_(a.At), at: histWhen_(a.At), by: String(a.By || ''), app: '', position: '', title: String(a.Label || a.Field), oldV: String(a.Old || ''), newV: String(a.New || '') });
   });
   ev.sort(function (a, b) { return b.ms - a.ms; });
   const results = [];
   (src.stage || []).forEach(function (h) {
     const to = String(h.To_Stage);
     if ((to === 'Technical' || to === 'HR') && String(h.From_Stage) !== to) {
-      results.push({ app: String(h.App_ID), position: label(appLine[String(h.App_ID)] || h.Line_ID), round: to, outcome: String(h.Outcome || ''), at: histWhen_(h.Changed_At), ms: histMs_(h.Changed_At), by: String(h.Changed_By || ''), note: String(h.Note || '') });
+      results.push({ app: String(h.App_ID), position: label(appLine[String(h.App_ID)] || h.Line_ID), round: to, outcome: String(h.Outcome || ''), at: histWhen_(h.Changed_At), ms: ms_(h.Changed_At), by: String(h.Changed_By || ''), note: String(h.Note || '') });
     }
   });
   results.sort(function (a, b) { return b.ms - a.ms; });
@@ -87,7 +86,7 @@ function histBuild_(src) {
 /** The CV files of a candidate, newest first, the current one marked. Falls back to the file on the candidate row when no version was ever recorded. */
 function histCvList_(rows, currentUrl) {
   const out = (rows || []).map(function (r) {
-    return { url: String(r.File_URL || ''), name: String(r.File_Name || ''), by: String(r.Uploaded_By || ''), at: histWhen_(r.Uploaded_At), ms: histMs_(r.Uploaded_At), source: String(r.Source || ''), current: String(r.File_URL || '') === String(currentUrl || '') && !!currentUrl };
+    return { url: String(r.File_URL || ''), name: String(r.File_Name || ''), by: String(r.Uploaded_By || ''), at: histWhen_(r.Uploaded_At), ms: ms_(r.Uploaded_At), source: String(r.Source || ''), current: String(r.File_URL || '') === String(currentUrl || '') && !!currentUrl };
   }).sort(function (a, b) { return b.ms - a.ms; });
   if (currentUrl && !out.some(function (x) { return x.current; })) out.unshift({ url: String(currentUrl), name: '', by: '', at: '', ms: 0, source: 'File on the profile', current: true });
   return out;
@@ -134,7 +133,7 @@ function apiCandidateHistory(candidateId) {
     const l = lineRow[String(a.Line_ID)] || {};
     return { app: String(a.App_ID), line: String(a.Line_ID), mrf: String(l.MRF_No || a.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), recruiter: String(a.Recruiter || l.Recruiter || ''),
       stage: String(a.Stage || ''), status: String(a.Status || ''), reason: String(a.Status_Reason || ''), since: histWhen_(a.Stage_Since), offerDate: ymd_(a.Offer_Date), offerCtc: String(a.Offer_CTC || ''),
-      edoj: ymd_(a.EDOJ), doj: ymd_(a.Actual_DOJ), backout: ymd_(a.Backout_Date), created: ymd_(a.Created_At), ms: histMs_(a.Created_At) };
+      edoj: ymd_(a.EDOJ), doj: ymd_(a.Actual_DOJ), backout: ymd_(a.Backout_Date), created: ymd_(a.Created_At), ms: ms_(a.Created_At) };
   }).sort(function (x, y) { return y.ms - x.ms; });
   return { id: id, cards: cards, events: built.events.slice(0, 600), truncated: built.events.length > 600, results: built.results, cvs: histCvList_(cvRows, cand.CV_File_URL || ''), kinds: HIST_KINDS_ };
 }

@@ -513,7 +513,7 @@ function ctcVersions_() {
 
 /** The version in force on a day: the active one with the latest effective date on or before it. */
 function ctcActive_(day) {
-  const d = day || fmt_(new Date(), TZ, 'yyyy-MM-dd');
+  const d = day || ymd_(new Date());
   const v = ctcVersions_().filter(function (x) { return x.status === 'Active' && x.eff && x.eff <= d; })
     .sort(function (a, b) { return a.eff < b.eff ? 1 : a.eff > b.eff ? -1 : b.no - a.no; })[0];
   if (!v) throw new Error('No CTC rules are in force yet. Ask the admin to activate a version.');
@@ -537,7 +537,7 @@ function apiCtcRules() {
   const versions = all.filter(function (v) { return v.status !== 'Draft' && v.status !== 'Discarded'; }).map(function (v) { const o = Object.assign({}, v); delete o.json; delete o._row; return o; });
   const d = rules ? all.filter(function (v) { return v.status === 'Draft'; })[0] : null;
   const draft = d ? { id: d.id, by: d.by, at: d.at, updatedBy: d.updatedBy, updatedAt: d.updatedAt, config: JSON.parse(d.json), changes: ctcDiff_(act.config, JSON.parse(d.json)) } : null;
-  return { canRules: rules, today: fmt_(new Date(), TZ, 'yyyy-MM-dd'), active: act, versions: versions, draft: draft, approval: ctcApprovalOn_(), access: rules ? ctcAccessMatrix_() : null,
+  return { canRules: rules, today: ymd_(new Date()), active: act, versions: versions, draft: draft, approval: ctcApprovalOn_(), access: rules ? ctcAccessMatrix_() : null,
     reasons: CTC_REASONS_.filter(function (x) { return x !== 'Initial setup'; }) };
 }
 
@@ -943,7 +943,7 @@ function apiCtcActivate(id, d) {
   const u = currentUser_(); ensureSchema_();
   ctcRequire_(u, 'ctc_rules');
   d = d || {};
-  const today = fmt_(new Date(), TZ, 'yyyy-MM-dd');
+  const today = ymd_(new Date());
   const eff = ymd_(d.eff);
   if (!eff) throw new Error('Pick the date the new rules take effect.');
   if (eff < today) throw new Error('The rules can take effect from today or a later date, not the past.');
@@ -973,7 +973,7 @@ function apiCtcRetire(id, remark) {
   ctcRequire_(u, 'ctc_rules');
   remark = clean_(String(remark || '')).trim();
   if (remark.length < 10) throw new Error('Write a remark of at least 10 characters: why the version is cancelled.');
-  const today = fmt_(new Date(), TZ, 'yyyy-MM-dd');
+  const today = ymd_(new Date());
   withLock_(function () {
     const v = ctcRulesRow_(id);
     if (v.status !== 'Active' || !(v.eff > today)) throw new Error('Only a version that has not taken effect yet can be cancelled. To change rules in force, make a new version.');

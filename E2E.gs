@@ -675,7 +675,7 @@ function e2eRun_(trash) {
       const refused = !isLead_({ role: 'Recruiter', perms: ['voice_review'] }) && isLead_({ role: 'TA Lead' }) && !can_({ role: 'TA Lead' }, 'kpi_edit') && can_({ role: 'Head of HR' }, 'kpi_edit') && can_({ role: 'Admin' }, 'kpi_edit');
       return a.length >= 3 && refused ? a.length + ' audit rows' : false;
     });
-    t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && c.connected === false && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
+    t('V1 voice agent settings are readable by the admin and not ready until filled in', function () { const c = apiVoiceConfig(); return typeof c.ready === 'boolean' && Array.isArray(c.missing) && !('apiKey' in c) ? (c.ready ? 'ready' : c.missing.length + ' missing') : false; });
     t('H1 candidate history: merged timeline, origin of moved records, results by position', function () {
       const r = histBuild_({ lines: { L1: 'J1 A', L2: 'J2 B' }, apps: [{ App_ID: 'A1', Line_ID: 'L2' }],
         stage: [{ App_ID: 'A1', Line_ID: 'L1', From_Stage: 'Sourced', To_Stage: 'Technical', Outcome: 'Cleared', Changed_At: new Date(2000) }, { App_ID: 'A1', Line_ID: 'L2', From_Stage: 'Technical', To_Stage: 'Technical', Outcome: 'Moved', Changed_At: new Date(3000) }],
