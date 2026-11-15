@@ -327,9 +327,44 @@ function prepare_(def, data) {
   return out;
 }
 
+/**
+ * What insert_ needs from a table: its sheet, its headers and the rows the next id is worked out from. A big sheet is not read in
+ * full for that (v188): only the id column, as pseudo rows. A small sheet is read whole, as before.
+ */
+function insertBase_(def) {
+  const sh = sheet_(def.name), last = sh.getLastRow();
+  if (last <= SMALL_SHEET_ROWS_) { const t = readTable_(def.name, true); return { sheet: t.sheet, headers: t.headers, rows: t.rows }; }
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String), ci = headers.lastIndexOf(def.id);
+  const rows = ci < 0 ? [] : sh.getRange(2, ci + 1, last - 1, 1).getValues().map(function (v) { const o = {}; o[def.id] = v[0]; return o; });
+  return { sheet: sh, headers: headers, rows: rows };
+}
+/**
+ * The first row whose id column equals `id`, as the row object readTable_ would give (same _row, same JD-library repair), plus the
+ * sheet and headers. A big sheet is not read in full for it (v188): the id column finds the row, then only that row is read.
+ * rec is null when no row matches.
+ */
+function findRow_(def, id) {
+  const sh = sheet_(def.name), last = sh.getLastRow();
+  if (last <= SMALL_SHEET_ROWS_) {
+    const t = readTable_(def.name, true);
+    return { sheet: t.sheet, headers: t.headers, rec: t.rows.filter(function (r) { return String(r[def.id]) === String(id); })[0] || null };
+  }
+  const lc = sh.getLastColumn(), headers = sh.getRange(1, 1, 1, lc).getValues()[0].map(String), ci = headers.lastIndexOf(def.id), want = String(id);
+  if (ci >= 0) {
+    const col = sh.getRange(2, ci + 1, last - 1, 1).getValues();
+    for (let i = 0; i < col.length; i++) {
+      if (String(col[i][0]) !== want) continue;
+      const rows = rowsFromValues_(headers, sh.getRange(i + 2, 1, 1, lc).getValues(), i + 2);
+      jdmUndate_(def.name, headers, rows);
+      return { sheet: sh, headers: headers, rec: rows[0] || null };
+    }
+  }
+  return { sheet: sh, headers: headers, rec: null };
+}
+
 function insert_(def, obj, user) {
   return withLock_(function () {
-    const t = readTable_(def.name, true);
+    const t = insertBase_(def);
     const now = new Date();
     obj[def.id] = nextId_(def, t.rows);
     if (t.headers.indexOf('Created_By') >= 0) { obj.Created_By = user.email; obj.Created_At = now; }
@@ -346,8 +381,7 @@ function insert_(def, obj, user) {
 
 function update_(def, id, patch, user, guard) {
   return withLock_(function () {
-    const t = readTable_(def.name, true);
-    const rec = t.rows.filter(function (r) { return String(r[def.id]) === String(id); })[0];
+    const t = findRow_(def, id), rec = t.rec;
     if (!rec) throw new Error(def.id + ' ' + id + ' was not found. It may have been deleted.');
     if (guard) guard(rec);
     const changes = [];
