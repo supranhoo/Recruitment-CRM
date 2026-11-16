@@ -544,6 +544,7 @@ function form(fields, data, readonly) {
     const v = data[f.k] == null ? '' : data[f.k];
     const ro = readonly || f.ro;
     const id = 'f_' + f.k;
+    const req = f.req && !ro ? ' data-req="1" aria-required="true"' : '';
     let input;
     if (f.t === 'jdpick') {
       return `<div class="field wide"><label>JD from the JD folder</label>
@@ -565,10 +566,10 @@ function form(fields, data, readonly) {
         <div class="att">${v ? `<span class="att-on">Attached</span><button type="button" class="btn att-view" data-field="${f.k}">View</button>` : '<span class="att-off">No file yet</span>'}</div>
         ${ro ? '' : `<input type="file" class="att-input" data-field="${f.k}" aria-label="${esc(f.l)}" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">${esc(f.hint || (v ? 'Choose a file to replace it. ' : '') + 'Uploaded when you save.')}</span>`}</div>`;
     }
-    if (f.t === 'select') input = `<select id="${id}" name="${f.k}" ${ro ? 'disabled' : ''}>${opts(f.opts, v, !f.noBlank)}</select>`;
-    else if (f.t === 'textarea') input = `<textarea id="${id}" name="${f.k}" ${ro ? 'readonly' : ''}>${esc(v)}</textarea>`;
-    else input = `<input id="${id}" name="${f.k}" type="${f.t || 'text'}" value="${esc(v)}" ${ro ? 'readonly' : ''} ${f.t === 'number' ? 'min="0" step="1"' : ''} ${f.list ? `list="${f.list}"` : ''}>`;
-    return `<div class="field ${f.wide ? 'wide' : ''}"><label for="${id}">${esc(f.l)}${f.req ? ' *' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
+    if (f.t === 'select') input = `<select id="${id}" name="${f.k}" ${ro ? 'disabled' : ''}${req}>${opts(f.opts, v, !f.noBlank)}</select>`;
+    else if (f.t === 'textarea') input = `<textarea id="${id}" name="${f.k}" ${ro ? 'readonly' : ''}${req}>${esc(v)}</textarea>`;
+    else input = `<input id="${id}" name="${f.k}" type="${f.t || 'text'}" value="${esc(v)}" ${ro ? 'readonly' : ''}${req} ${f.t === 'number' ? 'min="0" step="1"' : ''} ${f.list ? `list="${f.list}"` : ''}>`;
+    return `<div class="field ${f.wide ? 'wide' : ''}"><label for="${id}">${esc(f.l)}${f.req ? ' <span aria-hidden="true">*</span><span class="sr-only"> (required)</span>' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
   }).join('');
 }
 function wrapForm(html) { return `<div class="form-flow">${`<fieldset><div class="grid">${html}</div></fieldset>`.replace('<fieldset><div class="grid"></div></fieldset>', '')}</div>`; }
@@ -586,6 +587,33 @@ function openDrawer(title, html, cls) {
   return $('#drawerBody');
 }
 function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/* ---- v202: check a form before it is sent. Every required field that is empty, and every value the field itself rejects (a date that is not a date, a negative
+   number), is listed once at the top of the form with a link that jumps to it; the fields are marked invalid for assistive technology; nothing goes to the
+   server until the list is empty. The server keeps its own checks as the second line. Returns true when the form can be sent. ---- */
+function validateForm(root, o) {
+  o = o || {};
+  if (!root) return true;
+  const old = root.querySelector(':scope > .form-summary'); if (old) old.remove();
+  $$('[aria-invalid="true"]', root).forEach(x => x.removeAttribute('aria-invalid'));
+  const problems = [];
+  $$('[name]', root).forEach(el => {
+    if (el.disabled || el.readOnly || el.type === 'hidden' || el.type === 'file' || el.closest('[hidden]') || !el.getClientRects().length) return;
+    const lab = el.id ? root.querySelector('label[for="' + el.id + '"]') : null;
+    const name = (lab ? lab.textContent : el.getAttribute('aria-label') || el.name).replace(/\(required\)/, '').replace(/\*/g, '').replace(/\s+/g, ' ').trim();
+    const empty = String(el.value == null ? '' : el.value).trim() === '';
+    if (el.dataset.req && empty) problems.push({ el, name, why: 'is required' });
+    else if (!empty && el.validity && (el.validity.rangeUnderflow || el.validity.rangeOverflow || el.validity.typeMismatch || el.validity.badInput)) problems.push({ el, name, why: el.validity.rangeUnderflow ? 'is too low' : el.validity.rangeOverflow ? 'is too high' : 'is not valid' });
+  });
+  if (!problems.length) return true;
+  problems.forEach(x => x.el.setAttribute('aria-invalid', 'true'));
+  const box = document.createElement('div'); box.className = 'form-summary note warn-note'; box.setAttribute('role', 'alert'); box.tabIndex = -1;
+  box.innerHTML = `<b>${problems.length === 1 ? 'One thing needs your attention' : problems.length + ' things need your attention'} before this can be saved.</b><ul>${problems.map((x, i) => `<li><a href="#" data-pi="${i}">${esc(x.name)} ${esc(x.why)}</a></li>`).join('')}</ul>`;
+  root.insertBefore(box, root.firstChild);
+  $$('a[data-pi]', box).forEach(a => a.onclick = e => { e.preventDefault(); const t = problems[Number(a.dataset.pi)].el; t.scrollIntoView({ block: 'center' }); t.focus(); });
+  problems.forEach(x => x.el.addEventListener('input', () => x.el.removeAttribute('aria-invalid'), { once: true }));
+  box.scrollIntoView({ block: 'nearest' }); box.focus();
+  return false;
+}
 /* ---- v201: one dialog style. askConfirm / askText replace the browser's confirm() and prompt(): same wording, the app's own look, focus kept inside,
    Escape cancels, Enter confirms; a destructive action gets a red button and starts on Cancel. They return promises: `if (!(await askConfirm(text))) return;`. ---- */
 function askDialog(build, o) {
@@ -1724,6 +1752,7 @@ function positionDrawer(p) {
   $('#pSave').onclick = async () => {
     const d = Object.assign({ Line_ID: isNew ? '' : p.Line_ID }, readForm($('#posForm')));
     const jdId = d._jdFileId; delete d._jdFileId;
+    if (!validateForm($('#posForm'))) return;
     const bad = checkAttachments($('#posForm')); if (bad) return toast(bad, true);
     const btn = $('#pSave'); busy(btn, true, 'Saving…');
     try {
@@ -2366,6 +2395,7 @@ function candidateDrawer(c, preset, parsedIn) {
     const d = Object.assign({ Candidate_ID: isNew ? '' : data.Candidate_ID }, readForm($('#candForm')));
     if (parsed && isNew) { d._parsed = parsed.fields; d._parseFile = parsed.fileName; d._parseChars = parsed.chars; if (parsed.profile) d._profile = parsed.profile; }
     const dm = S.boot.depts.find(x => x.dept === d.Dept); if (dm) { d.Business_Unit = dm.bu; d.Division = dm.division; }
+    if (!validateForm($('#candForm'))) return;
     const btn = $('#cSave'); busy(btn, true, 'Saving…');
     try {
       const res = await api('apiSaveCandidate', d, !!force);
@@ -8683,7 +8713,7 @@ async function viewPipeline(v) {
     if ($('#apHr')) $('#apHr').onclick = () => openApp(a, true);
     if ($('#apHrBack')) $('#apHrBack').onclick = () => openApp(a, false);
     if ($('#apMove')) $('#apMove').onclick = async () => {
-      const root = $('#apNext'); const bad = checkAttachments(root); if (bad) return toast(bad, true);
+      const root = $('#apNext'); if (!validateForm(root)) return; const bad = checkAttachments(root); if (bad) return toast(bad, true);
       if (fastRoute() && next === 'Confirmed' && !a.Dept_Confirm_File && !$$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0])) return toast('Attach the department\u2019s written confirmation (a photo, scan or PDF of the CV or form with its remarks).', true);
       const needPaper = fastRoute() && next === 'Offer' && !a.Dept_Confirm_File, paperChosen = $$('.att-input[data-field="Dept_Confirm_File"]', root).some(x => x.files[0]);
       if (needPaper && !paperChosen && !(isLead() && ($('[name=paperException]', root) || {}).value)) return toast('Attach the department\u2019s written confirmation in the field above, then confirm the hiring.', true);
@@ -8704,6 +8734,14 @@ async function viewPipeline(v) {
       } catch (e) { failed(e, b, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
     };
     $$('[data-st]', d).forEach(b => b.onclick = async () => {
+      /* v202: a status change that has consequences says what it does before it is made (the reason is checked first, so nobody confirms and then gets an error). */
+      const st = b.dataset.st, atOffer = ['Offer', 'Prejoin'].includes(a.Stage), who = a.cand && a.cand.name ? a.cand.name : 'this candidate';
+      if (st !== 'Active' && !String($('#apReason').value || '').trim()) { $('#apReason').focus(); $('#apReason').setAttribute('aria-invalid', 'true'); return toast('Give a short reason first.', true); }
+      const ask = st === 'Withdrawn' && atOffer ? ['Record the backout?', who + ' is recorded as backed out of the offer on the backout date. The position starts again for the next candidate (a replacement MRF, or the same MRF reopened, as set for your team) and the offer details move with the record.', 'Record the backout']
+        : st === 'Rejected' ? ['Reject this candidate?', who + ' is rejected and leaves the pipeline of this position. A lead can reactivate the card later.', 'Reject']
+        : st === 'On hold' ? ['Put this candidate on hold?', atOffer ? who + ' is parked, and the offer on the position is released: the position is Open again until the card is reactivated.' : who + ' stays on the position but is parked until the card is reactivated.', 'Put on hold']
+        : st === 'Withdrawn' ? ['Mark as withdrawn?', who + ' is marked as withdrawn and leaves the pipeline of this position.', 'Mark withdrawn'] : null;
+      if (ask && !(await askConfirm(ask[1], { title: ask[0], ok: ask[2], danger: st !== 'On hold' }))) return;
       try {
         const np = await api('apiSetAppStatus', a.App_ID, b.dataset.st, $('#apReason').value, $('#apBoDate') ? $('#apBoDate').value : '');
         if (np.replacement) {
@@ -8718,7 +8756,9 @@ async function viewPipeline(v) {
     if ($('#apBoDate', d)) $('#apBoDate', d).onchange = e => { $('#apBoHint', d).textContent = backoutHint(P.line, P.reopenFrom, e.target.value); };
     if ($('#apBack')) $('#apBack').onchange = async e => {
       if (!e.target.value) return;
-      try { after(await api('apiMoveStage', a.App_ID, e.target.value, { note: 'Moved back by a lead (correction)' })); toast('Moved back'); } catch (err) { toast(err, true); }
+      const to = e.target.value;
+      if (!(await askConfirm('Move ' + (a.cand && a.cand.name ? a.cand.name : 'this candidate') + ' back to ' + (PN(to) || to) + '? What the later stages recorded on the card and the position (offer, joining dates) is cleared. Use this to correct a mistake, not to record a backout.', { title: 'Move back one or more stages?', ok: 'Move back', danger: true }))) { e.target.value = ''; return; }
+      try { after(await api('apiMoveStage', a.App_ID, to, { note: 'Moved back by a lead (correction)' })); toast('Moved back'); } catch (err) { failed(err); }
     };
     if ($('#apEdojSave')) $('#apEdojSave').onclick = async () => {
       try { const np = await api('apiSetEdoj', a.App_ID, $('#apEdoj').value); applyBoard(np, a.Line_ID); after(np); toast('Expected joining date changed'); } catch (e) { toast(e, true); }
