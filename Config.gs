@@ -11,7 +11,7 @@ const T = {
   MRF: {
     name: 'MRF', id: 'Line_ID', prefix: 'MRL-', width: 5,
     dates: ['Receipt_Date', 'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date', 'TAT_End_Date',
-      'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'JD_Confirmed_Date', 'SQ_Confirmed_Date', 'Approved_On', 'Assigned_On', 'Replaced_On', 'TAT_Start_From', 'Reconciled_On'],
+      'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'JD_Confirmed_Date', 'SQ_Confirmed_Date', 'Approved_On', 'Assigned_On', 'Replaced_On', 'TAT_Start_From', 'Reconciled_On', 'Last_Backout_On'],
     editable: ['MRF_No', 'Receipt_Date', 'Position', 'Designation', 'Grade', 'Dept', 'Recruiter', 'No_Of_Positions', 'Approval_Status',
       'No_Vacancy_Date', 'Not_Needed_Date', 'Offer_Sent', 'Offer_Date', 'EDOJ', 'Actual_DOJ', 'Backout_Date',
       'Notice_Period_Days', 'Remarks', 'Candidate_ID', 'BGV_Required', 'BGV_Prev_Org_Date', 'BGV_Current_Org_Date', 'BGV_Remarks',
@@ -78,7 +78,7 @@ T.AUDIT = {
 const FUNNEL_METRICS = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
 const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER: 'Recruiter', ONBOARDING: 'Onboarding' };
 /** The release number, set before each deploy. Shown in the page (rail footer, Admin → Tools) and compared with the page's own copy, so a page served from an older release is noticed. */
-const BUILD_ID = '188';
+const BUILD_ID = '189';
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,

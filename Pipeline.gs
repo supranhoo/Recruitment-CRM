@@ -550,6 +550,41 @@ function replacementMrfNo_(line) {
   return m ? m[1] + '-R' + (Number(m[2]) + 1) : base + '-R1';
 }
 
+/** BACKOUT_REOPEN_FROM (yyyy-mm-dd), '' when empty or not a date: from this date a backout reopens the same MRF instead of raising a replacement (v189: the setting exists, nothing reads it yet). */
+function reopenFrom_() {
+  const v = settings_().BACKOUT_REOPEN_FROM, d = ymd_(v instanceof Date ? v : String(v == null ? '' : v).replace(/^'/, '').trim());
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
+}
+/**
+ * Every dated backout, from the candidates' cards and from older lines (v189, groundwork for keeping the same MRF after a backout).
+ * A card that is Withdrawn at Offer or Pre-joining with a Backout_Date is one event; a line with a Backout_Date that no card event on
+ * that line matches (backouts from before the pipeline existed) is one more. Reproduces the line-based counts month by month, and keeps
+ * counting right once a line holds several backouts. Nothing reads it yet.
+ */
+function backoutEventsFrom_(lines, apps) {
+  const byLine = {}, events = [], seen = {};
+  lines.forEach(function (l) { byLine[String(l.Line_ID)] = l; });
+  const ev = function (l, lineId, app, cand, day, reason, source) {
+    return { line: lineId, mrf: String((l && l.MRF_No) || ''), app: app, candidate: cand, date: day, reason: reason, recruiter: String((l && l.Recruiter) || ''), source: source };
+  };
+  apps.forEach(function (a) {
+    const day = ymd_(a.Backout_Date);
+    if (String(a.Status) !== 'Withdrawn' || !day || ['Offer', 'Prejoin'].indexOf(String(a.Stage)) < 0) return;
+    const id = String(a.Line_ID);
+    events.push(ev(byLine[id], id, String(a.App_ID || ''), String(a.Candidate_ID || ''), day, String(a.Backout_Reason || ''), 'card'));
+    seen[id + '|' + day] = true;
+  });
+  lines.forEach(function (l) {
+    const day = ymd_(l.Backout_Date), id = String(l.Line_ID);
+    if (day && !seen[id + '|' + day]) events.push(ev(l, id, '', String(l.Candidate_ID || ''), day, '', 'line'));
+  });
+  return events.sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; });
+}
+/** backoutEventsFrom_ over the sheets, optionally within [from, to] (yyyy-mm-dd, both inclusive). */
+function backoutEvents_(from, to) {
+  return backoutEventsFrom_(readTable_(T.MRF.name).rows, readTable_(T.APP.name).rows).filter(function (e) { return (!from || e.date >= from) && (!to || e.date <= to); });
+}
+
 /**
  * Policy 9.5: when the selected candidate backs out, the position closes as "Replaced" and a new
  * MRF is raised with a reference to the old one. Its TAT counts from the original start date.
