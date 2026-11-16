@@ -1525,6 +1525,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**The Restate button no longer looks frozen** (no schema change; v195; 16 Nov 2026)
+- The v194 button stayed on "Restating…" after the call finished because the code re-enabled the button without restoring its label. The label is now restored on every exit, the result ("3 to-dos restated: ...", "Nothing to restate", or the error) stays on the page next to the button, and the Data checks list reloads after a successful run. Server code unchanged.
+
 **Past "missed" to-dos restated, with the owner's approval** (no schema change; v194; 16 Nov 2026)
 - The owner approved the dry-run list of v193. New `apiTaskRestateApply` (Admin; button "Restate to-dos wrongly counted as missed" on the `todo_stuck` data check) sets `Resolved_At` of the replacement / reopen to-dos that a forward move had already cleared before they turned critical to the time of that first forward move, with one Audit_Log line per row; running it again changes nothing.
 - Rows: J00090-R1, J00056-R1, J000178-R1. On the workbook copy the monthly missed total goes from 131 to 130 for October and from 50 to 48 for November. Nothing else is touched.
