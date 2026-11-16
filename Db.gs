@@ -84,6 +84,34 @@ function jdmUndate_(name, headers, rows) {
   });
 }
 
+/**
+ * Candidate number columns (v209). Notice_Days, Expected_CTC and Current_CTC hold small numbers. When the cell format is Date, Sheets gives
+ * them back as dates ("30" as 29 Jan 1900, "6" as 5 Jan 1900), the way Total_Exp_Years once did. The value is read back as the number it
+ * was (a 1900 date is the day count; a date in a later year is a "6-8" style range Sheets turned into a date and is read as "6-8").
+ * The row keeps a hidden list of the columns it repaired (_dated), which the data check and the repair read.
+ */
+const CAND_NUM_COLS_ = ['Notice_Days', 'Expected_CTC', 'Current_CTC'];
+function candCellFix_(v) {
+  if (!(v instanceof Date) || isNaN(v)) return v;
+  const p = ymd_(v).split('-').map(Number);
+  if (p[0] < 1910) return Math.round((Date.UTC(p[0], p[1] - 1, p[2]) - Date.UTC(1899, 11, 30)) / 86400000);
+  return p[1] + '-' + p[2];
+}
+function candUndate_(name, headers, rows) {
+  if (name !== 'Candidates') return;
+  const cols = CAND_NUM_COLS_.filter(function (h) { return headers.indexOf(h) >= 0; });
+  if (!cols.length) return;
+  rows.forEach(function (o) {
+    cols.forEach(function (h) {
+      const v = o[h];
+      if (!(v instanceof Date)) return;
+      if (!o._dated) Object.defineProperty(o, '_dated', { value: [], enumerable: false });
+      o._dated.push({ col: h, was: ymd_(v) });
+      o[h] = candCellFix_(v);
+    });
+  });
+}
+
 function readTable_(name, fresh) {
   if (_tables[name] && !fresh) return _tables[name];
   const cacheable = CACHED_TABLES_.indexOf(name) >= 0;
@@ -92,7 +120,7 @@ function readTable_(name, fresh) {
   const values = sh.getDataRange().getValues();
   const headers = values.shift().map(String);
   const rows = rowsFromValues_(headers, values, 2);
-  jdmUndate_(name, headers, rows);
+  jdmUndate_(name, headers, rows); candUndate_(name, headers, rows);
   if (cacheable) tableToCache_(name, headers, rows);
   perfNote_('read ' + name, t0, rows.length + ' rows');
   return (_tables[name] = { headers: headers, rows: rows, sheet: sh });
@@ -355,7 +383,7 @@ function findRow_(def, id) {
     for (let i = 0; i < col.length; i++) {
       if (String(col[i][0]) !== want) continue;
       const rows = rowsFromValues_(headers, sh.getRange(i + 2, 1, 1, lc).getValues(), i + 2);
-      jdmUndate_(def.name, headers, rows);
+      jdmUndate_(def.name, headers, rows); candUndate_(def.name, headers, rows);
       return { sheet: sh, headers: headers, rec: rows[0] || null };
     }
   }
