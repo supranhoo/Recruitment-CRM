@@ -7128,14 +7128,15 @@ function ctcDef(f) { return f.default === undefined || f.default === null ? '' :
 async function viewCtc(v) {
   if (!can('ctc_use')) { v.innerHTML = '<div class="empty">You do not have access to the CTC calculator.</div>'; return; }
   const R = await ctcRules();
-  if (!can('ctc_rules')) S.ctcPreview = null;
+  if (!can('ctc_access')) S.ctcPreview = null;
   const pv = S.ctcPreview;
   const tabs = [['calc', 'Calculator'], ['saved', 'Saved calculations']];
-  if (ctcCan('ctc_rules')) tabs.push(['rules', R.draft ? 'Rules · draft ' + R.draft.id : 'Rules'], ['access', 'Access']);
+  if (ctcCan('ctc_rules')) tabs.push(['rules', R.draft ? 'Rules · draft ' + R.draft.id : 'Rules']);
+  if (ctcCan('ctc_access_view')) tabs.push(['access', 'Access']);
   let tab = S.ctcTab || 'calc'; if (!tabs.some(t => t[0] === tab)) tab = 'calc';
   v.innerHTML = `<div class="page-head"><div><h1>CTC calculator</h1><p>Enter a monthly target on the basis you want: Total CTC, Gross CTC, Gross salary or Net in-hand. The full structure is worked out on the rules in force.</p></div>
       <div class="ctc-ver"><span class="badge">Rules ${esc(R.active.id)} · in force from ${fmtDate(R.active.eff)}</span>${R.versions.filter(x => x.status === 'Active' && x.eff > R.today).map(x => `<span class="badge rs-next">${esc(x.id)} from ${fmtDate(x.eff)}</span>`).join('')}
-        ${can('ctc_rules') ? `<select id="ccPv" class="ctc-pv" aria-label="Preview as a role"><option value="">Preview as…</option>${['Head of HR', 'TA Lead', 'Recruiter'].map(r => `<option value="${r}" ${pv === r ? 'selected' : ''}>${r}</option>`).join('')}</select>` : ''}
+        ${can('ctc_access') ? `<select id="ccPv" class="ctc-pv" aria-label="Preview as a role"><option value="">Preview as…</option>${['Head of HR', 'TA Lead', 'Recruiter'].map(r => `<option value="${r}" ${pv === r ? 'selected' : ''}>${r}</option>`).join('')}</select>` : ''}
         <button class="btn sm" id="ccHist">Version history</button></div></div>
     ${pv ? `<div class="ctc-status info">Previewing as <b>${esc(pv)}</b>: you see the screens as that role would, with what they can and cannot do. Saving and issuing are switched off in the preview. <button class="linklike" id="ccPvX">Stop previewing</button></div>` : ''}
     <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${tab === k}">${esc(l)}</button>`).join('')}</div>
@@ -7751,21 +7752,24 @@ async function ctcAccessTab(el, R, v) {
   el.innerHTML = skRows(6, 4);
   let A; try { A = await api('apiCtcAccess'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   const roles = ['Head of HR', 'TA Lead', 'Recruiter'], D = { roles: JSON.parse(JSON.stringify(A.roles)), approval: A.approval, reason: '' };
-  const has = (r, p) => (D.roles[r] || []).includes(p), was = (r, p) => (A.roles[r] || []).includes(p);
+  const edit = can('ctc_access'), has = (r, p) => (D.roles[r] || []).includes(p), was = (r, p) => (A.roles[r] || []).includes(p);
   const changed = () => roles.some(r => CTC_PERM_INFO.some(([p]) => has(r, p) !== was(r, p))) || D.approval !== A.approval;
   const draw = () => {
-    el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Who can use the CTC calculator</h2><span class="hint">Admin always has everything. Changing the CTC rules stays with the admin.</span></div>
+    el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Who can use the CTC calculator</h2><span class="hint">Admin always has everything. Changing the CTC rules is for the admin and the Head of HR; changing who has access is for the admin only.</span></div>
       <div class="table-wrap"><table class="ctc-table ctc-acc"><thead><tr><th>Can…</th><th>Admin</th>${roles.map(r => `<th>${esc(r)}</th>`).join('')}</tr></thead><tbody>
         ${CTC_PERM_INFO.map(([p, l, d]) => `<tr><td><b>${esc(l)}</b><span class="sub">${esc(d)}</span></td><td class="ck"><span class="ok-tick" aria-label="Yes">✓</span></td>
-          ${roles.map(r => `<td class="ck ${has(r, p) !== was(r, p) ? 'chg' : ''}"><input type="checkbox" data-r="${esc(r)}" data-p="${p}" ${has(r, p) ? 'checked' : ''} aria-label="${esc(r)}: ${esc(l)}"></td>`).join('')}</tr>`).join('')}
-        <tr><td><b>Change the CTC rules</b><span class="sub">Versions, amounts, slabs, the letter and its terms. Admin only.</span></td><td class="ck"><span class="ok-tick">✓</span></td>${roles.map(() => '<td class="ck"><span class="muted">–</span></td>').join('')}</tr>
+          ${roles.map(r => `<td class="ck ${has(r, p) !== was(r, p) ? 'chg' : ''}"><input type="checkbox" data-r="${esc(r)}" data-p="${p}" ${has(r, p) ? 'checked' : ''} ${edit ? '' : 'disabled'} aria-label="${esc(r)}: ${esc(l)}"></td>`).join('')}</tr>`).join('')}
+        <tr><td><b>Change the CTC rules</b><span class="sub">Versions, amounts, slabs, the letter and its terms. Admin and Head of HR; the Admin gets an e-mail when someone else puts a version in force.</span></td><td class="ck"><span class="ok-tick">✓</span></td>${roles.map(r => r === 'Head of HR' ? '<td class="ck"><span class="ok-tick" aria-label="Yes">✓</span></td>' : '<td class="ck"><span class="muted">–</span></td>').join('')}</tr>
+        <tr><td><b>See this Access tab</b><span class="sub">The table, the approval switch and the recent changes, read only. Admin and Head of HR.</span></td><td class="ck"><span class="ok-tick">✓</span></td>${roles.map(r => r === 'Head of HR' ? '<td class="ck"><span class="ok-tick" aria-label="Yes">✓</span></td>' : '<td class="ck"><span class="muted">–</span></td>').join('')}</tr>
+        <tr><td><b>Change who has access</b><span class="sub">The ticks above and the letter-approval switch. Admin only.</span></td><td class="ck"><span class="ok-tick">✓</span></td>${roles.map(() => '<td class="ck"><span class="muted">–</span></td>').join('')}</tr>
       </tbody></table></div>
-      <label class="ctc-appr"><input type="checkbox" id="acAppr" ${D.approval ? 'checked' : ''}> <span><b>Letters need approval before they are issued</b><span class="sub">People who can make letters but not approve them submit a letter; someone who can approve it checks it and issues it. People who can approve issue their own letters directly. Off at launch.</span></span></label>
-      <div class="grid" style="margin-top:14px"><div class="field wide"><label for="acReason">Reason for the change (kept in the change history)</label><textarea id="acReason" rows="2" maxlength="300" placeholder="e.g. Pilot with the recruiting team">${esc(D.reason)}</textarea></div></div>
+      <label class="ctc-appr"><input type="checkbox" id="acAppr" ${D.approval ? 'checked' : ''} ${edit ? '' : 'disabled'}> <span><b>Letters need approval before they are issued</b><span class="sub">People who can make letters but not approve them submit a letter; someone who can approve it checks it and issues it. People who can approve issue their own letters directly. Off at launch.</span></span></label>
+      ${edit ? `      <div class="grid" style="margin-top:14px"><div class="field wide"><label for="acReason">Reason for the change (kept in the change history)</label><textarea id="acReason" rows="2" maxlength="300" placeholder="e.g. Pilot with the recruiting team">${esc(D.reason)}</textarea></div></div>
       <div class="rs-row"><span class="hint">Takes effect for each person the next time the page is opened (within about 5 minutes).</span><button class="btn primary" id="acSave" ${changed() ? '' : 'disabled'}>Save access</button></div></section>
       <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Preview as a role</h2></div><p class="hint" style="margin:0 0 10px">See the calculator the way a role would see it before you switch anything on. Nothing is saved or issued in a preview.</p>
-        <div class="rs-row">${roles.map(r => `<button class="btn" data-pv="${esc(r)}">Preview as ${esc(r)}</button>`).join('')}</div></section>
+        <div class="rs-row">${roles.map(r => `<button class="btn" data-pv="${esc(r)}">Preview as ${esc(r)}</button>`).join('')}</div></section>` : '<p class="hint" style="margin-top:14px">Only the Admin changes access. You can see who has what and the recent changes.</p></section>'}
       <section class="panel" style="margin-top:16px"><div class="dp-h"><h2>Recent changes</h2></div>${A.log.length ? `<ul class="rs-changes">${A.log.map(x => `<li><b>${esc(x.at)}</b> · ${esc(String(x.by).split('@')[0])} · ${esc(x.what)}</li>`).join('')}</ul>` : '<p class="hint">No changes yet.</p>'}</section>`;
+    if (!edit) return;
     $$('input[data-p]', el).forEach(x => x.onchange = () => {
       const r = x.dataset.r, p = x.dataset.p, list = D.roles[r] = D.roles[r] || [];
       const set = (q, on) => { const i = list.indexOf(q); if (on && i < 0) list.push(q); if (!on && i >= 0) list.splice(i, 1); };
@@ -7781,7 +7785,7 @@ async function ctcAccessTab(el, R, v) {
       const reason = $('#acReason').value.trim();
       if (reason.length < 10) return toast('Write a reason of at least 10 characters.', true);
       busy(e.target, true, 'Saving…');
-      try { await api('apiCtcAccessSave', { roles: Object.fromEntries(roles.map(r => [r, D.roles[r] || []])), approval: D.approval, reason }); S.ctc = null; S.ctcList = null; toast('Access saved.'); viewCtc(v); }
+      try { await api('apiCtcAccessSave', { roles: Object.fromEntries(roles.map(r => [r, (D.roles[r] || []).filter(p => CTC_PERM_INFO.some(i => i[0] === p))])), approval: D.approval, reason }); S.ctc = null; S.ctcList = null; toast('Access saved.'); viewCtc(v); }
       catch (err) { toast(err, true); busy(e.target, false, 'Save access'); }
     };
   };
