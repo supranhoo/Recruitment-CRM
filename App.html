@@ -579,14 +579,36 @@ function readForm(root) {
   return o;
 }
 
+/* ---- v210: the open drawer behaves as a dialog. The page behind is made inert, Tab and Shift+Tab wrap inside the drawer (and the CV pane beside it),
+   and focus goes back to the control that opened it when it closes. ---- */
+function drawerFocusables() {
+  const sel = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
+  const roots = [$('#drawer')]; const cv = $('#cvPane'); if (cv && !cv.hidden) roots.push(cv);
+  return roots.flatMap(r => [...r.querySelectorAll(sel)]).filter(el => !el.closest('[hidden]') && !el.closest('details:not([open])>*:not(summary)') && el.getClientRects().length);
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Tab' || !$('#drawer').classList.contains('open') || document.querySelector('dialog[open]')) return;
+  const f = drawerFocusables(); if (!f.length) { e.preventDefault(); return; }
+  const first = f[0], last = f[f.length - 1], a = document.activeElement, inside = f.includes(a);
+  if (e.shiftKey && (a === first || !inside)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (a === last || !inside)) { e.preventDefault(); first.focus(); }
+});
 function openDrawer(title, html, cls) {
+  const wasOpen = $('#drawer').classList.contains('open');
+  if (!wasOpen) { const a = document.activeElement; S.drawerOpener = a && a !== document.body && !$('#drawer').contains(a) ? a : null; }
+  $('#shell').inert = true;
   hideCv(); S.drawerTok = {}; S.drawerDirty = false;
   late('#drawerTitle').textContent = title; late('#drawerBody').innerHTML = html;
   $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); showScrim();
-  setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
+  setTimeout(() => { if (!$('#drawer').classList.contains('open')) return; const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])') || $('#drawerClose'); if (f) f.focus(); }, 230);
   return $('#drawerBody');
 }
-function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+function closeDrawer() {
+  hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim();
+  $('#shell').inert = false;
+  const o = S.drawerOpener; S.drawerOpener = null;
+  const t = o && o.isConnected ? o : $('#view'); if (t && t.focus) t.focus({ preventScroll: true });
+}
 /* ---- v205: the candidate dialog's folds. appFold wraps a supporting tool in a native <details>; foldOpen says for which stages it starts open, so the stage's own
    tools are in view and the rest are one click away. The containers inside keep their ids, so the code that fills them is unchanged. ---- */
 const FOLD_OPEN_AT = { voice: ['Sourced', 'Screened'], bgv: ['Offer', 'Prejoin', 'Joined'], ctc: ['Docs', 'Offer'], checkin: ['Prejoin', 'Joined'], interview: ['Confirmed', 'Technical', 'HR'] };
