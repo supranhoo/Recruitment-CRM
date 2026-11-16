@@ -565,7 +565,7 @@ function backoutEventsFrom_(lines, apps) {
   const byLine = {}, events = [], seen = {};
   lines.forEach(function (l) { byLine[String(l.Line_ID)] = l; });
   const ev = function (l, lineId, app, cand, day, reason, source) {
-    return { line: lineId, mrf: String((l && l.MRF_No) || ''), app: app, candidate: cand, date: day, reason: reason, recruiter: String((l && l.Recruiter) || ''), source: source };
+    return { line: lineId, mrf: String((l && l.MRF_No) || ''), position: String((l && l.Position) || ''), app: app, candidate: cand, date: day, reason: reason, recruiter: String((l && l.Recruiter) || ''), source: source };
   };
   apps.forEach(function (a) {
     const day = ymd_(a.Backout_Date);
@@ -579,6 +579,12 @@ function backoutEventsFrom_(lines, apps) {
     if (day && !seen[id + '|' + day]) events.push(ev(l, id, '', String(l.Candidate_ID || ''), day, '', 'line'));
   });
   return events.sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; });
+}
+/** The events of backoutEventsFrom_ grouped by line, for the readers that go line by line (v190): {Line_ID: [event, ...]}. */
+function backoutsByLine_(lines, apps) {
+  const by = {};
+  backoutEventsFrom_(lines, apps).forEach(function (e) { (by[e.line] = by[e.line] || []).push(e); });
+  return by;
 }
 /** backoutEventsFrom_ over the sheets, optionally within [from, to] (yyyy-mm-dd, both inclusive). */
 function backoutEvents_(from, to) {

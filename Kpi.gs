@@ -478,7 +478,7 @@ function computeKpis_(fy) {
   const bucketMain = bucketIn(recruiters), extra = {}, bucketExtra = bucketIn(extra);   // extra: the tagged recruiters' cells (v164), merged after the team row is built
   const bucket = bucketMain;
   const inFy = function (m) { return months.indexOf(m) >= 0; };
-  const clocks = kpiClocks_(), nowMonth = ymd_(new Date()).slice(0, 7);
+  const clocks = kpiClocks_(), nowMonth = ymd_(new Date()).slice(0, 7), boByLine = backoutsByLine_(lines, readTable_(T.APP.name).rows);
   const plan = kpiStretchPlan_(lines), pend = {};   // v183: stretches of earlier holders, and the one-entry-per-holder merge
 
   const doLine = function (l, cr, vs) {
@@ -532,8 +532,9 @@ function computeKpis_(fy) {
 
     // 3. Offer backout rate (v150) — candidates who backed out in the month ÷ positions worked on in the month × 100.
     // The backout is counted in the month of its date, for the position's recruiter; the positions worked on are counted in the loop above.
-    const backM = vs ? '' : ymd_(l.Backout_Date).slice(0, 7);
-    if (backM && inFy(backM)) { const c = bucket(rec, 'OFFER_BACKOUT', backM); c.num++; c.items.push(Object.assign({ event: 'Backout', date: ymd_(l.Backout_Date) }, brief)); }
+    (vs ? [] : boByLine[String(l.Line_ID)] || []).forEach(function (e) {   // v190: the backout events (a card or an older line), not the line's own date, so a line that holds several backouts counts each
+      if (inFy(e.date.slice(0, 7))) { const c = bucket(rec, 'OFFER_BACKOUT', e.date.slice(0, 7)); c.num++; c.items.push(Object.assign({ event: 'Backout', date: e.date }, brief)); }
+    });
   };
   lines.forEach(function (l) { doLine(l, null); posTaggedCredits_(l).forEach(function (cr) { doLine(l, cr); }); });
   plan.stretches.forEach(function (vs) { doLine(vs.vline, null, vs); });   // v183: the earlier holders\u2019 stretches

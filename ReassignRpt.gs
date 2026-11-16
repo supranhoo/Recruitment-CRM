@@ -124,7 +124,7 @@ function rsChain_(line, byId, childOf, cands) {
 
 /** The whole report from plain inputs (so it can be tested without sheets). d = {lines, prRows, auditRows, counts, cands, today, from, to, recruiter, lineId}. */
 function reassignBuild_(d) {
-  const byId = {}, childOf = {}, prBy = {}, auditBy = {};   // stint records and audit rows grouped by position once, in their original order
+  const byId = {}, childOf = {}, prBy = {}, auditBy = {}, boBy = backoutsByLine_(d.lines, d.apps || []);   // stint records and audit rows grouped by position once, in their original order
   d.prRows.forEach(function (r) { const k = String(r.Line_ID); (prBy[k] = prBy[k] || []).push(r); });
   d.auditRows.forEach(function (a) { const k = String(a.Record_ID); (auditBy[k] = auditBy[k] || []).push(a); });
   d.lines.forEach(function (l) { byId[String(l.Line_ID)] = l; });
@@ -140,12 +140,13 @@ function reassignBuild_(d) {
     if (!inRange && !d.lineId) return;
     if (d.recruiter && !all.concat(st.tagged).some(function (s) { return s.name.toLowerCase() === String(d.recruiter).toLowerCase(); })) return;
     const holds = holdRanges_(l), cnt = d.counts[String(l.Line_ID)] || {};
-    const dated = { offers: rsDay_(l.Offer_Date), joined: rsDay_(l.Actual_DOJ), backouts: rsDay_(l.Backout_Date) };
+    const dated = { offers: rsDay_(l.Offer_Date), joined: rsDay_(l.Actual_DOJ) }, boDays = (boBy[String(l.Line_ID)] || []).map(function (e) { return e.date; });
     const rows = all.concat(st.tagged).map(function (s) {
       const end = s.to || addDays_(d.today, 1), from = s.from;
       const c = {}; REASSIGN_METRICS_.forEach(function (m) { c[m] = 0; });
       Object.keys(cnt).forEach(function (day) { if (day >= from && day < end) Object.keys(cnt[day]).forEach(function (m) { c[m] += cnt[day][m]; }); });
       Object.keys(dated).forEach(function (m) { if (dated[m] && dated[m] >= from && dated[m] < end) c[m] += 1; });
+      boDays.forEach(function (day) { if (day >= from && day < end) c.backouts += 1; });
       const days = rsDays_(from, end), work = rsWorkDays_(from, end, holds), hold = rsHoldDays_(from, end, holds);
       const per = {}; ['recv', 'rev', 'screened', 'shared', 'short', 'intv'].forEach(function (m) { per[m] = work > 0 ? Math.round(c[m] / work * 10) / 10 : null; });
       return { name: s.name, role: s.role, from: from, to: s.to, active: !!s.active && !s.to, days: days, hold: hold, workDays: work, counts: c, perDay: per, source: s.source };
@@ -178,7 +179,7 @@ function apiReassignReport(opts) {
   Object.keys(scr).forEach(function (line) { const c = counts[line] = counts[line] || {}; Object.keys(scr[line]).forEach(function (day) { const d = c[day] = c[day] || {}; d.screened = (d.screened || 0) + scr[line][day]; }); });
   const ids = []; lines.forEach(function (l) { if (rsDay_(l.Actual_DOJ) && l.Candidate_ID) ids.push(l.Candidate_ID); });
   const cands = candNames_(ids);
-  const r = reassignBuild_({ lines: lines, prRows: prRows, auditRows: auditRows, counts: counts, cands: cands, today: today, from: from, to: to, recruiter: String(opts.recruiter || ''), lineId: String(opts.lineId || '') });
+  const r = reassignBuild_({ lines: lines, apps: readTable_(T.APP.name).rows, prRows: prRows, auditRows: auditRows, counts: counts, cands: cands, today: today, from: from, to: to, recruiter: String(opts.recruiter || ''), lineId: String(opts.lineId || '') });
   r.from = from; r.to = to; r.today = today; r.recruiters = activeRecruiterNames_();
   return r;
 }

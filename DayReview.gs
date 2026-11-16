@@ -155,8 +155,8 @@ function dayData_(date, onlyRecruiter) {
       const brief = { line: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), dept: String(l.Dept) };
       if (ymd_(l.Offer_Date) === date) { r.funnel.Offers++; r.offers.push(brief); }
       if (ymd_(l.Actual_DOJ) === date) { r.funnel.Joined++; r.joined.push(brief); }
-      if (ymd_(l.Backout_Date) === date) r.backouts++;
     });
+    backoutEvents_(date, date).forEach(function (e) { const r = get(e.recruiter); if (r) r.backouts++; });
   }
 
   readTableFrom_(T.CAND.name, 'Created_At', date).rows.forEach(function (c) {
