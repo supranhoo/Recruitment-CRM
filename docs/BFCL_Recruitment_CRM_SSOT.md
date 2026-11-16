@@ -1525,6 +1525,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit of build 198, release 3: Candidates filters** (no schema change; v211; 16 Nov 2026)
+- Finding: the Candidates page drew two rows of about 12 filter controls before the table, with no sign of which were in use and no single way to reset them.
+- Change: Search, HR result, Sourced by and Archived stay in view. Has CV, Possible duplicates, Show, Function, Experience from/to, Location, Notice and Expected CTC sit behind a "More filters" button that shows how many of them are set and opens by itself when one is (so coming back to the page shows them). Every filter in use shows as a removable chip ("Location: Ranchi", "Notice up to: 30 days"); a Clear all button resets everything and returns focus to Search. The chip line is announced to screen readers. The filters were already kept in `S.candFilter`, so they survive opening a candidate and coming back. The result count stays under the table as before. No change to what the search does.
+- Tested in Chromium with the real `viewCandidates` and a stub search: the panel starts closed; the button opens it; chips appear and the search receives each filter; removing a chip clears its field and its filter; Clear all empties every control; a hidden filter set earlier opens the panel on return; the Has CV chip unticks the box.
+
 **Audit of build 198, release 2: the open drawer behaves as a dialog** (no schema change; v210; 16 Nov 2026)
 - Finding: with a form drawer open (Add candidate and the others), Tab moved into the page behind it, and closing the drawer left focus nowhere. Cause: `openDrawer` only moved focus in; nothing held it there or put it back.
 - Fix: while the drawer is open the page behind (menu and view) is inert; Tab and Shift+Tab wrap inside the drawer (and the CV preview pane when it is open beside it); the drawer is marked as a dialog (`role="dialog"`, `aria-modal`, named by its title); on close, focus returns to the control that opened it, or to the page area if that control is gone. Opening a second drawer from the first keeps the original opener. Escape, the backdrop and Cancel still ask before discarding edits (v199). The question dialogs are native and unchanged.
