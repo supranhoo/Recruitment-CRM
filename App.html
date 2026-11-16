@@ -1563,6 +1563,27 @@ function positionDrawer(p) {
     try { await api('apiRestorePosition', p.Line_ID, why); toast('Position restored.'); afterClose(); } catch (err) { toast(err, true); busy(e.target, false); } };
   if ($('#posUndoInt', body)) $('#posUndoInt', body).onclick = async e => { const why = prompt('Why is this internal fill being undone?'); if (!why) return; busy(e.target, true);
     try { await api('apiUndoInternalFill', p.Line_ID, why); toast('Internal fill undone; the position is open again.'); afterClose(); } catch (err) { toast(err, true); busy(e.target, false); } };
+  /* v197: the notice period follows the offer letter date and the expected joining date (joining minus offer) while it is empty or was filled this way;
+     a value the recruiter typed that differs is left alone. The result is shown under the field and can always be overwritten. */
+  (() => {
+    const f = $('#posForm'), q = n => f.querySelector('[name="' + n + '"]'), nd = q('Notice_Period_Days'), of = q('Offer_Date'), ed = q('EDOJ'), os = q('Offer_Sent');
+    if (!nd || !of || !ed || nd.readOnly || nd.disabled) return;
+    const diff = () => {
+      if (os && String(os.value).toUpperCase() !== 'YES') return null;
+      const a = String(of.value || '').slice(0, 10), b = String(ed.value || '').slice(0, 10); if (!a || !b) return null;
+      const n = Math.round((Date.parse(b) - Date.parse(a)) / 86400000); return n >= 0 ? n : null;
+    };
+    const note = t => { let m = $('#ndAuto', f); if (!m) { m = document.createElement('span'); m.id = 'ndAuto'; m.className = 'hint'; m.setAttribute('role', 'status'); nd.parentNode.appendChild(m); } m.textContent = t; };
+    let auto = nd.value === '' || Number(nd.value) === diff();
+    if (auto && diff() !== null && nd.value !== '') note('Calculated: expected joining date minus offer letter date. You can overwrite it.');
+    nd.addEventListener('input', e => { if (e.isTrusted !== false) { auto = false; const m = $('#ndAuto', f); if (m) m.textContent = ''; } });
+    const follow = () => {
+      const n = diff(); if (n === null || !auto) return;
+      if (String(nd.value) !== String(n)) nd.value = String(n);
+      note('Calculated: expected joining date minus offer letter date (' + n + ' days). You can overwrite it.');
+    };
+    [of, ed, os].forEach(el => { if (el) { el.addEventListener('change', follow); el.addEventListener('input', follow); } });
+  })();
   $('#posForm').addEventListener('input', readout);
   if (!isNew) bindAttachmentViews('MRF', p.Line_ID, body);
   if ($('#jdPickBtn', body)) $('#jdPickBtn', body).onclick = () => openJdPicker(file => {

@@ -1525,6 +1525,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**The notice period is calculated from the offer and joining dates** (no schema change; v197; 17 Nov 2026)
+- Position form, Offer and joining: when Offer sent is Yes and both the offer letter date and the expected joining date are set, the notice period is filled with expected joining minus offer date and the TAT readout updates at once. It follows later date changes while it is empty or was filled this way; a value the recruiter typed (or a saved value that differs from the calculation) is left alone. The recruiter can always overwrite it. Existing records are not changed and nothing is written by the server.
+- Why not locked: on the 13 Nov data the notice equals joining minus offer for 236 of 359 offers; 123 differ, and the notice sets the extra TAT days (days beyond the grace), so a forced value would change TAT.
+- Checked in a browser page with the real block: empty to filled on both dates (72 days for 1 Sep to 12 Nov), follows a joining change when it matched, leaves a different saved value and a typed value alone, nothing when Offer sent is No or joining is before the offer.
+
 **A tagged recruiter can work the candidates of the position** (no schema change; v196; 17 Nov 2026)
 - Gap: the screening screen (`apiScreening`) and the file-attach rules for candidates and cards (`Compliance.gs`) used `canEditLine_` (lead recruiter and leads only), while the server routes that save a screening, share it and move a card use `onPosition_` (lead, tagged, leads). A tagged recruiter saw "Record screening" but the form was read-only, and could not attach or open a candidate's or card's papers, so could not move a candidate forward on a position that has screening questions.
 - Fix: `apiScreening.canEdit`, candidate (`CAND`) and card (`APP`) file attach and open now use `onPosition_`; the Papers section of a fast-track card shows for anyone who can work the card. Position-level actions (edit the position, JD and position files, day's status, TAT exemption requests, voice requests) and reject / hold / withdraw / back out of cards the person did not add stay as before.
