@@ -1343,7 +1343,7 @@ function apiScreening(appId) {
   const cand = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0] || {};
   const fin = sqFinalFor_(app.Line_ID), scr = scrOf_(appId), st = pdocState_(app.Line_ID);
   const cur = scrClient_(scr, true);
-  return { appId: String(appId), stage: String(app.Stage), status: String(app.Status), canEdit: canEditLine_(u, line) && String(app.Status) === 'Active',
+  return { appId: String(appId), stage: String(app.Stage), status: String(app.Status), canEdit: onPosition_(u, line) && String(app.Status) === 'Active',
     line: { id: String(line.Line_ID), mrf: String(line.MRF_No || ''), position: String(line.Position), grade: String(line.Grade || ''), dept: String(line.Dept) },
     cand: { id: String(cand.Candidate_ID || ''), name: String(cand.Name || ''), designation: String(cand.Current_Designation || ''), company: String(cand.Current_Company || ''),
       exp: expYearsText_(cand), education: String(cand.Education || ''), location: String(cand.Current_Location || ''), hasCv: !!cand.CV_File_URL },

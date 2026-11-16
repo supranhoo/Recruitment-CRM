@@ -1525,6 +1525,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**A tagged recruiter can work the candidates of the position** (no schema change; v196; 17 Nov 2026)
+- Gap: the screening screen (`apiScreening`) and the file-attach rules for candidates and cards (`Compliance.gs`) used `canEditLine_` (lead recruiter and leads only), while the server routes that save a screening, share it and move a card use `onPosition_` (lead, tagged, leads). A tagged recruiter saw "Record screening" but the form was read-only, and could not attach or open a candidate's or card's papers, so could not move a candidate forward on a position that has screening questions.
+- Fix: `apiScreening.canEdit`, candidate (`CAND`) and card (`APP`) file attach and open now use `onPosition_`; the Papers section of a fast-track card shows for anyone who can work the card. Position-level actions (edit the position, JD and position files, day's status, TAT exemption requests, voice requests) and reject / hold / withdraw / back out of cards the person did not add stay as before.
+- Checked by running the real server code on the workbook copy: tagging Aditya on a position led by another recruiter, `apiScreening` gave `canEdit` false before and true after; attaching to a card was refused before and passes the permission check after; attaching to the position is still refused.
+
 **The Restate button no longer looks frozen** (no schema change; v195; 16 Nov 2026)
 - The v194 button stayed on "Restating…" after the call finished because the code re-enabled the button without restoring its label. The label is now restored on every exit, the result ("3 to-dos restated: ...", "Nothing to restate", or the error) stays on the page next to the button, and the Data checks list reloads after a successful run. Server code unchanged.
 
