@@ -318,11 +318,11 @@ function sendSummary_(to, test) {
   const lines = readTable_(T.MRF.name).rows;
   const wk = { joined: [], offers: 0, backouts: [] };
   lines.forEach(function (l) {
-    const doj = ymd_(l.Actual_DOJ), off = ymd_(l.Offer_Date), bo = ymd_(l.Backout_Date);
+    const doj = ymd_(l.Actual_DOJ), off = ymd_(l.Offer_Date);
     if (doj >= since) wk.joined.push(l);
     if (off >= since) wk.offers++;
-    if (bo >= since) wk.backouts.push(l);
   });
+  backoutEventsFrom_(lines, readTable_(T.APP.name).rows).forEach(function (e) { if (e.date >= since) wk.backouts.push({ Position: e.position, Recruiter: e.recruiter }); });
   const ctx = tatContext_();
   const overdue = lines.map(function (l) { return orgTat_(Object.assign({}, l, computeTat_(l, ctx))); })
     .filter(function (l) { return l.TAT_Result === 'Overdue'; })

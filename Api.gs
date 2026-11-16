@@ -653,7 +653,7 @@ function computeDashboard_() {
   const since180 = fmt_(new Date(Date.now() - 180 * 86400000), TZ, 'yyyy-MM-dd');
 
   const k = { open: 0, offered: 0, overdue: 0, atRisk: 0, joinedMonth: 0, achieved180: 0, closed180: 0, backouts180: 0 };
-  const byRec = {};
+  const byRec = {}, boByLine = backoutsByLine_(lines, readTable_(T.APP.name).rows);
   lines.forEach(function (l) {
     const s = l.Position_Status, r = String(l.Recruiter || 'Unassigned');
     const b = byRec[r] = byRec[r] || { recruiter: r, open: 0, offered: 0, overdue: 0, joined30: 0, cv30: 0, interviews30: 0, selected30: 0 };
@@ -666,7 +666,7 @@ function computeDashboard_() {
     if (doj && doj >= since30) b.joined30++;
     const end = ymd_(l.TAT_End_Date);
     if (s === 'Closed' && end >= since180) { k.closed180++; if (l.TAT_Result === 'Achieved') k.achieved180++; }
-    if (ymd_(l.Backout_Date) >= since180) k.backouts180++;
+    (boByLine[String(l.Line_ID)] || []).forEach(function (e) { if (e.date >= since180) k.backouts180++; });
     posTaggedCredits_(l).forEach(function (cr) {   // split credit (v164): a tagged recruiter's own view; the totals above count the position once
       const tb = byRec[cr.name] = byRec[cr.name] || { recruiter: cr.name, open: 0, offered: 0, overdue: 0, joined30: 0, cv30: 0, interviews30: 0, selected30: 0 };
       if (s === 'Open') tb.open++;
