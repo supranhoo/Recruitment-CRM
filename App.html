@@ -307,14 +307,35 @@ function watchToast(t, host) {
 }
 /* A dialog that closes right after a notice must not take the notice with it: it moves to the next open dialog or back to the page. */
 document.addEventListener('close', ev => { if (ev.target && ev.target.tagName === 'DIALOG') parkToast(); }, true);
-function toast(msg, err) {
+function toast(msg, err, opts) {
   const t = toastEl();
   parkToast();
-  t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
-  const hide = () => { t.className = 'toast'; if (toastObs) { toastObs.disconnect(); toastObs = null; } if (t.parentNode !== document.body) document.body.appendChild(t); };
-  const arm = () => { clearTimeout(toastTimer); toastTimer = setTimeout(hide, err ? 6000 : 2800); };
-  t.onmouseenter = () => clearTimeout(toastTimer); t.onmouseleave = arm;
-  arm();
+  opts = opts || {};
+  t.className = 'toast show' + (err ? ' err' : '');
+  t.setAttribute('role', err ? 'alert' : 'status'); t.setAttribute('aria-live', err ? 'assertive' : 'polite');
+  t.textContent = String(msg == null ? '' : msg);
+  const hide = () => { clearTimeout(toastTimer); t.className = 'toast'; t.textContent = ''; if (toastObs) { toastObs.disconnect(); toastObs = null; } if (t.parentNode !== document.body) document.body.appendChild(t); };
+  t.onmouseenter = null; t.onmouseleave = null; clearTimeout(toastTimer);
+  if (err) {
+    /* v200: an error stays until it is dismissed (the close button, Escape, or the next notice), says what it is, and offers a Retry where re-running is safe. */
+    if (opts.note) { const n = document.createElement('span'); n.className = 'toast-note'; n.textContent = opts.note; t.appendChild(n); }
+    if (opts.retry) { const r = document.createElement('button'); r.type = 'button'; r.className = 'toast-btn'; r.textContent = 'Retry'; r.onclick = () => { hide(); try { opts.retry(); } catch (e) { } }; t.appendChild(r); }
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'toast-btn toast-x'; x.setAttribute('aria-label', 'Dismiss this message'); x.textContent = '\u2715'; x.onclick = hide; t.appendChild(x);
+    S.toastHide = hide;
+  } else {
+    S.toastHide = null;
+    toastTimer = setTimeout(hide, 2800);
+    t.onmouseenter = () => clearTimeout(toastTimer); t.onmouseleave = () => { toastTimer = setTimeout(hide, 2800); };
+  }
+}
+/** After a failed save or action: the button is usable again, and the message says whether anything was saved and what to do. */
+function failed(e, btn, label) {
+  if (btn) { busy(btn, false, label); }
+  const msg = String(e && e.message ? e.message : e || 'Something went wrong').replace(/^Error:\s*/, '');
+  const unsure = /\b(timed? ?out|time limit|exceeded|network|connection|unavailable|failed to fetch|internal error|server error|server is|script)\b/i.test(msg) && !/Someone else is saving/i.test(msg);
+  toast(msg, true, unsure
+    ? { note: 'It may not have finished. Check the record before trying again.' }
+    : { note: 'Nothing was saved. What you typed is still on screen.', retry: btn && btn.isConnected ? () => { if (btn.isConnected && !btn.disabled) btn.click(); } : null });
 }
 function busy(btn, on, label) { if (!btn) return; btn.disabled = on; if (label) btn.textContent = label; }
 
@@ -344,7 +365,7 @@ const bootStart = () => {
   ['input', 'change'].forEach(ev => $('#drawerBody').addEventListener(ev, markDrawerDirty));
   $('#drawerClose').addEventListener('click', closeDrawerSafe);
   $('#scrim').addEventListener('click', closeDrawerSafe);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog[open]') && $('#drawer').classList.contains('open')) closeDrawerSafe(); });   // Escape cancels the dialog on top, not the drawer under it
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.toastHide) { S.toastHide(); S.toastHide = null; return; } if (e.key === 'Escape' && !document.querySelector('dialog[open]') && $('#drawer').classList.contains('open')) closeDrawerSafe(); });   // Escape cancels the dialog on top, not the drawer under it
 };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootStart); else setTimeout(bootStart, 0);
 
@@ -414,7 +435,7 @@ function go(view, push) {
       layer.hidden = false;
     });
   }
-  VIEWS[view](v).catch(msg => { v.innerHTML = `<div class="empty">${esc(msg)}</div>`; console.error(msg); }).finally(() => {
+  VIEWS[view](v).catch(msg => { v.innerHTML = `<div class="empty" role="alert"><b>Couldn\u2019t load this page.</b><span class="sub">${esc(msg)}</span><span class="sub">Nothing was changed. Check your connection and try again.</span><button class="btn primary" id="pgRetry" type="button">Retry</button></div>`; const rb = v.querySelector('#pgRetry'); if (rb) rb.onclick = () => go(view, false); console.error(msg); }).finally(() => {
     ready = true;
     if (PERF) console.log(`[perf] page ${view} ready in ${Math.round(performance.now() - t0)} ms`);
     if (seq !== S.goSeq || !layer || layer.hidden) return;
@@ -672,7 +693,7 @@ function bindTaskList(root, tasks, after) {
     const run = async (btn, action, data) => {
       busy(btn, true);
       try { const r = await api('apiTaskAction', t.key, action, data || {}); toast(action === 'chased' ? 'Chase recorded. It comes back in 24 hours if still pending.' : action === 'done' ? 'Marked done' : action === 'note' ? 'Note added' : 'Snoozed'); after(r); }
-      catch (e) { toast(e, true); busy(btn, false); }
+      catch (e) { failed(e, btn); }
     };
     $$('[data-act]', li).forEach(b => b.onclick = () => {
       const act = b.dataset.act, sz = $('.task-snooze', li);
@@ -750,13 +771,13 @@ async function findCandidatesDialog(lineId, after) {
   $$('[data-add]', d).forEach(b => b.onclick = async () => {
     busy(b, true);
     try { await api('apiAddToPipeline', b.dataset.add, lineId); b.textContent = 'Added'; b.disabled = true; S.candStale = true; toast('Added to the pipeline'); after && after(); }
-    catch (e) { toast(e, true); busy(b, false, 'Add to pipeline'); }
+    catch (e) { failed(e, b, 'Add to pipeline'); }
   });
   $$('[data-notsuit]', d).forEach(b => b.onclick = async () => {
     const why = prompt('Why is this CV not suitable? (a short reason)'); if (why === null) return;
     busy(b, true);
     try { await api('apiRejectCv', b.dataset.notsuit, lineId, why); b.textContent = 'Rejected'; b.disabled = true; const a = b.parentElement.querySelector('[data-add]'); if (a) a.disabled = true; S.candStale = true; toast('Counted as sourced and reviewed, and rejected'); after && after(); }
-    catch (e) { toast(e, true); busy(b, false, 'Not suitable'); }
+    catch (e) { failed(e, b, 'Not suitable'); }
   });
 }
 const CDN_NPM = 'https:' + String.fromCharCode(47, 47) + 'cdn.jsdelivr.net/npm/';
@@ -894,7 +915,7 @@ function dupNoteHtml(dups) {
 }
 function bindDupNote(el) {
   $$('[data-open]', el).forEach(b => b.onclick = () => openCandidate(b.dataset.open));
-  $$('[data-restore]', el).forEach(b => b.onclick = async () => { busy(b, true); try { const r = await api('apiRestoreCandidate', b.dataset.restore); S.candStale = true; toast('Restored. Update the record with the new details and CV.'); candidateDrawer(r); } catch (e) { toast(e, true); busy(b, false); } });
+  $$('[data-restore]', el).forEach(b => b.onclick = async () => { busy(b, true); try { const r = await api('apiRestoreCandidate', b.dataset.restore); S.candStale = true; toast('Restored. Update the record with the new details and CV.'); candidateDrawer(r); } catch (e) { failed(e, b); } });
 }
 async function cvBulkDialog() {
   const d = cpDlg(`<h2 id="cpTitle">Upload CVs</h2>
@@ -917,7 +938,7 @@ async function cvBulkDialog() {
         if (r.duplicates) { it.status = 'Duplicate found \u2014 review it'; it.res.duplicates = r.duplicates; draw(); return; }
         try { await uploadCv(r.saved.Candidate_ID, it.file); it.status = 'Saved to the pool as ' + r.saved.Candidate_ID; } catch (e) { it.status = 'Saved as ' + r.saved.Candidate_ID + ', but the CV upload failed'; }
         it.saved = true; S.candStale = true; draw();
-      } catch (e) { toast(e, true); busy(b, false, 'Save to pool'); }
+      } catch (e) { failed(e, b, 'Save to pool'); }
     });
   };
   $('#cbFiles', d).onchange = async e => {
@@ -971,7 +992,7 @@ async function closePositionDialog(p, after) {
       const bits = [r.rejected ? r.rejected + ' closed' : '', r.held ? r.held + ' kept on hold' : '', r.moved ? r.moved + ' moved' : '', r.withdrawn ? 'offer withdrawn' : '', r.cancelled ? r.cancelled + ' interview' + (r.cancelled === 1 ? '' : 's') + ' cancelled' : ''].filter(Boolean).join(', ');
       toast((r.outcome === 'On Hold' ? 'Position put on hold' : r.outcome === 'Filled Internally' ? 'Position filled internally' : r.outcome === 'Created in Error' ? 'Position removed' : 'Position closed without a hire') + (bits ? ': ' + bits : '') + '.');
       d.close(); after && after();
-    } catch (e) { toast(e, true); busy(b, false); }
+    } catch (e) { failed(e, b); }
   };
 }
 function resumePositionDialog(p, after) {
@@ -986,7 +1007,7 @@ function resumePositionDialog(p, after) {
   $('#rsSave', d).onclick = async () => {
     const b = $('#rsSave', d); busy(b, true);
     try { const r = await api('apiResumePosition', p.Line_ID, { date: $('#rsDate', d).value, reactivate: $('#rsReact', d).checked }); toast(`Position resumed. ${r.holdDays} day${r.holdDays === 1 ? '' : 's'} on hold excluded from TAT${r.reactivated ? '; ' + r.reactivated + ' candidate' + (r.reactivated === 1 ? '' : 's') + ' reactivated' : ''}.`); d.close(); after && after(); }
-    catch (e) { toast(e, true); busy(b, false); }
+    catch (e) { failed(e, b); }
   };
 }
 function backoutHint(line, from, day) {
@@ -1012,7 +1033,7 @@ async function reinstateDialog(app, after) {
   $('#rnSave', d).onclick = async () => {
     const b = $('#rnSave', d); busy(b, true);
     try { await api('apiReinstateBackout', app.App_ID, { reason: $('#rnWhy', d).value, edoj: $('#rnEdoj', d).value }); d.close(); toast(`${pv.candidate} is back on ${pv.mrf}. Log a check-in with the candidate.`); after(); }
-    catch (e) { toast(e, true); busy(b, false); }
+    catch (e) { failed(e, b); }
   };
 }
 let RC_LAST = null;
@@ -1105,7 +1126,7 @@ function bindRcCard(card, r, render) {
   const run = async (btn, fn, ...args) => {
     busy(btn, true);
     try { const res = await api(fn, ...args); S.posStale = true; toast('Saved'); render(res); }
-    catch (e) { toast(e, true); busy(btn, false); }
+    catch (e) { failed(e, btn); }
   };
   if (q('.rc-holder')) {
     const sync = () => { const v = q('.rc-holder').value; $$('.rc-search-l', card).forEach(x => x.hidden = v !== 'search'); $$('.rc-new-l', card).forEach(x => x.hidden = v !== 'new'); q('.rc-acc-l').hidden = q('.rc-stage').value !== 'Prejoin'; };
@@ -1194,7 +1215,7 @@ async function viewOverview(v, fresh) {
   sumP.then(drawSum).catch(() => { const host = $('#ovTodo', v); if (host && !sumMem) host.remove(); });
   $('#dashRefresh').onclick = async () => {
     const b = $('#dashRefresh'); busy(b, true, 'Refreshing…');
-    try { await viewOverview(v, true); toast('Dashboard updated'); } catch (e) { toast(e, true); busy(b, false, 'Refresh'); }
+    try { await viewOverview(v, true); toast('Dashboard updated'); } catch (e) { failed(e, b, 'Refresh'); }
   };
   $$('tr[data-id]', v).forEach(tr => tr.addEventListener('click', async () => {
     try { await loadPositions(); positionDrawer(lineById(tr.dataset.id)); } catch (e) { toast(e, true); }
@@ -1479,7 +1500,7 @@ async function exemptSectionInto(el, p, afterChange) {
         toast(grant ? 'Exemption granted; TAT recalculated' : 'Sent to the Head of HR for approval');
         if (grant) await afterChange();
         await load();
-      } catch (e) { toast(e, true); busy(b, false, grant ? 'Grant now' : 'Send for approval'); }
+      } catch (e) { failed(e, b, grant ? 'Grant now' : 'Send for approval'); }
     };
     if ($('#texSend', f)) $('#texSend', f).onclick = e => send(false, e.target);
     if ($('#texGrant', f)) $('#texGrant', f).onclick = e => send(true, e.target);
@@ -1574,9 +1595,9 @@ function positionDrawer(p) {
   if ($('#posClose', body)) $('#posClose', body).onclick = () => closePositionDialog(p, afterClose);
   if ($('#posResume', body)) $('#posResume', body).onclick = () => resumePositionDialog(p, afterClose);
   if ($('#posRestore', body)) $('#posRestore', body).onclick = async e => { const why = prompt('Why is this position being restored?'); if (!why) return; busy(e.target, true);
-    try { await api('apiRestorePosition', p.Line_ID, why); toast('Position restored.'); afterClose(); } catch (err) { toast(err, true); busy(e.target, false); } };
+    try { await api('apiRestorePosition', p.Line_ID, why); toast('Position restored.'); afterClose(); } catch (err) { failed(err, e.target); } };
   if ($('#posUndoInt', body)) $('#posUndoInt', body).onclick = async e => { const why = prompt('Why is this internal fill being undone?'); if (!why) return; busy(e.target, true);
-    try { await api('apiUndoInternalFill', p.Line_ID, why); toast('Internal fill undone; the position is open again.'); afterClose(); } catch (err) { toast(err, true); busy(e.target, false); } };
+    try { await api('apiUndoInternalFill', p.Line_ID, why); toast('Internal fill undone; the position is open again.'); afterClose(); } catch (err) { failed(err, e.target); } };
   /* v197: the notice period follows the offer letter date and the expected joining date (joining minus offer) while it is empty or was filled this way;
      a value the recruiter typed that differs is left alone. The result is shown under the field and can always be overwritten. */
   (() => {
@@ -1671,7 +1692,7 @@ function positionDrawer(p) {
       closeDrawer();
       /* The list was patched above: the table redraws in place. The Overview snapshot does not change on a save, so it is not read again. */
       if (S.view === 'positions') document.dispatchEvent(new CustomEvent('positions-updated'));
-    } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add position' : 'Save changes'); }
+    } catch (e) { failed(e, btn, isNew ? 'Add position' : 'Save changes'); }
   };
 }
 
@@ -1791,7 +1812,7 @@ function bindDailyForm(root, after) {
     pipedKeys(d.Entry_Date || today()).forEach(k => { d[k] = 0; });   // counted from the Pipeline, never typed
     const btn = $('.dl-save', f), label = btn.textContent; busy(btn, true, 'Saving…');
     try { const saved = await api('apiSaveFunnel', d); if (saved && saved.Entry_ID) f.dataset.entry = saved.Entry_ID; toast(d.Entry_ID ? 'Entry updated' : 'Activity logged'); after(saved); }
-    catch (e) { toast(e, true); busy(btn, false, label); }
+    catch (e) { failed(e, btn, label); }
   };
 }
 function bindEntryEdits(root, rows, after) {
@@ -1891,7 +1912,7 @@ async function dailyGrid(box, onRec, fixed) {
       const b = $('.dg-save', tr);
       if (b) b.onclick = async () => { busy(b, true, 'Saving…'); try { const sv = await api('apiSaveFunnel', payload(tr)); if (sv && sv.Entry_ID) tr.dataset.entry = sv.Entry_ID; toast('Saved'); onRec(null, true); tr.classList.remove('dg-dirty');
         if ($$('tr.dg-dirty', box).length) { busy(b, false, 'Save'); b.disabled = true; sync(); } else await draw();   // other rows still hold unsaved numbers: leave them alone
-      } catch (e) { toast(e, true); busy(b, false, 'Save'); } };
+      } catch (e) { failed(e, b, 'Save'); } };
     });
     $('#dgAll', box).onclick = async () => {
       const trs = $$('tr.dg-dirty', box), b = $('#dgAll', box); busy(b, true, 'Saving…'); let ok = 0; const bad = [];
@@ -2158,7 +2179,7 @@ async function cvProfileSection(el, c) {
         links: { linkedin: $('#pvLi', dlg).value, github: $('#pvGh', dlg).value, portfolio: $('#pvPf', dlg).value }, visa: $('#pvVisa', dlg).value });
       busy(e.target, true, 'Saving…');
       try { await api('apiSaveProfile', c.Candidate_ID, out); closeDrawer(); toast('Profile saved as reviewed.'); openCandidate(c.Candidate_ID); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Save as reviewed'); }
+      catch (err) { failed(err, e.target, 'Save as reviewed'); }
     };
   };
   draw(R);
@@ -2222,7 +2243,7 @@ function archivedCandidateDrawer(c) {
   $('#arRestore', b).onclick = async () => {
     const btn = $('#arRestore', b); busy(btn, true, 'Restoring\u2026');
     try { const r = await api('apiRestoreCandidate', c.Candidate_ID); S.candStale = true; toast('Restored. The candidate is active again.'); candidateDrawer(r); }
-    catch (e) { toast(e, true); busy(btn, false, 'Restore to active'); }
+    catch (e) { failed(e, btn, 'Restore to active'); }
   };
 }
 function candidateDrawer(c, preset, parsedIn) {
@@ -2295,7 +2316,7 @@ function candidateDrawer(c, preset, parsedIn) {
           ${res.duplicates.map(x => `<button class="linklike" data-open="${esc(x.id)}">${esc(x.id)} ${esc(x.name)}</button> — ${esc(x.position)}${x.hr ? ', HR: ' + esc(x.hr) : ''}${x.archived ? ` <span class="badge-arch">Archived</span> last active ${fmtDate(x.last)} <button class="btn sm" data-restore="${esc(x.id)}">Restore and use</button>` : ''}`).join('<br>')}
           <div style="margin-top:8px"><button class="btn" id="saveAnyway">Save as a separate candidate anyway</button></div></div>`;
         $$('[data-open]', body).forEach(b => b.onclick = () => openCandidate(b.dataset.open));
-        $$('[data-restore]', body).forEach(b => b.onclick = async () => { busy(b, true); try { const r = await api('apiRestoreCandidate', b.dataset.restore); S.candStale = true; toast('Restored. Update the record with the new details and CV.'); candidateDrawer(r); } catch (e) { toast(e, true); busy(b, false); } });
+        $$('[data-restore]', body).forEach(b => b.onclick = async () => { busy(b, true); try { const r = await api('apiRestoreCandidate', b.dataset.restore); S.candStale = true; toast('Restored. Update the record with the new details and CV.'); candidateDrawer(r); } catch (e) { failed(e, b); } });
         $('#saveAnyway').onclick = () => save(true);
         $('#dupNote').scrollIntoView({ behavior: 'smooth' });
         return;
@@ -2317,7 +2338,7 @@ function candidateDrawer(c, preset, parsedIn) {
       if (S.view === 'pipeline' && s.Line_ID && S.pipeRefresh) { closeDrawer(); S.pipeRefresh(); return; }
       if (S.view === 'candidates' && S.candPatch) S.candPatch(s);
       if (isNew || file || attFiles) candidateDrawer(s); else closeDrawer();
-    } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add candidate' : 'Save changes'); }
+    } catch (e) { failed(e, btn, isNew ? 'Add candidate' : 'Save changes'); }
   };
   $('#cSave').onclick = () => save(false);
   if ($('#cvView')) $('#cvView').onclick = () => showCv(data.Candidate_ID, $('#cvView'));
@@ -2433,7 +2454,7 @@ async function showFile(key, fetchFile, btn, viewLabel, hideLabel) {
       body.innerHTML = '<p class="empty">This file type cannot be previewed here. Use Download.</p>';
     }
     busy(btn, false, hideLabel || 'Hide');
-  } catch (e) { toast(e, true); busy(btn, false, viewLabel); }
+  } catch (e) { failed(e, btn, viewLabel); }
 }
 
 async function viewPanel(v) {
@@ -2491,7 +2512,7 @@ async function viewPanel(v) {
     $('#pnSave').onclick = async () => {
       const btn = $('#pnSave'); busy(btn, true, 'Saving\u2026');
       try { await api('apiSavePanel', Object.assign({ Entry_ID: r ? r.Entry_ID : '' }, readForm($('#pnForm')))); toast('Saved'); closeDrawer(); go('panel', false); }
-      catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+      catch (e) { failed(e, btn, 'Save'); }
     };
   };
   $('#newPanel').onclick = () => edit(null);
@@ -2596,7 +2617,7 @@ function openPanelDialog(m, onSaved) {
       if (saved.active !== 'No') S.boot.panel.push(saved);
       S.boot.panel.sort((a, b) => a.name.localeCompare(b.name)); buildPanelIndex();
       dlg.close(); toast(edit ? 'Panel member updated' : `${saved.name} added to the panel list`); onSaved && onSaved(saved);
-    } catch (e) { toast(e, true); busy(b, false, edit ? 'Save' : 'Add member'); }
+    } catch (e) { failed(e, b, edit ? 'Save' : 'Add member'); }
   };
 }
 
@@ -2676,7 +2697,7 @@ function tatEditor(r, done) {
       S.posStale = true;
       toast(`Saved as ${x.version}. TAT recalculated for ${x.recomputed} positions.`);
       closeDrawer(); done();
-    } catch (e) { toast(e, true); busy(btn, false, 'Save new rules'); }
+    } catch (e) { failed(e, btn, 'Save new rules'); }
   };
   fill();
 }
@@ -2792,7 +2813,7 @@ function jdmImportDialog(done) {
         ${r.warnings.length ? `<div style="margin-top:6px"><b>Warnings:</b><ul style="margin:4px 0 0 18px">${r.warnings.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}</div>`;
       btn.hidden = true; $('#jdmCancel', b).disabled = false; $('#jdmCancel', b).textContent = 'Close';
       $('#jdmCancel', b).onclick = () => { closeDrawer(); done(); };
-    } catch (err) { toast(err, true); busy(btn, false, 'Import'); $('#jdmCancel', b).disabled = false; }
+    } catch (err) { failed(err, btn, 'Import'); $('#jdmCancel', b).disabled = false; }
   };
 }
 const JDM_LOGO = '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' + '/9k=';
@@ -2989,7 +3010,7 @@ async function openJdMaker(lineId, templateId, after) {
       if (!ok) return;
       const btn = $('#jmMasterSave', body); busy(btn, true, 'Saving\u2026');
       try { await api('apiJdmSaveResponsibilityChanges', work.templateId, p); toast('Reusable responsibilities saved to JD Master.'); openJdMaker(lineId, work.templateId, after); }
-      catch (e) { toast(e, true); busy(btn, false, 'Save reusable changes'); }
+      catch (e) { failed(e, btn, 'Save reusable changes'); }
     };
   };
   bindWork();
@@ -3777,7 +3798,7 @@ async function jdmProfiles(el, f, v) {
     if ($('#jdmBulk')) twoStep($('#jdmBulk'), `Click again to confirm ${rows.length}`, async () => {
       const btn = $('#jdmBulk'); busy(btn, true, 'Confirming\u2026');
       try { const r = await api('apiJdmConfirm', rows.map(x => x.id), f.show); toast(`${r.confirmed} confirmed.${r.skipped && r.skipped.length ? ` ${r.skipped.length} skipped: the framework has no requirements for their department at their grade (${r.skipped.slice(0, 5).join(', ')}${r.skipped.length > 5 ? '\u2026' : ''}).` : ''}`, r.skipped && r.skipped.length > 0); jdmProfiles(el, f, v); }
-      catch (e) { toast(e, true); busy(btn, false, 'Confirm'); }
+      catch (e) { failed(e, btn, 'Confirm'); }
     });
   };
   el.innerHTML = `<div class="chips" role="group" aria-label="Show">${views.map(([k, l]) => `<button class="chip" aria-pressed="${f.show === k}" data-show="${k}">${l}<span class="n">${all.filter(r => passFor(r, k)).length}</span></button>`).join('')}</div>
@@ -3854,7 +3875,7 @@ async function jdmProfile(id, after) {
   const save = async (patch, btn, label) => {
     busy(btn, true, 'Saving\u2026');
     try { await api('apiJdmSaveTemplate', Object.assign({ JD_ID: id }, patch)); toast('Saved'); reload(); }
-    catch (e) { toast(e, true); busy(btn, false, label); }
+    catch (e) { failed(e, btn, label); }
   };
   if ($('#jsave', b)) $('#jsave', b).onclick = () => save({ Grade: $('#jg', b).value, Competency_Dept: $('#jcd', b).value, Status: $('#jst', b).value, Primary_JD: $('#jpr', b).value.trim().toUpperCase(), Review_Note: $('#jnote', b).value }, $('#jsave', b), 'Save changes');
   if ($('#jcg', b)) $('#jcg', b).onclick = () => save({ Grade: $('#jg', b).value, confirmGrade: true }, $('#jcg', b), 'Confirm grade');
@@ -3873,7 +3894,7 @@ async function jdmProfile(id, after) {
     $('#jiSave', x).onclick = async () => {
       const btn = $('#jiSave', x); busy(btn, true, 'Saving\u2026');
       const body = Object.assign({ JD_ID: id }, readForm($('#jiForm', x))); if (s) body[kind === 'skill' ? 'Skill_ID' : 'Stmt_ID'] = s.id;
-      try { await api('apiJdmSaveItem', kind, body); toast('Saved'); reload(); } catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+      try { await api('apiJdmSaveItem', kind, body); toast('Saved'); reload(); } catch (e) { failed(e, btn, 'Save'); }
     };
   };
   const find = key => { const [kind, sid] = key.split(':'); return [kind, (kind === 'skill' ? d.skills : d.stmts).find(s => s.id === sid)]; };
@@ -3905,7 +3926,7 @@ async function jdmDepts(el, f) {
     $$('#jdmDl [data-save]').forEach(btn => btn.onclick = async () => {
       const tr = btn.closest('tr'); busy(btn, true, 'Saving\u2026');
       try { const r = await api('apiJdmSaveDeptMap', { dept: tr.dataset.d, comp: $('.jdm-sel', tr).value }); m.rows = r.rows; toast('Saved'); render(); }
-      catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+      catch (e) { failed(e, btn, 'Save'); }
     });
   };
   const open = m.rows.filter(needs).length;
@@ -3994,7 +4015,7 @@ async function renderUsers(el, v) {
         <td>${x.access === null ? '<span class="muted">\u2014</span>' : x.access === x.active ? (x.active ? '<span class="ok-tick">\u2713</span> Has access' : '<span class="muted">No access</span>') : `<span class="miss">${x.active ? 'Missing' : 'Still has access'}</span>${r.canEdit ? ` <button class="btn sm" data-fix="${esc(x.email)}">Fix access</button>` : ''}`}</td>
         <td class="num">${x.openPositions || ''}</td><td>${x.addedOn ? fmtDate(x.addedOn) : '<span class="muted">before user management</span>'}<span class="sub">${esc(x.addedBy)}</span></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No users match.</td></tr>'}
       </tbody></table></div><p class="pager">${rows.length} of ${r.users.length} users</p>`;
-    $$('[data-fix]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); busy(b, true); try { toast(await api('apiFixAccess', b.dataset.fix)); renderUsers(el, v); } catch (err) { toast(err, true); busy(b, false, 'Fix access'); } });
+    $$('[data-fix]', el).forEach(b => b.onclick = async e => { e.stopPropagation(); busy(b, true); try { toast(await api('apiFixAccess', b.dataset.fix)); renderUsers(el, v); } catch (err) { failed(err, b, 'Fix access'); } });
     if (r.canEdit) $$('#usList tr[data-email]', el).forEach(tr => tr.onclick = () => userDrawer(r, r.users.find(x => x.email === tr.dataset.email), () => renderUsers(el, v)));
   };
   el.innerHTML = `<div class="filters"><div class="field search"><label for="usq">Search</label><input id="usq" type="search" value="${esc(f.q)}" placeholder="Name, email or recruiter name"></div>
@@ -4043,7 +4064,7 @@ function userDrawer(r, x, done) {
       }
       toast((isNew ? 'User added. ' : 'Saved. ') + (res.reassigned ? res.reassigned + ' positions reassigned. ' : '') + (res.access || ''));
       closeDrawer(); done();
-    } catch (e) { toast(e, true); busy(btn, false, isNew ? 'Add user' : 'Save changes'); }
+    } catch (e) { failed(e, btn, isNew ? 'Add user' : 'Save changes'); }
   };
   $('#usSave', b).onclick = () => save('');
 }
@@ -4066,7 +4087,7 @@ async function renderDayStatusAdmin(el) {
       $$('[data-mv]', tr).forEach(b => b.onclick = () => { const j = i + Number(b.dataset.mv); if (j < 0 || j >= list.length) return; [list[i], list[j]] = [list[j], list[i]]; draw(); }); });
     $('#dsAdd').onclick = () => { list.push({ status: '', colour: 'teal', kind: 'Manual', active: true, description: '', isNew: true }); draw(); };
     $('#dsSaveList').onclick = async e => { busy(e.target, true, 'Saving\u2026');
-      try { rows = await api('apiSaveDayStatusConfig', list); list = rows.map(r => Object.assign({}, r)); toast('Day\u2019s Status list saved'); draw(); } catch (err) { toast(err, true); busy(e.target, false, 'Save'); } };
+      try { rows = await api('apiSaveDayStatusConfig', list); list = rows.map(r => Object.assign({}, r)); toast('Day\u2019s Status list saved'); draw(); } catch (err) { failed(err, e.target, 'Save'); } };
   };
   draw();
 }
@@ -4109,7 +4130,7 @@ async function renderGrades(el) {
         S.boot.grades = grades.map(g => ({ grade: g.grade, band: g.band, tat: g.tat, active: g.active,
           designations: desigs.filter(d => d.active && d.grade.toUpperCase() === g.grade.toUpperCase()).map(d => d.designation) }));
         toast('Grades and designations saved. Everyone sees them after their next refresh.'); S.posStale = true; draw();
-      } catch (err) { toast(err, true); busy(b, false, 'Save grades & designations'); }
+      } catch (err) { failed(err, b, 'Save grades & designations'); }
     };
   };
   draw();
@@ -4171,7 +4192,7 @@ async function renderExemptAdmin(el) {
     $$('tr[data-i]', el).forEach(tr => { const r = reasons[+tr.dataset.i]; $$('[data-f]', tr).forEach(inp => inp.oninput = inp.onchange = () => { r[inp.dataset.f] = inp.type === 'checkbox' ? inp.checked : inp.value; }); });
     if ($('#texAddR')) $('#texAddR').onclick = () => { reasons.push({ reason: '', type: 'Days', r: true, p: true, proof: true, max: '', active: true, note: '' }); draw(); };
     if ($('#texSaveR')) $('#texSaveR').onclick = async e => { busy(e.target, true, 'Saving…');
-      try { R = await api('apiSaveExemptionReasons', reasons.filter(r => r.orig || String(r.reason).trim())); reasons = R.reasons.map(r => Object.assign({ orig: r.reason }, r)); toast('Reasons saved'); draw(); } catch (err) { toast(err, true); busy(e.target, false, 'Save reasons'); } };
+      try { R = await api('apiSaveExemptionReasons', reasons.filter(r => r.orig || String(r.reason).trim())); reasons = R.reasons.map(r => Object.assign({ orig: r.reason }, r)); toast('Reasons saved'); draw(); } catch (err) { failed(err, e.target, 'Save reasons'); } };
   };
   draw();
 }
@@ -4348,7 +4369,7 @@ async function viewAdmin(v) {
       $('#hodSave').onclick = async () => {
         const list = $$('tr[data-dept]', el).map(tr => ({ dept: tr.dataset.dept, name: $('[data-f=name]', tr).value, email: $('[data-f=email]', tr).value }));
         const b = $('#hodSave'); busy(b, true, 'Saving\u2026');
-        try { await api('apiSaveHodContacts', list); toast('HOD contacts saved'); busy(b, false, 'Save HOD contacts'); } catch (e) { toast(e, true); busy(b, false, 'Save HOD contacts'); }
+        try { await api('apiSaveHodContacts', list); toast('HOD contacts saved'); busy(b, false, 'Save HOD contacts'); } catch (e) { failed(e, b, 'Save HOD contacts'); }
       };
     } else {
       el.innerHTML = `<section class="panel"><h2>Task rules</h2><p class="hint">Hours are counted from the event that starts each clock. A task appears on the recruiter\u2019s to-do list at the \u201cdue\u201d hour and turns critical at the \u201ccritical\u201d hour. Critical tasks still open at the end of the day show as missed in the Daily review.</p>
@@ -4360,7 +4381,7 @@ async function viewAdmin(v) {
       $('#ruleSave').onclick = async () => {
         const list = $$('tr[data-rule]', el).map(tr => ({ id: tr.dataset.rule, on: $('[data-f=on]', tr).checked, due: $('[data-f=due]', tr).value, crit: $('[data-f=crit]', tr) ? $('[data-f=crit]', tr).value : '' }));
         const b = $('#ruleSave'); busy(b, true, 'Saving\u2026');
-        try { await api('apiSaveTaskRules', list); toast('Task rules saved'); busy(b, false, 'Save task rules'); } catch (e) { toast(e, true); busy(b, false, 'Save task rules'); }
+        try { await api('apiSaveTaskRules', list); toast('Task rules saved'); busy(b, false, 'Save task rules'); } catch (e) { failed(e, b, 'Save task rules'); }
       };
     }
     return;
@@ -4418,12 +4439,12 @@ async function viewAdmin(v) {
         <p>Last sent: ${esc(s.lastSent || 'not yet')}</p>
         ${admin ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ${s.on ? '' : 'primary'}" id="wkToggle">${s.on ? 'Turn off' : 'Turn on'}</button><button class="btn" id="wkTest">Send a test to me</button></div>` : ''}`;
       if (!admin) return;
-      $('#wkToggle').onclick = async () => { const b = $('#wkToggle'); busy(b, true, 'Saving\u2026'); try { wk(await api('apiSetWeekly', !s.on)); toast(s.on ? 'Weekly summary turned off' : 'Weekly summary turned on: Mondays 9:00'); } catch (e) { toast(e, true); busy(b, false, s.on ? 'Turn off' : 'Turn on'); } };
+      $('#wkToggle').onclick = async () => { const b = $('#wkToggle'); busy(b, true, 'Saving\u2026'); try { wk(await api('apiSetWeekly', !s.on)); toast(s.on ? 'Weekly summary turned off' : 'Weekly summary turned on: Mondays 9:00'); } catch (e) { failed(e, b, s.on ? 'Turn off' : 'Turn on'); } };
       $('#wkTest').onclick = async () => { const b = $('#wkTest'); busy(b, true, 'Sending\u2026'); try { toast(await api('apiSendSummaryTest')); } catch (e) { toast(e, true); } finally { busy(b, false, 'Send a test to me'); } };
     };
     wk().catch(e => { late('#wkStatus').innerHTML = `<p class="miss">${esc(e)}</p>`; });
     if (!admin) return;
-    $('#bkNow').onclick = async () => { const b = $('#bkNow'); busy(b, true, 'Backing up\u2026'); try { const r = await api('apiBackupNow'); toast(`Saved \u201c${r.name}\u201d \u00b7 ${r.kept} backups kept`); viewAdmin(v); } catch (e) { toast(e, true); busy(b, false, 'Back up now'); } };
+    $('#bkNow').onclick = async () => { const b = $('#bkNow'); busy(b, true, 'Backing up\u2026'); try { const r = await api('apiBackupNow'); toast(`Saved \u201c${r.name}\u201d \u00b7 ${r.kept} backups kept`); viewAdmin(v); } catch (e) { failed(e, b, 'Back up now'); } };
     if ($('#archStatus')) api('apiArchiveStatus').then(s => { const el = $('#archStatus'); if (!el) return; el.textContent = `Candidates with no activity for ${s.days} days (and no active pipeline card) move to the archive every night. Active: ${s.active} \u00b7 archived: ${s.archiveTotal}${s.last ? ` \u00b7 last run ${s.last.at}: ${s.last.archived} archived` + (s.last.cvPending ? `, ${s.last.cvPending} CV files still to move` : '') : ''}.`; }).catch(() => {});
     if ($('#parseAcc')) api('apiParseAccuracy').then(r => { const el = $('#parseAcc'); if (!el) return; el.innerHTML = r.cvs ? `<p>${r.cvs} CV${r.cvs === 1 ? '' : 's'} parsed and saved. \u201cKept\u201d means the recruiter saved the parsed value unchanged.</p><div class="table-wrap"><table><thead><tr><th>Field</th><th class="num">Kept</th><th class="num">Corrected</th><th class="num">Missed</th><th class="num">Accuracy</th></tr></thead><tbody>${r.fields.map(x => `<tr style="cursor:default"><td>${esc(x.field.replace(/_/g, ' '))}</td><td class="num">${x.kept}</td><td class="num">${x.corrected}</td><td class="num">${x.missed}</td><td class="num">${x.accuracy == null ? '\u2014' : x.accuracy + '%'}</td></tr>`).join('')}</tbody></table></div>` : 'No CVs parsed yet. Use \u201cFill from a CV\u201d or \u201cUpload CVs\u201d on the Candidates page; results appear here.'; }).catch(() => {});
     if ($('#ocrSelfTest')) $('#ocrSelfTest').onclick = async () => {
@@ -4451,7 +4472,7 @@ async function viewAdmin(v) {
       } catch (e) { el.textContent = 'Not working: ' + String(e.message || e); }
       busy(b, false, 'Test the CV reader');
     };
-    if ($('#archNow')) $('#archNow').onclick = async () => { const b = $('#archNow'); busy(b, true, 'Archiving\u2026'); try { const r = await api('apiArchiveNow'); toast(`${r.archived} archived (no activity since before ${fmtDate(r.cutOff)}); ${r.protectedByPipeline} kept because they are in an active pipeline.`); S.candStale = true; go('admin', false); } catch (e) { toast(e, true); busy(b, false, 'Archive inactive candidates now'); } };
+    if ($('#archNow')) $('#archNow').onclick = async () => { const b = $('#archNow'); busy(b, true, 'Archiving\u2026'); try { const r = await api('apiArchiveNow'); toast(`${r.archived} archived (no activity since before ${fmtDate(r.cutOff)}); ${r.protectedByPipeline} kept because they are in an active pipeline.`); S.candStale = true; go('admin', false); } catch (e) { failed(e, b, 'Archive inactive candidates now'); } };
     $('#recalc').onclick = async () => { const b = $('#recalc'); busy(b, true, 'Recalculating\u2026'); try { const n = await api('apiRecomputeAll'); toast(`Recalculated ${n} positions`); S.positions = null; } catch (e) { toast(e, true); } finally { busy(b, false, 'Recalculate TAT'); } };
     return;
   }
@@ -4494,12 +4515,12 @@ async function viewAdmin(v) {
       const r = await api('apiTaskRestateApply');
       S.tdMsg = r.restated + ' to-do' + (r.restated === 1 ? '' : 's') + ' restated' + (r.rows && r.rows.length ? ': ' + r.rows.join(', ') : '') + '.';
       busy(btn, false, label); toast(S.tdMsg); S.posStale = true; go('admin', false);
-    } catch (err) { msg('Not restated: ' + (err && err.message ? err.message : err)); toast(err, true); busy(btn, false, label); }
+    } catch (err) { msg('Not restated: ' + (err && err.message ? err.message : err)); failed(err, btn, label); }
   };
   if ($('#dupFix')) $('#dupFix').onclick = async e => {
     if (!confirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;
     busy(e.target, true, 'Removing…');
-    try { const r = await api('apiRemoveDuplicateEntries'); toast(r.removed + ' duplicate' + (r.removed === 1 ? '' : 's') + ' removed' + (r.left ? '; ' + r.left + ' with different numbers left for you to check' : '')); S.posStale = true; go('admin', false); } catch (err) { toast(err, true); busy(e.target, false, 'Remove the identical duplicates'); }
+    try { const r = await api('apiRemoveDuplicateEntries'); toast(r.removed + ' duplicate' + (r.removed === 1 ? '' : 's') + ' removed' + (r.left ? '; ' + r.left + ' with different numbers left for you to check' : '')); S.posStale = true; go('admin', false); } catch (err) { failed(err, e.target, 'Remove the identical duplicates'); }
   };
   $$('#adBody tr[data-id]').forEach(tr => tr.onclick = async () => {
     if (tr.dataset.e === 'FUNNEL') return;
@@ -4586,7 +4607,7 @@ async function viewKpi(v, fresh) {
     })));
     csvSave(`kpi-target-days-vs-grade-tat-fy${f.fy}.csv`, ['Recruiter', 'KPI', 'Month', 'Positions worked on', 'Missed (single target days)', '% (single target days)', 'Missed (grade TAT)', '% (grade TAT)', 'Change in % points'], rows);
   };
-  $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { toast(e, true); busy(b, false, 'Recalculate'); } };
+  $('#kpiRefresh').onclick = async () => { const b = $('#kpiRefresh'); busy(b, true, 'Recalculating…'); try { await viewKpi(v, true); toast('KPIs recalculated'); } catch (e) { failed(e, b, 'Recalculate'); } };
   $$('.kcell[data-k]', v).forEach(td => {
     const open = () => kpiDrill(k, f, td.dataset.k, td.dataset.m);
     td.addEventListener('click', open);
@@ -4774,7 +4795,7 @@ async function kpiHandoverDialog(fy) {
       ${r.stretches.map(s => `<tr style="cursor:default"><td>${esc(s.mrf)}<span class="sub">${esc(s.position)}</span></td><td>${esc(s.holder)}</td><td class="nw">${fmtDate(s.from)}</td><td class="nw">${fmtDate(s.to)}</td><td>${esc(s.next)}</td></tr>`).join('')}</tbody></table></div>` : ''}
     <div class="drawer-actions" style="position:static">${r.canEdit ? `<button class="btn" id="khSw">${r.enabled ? 'Switch the rule off' : 'Switch the rule on'}</button>` : ''}<button class="btn" data-close>Close</button></div>`);
   const sw = $('#khSw', d || document);
-  if (sw) sw.onclick = async () => { busy(sw, true, 'Saving…'); try { await api('apiKpiHandoverSet', !r.enabled); toast('Saved. The scorecard is recalculated on the next open.'); RESULTS.clear && RESULTS.clear(); if (d && d.close) d.close(); go('kpi', false); } catch (e) { toast(e, true); busy(sw, false, r.enabled ? 'Switch the rule off' : 'Switch the rule on'); } };
+  if (sw) sw.onclick = async () => { busy(sw, true, 'Saving…'); try { await api('apiKpiHandoverSet', !r.enabled); toast('Saved. The scorecard is recalculated on the next open.'); RESULTS.clear && RESULTS.clear(); if (d && d.close) d.close(); go('kpi', false); } catch (e) { failed(e, sw, r.enabled ? 'Switch the rule off' : 'Switch the rule on'); } };
 }
 
 /** Every position worked on in the month and where it sits in a TAT KPI (Timely closure, M-level or W-level), so the count can be reconciled by hand. */
@@ -4852,7 +4873,7 @@ function obDrawer(r, after) {
   $('#obSave').onclick = async () => {
     const btn = $('#obSave'); busy(btn, true, 'Saving\u2026');
     try { await api('apiSaveObservation', Object.assign({ Obs_ID: r ? r.Obs_ID : '' }, readForm($('#obForm')))); toast('Observation saved'); closeDrawer(); after(); }
-    catch (e) { toast(e, true); busy(btn, false, 'Save'); }
+    catch (e) { failed(e, btn, 'Save'); }
   };
 }
 
@@ -4884,7 +4905,7 @@ async function renderAudit(el, f) {
       const tr = b.closest('tr'); const d = { Audit_ID: tr.dataset.id };
       $$('[data-f]', tr).forEach(x => d[x.dataset.f] = x.value);
       busy(b, true, 'Saving\u2026');
-      try { await api('apiAuditSave', d); toast('Audit result saved'); load(); } catch (e) { toast(e, true); busy(b, false, 'Save'); }
+      try { await api('apiAuditSave', d); toast('Audit result saved'); load(); } catch (e) { failed(e, b, 'Save'); }
     });
   };
   $('#aum').onchange = e => { f.auditMonth = e.target.value; load(); };
@@ -4970,7 +4991,7 @@ function dayStatusDialog(g, ctx, after) {
     <div class="field wide"><label for="dsNote">Note</label><textarea id="dsNote" rows="2" placeholder="Required when you override, e.g. \u201cTransfer of Pankaj Kumar agreed, wef 1 Oct\u201d">${esc(g.day.override ? g.day.note : '')}</textarea></div>
     <div class="drawer-actions" style="position:static"><button class="btn" data-close>Cancel</button>${g.day.override ? '<button class="btn" id="dsClear">Back to automatic</button>' : ''}<button class="btn primary" id="dsSave">Save</button></div>`;
   $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
-  const send = async (status, note, btn) => { busy(btn, true); try { await api('apiSetDayStatus', g.line, status, note, ctx.date); toast('Day\u2019s status saved'); d.close(); after(); } catch (e) { toast(e, true); busy(btn, false); } };
+  const send = async (status, note, btn) => { busy(btn, true); try { await api('apiSetDayStatus', g.line, status, note, ctx.date); toast('Day\u2019s status saved'); d.close(); after(); } catch (e) { failed(e, btn); } };
   $('#dsSave', d).onclick = e => { const s = $('#dsSel', d).value; send(s === g.day.auto ? '' : s, $('#dsNote', d).value, e.target); };
   if ($('#dsClear', d)) $('#dsClear', d).onclick = e => send('', '', e.target);
   if (!d.open) d.showModal();
@@ -5090,7 +5111,7 @@ function bgvPendPaint(host, rows, empty) {
         const i = rows.findIndex(x => x.id === r.id); rows[i] = nr;
         const t = document.createElement('tbody'); t.innerHTML = bgvPendRowHtml(nr); tr.replaceWith(t.firstElementChild);
         bgvPendPaint(host, rows, empty); toast('Saved');
-      } catch (e) { toast(e, true); busy(save, false, 'Save'); }
+      } catch (e) { failed(e, save, 'Save'); }
     };
   });
 }
@@ -5309,7 +5330,7 @@ async function approvedDatesDialog(includeClosed) {
   const send = async (id, date, b) => {
     busy(b, true);
     try { await api('apiSetApprovedDate', id, date, st.closed); S.posStale = true; toast(date ? 'Approved date saved; the TAT is recalculated' : 'Date confirmed'); if (root.close) root.close(); approvedDatesDialog(); }
-    catch (e) { toast(e, true); busy(b, false); }
+    catch (e) { failed(e, b); }
   };
   $$('[data-save]', root).forEach(b => b.onclick = () => { const tr = b.closest('tr'), v = $('.ap-date', tr).value; if (!v) return toast('Pick the approved date.', true); send(b.dataset.save, v, b); });
   $$('[data-ok]', root).forEach(b => b.onclick = () => send(b.dataset.ok, '', b));
@@ -5515,7 +5536,7 @@ function orgNoteDialog(s, done) {
   $('#onSave', b).onclick = async () => {
     const btn = $('#onSave', b); busy(btn, true, 'Saving…');
     try { await api('apiOrgSaveNote', { dept: s.dept, from: s.from, to: s.to, seats: Number($('#onSeats', b).value), reason: $('#onReason', b).value, by: $('#onBy', b).value, reviewOn: $('#onRev', b).value }); toast('Note saved'); closeDrawer(); done(); }
-    catch (e) { toast(e, true); busy(btn, false, 'Save note'); }
+    catch (e) { failed(e, btn, 'Save note'); }
   };
 }
 function orgSubsHtml(d, canManage) {
@@ -5686,7 +5707,7 @@ function orgImportDialog(done) {
       $('#orgCheck', b).innerHTML = `<div class="note ok-note"><b>Imported.</b> ${orgN(res.existing)} in post, as on ${esc(res.asOn)}. ${res.planCreated ? 'Plan revision 1 was created from the report.' : 'The approved plan was kept.'}</div>`;
       btn.hidden = true; $('#orgCancel', b).disabled = false; $('#orgCancel', b).textContent = 'Close';
       $('#orgCancel', b).onclick = () => { closeDrawer(); done(); };
-    } catch (err) { toast(err, true); busy(btn, false, 'Import'); $('#orgCancel', b).disabled = false; }
+    } catch (err) { failed(err, btn, 'Import'); $('#orgCancel', b).disabled = false; }
   };
 }
 
@@ -5712,7 +5733,7 @@ async function orgPlanReview(p, done) {
     try {
       const r = await api('apiOrgPlanActivate', p.draft.id, { reason: $('#opReason', b).value, approvedBy: $('#opBy', b).value, effectiveOn: $('#opEff', b).value });
       closeDrawer(); toast('Plan revision ' + r.activated.rev + ' is in force'); done();
-    } catch (e) { toast(e, true); busy(btn, false, 'Activate plan'); }
+    } catch (e) { failed(e, btn, 'Activate plan'); }
   };
 }
 async function orgPlanHistory(p, done) {
@@ -5770,7 +5791,7 @@ function orgPlanUploadDialog(p, done) {
   };
   $('#opSave', b).onclick = async () => {
     const btn = $('#opSave', b); busy(btn, true, 'Saving…');
-    try { await api('apiOrgPlanUpload', rows, { apply: true }); closeDrawer(); toast('Saved as a draft. Review it, then activate.'); done(); } catch (e) { toast(e, true); busy(btn, false, 'Save as draft'); }
+    try { await api('apiOrgPlanUpload', rows, { apply: true }); closeDrawer(); toast('Saved as a draft. Review it, then activate.'); done(); } catch (e) { failed(e, btn, 'Save as draft'); }
   };
 }
 async function orgPlanPanel(el, head, bind, redo) {
@@ -5903,7 +5924,7 @@ async function renderOrgAdmin(el) {
       const nw = $('#orgNew', el), nn = $('[data-f=name]', nw).value.trim();
       if (nn) depts.push({ dept: nn, division: $('[data-f=div]', nw).value, hod: $('[data-f=hod]', nw).value, email: $('[data-f=email]', nw).value, active: true, isNew: true });
       const btn = $('#orgSave', el); busy(btn, true, 'Saving…');
-      try { await api('apiOrgSaveStructure', { divisions, depts }); toast('Saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save changes'); }
+      try { await api('apiOrgSaveStructure', { divisions, depts }); toast('Saved'); redo(); } catch (e) { failed(e, btn, 'Save changes'); }
     };
     return;
   }
@@ -5932,7 +5953,7 @@ async function renderOrgAdmin(el) {
   $('#orgMapSave', el).onclick = async () => {
     const list = $$('tr[data-crm]', el).map(tr => ({ crm: tr.dataset.crm, org: $('[data-f=org]', tr).value }));
     const btn = $('#orgMapSave', el); busy(btn, true, 'Saving…');
-    try { await api('apiOrgSaveMap', list); toast('Mapping saved'); redo(); } catch (e) { toast(e, true); busy(btn, false, 'Save mapping'); }
+    try { await api('apiOrgSaveMap', list); toast('Mapping saved'); redo(); } catch (e) { failed(e, btn, 'Save mapping'); }
   };
 }
 
@@ -6253,7 +6274,7 @@ async function openBgvCase(id, after) {
     $('#bdUp').onclick = async e => {
       busy(e.target, true, 'Uploading…');
       try { const bad = checkAttachments($('#bgDocs')); if (bad) throw bad; await uploadAttachments('BGV', c.id, $('#bgDocs')); draw(await api('apiBgvCase', c.id)); toast('Files uploaded.'); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Upload chosen files'); }
+      catch (err) { failed(err, e.target, 'Upload chosen files'); }
     };
   };
   draw(X);
@@ -6366,7 +6387,7 @@ function openBgvImport(after) {
       const R = await api('apiBgvImport', payload(), { apply, advance: $('#biAdv', body).checked, skipErrors: apply && !!$('#biSkip', body) && $('#biSkip', body).checked });
       st.result = R; if (apply) { toast(`Applied: ${R.counts.ok} row${R.counts.ok === 1 ? '' : 's'} on ${R.counts.cases} case${R.counts.cases === 1 ? '' : 's'}.`); if (after) after(); }
       drawResult(R); busy(b, false, apply ? 'Apply' : 'Check the file');
-    } catch (e) { toast(e, true); busy(b, false, apply ? 'Apply' : 'Check the file'); }
+    } catch (e) { failed(e, b, apply ? 'Apply' : 'Check the file'); }
   };
   const drawResult = R => {
     const bad = R.counts.errors, ok = R.counts.ok;
@@ -6437,7 +6458,7 @@ async function bgvGovernTab(el, B, v) {
       <p class="hint" style="margin-top:0">Every step of the BGV timeline and every change to cases, checks, vendors and rules, with who and when; opening a BGV file is recorded too. Up to one year at a time. The export itself is logged.</p>
       <div class="filters"><div class="field"><label for="auFrom">From</label><input id="auFrom" type="date" value="${daysAgo(90)}" max="${today()}"></div><div class="field"><label for="auTo">To</label><input id="auTo" type="date" value="${today()}" max="${today()}"></div>
         <div class="field"><label for="auCase">One case <span class="opt">(optional)</span></label><input id="auCase" placeholder="BGV-00012" maxlength="12"></div><div class="field"><label>&nbsp;</label><button class="btn primary" id="auGo">Download CSV</button></div></div></section>` : ''}`;
-  if ($('#gvSync')) $('#gvSync').onclick = async e => { busy(e.target, true, 'Syncing…'); try { await api('apiBgvDriveSync'); toast('Drive access synced.'); bgvGovernTab(el, B, v); } catch (err) { toast(err, true); busy(e.target, false, 'Sync Drive access now'); } };
+  if ($('#gvSync')) $('#gvSync').onclick = async e => { busy(e.target, true, 'Syncing…'); try { await api('apiBgvDriveSync'); toast('Drive access synced.'); bgvGovernTab(el, B, v); } catch (err) { failed(err, e.target, 'Sync Drive access now'); } };
   $('#gvCsv').onclick = () => csvSave(`bgv-retention-${today()}.csv`, ['Case', 'Type', 'Candidate', 'Position', 'Recruiter', 'Kept as', 'Case closed on', 'Backout on', 'Keep until', 'Files', 'Case status', 'Retention'], R.due.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.backout || '', x.due, x.files, x.status, 'Due']).concat(R.upcoming.map(x => [x.id, x.type, x.candidate, x.position, x.recruiter, x.kind, x.closed, x.backout || '', x.due, x.files, x.status, 'Due within 60 days'])));
   if ($('#gvPurge')) {
     const picks = () => $$('.gv-pick', el).filter(b => b.checked).map(b => b.value), sync = () => { const n = picks().length; $('#gvPurge').disabled = !n; late('#gvPurge').textContent = n ? `Purge ${n} now` : 'Purge now'; };
@@ -6448,7 +6469,7 @@ async function bgvGovernTab(el, B, v) {
       if (!confirm(`Purge ${ids.length} case${ids.length === 1 ? '' : 's'}?\n\nTheir files go to the Drive bin and the candidate’s name, findings and notes are blanked. This cannot be undone from the CRM.`)) return;
       busy(e.target, true, 'Purging…');
       try { const r = await api('apiBgvPurge', ids, reason); toast(`Purged ${r.purged} case${r.purged === 1 ? '' : 's'}, ${r.files} file${r.files === 1 ? '' : 's'} deleted.` + (r.failed.length ? ' Not purged: ' + r.failed.join('; ') : ''), !!r.failed.length); bgvGovernTab(el, B, v); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Purge now'); }
+      catch (err) { failed(err, e.target, 'Purge now'); }
     };
   }
   if ($('#auGo')) $('#auGo').onclick = async e => {
@@ -6493,7 +6514,7 @@ async function renderVoiceAdmin(el) {
   const save = async (extra, btn, label) => {
     busy(btn, true, 'Saving…');
     try { await api('apiVoiceConfigSave', Object.assign({ enabled: $('#vcOn').checked, agentId: $('#vcAgent').value, agentVersion: $('#vcVer').value, connectionId: $('#vcConn').value, fromNumber: $('#vcFrom').value, apiKey: $('#vcKey').value, orgId: $('#vcOrg').value, workspaceId: $('#vcWs').value, openingLine: $('#vcLine').value, entryState: $('#vcState').value, questionsVar: $('#vcQv').value, maxQ: $('#vcMq').value, ratePerMin: $('#vcRate').value, queuePerMin: $('#vcQpm').value, callHours: $('#vcHrs').value, webhookUrl: $('#vcHook').value }, extra)); toast('Saved.'); renderVoiceAdmin(el); }
-    catch (e) { toast(e, true); busy(btn, false, label); }
+    catch (e) { failed(e, btn, label); }
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
   if ($('#vcClear')) $('#vcClear').onclick = e => { if (confirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
@@ -6555,7 +6576,7 @@ function voiceBatchDialog(P, after) {
   $('#vbGo', d).onclick = async e => {
     if (!confirm('Start calling ' + last.ready + ' candidate' + (last.ready === 1 ? '' : 's') + ' now?')) return;
     busy(e.target, true, 'Starting\u2026');
-    try { const r = await api('apiVoiceBatchStart', ticked()); toast('Batch started: ' + r.queued + ' queued' + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + (r.inHours ? '' : '. Calls begin when the calling hours start')); d.close(); if (after) after(); } catch (err) { toast(err, true); busy(e.target, false, 'Start the batch'); }
+    try { const r = await api('apiVoiceBatchStart', ticked()); toast('Batch started: ' + r.queued + ' queued' + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + (r.inHours ? '' : '. Calls begin when the calling hours start')); d.close(); if (after) after(); } catch (err) { failed(err, e.target, 'Start the batch'); }
   };
 }
 async function voiceAdminExtras(host) {
@@ -6588,11 +6609,11 @@ async function voiceAdminExtras(host) {
   $('#vaSave', host).onclick = async e => {
     const list = $$('tr[data-em]', host).map(tr => ({ email: tr.dataset.em, active: !!($('[data-f=act]', tr) && $('[data-f=act]', tr).checked), limit: $('[data-f=lim]', tr) ? $('[data-f=lim]', tr).value : '', reason: $('[data-f=why]', tr) ? $('[data-f=why]', tr).value : '' }));
     busy(e.target, true, 'Saving\u2026');
-    try { await api('apiVoiceAccessSave', list); toast('Access saved'); redo(); } catch (err) { toast(err, true); busy(e.target, false, 'Save access'); }
+    try { await api('apiVoiceAccessSave', list); toast('Access saved'); redo(); } catch (err) { failed(err, e.target, 'Save access'); }
   };
   $('#vdAdd', host).onclick = async e => {
     busy(e.target, true, 'Adding\u2026');
-    try { const r = await api('apiVoiceDndAdd', $('#vdText', host).value, $('#vdNote', host).value); toast(r.added + ' added' + (r.already ? ', ' + r.already + ' already on the list' : '') + (r.badCount ? ', ' + r.badCount + ' not valid numbers' : '')); redo(); } catch (err) { toast(err, true); busy(e.target, false, 'Add to the register'); }
+    try { const r = await api('apiVoiceDndAdd', $('#vdText', host).value, $('#vdNote', host).value); toast(r.added + ' added' + (r.already ? ', ' + r.already + ' already on the list' : '') + (r.badCount ? ', ' + r.badCount + ' not valid numbers' : '')); redo(); } catch (err) { failed(err, e.target, 'Add to the register'); }
   };
   $$('[data-vdrm]', host).forEach(b => b.onclick = async () => {
     const why = prompt('Why is this number being taken off the list?'); if (why === null) return;
@@ -6639,7 +6660,7 @@ function dncUndo(root, ref, done) {
     const why = prompt('Why is this number being taken off the Do Not Disturb register?'); if (!why) return;
     busy(e.target, true, 'Working\u2026');
     try { await api(ref.app ? 'apiVoiceDndUnmark' : 'apiVoiceDndUnmarkCandidate', ref.app || ref.cand, why); toast('The number is off the register.'); await done(); }
-    catch (err) { toast(err, true); busy(e.target, false, 'Undo'); }
+    catch (err) { failed(err, e.target, 'Undo'); }
   };
 }
 async function voiceCardSection(el, a, P) {
@@ -6674,7 +6695,7 @@ async function voiceCardSection(el, a, P) {
   };
   const openDesk = async (btn, fu, legacy) => {
     const label = btn.textContent; busy(btn, true, 'Opening\u2026');
-    let dk; try { dk = await api('apiVoicePlanDraft', a.App_ID); } catch (err) { toast(err, true); busy(btn, false, label); return; }
+    let dk; try { dk = await api('apiVoicePlanDraft', a.App_ID); } catch (err) { failed(err, btn, label); return; }
     busy(btn, false, label);
     if (dk.listOnly) voicePlanDesk(a, dk, el, P); else legacy();
   };
@@ -6744,7 +6765,7 @@ function voicePlanDesk(a, dk, el, P) {
     if (!confirm('Call ' + dk.candidate + ' now and ask ' + n + (n === 1 ? ' question' : ' questions') + '?')) return;
     busy(e.target, true, 'Calling…');
     try { await api('apiVoiceStartScreening', a.App_ID, { followUp: dk.followUp, plan: plan() }); toast('The call has been placed.'); d.close(); voiceCardSection(el, a, P); }
-    catch (err) { toast(err, true); busy(e.target, false, 'Place the call'); }
+    catch (err) { failed(err, e.target, 'Place the call'); }
   };
   total(); $$('.dk-sp', d).forEach(grow);
 }
@@ -6792,7 +6813,7 @@ function voiceResultDialog(r, ctx) {
       await api('apiVoiceReviewSave', c.id, { answers: collect(), complete: !!complete });
       if (complete) { toast('Screening completed.'); d.close(); S.posStale = true; go('pipeline', false); }
       else { toast('Saved to the screening draft.'); busy(btn, false, label); }
-    } catch (err) { toast(err, true); busy(btn, false, label); }
+    } catch (err) { failed(err, btn, label); }
   };
   if ($('#vrSave', d)) $('#vrSave', d).onclick = e => send(false, e.target, 'Save to the screening draft');
   if ($('#vrDone', d)) $('#vrDone', d).onclick = e => send(true, e.target, 'Confirm and complete the screening');
@@ -6901,7 +6922,7 @@ function checkinEditor(r, cur, done) {
   $('#ckSave', b).onclick = async () => {
     const btn = $('#ckSave', b); busy(btn, true, 'Saving…');
     try { const x = await api('apiCheckinSave', payload()); toast(`Saved as ${x.version}.`); closeDrawer(); done(); }
-    catch (e) { toast(e, true); busy(btn, false, 'Save as a new version'); }
+    catch (e) { failed(e, btn, 'Save as a new version'); }
   };
 }
 function policyHeading(line) {
@@ -7030,7 +7051,7 @@ async function renderPolicyAdmin(el) {
   $$('[data-wd]', el).forEach(b => b.onclick = async () => {
     const why = prompt('Why is this policy withdrawn? (at least 10 characters)'); if (!why) return;
     busy(b, true, 'Withdrawing…');
-    try { await api('apiPolicyWithdraw', b.dataset.wd, why); toast('Policy withdrawn.'); renderPolicyAdmin(el); } catch (e) { toast(e, true); busy(b, false, 'Withdraw'); }
+    try { await api('apiPolicyWithdraw', b.dataset.wd, why); toast('Policy withdrawn.'); renderPolicyAdmin(el); } catch (e) { failed(e, b, 'Withdraw'); }
   });
 }
 function policyAddDrawer(live, done) {
@@ -7075,7 +7096,7 @@ function policyAddDrawer(live, done) {
       }
       const fin = await api('apiPolicyFinish', st.docId);
       toast(`Policy added: ${fin.chunks} passages.`); closeDrawer(); done();
-    } catch (e) { toast(e, true); busy(btn, false, 'Add the policy'); }
+    } catch (e) { failed(e, btn, 'Add the policy'); }
   };
 }
 function serverPerfHtml(p) {
@@ -7098,7 +7119,7 @@ async function renderRoutesAdmin(el) {
     <div class="rs-row" style="flex-wrap:wrap;gap:6px 18px">${C.levels.map(l => `<label class="chk"><input type="checkbox" class="rt-l" value="${esc(l)}" ${C.fast.includes(l) ? 'checked' : ''} ${C.canEdit ? '' : 'disabled'}> ${esc(l)}</label>`).join('')}</div>
     <h4>Joining documents for a fast-track hire</h4><ul class="rs-changes">${C.docs.map(d => `<li>${esc(d[1])}</li>`).join('')}</ul>
     ${C.canEdit ? '<div class="drawer-actions" style="position:static"><button class="btn" id="rtDefault">Use the default levels (W1\u2013W5 and T levels)</button><button class="btn primary" id="rtSave">Save</button></div>' : ''}</section>`;
-  const save = async (levels, btn, label) => { busy(btn, true, 'Saving\u2026'); try { await api('apiFastTrackConfigSave', levels); toast('Saved.'); renderRoutesAdmin(el); } catch (e) { toast(e, true); busy(btn, false, label); } };
+  const save = async (levels, btn, label) => { busy(btn, true, 'Saving\u2026'); try { await api('apiFastTrackConfigSave', levels); toast('Saved.'); renderRoutesAdmin(el); } catch (e) { failed(e, btn, label); } };
   if ($('#rtSave')) $('#rtSave').onclick = e => save($$('.rt-l', el).filter(x => x.checked).map(x => x.value), e.target, 'Save');
   if ($('#rtDefault')) $('#rtDefault').onclick = e => save(C.defaults, e.target, 'Use the default levels (W1\u2013W5 and T levels)');
 }
@@ -7120,7 +7141,7 @@ function bgvVendors(el, B, v) {
     $('#vnSave', dlg).onclick = async e => {
       busy(e.target, true, 'Saving…');
       try { const r = readForm($('#vnForm', dlg)); await api('apiBgvVendorSave', Object.assign({ id: d.id || '' }, r, { active: r.active !== 'No' })); toast('Vendor saved.'); closeDrawer(); bgvReload(v); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Save vendor'); }
+      catch (err) { failed(err, e.target, 'Save vendor'); }
     };
   };
   $('#vnAdd', el).onclick = () => edit(null);
@@ -7147,7 +7168,7 @@ async function bgvRulesTab(el, B, v) {
     try { const values = {}; $$('input[data-k]', el).forEach(i => { values[i.dataset.k] = i.value; });
       await api('apiBgvRulesSave', { values, scope: { managerPlus: $('#brMgr').checked, flagged: $('#brFlag').checked }, company: $('#brCompany').value, joinWarning: $('#brJoin').checked, templates: Object.fromEntries($$('fieldset[data-tpl]', el).map(fs => [fs.dataset.tpl, { subject: $('.bt-s', fs).value, body: $('.bt-b', fs).value }])), eff: $('#brEff').value, reason: $('#brReason').value, remark: $('#brRemark').value.trim() });
       toast('Rules saved.'); bgvReload(v); }
-    catch (err) { toast(err, true); busy(e.target, false, 'Save as a new version'); }
+    catch (err) { failed(err, e.target, 'Save as a new version'); }
   };
 }
 
@@ -7371,11 +7392,11 @@ function ctcCalc(el, R, v) {
       f.saved = Object.assign(rec, { sig: ctcSig(f) }); S.ctcList = null;
       return rec;
     };
-    $('#ccSave').onclick = async e => { busy(e.target, true, 'Saving…'); try { const x = await save(); toast(`Saved as ${x.id}.`); draw(r); } catch (err) { toast(err, true); busy(e.target, false, 'Save draft'); } };
+    $('#ccSave').onclick = async e => { busy(e.target, true, 'Saving…'); try { const x = await save(); toast(`Saved as ${x.id}.`); draw(r); } catch (err) { failed(err, e.target, 'Save draft'); } };
     if ($('#ccLetter')) $('#ccLetter').onclick = async e => {
       busy(e.target, true, 'Saving…');
       try { const rec = saved || await save(); draw(r); ctcLetter(rec, R, () => draw(r)); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Letter…'); }
+      catch (err) { failed(err, e.target, 'Letter…'); }
     };
   };
   $$('input[name="ccBasis"]', el).forEach(x => x.onchange = () => { f.basis = x.value; run(); });
@@ -7557,7 +7578,7 @@ async function ctcLinkSection(el, o) {
     $('button', box).onclick = async b => {
       busy(b.target, true, 'Attaching…');
       try { await api('apiCtcLink', $('select', box).value, Object.assign(o.candId ? { candidateId: o.candId } : {}, o.lineId ? { lineId: o.lineId } : {})); S.ctcList = null; toast('Attached.'); ctcLinkSection(el, o); }
-      catch (err) { toast(err, true); busy(b.target, false, 'Attach'); }
+      catch (err) { failed(err, b.target, 'Attach'); }
     };
   };
 }
@@ -7625,7 +7646,7 @@ async function ctcOpen(id, R, v) {
     else S.ctcIn.saved = Object.assign({}, c, { sig: ctcSig(S.ctcIn) });
     closeDrawer(); S.ctcTab = 'calc'; viewCtc(v);
   };
-  if ($('#coUnlink')) $('#coUnlink').onclick = async e => { busy(e.target, true); try { await api('apiCtcLink', c.id, { candidateId: '', lineId: '' }); S.ctcList = null; toast('Link removed.'); ctcOpen(id, R, v); } catch (err) { toast(err, true); busy(e.target, false); } };
+  if ($('#coUnlink')) $('#coUnlink').onclick = async e => { busy(e.target, true); try { await api('apiCtcLink', c.id, { candidateId: '', lineId: '' }); S.ctcList = null; toast('Link removed.'); ctcOpen(id, R, v); } catch (err) { failed(err, e.target); } };
   if ($('#coLetter')) $('#coLetter').onclick = () => { closeDrawer(); ctcLetter(c, R, () => { S.ctcList = null; }); };
   if ($('#coEdit')) $('#coEdit').onclick = () => load(false);
   if ($('#coRerun')) $('#coRerun').onclick = () => load(true);
@@ -7759,27 +7780,27 @@ function ctcLetter(c, R, onIssued) {
     if ($('#ctlIssue', d)) twoStep($('#ctlIssue', d), 'Click again to issue', async () => {
       const b = $('#ctlIssue', d);
       try { const pdf = await pdfOf(b); busy(b, true, 'Issuing…'); done(await api('apiCtcIssue', c.id, { language: lang, pdf }), `${c.id} issued. The PDF is saved in Drive.`); }
-      catch (e) { toast(e, true); busy(b, false, 'Issue letter'); }
+      catch (e) { failed(e, b, 'Issue letter'); }
     });
     if ($('#ctlSubmit', d)) twoStep($('#ctlSubmit', d), 'Click again to submit', async () => {
       const b = $('#ctlSubmit', d);
       try { busy(b, true, 'Submitting…'); done(await api('apiCtcSubmit', c.id, { language: lang }), `${c.id} submitted for approval.`); }
-      catch (e) { toast(e, true); busy(b, false, 'Submit for approval'); }
+      catch (e) { failed(e, b, 'Submit for approval'); }
     });
     if ($('#ctlApprove', d)) twoStep($('#ctlApprove', d), 'Click again to approve', async () => {
       const b = $('#ctlApprove', d);
       try { const pdf = await pdfOf(b); busy(b, true, 'Approving…'); done(await api('apiCtcReview', c.id, { action: 'Approve', language: lang, pdf }), `${c.id} approved and issued. The PDF is saved in Drive.`); }
-      catch (e) { toast(e, true); busy(b, false, 'Approve and issue'); }
+      catch (e) { failed(e, b, 'Approve and issue'); }
     });
     if ($('#ctlReturn', d)) $('#ctlReturn', d).onclick = async e => {
       const note = $('#ctlNote', d).value.trim();
       if (note.length < 5) return toast('Write a note for the maker: what to change.', true);
       busy(e.target, true, 'Returning…');
-      try { done(await api('apiCtcReview', c.id, { action: 'Return', note }), `${c.id} returned to ${c.by.split('@')[0]}.`); } catch (err) { toast(err, true); busy(e.target, false, 'Return'); }
+      try { done(await api('apiCtcReview', c.id, { action: 'Return', note }), `${c.id} returned to ${c.by.split('@')[0]}.`); } catch (err) { failed(err, e.target, 'Return'); }
     };
     if ($('#ctlWithdraw', d)) $('#ctlWithdraw', d).onclick = async e => {
       busy(e.target, true, 'Withdrawing…');
-      try { done(await api('apiCtcReview', c.id, { action: 'Withdraw' }), `${c.id} is a draft again.`); } catch (err) { toast(err, true); busy(e.target, false, 'Withdraw'); }
+      try { done(await api('apiCtcReview', c.id, { action: 'Withdraw' }), `${c.id} is a draft again.`); } catch (err) { failed(err, e.target, 'Withdraw'); }
     };
     if ($('#ctlPdf', d)) $('#ctlPdf', d).onclick = async e => { try { (await ctcPdf(await make(e.target))).save(ctcFileName(c, 'pdf')); e.target.textContent = 'Download PDF'; } catch (err) { toast(err, true); } };
     if ($('#ctlPng', d)) $('#ctlPng', d).onclick = async e => { try { const cv = await make(e.target); e.target.textContent = 'Download image'; cv.toBlob(b => saveBlob(b, ctcFileName(c, 'png')), 'image/png'); } catch (err) { toast(err, true); } };
@@ -7835,7 +7856,7 @@ async function ctcAccessTab(el, R, v) {
       if (reason.length < 10) return toast('Write a reason of at least 10 characters.', true);
       busy(e.target, true, 'Saving…');
       try { await api('apiCtcAccessSave', { roles: Object.fromEntries(roles.map(r => [r, (D.roles[r] || []).filter(p => CTC_PERM_INFO.some(i => i[0] === p))])), approval: D.approval, reason }); S.ctc = null; S.ctcList = null; toast('Access saved.'); viewCtc(v); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Save access'); }
+      catch (err) { failed(err, e.target, 'Save access'); }
     };
   };
   draw();
@@ -7853,13 +7874,13 @@ async function ctcRulesTab(el, R, v) {
   if (!R.draft) {
     el.innerHTML = head + `<section class="panel ctc-empty" style="margin-top:16px"><b>No draft version.</b><span>Start a new version to change rates, caps, slabs, amounts, allowances, labels, the letter or its terms. It starts as a copy of ${esc(R.active.id)}.</span>
       <button class="btn primary" id="rsNew" style="margin-top:8px">Start a new version</button></section>`;
-    $('#rsNew').onclick = async e => { busy(e.target, true, 'Starting…'); try { S.ctc = await api('apiCtcDraftNew'); S.ctcDraft = null; viewCtc(v); } catch (err) { toast(err, true); busy(e.target, false, 'Start a new version'); } };
+    $('#rsNew').onclick = async e => { busy(e.target, true, 'Starting…'); try { S.ctc = await api('apiCtcDraftNew'); S.ctcDraft = null; viewCtc(v); } catch (err) { failed(err, e.target, 'Start a new version'); } };
   } else ctcDraftEditor(el, R, v, head);
   $$('[data-retire]', el).forEach(b => b.onclick = async () => {
     const note = $('#rsX_' + CSS.escape(b.dataset.retire)).value.trim();
     if (note.length < 10) return toast('Write why the version is cancelled (at least 10 characters).', true);
     busy(b, true, 'Cancelling…');
-    try { S.ctc = await api('apiCtcRetire', b.dataset.retire, note); toast(`${b.dataset.retire} cancelled.`); viewCtc(v); } catch (e) { toast(e, true); busy(b, false, 'Cancel version'); }
+    try { S.ctc = await api('apiCtcRetire', b.dataset.retire, note); toast(`${b.dataset.retire} cancelled.`); viewCtc(v); } catch (e) { failed(e, b, 'Cancel version'); }
   });
 }
 function ctcDraftEditor(el, R, v, head) {
@@ -8043,7 +8064,7 @@ function ctcDraftEditor(el, R, v, head) {
         if (!r.saved) { toast('Not saved: ' + r.errors[0], true); busy(e.target, false, 'Save draft'); return; }
         D.dirty = false; D.changes = r.changes; toast(`Draft saved · ${r.changes.length} change${r.changes.length === 1 ? '' : 's'} against ${R.active.id}.`);
         S.ctc = await api('apiCtcRules'); draw();
-      } catch (err) { toast(err, true); busy(e.target, false, 'Save draft'); }
+      } catch (err) { failed(err, e.target, 'Save draft'); }
     };
     twoStep($('#rsDiscard'), 'Click again to discard', async () => { try { S.ctc = await api('apiCtcDraftDiscard', D.id); S.ctcDraft = null; toast(`Draft ${D.id} discarded.`); viewCtc(v); } catch (e) { toast(e, true); } });
     if ($('#rsActivate')) twoStep($('#rsActivate'), 'Click again to put in force', async () => {
@@ -8051,7 +8072,7 @@ function ctcDraftEditor(el, R, v, head) {
       if (!eff || !reason || remark.length < 10) return toast('Pick the date and the reason, and write a remark of at least 10 characters.', true);
       const b = $('#rsActivate'); busy(b, true, 'Putting in force…');
       try { S.ctc = await api('apiCtcActivate', D.id, { eff, reason, remark }); S.ctcDraft = null; S.ctcIn = null; S.ctcList = null; S.ctcTab = 'rules'; toast(`${D.id} is in force from ${fmtDate(eff)}.`); viewCtc(v); }
-      catch (e) { toast(e, true); busy(b, false, 'Put in force'); }
+      catch (e) { failed(e, b, 'Put in force'); }
     });
   };
   draw();
@@ -8406,7 +8427,7 @@ async function viewPipeline(v) {
           if (!w) { btn.insertAdjacentHTML('beforebegin', '<div class="note warn-note" id="apIvWarn" role="alert"></div>'); w = $('#apIvWarn', sec); }
           w.innerHTML = `${esc(msg)} Change the date or the panel, or save anyway if the member has confirmed.`;
           btn.dataset.override = '1'; busy(btn, false, 'Schedule anyway');
-        } else { toast(e, true); busy(btn, false, override ? 'Schedule anyway' : 'Save interview'); }
+        } else { failed(e, btn, override ? 'Schedule anyway' : 'Save interview'); }
       }
     };
     $$('[data-iv]', sec).forEach(b => b.onclick = async () => {
@@ -8416,7 +8437,7 @@ async function viewPipeline(v) {
       if (act === 'unavailSave') data = { members: $$('input[type=checkbox]:checked', box).map(x => x.value), reason: $('.iv-reason', box).value };
       busy(b, true);
       try { const res = await api('apiInterviewAction', id, act === 'unavailSave' ? 'unavailable' : act, data); toast(act === 'unavailSave' ? 'Recorded in the panel unavailability log. A reschedule task has been added.' : act === 'confirm' ? 'Attendance confirmed' : 'Interview cancelled'); after(res); }
-      catch (e) { toast(e, true); busy(b, false); }
+      catch (e) { failed(e, b); }
     });
   };
   /* Positions of the same MRF this card can move to: open or offered, and ones this person may work on (a lead: all). Cards before Offer only. */
@@ -8569,19 +8590,19 @@ async function viewPipeline(v) {
         PIPE_BOARDS.delete(to);   // that board has one more card now: it is read again when opened
         applyBoard(np, a.Line_ID); d.close(); reload(np);
         toast(`${a.cand.name} moved to ${tp ? lineLabel(tp) : 'the other position'}`);   // after the redraw, so the notice is not removed with the dialog
-      } catch (e) { toast(e, true); busy(b, false, 'Move'); }
+      } catch (e) { failed(e, b, 'Move'); }
     };
     if ($('#apDojFix', d)) $('#apDojFix', d).onclick = async () => {
       const b = $('#apDojFix', d); busy(b, true);
       try {
         const np = await api('apiCorrectJoiningDate', a.App_ID, $('#apDojNew', d).value, $('#apDojWhy', d).value);
         S.posStale = true; d.close(); reload(np); toast('Joining date corrected' + (np.warnings && np.warnings.length ? '. ' + np.warnings.join(' ') : ''));
-      } catch (e) { toast(e, true); busy(b, false); }
+      } catch (e) { failed(e, b); }
     };
     if ($('#apUnlink', d)) $('#apUnlink', d).onclick = async () => {
       const b = $('#apUnlink', d); busy(b, true);
       try { const np = await api('apiUnlinkApp', a.App_ID, $('#apUnlinkWhy', d).value); S.posStale = true; toast('Card removed. The position is back in the switch-over check.'); d.close(); reload(np); }
-      catch (e) { toast(e, true); busy(b, false); }
+      catch (e) { failed(e, b); }
     };
     bindAttachmentViews('APP', a.App_ID, d);
     if ($('#apPapersUp', d)) $('#apPapersUp', d).onclick = async e => {
@@ -8589,7 +8610,7 @@ async function viewPipeline(v) {
       if (!$$('.att-input', root).some(x => x.files[0])) return toast('Choose a file first.', true);
       busy(e.target, true, 'Uploading\u2026');
       try { await uploadAttachments('APP', a.App_ID, root); const np = await api('apiPipeline', f.line); toast('Files uploaded.'); after(np); }
-      catch (err) { toast(err, true); busy(e.target, false, 'Upload chosen files'); }
+      catch (err) { failed(err, e.target, 'Upload chosen files'); }
     };
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
@@ -8621,7 +8642,7 @@ async function viewPipeline(v) {
         if (!uploaded && $$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
         applyBoard(np, a.Line_ID);
         after(np); toast(`${a.cand.name} moved to ${PN(next)}`); tmv.done('cold');   // the card dialog is redrawn by after(); the notice goes in afterwards so the redraw does not remove it
-      } catch (e) { toast(e, true); busy(b, false, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
+      } catch (e) { failed(e, b, fastRoute() ? (FAST_BTN[next] || 'Move to ' + PN(next)) : `Move to ${PN(next)}`); }
     };
     $$('[data-st]', d).forEach(b => b.onclick = async () => {
       try {
