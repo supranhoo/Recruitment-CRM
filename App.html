@@ -695,7 +695,7 @@ function askDialog(build, o) {
     const opener = document.activeElement, d = document.createElement('dialog');
     d.className = 'pm-dialog ask-dlg'; d.setAttribute('aria-labelledby', 'askTitle'); d.setAttribute('aria-describedby', 'askText');
     d.innerHTML = `<h2 id="askTitle">${esc(o.title || 'Please confirm')}</h2>${build.html}<p class="ask-err miss" role="alert" hidden></p>
-      <div class="drawer-actions" style="position:static"><button type="button" class="btn" data-ask="no">${esc(o.cancel || 'Cancel')}</button><button type="button" class="btn ${o.danger ? 'danger' : 'primary'}" data-ask="yes">${esc(o.ok || 'OK')}</button></div>`;
+      <div class="drawer-actions" style="position:static"><button type="button" class="btn" data-ask="no"${o.single ? ' hidden' : ''}>${esc(o.cancel || 'Cancel')}</button><button type="button" class="btn ${o.danger ? 'danger' : 'primary'}" data-ask="yes">${esc(o.ok || 'OK')}</button></div>`;
     document.body.appendChild(d);
     let done = false;
     const finish = v => { if (done) return; done = true; try { d.close(); } catch (e) { } d.remove(); try { if (opener && opener.isConnected) opener.focus(); } catch (e) { } resolve(v); };
@@ -4735,6 +4735,21 @@ const KPI_NOTES = {
   BGV: 'Manager+ or flagged hires without BGV on time · 5 for 0, 2 for 1, 0 for more',
   TRACKER_ACCURACY: 'Errors in the monthly 20% audit · 5 for 0 errors, 0 for any'
 };
+/* v212: "How calculated" for each KPI: formula, what counts, what does not, one example. Plain text; the figures come from the same rules the scorecard uses. */
+const KPI_HOW = {
+  TIMELY_CLOSURE: { f: 'Positions worked on in the month without a TAT miss \u00f7 positions worked on in the month \u00d7 100.', yes: 'Every position the recruiter worked on in the month, all levels. A position falls due on its start date + TAT, plus notice beyond the grace days and any approved exemption.', no: 'A position that falls due later this month and has not joined yet is not counted until it joins or its due date passes. A miss is counted once, in the month it fell due.', ex: '10 positions worked on, 2 joined after their due date: 8 \u00f7 10 = 80%.' },
+  M_FULFILMENT: { f: 'Same as Timely closure, for M-level positions only, with the M-level TAT days.', yes: 'M-level positions worked on in the month.', no: 'Other levels. A position can be on time in Timely closure and late here, because each KPI has its own TAT days.', ex: '5 M-level positions worked on, 1 late: 4 \u00f7 5 = 80%.' },
+  W_FULFILMENT: { f: 'Positions joined on time \u00f7 positions that fell due in the month \u00d7 100.', yes: 'W-level positions. One filled early or on time counts in the month it joins; a late or unfilled one counts in the month it fell due. The small line "of N worked on" counts every W-level position worked on, due or not.', no: 'A position that falls due later in the current month is not counted until it joins or its due date passes.', ex: '4 W-level positions fell due, 3 joined by their due date: 3 \u00f7 4 = 75%.' },
+  OFFER_BACKOUT: { f: 'Candidates who backed out \u00f7 positions worked on in the month \u00d7 100. Lower is better.', yes: 'Offered candidates who backed out in the month.', no: 'It is not scored.', ex: '1 backout in 10 positions worked on: 10%.' },
+  PSYCHOMETRIC: { f: 'Count of shortlisted Manager and above candidates who have no Mettl test.', yes: 'Candidates at Manager level or above who were shortlisted in the month.', no: 'Below Manager level. Months before the capture start date.', ex: '1 shortlisted Manager without a test: score 3 (0 gives 5, more than 1 gives 0).' },
+  MRF_ADHERENCE: { f: 'Count of process observations logged against the recruiter in the month.', yes: 'Observations recorded in the month (the drill-down lists each one).', no: 'Months before the capture start date.', ex: '2 observations: the score for 2 on the scale (0 gives 5, more than 4 gives 0).' },
+  BGV: { f: 'Count of Manager and above (or flagged) hires whose background verification was not started on time.', yes: 'Hires of the month that need BGV under the BGV rules.', no: 'Hires that do not need BGV. Months before the capture start date.', ex: '1 late hire: score 2 (0 gives 5, more than 1 gives 0).' },
+  TRACKER_ACCURACY: { f: 'Count of errors found in the monthly audit of 20% of the recruiter\u2019s tracker records.', yes: 'The audited sample for the month.', no: 'Months with no audit sample show nothing.', ex: '0 errors in the sample: score 5; any error: 0.' }
+};
+function kpiHow(k, kpi, note) {
+  const h = KPI_HOW[kpi]; if (!h) return Promise.resolve();
+  return askDialog({ html: `<div id="askText" class="ask-text kpi-how"><p><b>Formula.</b> ${esc(h.f)}</p><p><b>Counted.</b> ${esc(h.yes)}</p><p><b>Not counted.</b> ${esc(h.no)}</p><p><b>Example.</b> ${esc(h.ex)}</p>${note ? `<p class="hint">${esc(note)}</p>` : ''}</div>`, cancelValue: false }, { title: k.defs[kpi].name, ok: 'Close', single: true });
+}
 function fyNow() { const d = new Date(); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; }
 function monthLabel(m) { const [y, mm] = m.split('-'); return `${MONTHS[mm - 1]} ${y.slice(2)}`; }
 function scoreBadge(s) { return s == null ? '' : `<span class="score s${s}">${s}</span>`; }
@@ -4786,11 +4801,15 @@ async function viewKpi(v, fresh) {
       <div class="field"><label for="kfy">Financial year</label><select id="kfy">${opts([fyNow() - 1, fyNow()].map(y => [y, `FY ${y}-${String(y + 1).slice(2)}`]), f.fy, false)}</select></div>
       <div class="field"><label for="krec">Recruiter</label><select id="krec">${opts([['TEAM_TOTAL', 'Whole team']].concat(recs.map(r => [r, r])), f.rec, false)}</select></div>
     </div>
-    <div class="table-wrap"><table class="ktable"><thead><tr><th class="kname">KPI</th>${k.months.map(m => `<th class="num">${monthLabel(m)}</th>`).join('')}</tr></thead><tbody>
-      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc([noteOf(kpi) || tgt(kpi), KPI_WORKED_BASIS.includes(kpi) ? 'achieved \u00f7 worked on' : ''].filter(Boolean).join(' \u00b7 '))}</span></th>
+    <div class="table-wrap"><table class="ktable"><thead><tr><th class="kname">KPI</th>${k.months.map(m => `<th class="num${m === nowM ? ' kcur' : ''}"${m === nowM ? ' aria-current="date"' : ''} data-m="${m}">${monthLabel(m)}</th>`).join('')}</tr></thead><tbody>
+      ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc([noteOf(kpi) || tgt(kpi), KPI_WORKED_BASIS.includes(kpi) ? 'achieved \u00f7 worked on' : ''].filter(Boolean).join(' \u00b7 '))}</span><button type="button" class="linkbtn kpi-howbtn" data-how="${kpi}">How calculated</button></th>
         ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
     </tbody></table></div>
     <p class="legend">Score: ${esc(bandsLegend)}. A position falls due on its start date + TAT, with notice beyond ${grace} days and approved exemptions added; when the offer went out within the TAT, the notice runs from the offer, so the position is due on the later of that date and the offer date + its notice period. Timely closure (${teamDays('TIMELY_CLOSURE')} days, all levels) and M-level fulfilment (${teamDays('M_FULFILMENT')} days) = positions worked on in the month without a TAT miss \u00f7 positions worked on; a miss is a position that fell due in the month and joined after its due date or has not joined, counted once, in that month. W-level fulfilment (${teamDays('W_FULFILMENT')} days) = positions joined on time \u00f7 positions due in the month (a position filled early or on time counts in the month it joins; a late or unfilled one in the month it fell due); its small line \u201cof N worked on\u201d counts every position worked on in the month, due or not. A position that falls due later in the current month is not counted until it joins or its due date passes. An M-level or W-level position is also part of Timely closure, which has its own ${teamDays('TIMELY_CLOSURE')} days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Admin \u2192 KPI targets); tracker accuracy shows only for months with an audit sample.</p>`;
+  $$('.kpi-howbtn', v).forEach(b => b.onclick = () => kpiHow(k, b.dataset.how, noteOf(b.dataset.how)));
+  /* v212: the table opens with the current month in view (the KPI column stays); a past year opens at its start */
+  { const wrap = $('.ktable', v) && $('.ktable', v).closest('.table-wrap'), cur = $('.ktable th.kcur', v), nm = $('.ktable th.kname', v);
+    if (wrap && cur && wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = Math.max(0, cur.offsetLeft - (nm ? nm.offsetWidth : 0) - 12); }
   $('#kfy').onchange = e => { f.fy = Number(e.target.value); go('kpi', false); };
   if ($('#kpiSetup')) $('#kpiSetup').onclick = e => { e.preventDefault(); (S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() }).tab = 'kpit'; go('admin'); };
   $('#krec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('kpi', false); };   // the data holds every recruiter: no server call
@@ -6334,7 +6353,9 @@ function bgvCases(el, B, v) {
   const f = S.bgvF, own = f.tab === 'mine', sum = own ? B.mine : B.all;
   const scope = B.rows.filter(r => own ? r.mine : true);
   const recs = [...new Set(B.rows.map(r => r.recruiter))].sort();
-  el.innerHTML = `<div class="kpis bgv-kpis">
+  const none = !scope.length;   // v212: with no cases, an explanation leads instead of ten zero tiles
+  el.innerHTML = `${none ? `<div class="note empty-explain"><b>${own ? 'You have no BGV cases yet.' : 'There are no BGV cases yet.'}</b> A case is opened automatically when an offer is recorded on a position that needs background verification (the BGV rules decide which grades). Previous-employer checks should start within ${B.rules.cfg.prevInitDays} days of the offer. Cases appear here as hires reach the offer stage${own ? '; the recruiter of the position owns each case' : ''}.${B.lead ? ' Use the Rules tab to see which grades need it, or Import vendor update when a vendor sends results.' : ''}</div>` : ''}
+    <div class="kpis bgv-kpis"${none ? ' hidden' : ''}>
       <div class="kpi"><div class="v">${sum.open}</div><div class="l">Open cases</div></div>
       <div class="kpi ${sum.toStart ? 'alert' : ''}"><div class="v">${sum.toStart}</div><div class="l">To start</div></div>
       <div class="kpi"><div class="v">${sum.inProgress}</div><div class="l">With the vendor</div></div>

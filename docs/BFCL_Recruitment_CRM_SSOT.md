@@ -1525,6 +1525,14 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit of build 198, release 4: BGV and KPI readability** (no schema change; v212; 16 Nov 2026)
+- BGV tracker: with no cases, a short explanation leads instead of ten zero tiles. It says a case opens automatically when an offer is recorded on a position that needs verification (the rules decide the grades), shows the start-within-days limit from the rules, and for a TA Lead points to the Rules tab and the vendor import. When there are cases the tiles show as before.
+- KPI scorecard: the table opens with the current month in view, beside the KPI column (which stays in place); the current month heading is marked and underlined. A past financial year opens at its start. The year is still fully reachable by scrolling.
+- KPI scorecard: a "How calculated" button on every KPI row opens a short panel with Formula, Counted, Not counted and one Example, for all eight KPIs. The texts restate the existing rules (the legend below the table and the row notes); no score, target or rule changed, and the long legend stays.
+- `askDialog` gained a single-button form (`single`) for information panels.
+- Tested in Chromium: current month fully visible right of the KPI column; the panel opens, shows only Close, Escape closes it and returns focus; all eight KPIs have a panel; BGV shows the explanation and hides the tiles with no cases, and the reverse with cases.
+- This closes the audit of build 198: v209 (data), v210 (drawer focus; the menu at 200% zoom was not reproduced), v211 (filters), v212 (BGV and KPI). Not built, on request only: saved views, and a one-line explanation of Total / Gross / Net CTC.
+
 **Audit of build 198, release 3: Candidates filters** (no schema change; v211; 16 Nov 2026)
 - Finding: the Candidates page drew two rows of about 12 filter controls before the table, with no sign of which were in use and no single way to reset them.
 - Change: Search, HR result, Sourced by and Archived stay in view. Has CV, Possible duplicates, Show, Function, Experience from/to, Location, Notice and Expected CTC sit behind a "More filters" button that shows how many of them are set and opens by itself when one is (so coming back to the page shows them). Every filter in use shows as a removable chip ("Location: Ranchi", "Notice up to: 30 days"); a Clear all button resets everything and returns focus to Search. The chip line is announced to screen readers. The filters were already kept in `S.candFilter`, so they survive opening a candidate and coming back. The result count stays under the table as before. No change to what the search does.
