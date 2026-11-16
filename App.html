@@ -4446,7 +4446,19 @@ async function viewAdmin(v) {
   const total = checks.reduce((s, c) => s + c.count, 0);
   el.innerHTML = `<p style="margin:0 0 14px;color:var(--ink-2)">${total ? `${total} records to look at. Click a record to open and fix it.` : 'No problems found.'}</p>
     ${checks.map(c => `<details class="check" ${c.count ? '' : 'data-ok'}><summary><span class="check-n ${c.count ? '' : 'zero'}">${c.count}</span><span><b>${esc(c.title)}</b><span class="sub">${esc(c.why)}</span></span></summary>
-      ${c.key === 'daily_dup' && c.count && isLead() ? '<div style="margin:8px 0"><button class="btn sm" id="dupFix">Remove the identical duplicates</button></div>' : ''}${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+      ${c.key === 'todo_stuck' && can('system') ? '<div style="margin:8px 0"><button class="btn sm" id="tdFix">Restate to-dos wrongly counted as missed</button></div>' : ''}${c.key === 'daily_dup' && c.count && isLead() ? '<div style="margin:8px 0"><button class="btn sm" id="dupFix">Remove the identical duplicates</button></div>' : ''}${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+  if ($('#tdFix')) $('#tdFix').onclick = async e => {
+    busy(e.target, true, 'Checking…');
+    try {
+      const p = await api('apiTaskRestatePreview'), w = p.rows.filter(r => r.missedNow && !r.missedCorrected);
+      busy(e.target, false);
+      if (!w.length) return toast('Nothing to restate.');
+      if (!confirm('Restate ' + w.length + ' to-do' + (w.length === 1 ? '' : 's') + ' (' + w.map(r => r.mrf + ', ' + r.recruiter).join('; ') + ') as cleared when the first candidate was moved forward, so they no longer count as missed? Each change is logged.')) return;
+      busy(e.target, true, 'Restating…');
+      const r = await api('apiTaskRestateApply'); toast(r.restated + ' to-do' + (r.restated === 1 ? '' : 's') + ' restated');
+    } catch (err) { toast(err, true); }
+    busy(e.target, false);
+  };
   if ($('#dupFix')) $('#dupFix').onclick = async e => {
     if (!confirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;
     busy(e.target, true, 'Removing…');
