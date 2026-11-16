@@ -150,7 +150,10 @@ function apiPipelineRun_(lineId) {
   if (line.Replaced_By && byId[line.Replaced_By]) l.replacedByMrf = String(byId[line.Replaced_By].MRF_No || line.Replaced_By);
   if (line.Parent_Line_ID && byId[line.Parent_Line_ID]) l.parentMrf = String(byId[line.Parent_Line_ID].MRF_No || line.Parent_Line_ID);
   const qs = sqTexts_(line.Screening_Questions);
-  return { line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: isFast_(line) ? FAST_DOC_SECTIONS_ : DOC_SECTIONS, route: routeOf_(line), fastStages: FAST_STAGES_, now: Date.now(), interviews: interviewsFor_(lineId) };
+  const boEv = backoutEventsFrom_([line], readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === lineId; })).filter(function (e) { return e.source === 'card'; });
+  const boNames = boEv.length ? candNamesSlim_(boEv.map(function (e) { return e.candidate; })) : {};
+  return { backouts: boEv.map(function (e) { return { date: e.date, app: e.app, name: String((boNames[e.candidate] || {}).Name || e.candidate), reason: e.reason }; }), reopenFrom: reopenFrom_(),
+    line: l, questions: qs, docs: pdocState_(lineId), hasFinalSq: !!sqFinalFor_(lineId), hod: hodOf_(line.Dept), apps: apps, posts: posts, stages: STAGES, names: STAGE_NAMES, docSections: isFast_(line) ? FAST_DOC_SECTIONS_ : DOC_SECTIONS, route: routeOf_(line), fastStages: FAST_STAGES_, now: Date.now(), interviews: interviewsFor_(lineId) };
 }
 
 /**
@@ -441,7 +444,7 @@ function apiSetAppStatusRun_(appId, status, reason, backoutDate) {
   }
   const backout = status === 'Withdrawn' && ['Offer', 'Prejoin'].indexOf(stage) >= 0;
   if (status !== 'Active' && STAGES.indexOf(stage) >= STAGES.indexOf('Joined')) throw new Error('This candidate has already joined. Ask a TA Lead or the Head of HR to move the card back first if the joining was recorded in error.');
-  if (status === 'Rejected' && ['Offer', 'Prejoin'].indexOf(stage) >= 0) throw new Error('A candidate who holds an offer cannot be rejected here. If they backed out, use \u201cRecord backout\u201d, which closes the MRF and raises the replacement.');
+  if (status === 'Rejected' && ['Offer', 'Prejoin'].indexOf(stage) >= 0) throw new Error('A candidate who holds an offer cannot be rejected here. If they backed out, use \u201cRecord backout\u201d.');
   const patch = { Status: status, Status_Reason: clean_(String(reason || '')), Risk: status === 'Active' ? app.Risk : '' };
   let when = null;
   if (backout) {
@@ -458,10 +461,24 @@ function apiSetAppStatusRun_(appId, status, reason, backoutDate) {
   }
   // One backout is one piece of work: under one lock, and a retry after an interruption finishes the replacement
   // without writing the withdrawal and its history a second time.
+  const reopen = !!reopenFrom_() && ymd_(when) >= reopenFrom_();   // ADR-082: from this date a backout reopens the same MRF; before it, or with no date set, the replacement path below
   return withLock_(function () {
     const fresh = appOf_(appId), done = String(fresh.Status) === 'Withdrawn' && !!ymd_(fresh.Backout_Date);
     /* The position is read again inside the lock: a call that waited for the lock while another one finished the backout finds the replacement already there and returns it. */
     const lineNow = readTable_(T.MRF.name, true).rows.filter(function (l) { return l.Line_ID === line.Line_ID; })[0] || line;
+    if (reopen) {
+      if (!done) {
+        update_(T.APP, appId, patch, u);
+        appendHistory_(app, stage, stage, 'Backout', reason, u);
+      }
+      const when3 = done ? parseYmd_(ymd_(fresh.Backout_Date)) : when;
+      const again = done && ymd_(lineNow.Last_Backout_On) === ymd_(when3) && String(lineNow.Offer_Sent || '').toUpperCase() !== 'YES';   // a retry after an interruption, or a second call: already reopened
+      const count = again ? Number(lineNow.Backout_Count) || 1 : reopenAfterBackout_(lineNow, fresh, when3, String(reason || fresh.Backout_Reason || ''), u);
+      bgvTouchLine_(lineNow.Line_ID);   // after the line is updated, so the backed-out candidate's cases are cancelled and the next holder's are opened
+      const outR = apiPipeline(lineNow.Line_ID);
+      outR.reopened = { line: lineNow.Line_ID, mrf: String(lineNow.MRF_No || lineNow.Line_ID), count: count, date: ymd_(when3) };
+      return outR;
+    }
     if (done && lineNow.Replaced_By) {
       const existing = readTable_(T.MRF.name).rows.filter(function (l) { return l.Line_ID === lineNow.Replaced_By; })[0];
       const out0 = apiPipeline(lineNow.Replaced_By);
@@ -592,6 +609,29 @@ function backoutEvents_(from, to) {
 }
 
 /**
+ * ADR-082 (v191): after a backout dated on or after BACKOUT_REOPEN_FROM the same position is reopened instead of raising a replacement.
+ * The line keeps its number, documents, approval, recruiter history and TAT start; the offer fields of the candidate who backed out are
+ * cleared (the same fields a replacement does not copy), the status derives back to Open, and the other live cards stay where they are.
+ * The backout itself stays on the candidate's card (backoutEvents_); the line keeps only Backout_Count and Last_Backout_On, and a
+ * Remarks note with what was cleared (offer date, expected joining, notice) so a reinstatement can restore it. Called inside the lock.
+ * Returns the new Backout_Count.
+ */
+function reopenAfterBackout_(line, app, when, reason, u) {
+  const day = ymd_(when), count = (Number(line.Backout_Count) || 0) + 1;
+  const cand = readTable_(T.CAND.name).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0] || {};
+  const bits = ['offer ' + (ymd_(app.Offer_Date) || ymd_(line.Offer_Date) || 'date not recorded'), 'expected joining ' + (ymd_(line.EDOJ) || ymd_(app.EDOJ) || 'not recorded')];
+  if (Number(line.Notice_Period_Days)) bits.push('notice ' + Number(line.Notice_Period_Days) + ' days');
+  const note = 'Backout ' + count + ' on ' + day + ': ' + String(cand.Name || app.Candidate_ID) + ' (' + bits.join(', ') + ')' + (reason ? '. ' + reason : '') + '. Position reopened.';
+  const prior = String(line.Remarks || '').trim();
+  const patch = { Offer_Sent: 'No', Offer_Date: '', EDOJ: '', Candidate_ID: '', Backout_Date: '', Notice_Period_Days: '', Notice_Proof_File: '', Notice_Ext_Status: '', Notice_Ext_Note: '',
+    Notice_Ext_By: '', Notice_Ext_On: '', BGV_Prev_Org_Date: '', BGV_Current_Org_Date: '', BGV_Remarks: '', BGV_Prev_Org_File: '', BGV_Current_Org_File: '',
+    Remarks: clean_((prior ? prior + ' | ' : '') + note), Backout_Count: count, Last_Backout_On: when };
+  Object.assign(patch, storedTat_(computeTat_(Object.assign({}, line, patch), tatContext_())));
+  update_(T.MRF, line.Line_ID, patch, u);
+  return count;
+}
+
+/**
  * Policy 9.5: when the selected candidate backs out, the position closes as "Replaced" and a new
  * MRF is raised with a reference to the old one. Its TAT counts from the original start date.
  * Other active candidates on the old position move to the new one.
@@ -717,6 +757,12 @@ function apiReinstateBackout(appId, d) {
       update_(T.MRF, info.repl.Line_ID, Object.assign(rp, storedTat_(computeTat_(Object.assign({}, info.repl, rp), tatContext_()))), u);
     }
     const lp = { Replaced_By: '', Replaced_On: '', Backout_Date: '', Candidate_ID: app.Candidate_ID, Offer_Sent: 'Yes', EDOJ: edoj };
+    if (Number(line.Backout_Count) > 0) {   // a position that was reopened after this backout (ADR-082): give back the offer date and take this backout off the count
+      if (!ymd_(line.Offer_Date) && ymd_(app.Offer_Date)) lp.Offer_Date = app.Offer_Date;
+      const left = backoutEventsFrom_([line], readTable_(T.APP.name).rows.filter(function (a) { return a.Line_ID === line.Line_ID && a.App_ID !== app.App_ID; }));
+      lp.Backout_Count = Math.max(0, Number(line.Backout_Count) - 1);
+      lp.Last_Backout_On = left.length ? parseYmd_(left[left.length - 1].date) : '';
+    }
     update_(T.MRF, line.Line_ID, Object.assign(lp, storedTat_(computeTat_(Object.assign({}, line, lp), tatContext_()))), u);
     update_(T.APP, appId, { Status: 'Active', Status_Reason: '', Backout_Date: '', Backout_Reason: '', EDOJ: edoj, Risk: 'Amber',
       Next_Followup: parseYmd_(ymd_(new Date(Date.now() + 2 * 86400000))) }, u);

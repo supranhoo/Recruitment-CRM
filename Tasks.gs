@@ -44,6 +44,7 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'onboarding', title: 'Complete onboarding (induction and buddy)', due: 0, crit: 48, missed: true, policy: '14.3: buddy on the day of joining' },
   { id: 'checkin', title: 'New-joiner check-in', due: 0, crit: null, missed: false, policy: '14.5: 1st, 2nd and 3rd month for M levels' },
   { id: 'replacement_next', title: 'Replacement MRF: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5: new MRF after a backout; TAT continues from the original start' },
+  { id: 'backout_reopen', title: 'Backout: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5 (ADR-082): the same MRF is reopened after a backout; TAT continues from the original start' },
   { id: 'filled_cleanup', title: 'Position filled: close the remaining candidates', due: 0, crit: null, missed: false, policy: 'Reject, hold or move candidates left on a filled position' },
   { id: 'inform_closed', title: 'Inform candidates and panel: position closed', due: 0, crit: null, missed: false, policy: '18: keep candidates informed; position closed without a hire' },
   { id: 'voice_review', title: 'Review the voice screening draft', due: 0, crit: null, missed: false, policy: 'Voice screening: the call is complete; a person checks, rates and completes the screening' },
@@ -360,6 +361,17 @@ function computeTasks_() {
       title: 'Replacement ' + (l.MRF_No || id) + ': move the next candidate forward',
       context: act.length ? act.length + ' active candidate' + (act.length === 1 ? '' : 's') + ' \u00b7 ' + l.Position : 'No active candidates yet \u00b7 ' + l.Position,
       startMs: ms_(parent.Replaced_On) || ms_(l.Created_At) || now, open: { type: 'pipeline', line: id } });
+  });
+
+  // A position reopened after a backout (ADR-082): move the next candidate forward.
+  Object.keys(lines).forEach(function (id) {
+    const l = lines[id], last = ymd_(l.Last_Backout_On);
+    if (!last || positionStatus_(l) !== 'Open') return;
+    const act = apps.filter(function (a) { return a.Line_ID === id; });
+    add('backout_reopen', { key: 'backout_reopen|' + id + '|' + last, recruiter: String(l.Recruiter), line: id, app: '',
+      title: (l.MRF_No || id) + ': backout on ' + last + ', move the next candidate forward',
+      context: act.length ? act.length + ' active candidate' + (act.length === 1 ? '' : 's') + ' \u00b7 ' + l.Position : 'No active candidates yet \u00b7 ' + l.Position,
+      startMs: ms_(l.Last_Backout_On) || now, open: { type: 'pipeline', line: id } });
   });
 
   // Filled positions with candidates still active at earlier stages (joined in the last 60 days).

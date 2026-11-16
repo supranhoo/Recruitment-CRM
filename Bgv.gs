@@ -177,7 +177,7 @@ function bgvEnsureCases_(onlyLine) {
     mine.forEach(function (c) {
       const st = String(c.Status);
       if (['Closed', 'Cancelled'].indexOf(st) >= 0) return;
-      const backedOut = !!l.Backout_Date || status === 'Replaced';
+      const backedOut = !!l.Backout_Date || status === 'Replaced' || (!!c.Candidate_ID && String(c.Candidate_ID) !== String(l.Candidate_ID || '') && (apps[l.Line_ID] || []).some(function (a) { return a.Candidate_ID === c.Candidate_ID && String(a.Status) === 'Withdrawn' && !!ymd_(a.Backout_Date); }));   // ADR-082: a reopened position has no Backout_Date, so the case of a candidate whose card is Withdrawn and who no longer holds the offer is cancelled
       if (backedOut || (!required && ['Not started', 'Awaiting consent'].indexOf(st) >= 0)) {
         setCell(c._row, 'Status', 'Cancelled'); setCell(c._row, 'Closed_On', now);
         setCell(c._row, 'Remarks', (String(c.Remarks || '') + ' ' + (backedOut ? 'Cancelled: the candidate backed out.' : 'Cancelled: BGV is no longer required.')).trim());

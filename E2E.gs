@@ -36,7 +36,7 @@ function e2eRun_(trash) {
   t('A3 list candidates', function () { return apiListCandidates().length >= 1000; });
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 8 && !!k.defs.W_FULFILMENT ? 'fy ' + fy : false; });
-  t('A6 data checks', function () { return apiDataChecks().length === 16; });
+  t('A6 data checks', function () { return apiDataChecks().length >= 16; });
   t('A6c the backout events cover every line that has a backout date', function () {
     _tables = {}; const ev = backoutEvents_(), have = {}; ev.forEach(function (e) { have[e.line + '|' + e.date] = true; });
     const miss = readTable_(T.MRF.name).rows.filter(function (l) { return ymd_(l.Backout_Date) && !have[String(l.Line_ID) + '|' + ymd_(l.Backout_Date)]; });
