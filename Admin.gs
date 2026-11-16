@@ -251,6 +251,15 @@ function dataChecks_() {
   try { bgvLateCases_().forEach(function (x) { bl.items.push(x); }); } catch (e) { }
   const bx = add('bgv_excl_over', 'BGV excluded from the KRA past its release date', 'The former employer\u2019s data was expected by now: chase it, or revoke the exclusion in the BGV tracker.', 'MRF');
   try { bgvExclOverdue_().forEach(function (x) { bx.items.push(x); }); } catch (e) { }
+  const cbc = add('backout_count', 'Backout count differs from the backouts on the cards', 'A position reopened after a backout keeps Backout_Count; it should equal the number of its cards that are Withdrawn at Offer or Pre-joining with a backout date (ADR-082). Correct the count on the position, or the card\u2019s backout date.', 'MRF');
+  try {
+    const mrfRows = readTable_(T.MRF.name).rows, boBy = backoutsByLine_(mrfRows.filter(function (l) { return Number(l.Backout_Count) > 0; }), readTable_(T.APP.name).rows);
+    mrfRows.forEach(function (l) {
+      const n = Number(l.Backout_Count) || 0; if (!n) return;
+      const have = (boBy[String(l.Line_ID)] || []).filter(function (e) { return e.source === 'card'; }).length;
+      if (have !== n) cbc.items.push({ id: l.Line_ID, label: String(l.MRF_No) + ' \u00b7 ' + l.Position + ' (' + l.Recruiter + ')', detail: 'Backout count ' + n + ', cards with a backout ' + have });
+    });
+  } catch (e) { }
   return checks.map(function (c) { c.count = c.items.length; c.items = c.items.slice(0, 200); return c; });
 }
 

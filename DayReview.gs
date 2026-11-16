@@ -419,6 +419,17 @@ function dayStatusList_() {
   }).sort(function (a, b) { return a.sort - b.sort; });
 }
 /** A position's status as it stood on a date (today: the live status). '' = not yet received / approved. */
+/** The stretches when a reopened position had an offer out (ADR-082): {Line_ID: [[offer date, backout date], ...]} from the backed-out cards, built once per run. */
+let _offerIv_ = null;
+function reopenedOfferIv_() {
+  if (_offerIv_) return _offerIv_;
+  const iv = {};
+  readTable_(T.APP.name).rows.forEach(function (a) {
+    const off = ymd_(a.Offer_Date), bo = ymd_(a.Backout_Date);
+    if (String(a.Status) === 'Withdrawn' && off && bo && ['Offer', 'Prejoin'].indexOf(String(a.Stage)) >= 0) (iv[String(a.Line_ID)] = iv[String(a.Line_ID)] || []).push([off, bo]);
+  });
+  return (_offerIv_ = iv);
+}
 function statusAsOf_(l, d) {
   if (String(l.Approval_Status || '').trim().toUpperCase() === 'CREATED IN ERROR') return '';
   if (d >= ymd_(new Date())) return positionStatus_(l);
@@ -436,6 +447,7 @@ function statusAsOf_(l, d) {
   const sent = String(l.Offer_Sent).toUpperCase() === 'YES', off = y(l.Offer_Date);
   if (sent && off && off <= d) return 'Offered';
   if (sent && !off && !doj && positionStatus_(l) === 'Offered') return 'Offered';
+  if (Number(l.Backout_Count) > 0 && (reopenedOfferIv_()[String(l.Line_ID)] || []).some(function (r) { return r[0] <= d && d < r[1]; })) return 'Offered';   // a reopened position had its offer cleared: the days between that offer and the backout were Offered
   return 'Open';
 }
 /** Day's status for many lines on one date: {lineId: {auto, status, override, note, by, since, colour}}. */
