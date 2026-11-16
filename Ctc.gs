@@ -521,7 +521,9 @@ function ctcActive_(day) {
 }
 
 function ctcRequire_(u, perm) {
-  if (!can_(u, perm)) throw new Error(perm === 'ctc_rules' ? 'Only the admin can change the CTC rules.'
+  if (!can_(u, perm)) throw new Error(perm === 'ctc_rules' ? 'Only the admin or the Head of HR can change the CTC rules.'
+    : perm === 'ctc_access' ? 'Only the admin can change who has access to the CTC calculator.'
+    : perm === 'ctc_access_view' ? 'Only the admin or the Head of HR can see the CTC access settings.'
     : perm === 'ctc_issue' ? 'You can work out and save calculations, but you do not have access to make letters.'
     : perm === 'ctc_approve' ? 'Only someone who approves CTC letters can do this.' : 'You do not have access to the CTC calculator.');
 }
@@ -533,11 +535,11 @@ function apiCtcRules() {
   const u = currentUser_(); ensureSchema_();
   ctcRequire_(u, 'ctc_use');
   const act = ctcActive_();
-  const all = ctcVersions_(), rules = can_(u, 'ctc_rules');
+  const all = ctcVersions_(), rules = can_(u, 'ctc_rules'), accessView = can_(u, 'ctc_access_view');
   const versions = all.filter(function (v) { return v.status !== 'Draft' && v.status !== 'Discarded'; }).map(function (v) { const o = Object.assign({}, v); delete o.json; delete o._row; return o; });
   const d = rules ? all.filter(function (v) { return v.status === 'Draft'; })[0] : null;
   const draft = d ? { id: d.id, by: d.by, at: d.at, updatedBy: d.updatedBy, updatedAt: d.updatedAt, config: JSON.parse(d.json), changes: ctcDiff_(act.config, JSON.parse(d.json)) } : null;
-  return { canRules: rules, today: ymd_(new Date()), active: act, versions: versions, draft: draft, approval: ctcApprovalOn_(), access: rules ? ctcAccessMatrix_() : null,
+  return { canRules: rules, today: ymd_(new Date()), active: act, versions: versions, draft: draft, approval: ctcApprovalOn_(), access: rules || accessView ? ctcAccessMatrix_() : null, canAccessEdit: can_(u, 'ctc_access'),
     reasons: CTC_REASONS_.filter(function (x) { return x !== 'Initial setup'; }) };
 }
 
@@ -961,9 +963,10 @@ function apiCtcActivate(id, d) {
     const summary = ('Against ' + base.id + ': ' + changes.join('; ')).slice(0, 45000);
     ctcSetRow_(v, { Status: 'Active', Effective_From: parseYmd_(eff), Reason: reason, Remark: remark.slice(0, 1000), Change_Summary: summary,
       Activated_By: u.email, Activated_At: new Date(), Updated_By: u.email, Updated_At: new Date() });
-    return { changes: changes.length, base: base.id };
+    return { changes: changes.length, base: base.id, summary: summary };
   });
   audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Draft', 'Active from ' + eff + ' (' + reason + ': ' + remark.slice(0, 200) + ')');
+  ctcNotifyAdmins_(u, 'CTC rules ' + id + ' put in force by ' + u.name, ['Version: ' + id, 'In force from: ' + eff, 'Reason: ' + reason, 'Remark: ' + remark, res.summary]);
   return apiCtcRules();
 }
 
@@ -980,7 +983,21 @@ function apiCtcRetire(id, remark) {
     ctcSetRow_(v, { Status: 'Retired', Remark: (v.remark + ' | Cancelled: ' + remark).slice(0, 1000), Updated_By: u.email, Updated_At: new Date() });
   });
   audit_(u, CTC_RULES_, id, 'Update', 'Status', 'Active', 'Retired (' + remark.slice(0, 200) + ')');
+  ctcNotifyAdmins_(u, 'CTC rules ' + id + ' cancelled by ' + u.name, ['Version: ' + id + ' (it had not taken effect yet)', 'Why: ' + remark]);
   return apiCtcRules();
+}
+
+/**
+ * An e-mail to every active Admin when someone other than an Admin changes the rules (puts a version in force or cancels a scheduled one),
+ * because the Head of HR can now do that too (ADR-083). Sent to each Admin's official address; a failure never blocks the change.
+ */
+function ctcNotifyAdmins_(u, subject, lines) {
+  try {
+    if (u.role === ROLES.ADMIN) return;
+    const to = readTable_('Users').rows.filter(function (r) { return normRole_(r.Role) === ROLES.ADMIN && String(r.Active || 'Yes') !== 'No' && mailTo_(r); }).map(mailTo_)
+      .filter(function (e, i, all) { return all.indexOf(e) === i; });
+    if (to.length) MailApp.sendEmail(to.join(','), 'BFCL Recruitment CRM: ' + subject, lines.join('\n') + '\n\nOpen CTC calculator > Rules for the full history. This e-mail goes to the Admin whenever someone else changes the CTC rules.');
+  } catch (e) { console.error('ctcNotifyAdmins_: ' + e); }
 }
 
 /* ---------------------------------------------------------------- access (Role_Access; Admin) -------------- */
@@ -1017,7 +1034,7 @@ function ctcAccessMatrix_() {
 
 function apiCtcAccess() {
   const u = currentUser_(); ensureSchema_();
-  ctcRequire_(u, 'ctc_rules');
+  ctcRequire_(u, 'ctc_access_view');
   const since = fmt_(new Date(Date.now() - 365 * 86400000), TZ, 'yyyy-MM-dd');
   const log = readTableFrom_('Audit_Log', 'Timestamp', since).rows.filter(function (a) { return String(a.Sheet) === 'Role_Access' || (String(a.Sheet) === 'Settings' && String(a.Record_ID) === 'CTC_APPROVAL'); })
     .slice(-60).reverse().map(function (a) {
@@ -1033,13 +1050,13 @@ function apiCtcAccess() {
  */
 function apiCtcAccessSave(d) {
   const u = currentUser_(); ensureSchema_();
-  ctcRequire_(u, 'ctc_rules');
+  ctcRequire_(u, 'ctc_access');
   d = d || {};
   const reason = clean_(String(d.reason || '')).trim();
   if (reason.length < 10) throw new Error('Write a reason of at least 10 characters: why access is being changed.');
   const want = {};
   CTC_GRANT_ROLES_.forEach(function (role) {
-    const list = ((d.roles || {})[role] || []).map(String);
+    const list = ((d.roles || {})[role] || []).map(String).filter(function (p) { return (PERMS_[role] || []).indexOf(p) < 0; });   // a permission the role has built in (the Head of HR's ctc_rules) is not a grant
     list.forEach(function (p) { if (CTC_GRANTABLE_.indexOf(p) < 0) throw new Error('"' + p + '" cannot be given to a role here.'); });
     const uniq = CTC_GRANTABLE_.filter(function (p) { return list.indexOf(p) >= 0; });
     if (uniq.length && uniq.indexOf('ctc_use') < 0) throw new Error(role + ': to use the other options the role also needs access to the calculator.');

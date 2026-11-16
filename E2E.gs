@@ -42,6 +42,11 @@ function e2eRun_(trash) {
     const miss = readTable_(T.MRF.name).rows.filter(function (l) { return ymd_(l.Backout_Date) && !have[String(l.Line_ID) + '|' + ymd_(l.Backout_Date)]; });
     return miss.length === 0 ? ev.length + ' events' : false;
   });
+  t('A6d the CTC rules belong to the Admin and the Head of HR, access changes to the Admin', function () {
+    const has = function (role, p) { return (PERMS_[role] || []).indexOf(p) >= 0; };
+    return has('Admin', 'ctc_rules') && has('Head of HR', 'ctc_rules') && has('Head of HR', 'ctc_access_view') && !has('Head of HR', 'ctc_access') && has('Admin', 'ctc_access')
+      && !has('TA Lead', 'ctc_rules') && !has('Recruiter', 'ctc_access_view') ? 'ok' : false;
+  });
   t('A6b a handover on a replacement restarts the recruiter clock, the position clock keeps the original start', function () {
     const l = { Receipt_Date: '2026-08-21', Approved_On: '2026-08-21', Assigned_On: '2026-10-30', TAT_Start_From: '2026-08-21' };
     return tatStart_(l) === '2026-10-30' && posStart_(l) === '2026-08-21' && tatStartBasis_(l) === 'assigned' && tatStart_(Object.assign({}, l, { Assigned_On: '2026-08-21' })) === '2026-08-21' ? 'ok' : false;
