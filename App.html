@@ -341,9 +341,10 @@ const bootStart = () => {
     const el = $('#boot'); el.className = 'boot error'; el.removeAttribute('aria-busy');
     el.textContent = String(msg).replace(new RegExp('^ACCESS:\\s*'), '');
   });
-  $('#drawerClose').addEventListener('click', closeDrawer);
-  $('#scrim').addEventListener('click', closeDrawer);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) closeDrawer(); });   // Escape cancels the dialog on top, not the drawer under it
+  ['input', 'change'].forEach(ev => $('#drawerBody').addEventListener(ev, markDrawerDirty));
+  $('#drawerClose').addEventListener('click', closeDrawerSafe);
+  $('#scrim').addEventListener('click', closeDrawerSafe);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog[open]') && $('#drawer').classList.contains('open')) closeDrawerSafe(); });   // Escape cancels the dialog on top, not the drawer under it
 };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootStart); else setTimeout(bootStart, 0);
 
@@ -556,13 +557,26 @@ function readForm(root) {
 }
 
 function openDrawer(title, html, cls) {
-  hideCv(); S.drawerTok = {};
+  hideCv(); S.drawerTok = {}; S.drawerDirty = false;
   late('#drawerTitle').textContent = title; late('#drawerBody').innerHTML = html;
   $('#drawer').className = 'drawer open' + (cls ? ' ' + cls : ''); $('#drawer').setAttribute('aria-hidden', 'false'); showScrim();
   setTimeout(() => { const f = $('#drawerBody input:not([readonly]), #drawerBody select:not([disabled])'); if (f) f.focus(); }, 230);
   return $('#drawerBody');
 }
-function closeDrawer() { hideCv(); $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/* v199: the drawer remembers whether the person has typed or chosen anything since it opened. Closing it from the X, the backdrop, Escape or a Cancel
+   button then asks first; closes that follow a save call closeDrawer() directly and never ask. Search boxes and other controls marked data-nodirty do not count. */
+function drawerDirty() { return !!S.drawerDirty; }
+function closeDrawerSafe() {
+  if (drawerDirty() && !confirm('You have changes that are not saved. Discard them and close?')) return false;
+  closeDrawer(); return true;
+}
+function markDrawerDirty(e) {
+  const t = e.target;
+  if (!e.isTrusted || !t || !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+  if (t.type === 'search' || t.closest('[data-nodirty], [role="search"]') || /search|filter|find/i.test(t.id + ' ' + t.className)) return;
+  setTimeout(() => { if (t.isConnected) S.drawerDirty = true; }, 0);   // an input removed by a redraw fires a last change event: only a control still on the page counts
+}
 /** The backdrop fades with the drawer's slide (same .22 s); with reduced motion it appears and goes at once. */
 let scrimTimer;
 function showScrim() {
@@ -1626,7 +1640,7 @@ function positionDrawer(p) {
     if (b.dataset.t === 'funnel') renderLineFunnel(p);
   }));
   if (ro) return;
-  $('#pCancel').onclick = closeDrawer;
+  $('#pCancel').onclick = closeDrawerSafe;
   $('#pSave').onclick = async () => {
     const d = Object.assign({ Line_ID: isNew ? '' : p.Line_ID }, readForm($('#posForm')));
     const jdId = d._jdFileId; delete d._jdFileId;
@@ -2203,7 +2217,7 @@ function archivedCandidateDrawer(c) {
       <dt>Designation</dt><dd>${esc(c.Current_Designation || '\u2014')}</dd><dt>HR result</dt><dd>${esc(c.HR_Result || '\u2014')}</dd><dt>CV</dt><dd>${c.CV_File_URL ? 'On file' : '\u2014'}</dd></dl>
     <div id="candHistory"></div>
     <div class="drawer-actions"><button class="btn" id="arClose">Close</button><button class="btn primary" id="arRestore">Restore to active</button></div>`);
-  $('#arClose', b).onclick = closeDrawer;
+  $('#arClose', b).onclick = closeDrawerSafe;
   candHistorySection($('#candHistory', b), c.Candidate_ID);
   $('#arRestore', b).onclick = async () => {
     const btn = $('#arRestore', b); busy(btn, true, 'Restoring\u2026');
@@ -2234,7 +2248,7 @@ function candidateDrawer(c, preset, parsedIn) {
     ${isNew ? '' : '<div id="candProfile"></div><div id="candBgv"></div>'}
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
-  $('#cCancel').onclick = closeDrawer;
+  $('#cCancel').onclick = closeDrawerSafe;
   if ($('#candDnc', body)) dncUndo($('#candDnc', body), { cand: data.Candidate_ID }, async () => { closeDrawer(); openCandidate(data.Candidate_ID); });
   if ($('#candHistory', body)) candHistorySection($('#candHistory', body), data.Candidate_ID);
   if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
@@ -2473,7 +2487,7 @@ async function viewPanel(v) {
     ['Kind', 'Date', 'To_Date', 'Panel_Member'].forEach(k => $('#f_' + k, b).addEventListener('change', sync));
     sync();
     $('#f_Panel_Member', b).addEventListener('change', e => { const m = S.boot.panel.find(x => x.name === e.target.value); if (m) { $('#f_Designation', b).value = m.designation; $('#f_Department', b).value = m.department; } });
-    $('#pnCancel').onclick = closeDrawer;
+    $('#pnCancel').onclick = closeDrawerSafe;
     $('#pnSave').onclick = async () => {
       const btn = $('#pnSave'); busy(btn, true, 'Saving\u2026');
       try { await api('apiSavePanel', Object.assign({ Entry_ID: r ? r.Entry_ID : '' }, readForm($('#pnForm')))); toast('Saved'); closeDrawer(); go('panel', false); }
@@ -2639,7 +2653,7 @@ function tatEditor(r, done) {
   const payload = () => ({ mode: $('input[name=tatMode]:checked', b).value, eff: $('#tatEff', b).value, rows: changedRows(), note: $('#tatNote', b).value });
   $$('input[name=tatMode]', b).forEach(i => i.onchange = () => { $('#tatEff', b).disabled = i.value === 'all' && i.checked; fill(); });
   $('#tatEff', b).onchange = fill;
-  $('#tatCancel', b).onclick = closeDrawer;
+  $('#tatCancel', b).onclick = closeDrawerSafe;
   $('#tatPreview', b).onclick = async () => {
     const p = payload(); if (!p.rows.length) return toast('Change at least one level first.', true);
     const btn = $('#tatPreview', b); busy(btn, true, 'Checking\u2026');
@@ -2737,7 +2751,7 @@ function jdmImportDialog(done) {
     <p class="hint">On an update, grades, departments and duplicate decisions already signed off, and responsibilities added or edited in the app, are kept.</p>
     <div class="drawer-actions"><button class="btn" id="jdmCancel">Cancel</button><button class="btn primary" id="jdmGo" disabled>Import</button></div>`);
   let parsed = null, fileName = '';
-  $('#jdmCancel', b).onclick = closeDrawer;
+  $('#jdmCancel', b).onclick = closeDrawerSafe;
   $('#jdmFile', b).onchange = async e => {
     const file = e.target.files[0]; parsed = null; $('#jdmGo', b).disabled = true;
     if (!file) return;
@@ -4012,7 +4026,7 @@ function userDrawer(r, x, done) {
   const hints = { 'Recruiter': 'Edits their own positions; sees everything.', 'TA Lead': 'Edits all positions, assigns work, sees team reviews and admin checks.', 'Head of HR': 'Everything a TA Lead can, plus withdrawing offers, TAT rules and viewing users.', 'Admin': 'Everything, including users, backups and system tools.', 'Onboarding': 'Supports the recruitment team: confirms the hiring, records the joining and completes the onboarding of fast-track (W and T level) positions. Sees everything else, edits nothing else.' };
   const hint = () => { $('#u_roleHint', b).textContent = hints[$('#u_role', b).value] || ''; };
   $('#u_role', b).onchange = hint; hint();
-  $('#usCancel', b).onclick = closeDrawer;
+  $('#usCancel', b).onclick = closeDrawerSafe;
   const save = async reassignTo => {
     const btn = $('#usSave', b); busy(btn, true, 'Saving\u2026');
     const d = { isNew, email: $('#u_email', b).value, name: $('#u_name', b).value, role: $('#u_role', b).value, recruiter: $('#u_rec', b).value, official: $('#u_off', b).value, active: isNew ? true : $('#u_active', b).checked, reassignTo };
@@ -4834,7 +4848,7 @@ function obDrawer(r, after) {
   const b = openDrawer(r ? 'Edit observation' : 'Log observation', `<div id="obForm">${wrapForm(form(fields, data))}</div>
     <div class="drawer-actions"><button class="btn" id="obCancel">Cancel</button><button class="btn primary" id="obSave">Save</button></div>`);
   $('#f_Line_ID', b).onchange = e => { const p = lineById(e.target.value); if (p) $('#f_Recruiter', b).value = String(p.Recruiter).trim(); };
-  $('#obCancel').onclick = closeDrawer;
+  $('#obCancel').onclick = closeDrawerSafe;
   $('#obSave').onclick = async () => {
     const btn = $('#obSave'); busy(btn, true, 'Saving\u2026');
     try { await api('apiSaveObservation', Object.assign({ Obs_ID: r ? r.Obs_ID : '' }, readForm($('#obForm')))); toast('Observation saved'); closeDrawer(); after(); }
@@ -5496,7 +5510,7 @@ function orgNoteDialog(s, done) {
     <div class="field"><label for="onBy">Approved by${up ? '' : ' (optional)'}</label><input id="onBy" value="${esc(n.by || '')}" maxlength="80"></div>
     <div class="field" style="max-width:200px"><label for="onRev">Review on${up ? '' : ' (optional)'}</label><input id="onRev" type="date" value="${esc(n.reviewOn || (up ? dflt() : ''))}"></div>
     <div class="drawer-actions"><button class="btn" id="onCancel">Cancel</button>${n.id ? '<button class="btn" id="onClose">Close this note</button>' : ''}<button class="btn primary" id="onSave">Save note</button></div>`);
-  $('#onCancel', b).onclick = closeDrawer;
+  $('#onCancel', b).onclick = closeDrawerSafe;
   if (n.id) $('#onClose', b).onclick = async () => { try { await api('apiOrgCloseNote', n.id); toast('Note closed'); closeDrawer(); done(); } catch (e) { toast(e, true); } };
   $('#onSave', b).onclick = async () => {
     const btn = $('#onSave', b); busy(btn, true, 'Saving…');
@@ -5637,7 +5651,7 @@ function orgImportDialog(done) {
     <div id="orgCheck"></div>
     <div class="drawer-actions"><button class="btn" id="orgCancel">Cancel</button><button class="btn primary" id="orgGo" disabled>Import</button></div>`);
   let rows = null, fileName = '';
-  $('#orgCancel', b).onclick = closeDrawer;
+  $('#orgCancel', b).onclick = closeDrawerSafe;
   const show = r => {
     const errs = r.errors && r.errors.length ? `<div class="note warn-note"><b>Nothing was changed.</b> Fix these and choose the file again:<ul style="margin:6px 0 0 18px">${r.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${r.moreErrors ? `<div>and ${r.moreErrors} more.</div>` : ''}</div>` : '';
     const ok = r.ok ? `<div class="kpis"><div class="kpi"><div class="v">${orgN(r.approved)}</div><div class="l">Approved</div></div><div class="kpi"><div class="v">${orgN(r.existing)}</div><div class="l">Existing</div></div><div class="kpi"><div class="v">${orgN(r.net)}</div><div class="l">Net vacant</div></div><div class="kpi"><div class="v">${orgN(r.groups)}</div><div class="l">Department and grade rows</div></div></div>
@@ -5692,7 +5706,7 @@ async function orgPlanReview(p, done) {
     <div class="field"><label for="opBy">Approved by</label><input id="opBy" maxlength="80" placeholder="Name of the approver"></div>
     <div class="field" style="max-width:200px"><label for="opEff">Effective from</label><input type="date" id="opEff" value="${today()}"></div>
     <div class="drawer-actions"><button class="btn" id="opCancel">Back</button><button class="btn primary" id="opGo">Activate plan</button></div>`;
-  $('#opCancel', b).onclick = closeDrawer;
+  $('#opCancel', b).onclick = closeDrawerSafe;
   $('#opGo', b).onclick = async () => {
     const btn = $('#opGo', b); busy(btn, true, 'Activating…');
     try {
@@ -5737,7 +5751,7 @@ function orgPlanUploadDialog(p, done) {
     <div class="field"><label for="opFile">Excel file</label><input type="file" id="opFile" accept=".xlsx"></div>
     <div id="opCheck"></div><div class="drawer-actions"><button class="btn" id="opX">Cancel</button><button class="btn primary" id="opSave" disabled>Save as draft</button></div>`);
   let rows = null;
-  $('#opX', b).onclick = closeDrawer;
+  $('#opX', b).onclick = closeDrawerSafe;
   $('#opFile', b).onchange = async e => {
     const file = e.target.files[0]; rows = null; $('#opSave', b).disabled = true; if (!file) return;
     $('#opCheck', b).innerHTML = '<p class="hint">Reading the file…</p>';
@@ -6871,7 +6885,7 @@ function checkinEditor(r, cur, done) {
         active: g('active').checked ? 'Yes' : 'No', must: g('must').checked ? 'Yes' : 'No', ask: ckParseAsk(g('ask').value), inform: g('inform').value.split('\n').map(x => x.trim()).filter(Boolean) };
     })
   });
-  $('#ckCancel', b).onclick = closeDrawer;
+  $('#ckCancel', b).onclick = closeDrawerSafe;
   $('#ckPreview', b).onclick = async () => {
     const btn = $('#ckPreview', b); busy(btn, true, 'Checking…');
     try {
@@ -7032,7 +7046,7 @@ function policyAddDrawer(live, done) {
   let chunks = [], text = '', file = null;
   const stale = () => { $('#paSave', b).disabled = true; };
   $('#paFile', b).onchange = () => { stale(); $('#paPrev', b).innerHTML = ''; const x = $('#paFile', b).files[0]; if (x && !$('#paTitle', b).value) $('#paTitle', b).value = x.name.replace(/\.[^.]+$/, ''); };
-  $('#paCancel', b).onclick = closeDrawer;
+  $('#paCancel', b).onclick = closeDrawerSafe;
   $('#paRead', b).onclick = async () => {
     file = $('#paFile', b).files[0]; if (!file) return toast('Choose the policy file first.', true);
     if (file.size > 15 * 1024 * 1024) return toast('The file is over 15 MB.', true);
