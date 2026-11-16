@@ -540,7 +540,7 @@ function list(name) { return (S.boot.lists[name] || []); }
 
 function form(fields, data, readonly) {
   return fields.map(f => {
-    if (f.section) return `</div></fieldset><fieldset><legend>${esc(f.section)}</legend><div class="grid">`;
+    if (f.section) return f.fold ? `</div></fieldset><fieldset class="fold-sec" data-fold="${f.open ? 'open' : 'closed'}"><legend>${esc(f.section)}</legend><div class="grid">` : `</div></fieldset><fieldset><legend>${esc(f.section)}</legend><div class="grid">`;
     const v = data[f.k] == null ? '' : data[f.k];
     const ro = readonly || f.ro;
     const id = 'f_' + f.k;
@@ -592,6 +592,27 @@ function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className
 const FOLD_OPEN_AT = { voice: ['Sourced', 'Screened'], bgv: ['Offer', 'Prejoin', 'Joined'], ctc: ['Docs', 'Offer'], checkin: ['Prejoin', 'Joined'], interview: ['Confirmed', 'Technical', 'HR'] };
 function foldOpen(kind, stage) { return (FOLD_OPEN_AT[kind] || []).includes(String(stage)); }
 function appFold(title, inner, open, cls) { return `<details class="app-fold ${cls || ''}"${open ? ' open' : ''}><summary>${esc(title)}</summary><div class="app-fold-body">${inner}</div></details>`; }
+/* ---- v206: optional groups of a form fold away. A section marked fold:true in the field list is drawn closed (open when it already holds a value); its
+   heading becomes a button. Fields in a closed group still belong to the form: they are read and saved, and validateForm opens the group when one of them is wrong. ---- */
+function initFolds(root) {
+  $$('fieldset[data-fold]', root).forEach(fs => {
+    if (fs.dataset.foldInit) return; fs.dataset.foldInit = '1';
+    const lg = fs.querySelector('legend'), body = fs.querySelector('.grid'); if (!lg || !body) return;
+    body.setAttribute('data-foldbody', '1');
+    const title = lg.textContent, btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'fold-toggle';
+    const set = open => { body.hidden = !open; btn.setAttribute('aria-expanded', open ? 'true' : 'false'); btn.innerHTML = `<span aria-hidden="true">${open ? '\u25be' : '\u25b8'}</span> ${esc(title)} <span class="sub">${open ? '' : '(optional, click to add)'}</span>`; };
+    btn.onclick = () => set(body.hidden);
+    lg.textContent = ''; lg.appendChild(btn);
+    fs._setFold = set; set(fs.dataset.fold === 'open');
+  });
+}
+/** Opens every group that now holds a value (after a CV was read into the form). */
+function openFoldsWithValues(root) {
+  $$('fieldset[data-fold]', root).forEach(fs => {
+    if (fs._setFold && $$('[name]', fs).some(el => el.type !== 'file' && String(el.value || '').trim() !== '')) fs._setFold(true);
+  });
+}
 /* ---- v204: a small menu button. The list opens under the button, takes the arrow keys (Home / End too), closes on Escape (focus back on the button), Tab,
    a click outside or a choice. Items are ordinary buttons with role="menuitem"; their own handlers do the work. ---- */
 function menuButton(btn, list) {
@@ -624,7 +645,10 @@ function validateForm(root, o) {
   $$('[aria-invalid="true"]', root).forEach(x => x.removeAttribute('aria-invalid'));
   const problems = [];
   $$('[name]', root).forEach(el => {
-    if (el.disabled || el.readOnly || el.type === 'hidden' || el.type === 'file' || el.closest('[hidden]') || !el.getClientRects().length) return;
+    const inFold = el.closest('[data-foldbody]');
+    if (el.disabled || el.readOnly || el.type === 'hidden' || el.type === 'file') return;
+    if (!inFold && (el.closest('[hidden]') || !el.getClientRects().length)) return;
+    if (inFold && el.closest('[hidden]:not([data-foldbody])')) return;
     const lab = el.id ? root.querySelector('label[for="' + el.id + '"]') : null;
     const name = (lab ? lab.textContent : el.getAttribute('aria-label') || el.name).replace(/\(required\)/, '').replace(/\*/g, '').replace(/\s+/g, ' ').trim();
     const empty = String(el.value == null ? '' : el.value).trim() === '';
@@ -632,11 +656,11 @@ function validateForm(root, o) {
     else if (!empty && el.validity && (el.validity.rangeUnderflow || el.validity.rangeOverflow || el.validity.typeMismatch || el.validity.badInput)) problems.push({ el, name, why: el.validity.rangeUnderflow ? 'is too low' : el.validity.rangeOverflow ? 'is too high' : 'is not valid' });
   });
   if (!problems.length) return true;
-  problems.forEach(x => x.el.setAttribute('aria-invalid', 'true'));
+  problems.forEach(x => { x.el.setAttribute('aria-invalid', 'true'); const fs = x.el.closest('fieldset[data-fold]'); if (fs && fs._setFold) fs._setFold(true); });
   const box = document.createElement('div'); box.className = 'form-summary note warn-note'; box.setAttribute('role', 'alert'); box.tabIndex = -1;
   box.innerHTML = `<b>${problems.length === 1 ? 'One thing needs your attention' : problems.length + ' things need your attention'} before this can be saved.</b><ul>${problems.map((x, i) => `<li><a href="#" data-pi="${i}">${esc(x.name)} ${esc(x.why)}</a></li>`).join('')}</ul>`;
   root.insertBefore(box, root.firstChild);
-  $$('a[data-pi]', box).forEach(a => a.onclick = e => { e.preventDefault(); const t = problems[Number(a.dataset.pi)].el; t.scrollIntoView({ block: 'center' }); t.focus(); });
+  $$('a[data-pi]', box).forEach(a => a.onclick = e => { e.preventDefault(); const t = problems[Number(a.dataset.pi)].el, fs = t.closest('fieldset[data-fold]'); if (fs && fs._setFold) fs._setFold(true); t.scrollIntoView({ block: 'center' }); t.focus(); });
   problems.forEach(x => x.el.addEventListener('input', () => x.el.removeAttribute('aria-invalid'), { once: true }));
   box.scrollIntoView({ block: 'nearest' }); box.focus();
   return false;
@@ -2162,6 +2186,7 @@ async function viewCandidates(v) {
 
 function candidateFields(data) {
   data = data || {};
+  const used = ks => ks.some(k => String(data[k] == null ? '' : data[k]).trim() !== '');
   const lines = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)).map(p => [p.Line_ID, lineLabel(p)]);
   const curLine = data.Line_ID && lineById(data.Line_ID);   // the position the candidate is on, even if it is closed now, so a save keeps the link
   if (curLine && !lines.some(l => l[0] === curLine.Line_ID)) lines.push([curLine.Line_ID, lineLabel(curLine) + ' (' + curLine.Position_Status + ')']);
@@ -2171,20 +2196,20 @@ function candidateFields(data) {
     { k: 'Mobile', l: 'Mobile', hint: '10 digits' }, { k: 'Email', l: 'Email', t: 'email' },
     { k: 'Education', l: 'Education' }, { k: 'Relevant_Experience', l: 'Relevant experience', hint: 'e.g. 6 years' },
     { k: 'Current_Designation', l: 'Current designation' }, { k: 'Current_CTC', l: 'Current CTC', hint: 'e.g. 6.5 LPA' },
-    { section: 'Profile (talent pool)' },
-    { k: 'Function_Area', l: 'Function / area', t: 'select', opts: list('Function_Area') },
-    { k: 'Total_Exp_Years', l: 'Total experience (years)', t: 'number', hint: 'e.g. 6.5' },
-    { k: 'Key_Skills', l: 'Key skills', wide: true, hint: 'e.g. EOT crane maintenance, SAP PM, hydraulics' },
-    { k: 'Current_Company', l: 'Current company' },
-    { k: 'Current_Location', l: 'Current location' }, { k: 'Notice_Days', l: 'Notice period (days)', t: 'number' },
-    { k: 'Expected_CTC', l: 'Expected CTC', hint: 'e.g. 8 LPA' },
     { section: 'Applied for' },
     { k: 'Line_ID', l: 'Linked MRF position', t: 'select', opts: lines, wide: true, hint: 'Leave blank to keep the candidate in the talent pool until a suitable position opens. Only open, offered and on-hold positions are listed.' },
     { k: 'Position', l: 'Position applied for' }, { k: 'Offered_Designation', l: 'Offered designation' },
     { k: 'Dept', l: 'Department', t: 'select', opts: S.boot.depts.map(d => d.dept) },
     { k: 'Source_Channel', l: 'Source', t: 'select', opts: list('Source_Channel') },
     { k: 'Sourced_By', l: 'Sourced by', t: 'select', opts: S.boot.recruiters },
-    { section: 'Interviews' },
+    { section: 'Profile (talent pool)', fold: true, open: used(['Function_Area', 'Total_Exp_Years', 'Key_Skills', 'Current_Company', 'Current_Location', 'Notice_Days', 'Expected_CTC']) },
+    { k: 'Function_Area', l: 'Function / area', t: 'select', opts: list('Function_Area') },
+    { k: 'Total_Exp_Years', l: 'Total experience (years)', t: 'number', hint: 'e.g. 6.5' },
+    { k: 'Key_Skills', l: 'Key skills', wide: true, hint: 'e.g. EOT crane maintenance, SAP PM, hydraulics' },
+    { k: 'Current_Company', l: 'Current company' },
+    { k: 'Current_Location', l: 'Current location' }, { k: 'Notice_Days', l: 'Notice period (days)', t: 'number' },
+    { k: 'Expected_CTC', l: 'Expected CTC', hint: 'e.g. 8 LPA' },
+    { section: 'Interviews', fold: true, open: used(['Tech_Interview_Date', 'Tech_Interview_By', 'Tech_Result', 'HR_Interview_Date', 'HR_Interview_By', 'HR_Result', 'Interview_Remarks']) },
     { k: 'Tech_Interview_Date', l: 'Technical interview date', t: 'date' },
     { k: 'Tech_Interview_By', l: 'Technical interview by', t: 'multi', pref: linePanel(data.Line_ID, 'Tech_Panel'), hint: 'Members of the linked position\u2019s panel are listed first.' },
     { k: 'Tech_Result', l: 'Technical result', t: 'select', opts: list('Interview_Result') },
@@ -2192,12 +2217,12 @@ function candidateFields(data) {
     { k: 'HR_Interview_By', l: 'HR / final interview by (optional)', t: 'multi', pref: linePanel(data.Line_ID, 'Final_Panel') },
     { k: 'HR_Result', l: 'HR result', t: 'select', opts: list('Interview_Result') },
     { k: 'Interview_Remarks', l: 'Interview remarks', t: 'textarea', wide: true },
-    { section: 'Psychometric test (Mettl)' },
+    { section: 'Psychometric test (Mettl)', fold: true, open: used(['Psychometric_Status', 'Psychometric_Date', 'Psychometric_Score', 'Psychometric_Report', 'Psychometric_File']) },
     { k: 'Psychometric_Status', l: 'Test status', t: 'select', opts: ['Scheduled', 'Done', 'Waived'], hint: 'Required for shortlisted Manager & above candidates.' },
     { k: 'Psychometric_Date', l: 'Test date', t: 'date' },
     { k: 'Psychometric_Score', l: 'Score / result' }, { k: 'Psychometric_Report', l: 'Report reference (optional)' },
     { k: 'Psychometric_File', l: 'Psychometric report (attachment)', t: 'file', wide: true },
-    { section: 'Outcome' },
+    { section: 'Outcome', fold: true, open: used(['CV_Box', 'DOJ', 'Notes']) },
     { k: 'CV_Box', l: 'CV box', t: 'select', opts: list('CV_Box') }, { k: 'DOJ', l: 'Date of joining', t: 'date' },
     { k: 'Notes', l: 'Notes', t: 'textarea', wide: true }
   ];
@@ -2390,10 +2415,10 @@ function candidateDrawer(c, preset, parsedIn) {
   if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
-  initMulti(body);
+  initMulti(body); initFolds($('#candForm', body));
   const showParsed = res => {
     parsed = res;
-    const n = applyParsed($('#candForm', body), res);
+    const n = applyParsed($('#candForm', body), res); openFoldsWithValues($('#candForm', body));
     $('#cvFillMsg', body).textContent = res.scanned ? 'No text could be read from this file, even with OCR (the scan may be too faint or blurred). Please type the details; the file is still attached as the CV.'
       : `${n} field${n === 1 ? '' : 's'} filled from ${res.fileName}${res.skipped ? ` (${res.skipped} already had a value and ${res.skipped === 1 ? 'was' : 'were'} left unchanged)` : ''}${res.ocr ? ' by reading the scanned image (OCR). OCR can misread letters and digits, so please check every field' : '. Fields marked \u201ccheck\u201d were guessed; please confirm them'}. The file will be attached as the CV.`;
     if (res.text != null) $('#cvFillMsg', body).insertAdjacentHTML('beforeend', `<details class="cvtext"><summary>Show the text that was read</summary><pre>${esc(res.text.slice(0, 6000)) || '(no text)'}</pre></details>`);
@@ -8341,6 +8366,7 @@ async function viewPipeline(v) {
       ['Job posted', posts.length > 0, posts.length ? posts.map(x => x.Channel).join(', ') : P.docs.readyToPost ? 'ready to post' : 'after the JD and questions are final']];
     const ready = fastRoute() ? [readyAll[0], ['Fast-track route', true, 'No JD or screening questions needed. Call the candidate, send to the department, attach its written confirmation, confirm the hiring, then join and onboard.']] : readyAll;
     const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
+    const boardList = () => !shown.length ? '<p class="hint">No candidates on this position yet.</p>' : `<div class="table-wrap"><table class="pipe-list"><thead><tr><th>Candidate</th><th>Stage</th><th>In stage</th><th>Added by</th><th>Status</th></tr></thead><tbody>${P_STAGES.flatMap(st => shown.filter(a => a.Stage === st)).map(a => `<tr class="pcard ${a.Status !== 'Active' ? 'inactive' : ''}" data-app="${esc(a.App_ID)}"><td><b>${esc(a.cand.name || a.Candidate_ID)}</b><span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span></td><td>${esc(PN(a.Stage))}</td><td>${a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0} d</td><td>${esc(a.owner || '')}</td><td>${a.Status !== 'Active' ? esc(a.Status) : 'Active'}${a.Risk ? ` <span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
     const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
     const hidFast = fastRoute() ? ' hidden' : '';   // v204: the fast-track route needs no JD, screening questions or job posts, so those actions are not offered
     late('#pBody').innerHTML = `
@@ -8356,7 +8382,8 @@ async function viewPipeline(v) {
             </div></div></div></section>
       ${closedSt ? `<div class="note warn-note">${P.line.Position_Status === 'On Hold' ? 'On hold' : 'Closed without a hire (' + esc(P.line.Position_Status) + ')'}${P.line.Closure_Reason ? ': ' + esc(P.line.Closure_Reason) : ''}. This board is read-only${P.line.Position_Status === 'On Hold' ? ' until the position is resumed' : ''}.${P.line.Position_Status === 'On Hold' && owns ? ' <button class="btn sm" id="pResume">Resume position</button>' : ''}</div>` : ''}
       <div id="pTasks"></div>
-      <div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
+      <div class="board-tools"><button type="button" class="btn sm" id="pListToggle" aria-pressed="${f.list ? 'true' : 'false'}" title="Show the candidates as a list, or as stage columns">${f.list ? 'Show stage columns' : 'Show as a list'}</button></div>
+      ${f.list ? boardList() : `<div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
         const cards = shown.filter(a => a.Stage === s);
         return `<section class="col${cards.length ? '' : ' empty'}" role="listitem" aria-label="${PN(s)}${cards.length ? '' : ', no candidates'}" title="${PN(s)}"><header><span>${PN(s)}</span><span class="pcount">${cards.length}</span></header>
           ${cards.map(a => `<button class="pcard ${a.Status !== 'Active' ? 'inactive' : ''} ${a.Stage === 'Shared' && days(a) >= 1 && a.Status === 'Active' ? 'late' : ''}" data-app="${esc(a.App_ID)}">
@@ -8365,7 +8392,8 @@ async function viewPipeline(v) {
             ${a.owner ? `<span class="powner" title="Added by ${esc(a.owner)}"><span class="pown-ini" aria-hidden="true">${esc(a.owner.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase())}</span>${esc(a.owner)}</span>` : ''}
             <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}${a.dnc ? `<span class="dnc-flag" title="${esc(a.dnc.why)}">Do not call</span>` : ''}${a.screen && a.screen.status === 'Complete' ? fitChip(a.screen.band) : ''}</span>
           </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
-      }).join('')}</div>`;
+      }).join('')}</div>`}`;
+    $('#pListToggle').onclick = () => { f.list = !f.list; renderBoard(); };
     $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => { f.cardTab = 'work'; CARD_TL.delete(b.dataset.app); openApp(P.apps.find(a => a.App_ID === b.dataset.app)); });
     menuButton($('#pMenuBtn'), $('#pMenuList'));
     $('#pOpenPos').onclick = () => positionDrawer(lineById(f.line));
