@@ -5322,21 +5322,24 @@ async function viewDailyReview(v) {
     ${list.map(r => {
       const done = r.tasks.filter(t => t.d).length;
       return `<article class="panel rcard ${r.active ? '' : 'idle'}">
-        <header class="rcard-head"><h2>${esc(r.recruiter)}</h2>
+        <header class="rcard-head"><h2>${esc(r.recruiter)}</h2>${r.todo && r.todo.missed.length ? `<span class="badge bad-b" title="Critical to-dos missed on this day">${r.todo.missed.length} missed</span>` : ''}
           <span class="badge ${r.overview ? 'ok-b' : 'warn-b'}">${r.overview ? 'Summary written' + (r.updatedAt ? ' \u00b7 ' + esc(r.updatedAt) : '') : 'No summary written'}</span></header>
         <div class="rchips">${data.stages.includes('Sourced') ? ['Sourced', 'Screened', 'Shared', 'Confirmed', 'Technical', 'HR', 'Offer', 'Joined'].map(k => chip(r.funnel[k], P_NAMES[k].toLowerCase())).join('') : `${chip(r.funnel.CV_Reviewed, 'CVs reviewed')}${chip(r.funnel.CV_Sourced, 'sourced')}${chip(r.funnel.CV_Shared_Dept, 'shared with dept')}${chip(r.funnel.Interviews_Done, 'interviews')}${chip(r.funnel.Selected_Final, 'selected')}${chip(r.funnel.Offers, 'offers')}${chip(r.funnel.Joined, 'joined')}`}${chip(done + '/' + r.tasks.length, 'tasks done')}</div>
-        <div class="two" style="margin-top:14px">
-          <div><h3>Overview</h3>${r.overview ? `<p class="day-text">${esc(r.overview)}</p>` : '<p class="hint">The recruiter has not written an overview for this day.</p>'}
-            <h3>Tasks</h3>${r.tasks.length ? `<ul class="tasks ro">${r.tasks.map(t => `<li class="${t.d ? 'done' : ''}"><span class="tick">${t.d ? '\u2713' : '\u25cb'}</span> ${esc(t.t)}</li>`).join('')}</ul>` : '<p class="hint">No tasks listed.</p>'}</div>
+        <div style="margin-top:14px"><h3>Overview</h3>${r.overview ? `<p class="day-text">${esc(r.overview)}</p>` : '<p class="hint">The recruiter has not written an overview for this day.</p>'}</div>
+        ${todoReviewHtml(r)}
+        <details class="app-fold rdet" data-rec="${esc(r.recruiter)}" style="margin-top:12px"${f.rec || (f.open || {})[r.recruiter] ? ' open' : ''}><summary>Details <span class="sub">${r.tasks.length ? 'tasks ' + done + ' of ' + r.tasks.length + ' \u00b7 ' : ''}recorded work \u00b7 funnel \u00b7 BGV pending \u00b7 CVs by position</span></summary><div class="app-fold-body">
+        <div class="two">
+          <div><h3>Tasks</h3>${r.tasks.length ? `<ul class="tasks ro">${r.tasks.map(t => `<li class="${t.d ? 'done' : ''}"><span class="tick">${t.d ? '\u2713' : '\u25cb'}</span> ${esc(t.t)}</li>`).join('')}</ul>` : '<p class="hint">No tasks listed.</p>'}</div>
           <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
-        ${todoReviewHtml(r)}
         <h3>BGV pending <span class="sub">(as of today)</span></h3><div data-bgvp="${esc(r.recruiter)}"><p class="hint">Loading\u2026</p></div>
         <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
+        </div></details>
       </article>`;
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
   bindFunnelPeople($('#rvFunnel'), data.people, true);
+  $$('details.rdet', v).forEach(d => d.addEventListener('toggle', () => { (f.open = f.open || {})[d.dataset.rec] = d.open; }));
   $('#drMon').onclick = () => { f.mode = 'month'; go('review', false); };
   $('#drCv').onclick = () => cvCompareDialog();
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
