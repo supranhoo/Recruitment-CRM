@@ -37,6 +37,11 @@ function e2eRun_(trash) {
   t('A4 dashboard', function () { const d = apiDashboard(); return typeof d.kpi.open === 'number' ? 'open ' + d.kpi.open : false; });
   t('A5 KPI scorecard', function () { const k = apiKpi(fy, true); return Object.keys(k.defs).length === 8 && !!k.defs.W_FULFILMENT ? 'fy ' + fy : false; });
   t('A6 data checks', function () { return apiDataChecks().length === 16; });
+  t('A6c the backout events cover every line that has a backout date', function () {
+    _tables = {}; const ev = backoutEvents_(), have = {}; ev.forEach(function (e) { have[e.line + '|' + e.date] = true; });
+    const miss = readTable_(T.MRF.name).rows.filter(function (l) { return ymd_(l.Backout_Date) && !have[String(l.Line_ID) + '|' + ymd_(l.Backout_Date)]; });
+    return miss.length === 0 ? ev.length + ' events' : false;
+  });
   t('A6b a handover on a replacement restarts the recruiter clock, the position clock keeps the original start', function () {
     const l = { Receipt_Date: '2026-08-21', Approved_On: '2026-08-21', Assigned_On: '2026-10-30', TAT_Start_From: '2026-08-21' };
     return tatStart_(l) === '2026-10-30' && posStart_(l) === '2026-08-21' && tatStartBasis_(l) === 'assigned' && tatStart_(Object.assign({}, l, { Assigned_On: '2026-08-21' })) === '2026-08-21' ? 'ok' : false;

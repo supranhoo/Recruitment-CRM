@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '50';
+const SCHEMA_VERSION = '51';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -160,6 +160,13 @@ function ensureSchema_() {
       const s = readTable_('Settings', true);
       if (!s.rows.some(function (r) { return r.Key === 'SPLIT_CREDIT_FROM'; })) {
         s.sheet.appendRow(['SPLIT_CREDIT_FROM', '', 'Date (yyyy-mm-dd). From this date a position with a tagged recruiter credits card events to the card\u2019s recruiter and position measures to each tagged recruiter. Empty = lead recruiter only. Positions tagged before the date are not affected.']);
+      }
+    });
+    step_('addColumns_ MRF backouts', function () { addColumns_(T.MRF.name, ['Backout_Count', 'Last_Backout_On']); });
+    step_('BACKOUT_REOPEN_FROM setting', function () {
+      const s = readTable_('Settings', true);
+      if (!s.rows.some(function (r) { return r.Key === 'BACKOUT_REOPEN_FROM'; })) {
+        s.sheet.appendRow(['BACKOUT_REOPEN_FROM', '', 'Date (yyyy-mm-dd). Reserved (v189): from this date a backout is meant to reopen the same MRF instead of raising a replacement MRF. Empty = off. Nothing reads it yet; do not fill it in until the owner announces the release that uses it.']);
       }
     });
     const bad = Object.keys(failed);
