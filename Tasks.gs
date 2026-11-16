@@ -43,8 +43,8 @@ const TASK_RULES_DEFAULT_ = [
   { id: 'joining', title: 'Record the joining', due: 0, crit: 24, missed: true, policy: 'Joining day' },
   { id: 'onboarding', title: 'Complete onboarding (induction and buddy)', due: 0, crit: 48, missed: true, policy: '14.3: buddy on the day of joining' },
   { id: 'checkin', title: 'New-joiner check-in', due: 0, crit: null, missed: false, policy: '14.5: 1st, 2nd and 3rd month for M levels' },
-  { id: 'replacement_next', title: 'Replacement MRF: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5: new MRF after a backout; TAT continues from the original start' },
-  { id: 'backout_reopen', title: 'Backout: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5 (ADR-082): the same MRF is reopened after a backout; TAT continues from the original start' },
+  { id: 'replacement_next', title: 'Replacement MRF: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5: new MRF after a backout; TAT continues from the original start', clears: 'a candidate on the MRF is moved forward after the backout, or the position is offered or closed' },
+  { id: 'backout_reopen', title: 'Backout: move the next candidate forward', due: 0, crit: 72, missed: true, policy: '9.5 (ADR-082): the same MRF is reopened after a backout; TAT continues from the original start', clears: 'a candidate on the MRF is moved forward after the backout, or the position is offered or closed' },
   { id: 'filled_cleanup', title: 'Position filled: close the remaining candidates', due: 0, crit: null, missed: false, policy: 'Reject, hold or move candidates left on a filled position' },
   { id: 'inform_closed', title: 'Inform candidates and panel: position closed', due: 0, crit: null, missed: false, policy: '18: keep candidates informed; position closed without a hire' },
   { id: 'voice_review', title: 'Review the voice screening draft', due: 0, crit: null, missed: false, policy: 'Voice screening: the call is complete; a person checks, rates and completes the screening' },
@@ -66,7 +66,7 @@ function taskRules_() {
     let crit = r.crit;
     if (o.crit !== undefined) crit = o.crit === '' || o.crit === null ? null : Number(o.crit);
     return {
-      id: r.id, title: r.title, policy: r.policy, missed: r.missed, defaultCrit: r.crit,
+      id: r.id, title: r.title, policy: r.policy, clears: r.clears || '', missed: r.missed, defaultCrit: r.crit,
       on: o.on !== false,
       due: o.due !== undefined && o.due !== '' ? Number(o.due) : r.due,
       crit: crit
@@ -106,6 +106,31 @@ function interviewRoundFor_(stage, interviews) {
 function offerTodoApplies_(stage, techResult, interviews) {
   if (stage === 'HR' || stage === 'Docs') return true;
   return stage === 'Technical' && /select|shortlist/i.test(String(techResult || '')) && !hrInterviewOpen_(interviews);
+}
+
+/**
+ * First forward move of a card on each line, on or after a day (v193). A forward move is a Stage_History row whose to-stage is
+ * later than its from-stage; a transfer between lines ('Moved', equal stages) and a withdrawal do not count.
+ * Returns {lineId: [day, ...]} sorted; read once per run from the earliest day asked for.
+ */
+function forwardMovesFrom_(sinceDay) {
+  const by = {}, ms = {};
+  if (!sinceDay) return by;
+  readTableFrom_(T.HIST.name, 'Changed_At', sinceDay).rows.forEach(function (h) {
+    const f = STAGES.indexOf(String(h.From_Stage)), t = STAGES.indexOf(String(h.To_Stage)), d = ymd_(h.Changed_At);
+    if (!d || d < sinceDay || t < 0 || t <= f || !h.Line_ID) return;
+    (by[h.Line_ID] = by[h.Line_ID] || []).push(d);
+    (ms[h.Line_ID] = ms[h.Line_ID] || []).push({ d: d, ms: ms_(h.Changed_At) });
+  });
+  Object.keys(by).forEach(function (k) { by[k].sort(); });
+  Object.defineProperty(by, '_ms', { value: ms, enumerable: false });
+  return by;
+}
+/** The first day a card on the line moved forward on or after the backout day ('' when none yet). */
+function forwardedSince_(moves, lineId, sinceDay) {
+  const list = (moves && moves[lineId]) || [];
+  for (let i = 0; i < list.length; i++) if (list[i] >= sinceDay) return list[i];
+  return '';
 }
 
 function computeTasks_() {
@@ -351,27 +376,36 @@ function computeTasks_() {
   // 9c. BGV tracker cases: consent, chaser, report before joining, review (v-next).
   try { bgvTasks_(add); } catch (e) { console.error('BGV to-dos: ' + e); }
 
-  // Replacement MRFs (policy 9.5): move the next candidate forward.
+  // Replacement MRFs (policy 9.5) and positions reopened after a backout (ADR-082): move the next candidate forward.
+  // The to-do clears once a candidate on the MRF has moved forward since the backout (v193), as well as when the position is offered or closed.
+  const backoutDay = function (l) {
+    if (l.Parent_Line_ID) { const p = lines[l.Parent_Line_ID] || {}; return ymd_(p.Replaced_On) || ymd_(l.Created_At) || today; }
+    return ymd_(l.Last_Backout_On);
+  };
+  let earliest = '';
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
-    if (!l.Parent_Line_ID || positionStatus_(l) !== 'Open') return;
-    const parent = lines[l.Parent_Line_ID] || {};
-    const act = apps.filter(function (a) { return a.Line_ID === id; });
-    add('replacement_next', { key: 'replacement_next|' + id, recruiter: String(l.Recruiter), line: id, app: '',
-      title: 'Replacement ' + (l.MRF_No || id) + ': move the next candidate forward',
-      context: act.length ? act.length + ' active candidate' + (act.length === 1 ? '' : 's') + ' \u00b7 ' + l.Position : 'No active candidates yet \u00b7 ' + l.Position,
-      startMs: ms_(parent.Replaced_On) || ms_(l.Created_At) || now, open: { type: 'pipeline', line: id } });
+    if ((!l.Parent_Line_ID && !ymd_(l.Last_Backout_On)) || positionStatus_(l) !== 'Open') return;
+    const d = backoutDay(l); if (d && (!earliest || d < earliest)) earliest = d;
   });
-
-  // A position reopened after a backout (ADR-082): move the next candidate forward.
+  const moves = forwardMovesFrom_(earliest);
   Object.keys(lines).forEach(function (id) {
-    const l = lines[id], last = ymd_(l.Last_Backout_On);
-    if (!last || positionStatus_(l) !== 'Open') return;
+    const l = lines[id];
+    if (positionStatus_(l) !== 'Open') return;
+    const day = backoutDay(l);
+    if (!day || (!l.Parent_Line_ID && !ymd_(l.Last_Backout_On))) return;
+    if (forwardedSince_(moves, id, day)) return;
     const act = apps.filter(function (a) { return a.Line_ID === id; });
-    add('backout_reopen', { key: 'backout_reopen|' + id + '|' + last, recruiter: String(l.Recruiter), line: id, app: '',
-      title: (l.MRF_No || id) + ': backout on ' + last + ', move the next candidate forward',
-      context: act.length ? act.length + ' active candidate' + (act.length === 1 ? '' : 's') + ' \u00b7 ' + l.Position : 'No active candidates yet \u00b7 ' + l.Position,
-      startMs: ms_(l.Last_Backout_On) || now, open: { type: 'pipeline', line: id } });
+    const ctxt = 'No candidate moved forward yet since the backout on ' + day + (act.length ? ' \u00b7 ' + act.length + ' active' : ' \u00b7 no active candidates') + ' \u00b7 ' + l.Position;
+    if (l.Parent_Line_ID) {
+      add('replacement_next', { key: 'replacement_next|' + id, recruiter: String(l.Recruiter), line: id, app: '',
+        title: 'Replacement ' + (l.MRF_No || id) + ': move the next candidate forward', context: ctxt,
+        startMs: ms_((lines[l.Parent_Line_ID] || {}).Replaced_On) || ms_(l.Created_At) || now, open: { type: 'pipeline', line: id } });
+    } else {
+      add('backout_reopen', { key: 'backout_reopen|' + id + '|' + day, recruiter: String(l.Recruiter), line: id, app: '',
+        title: (l.MRF_No || id) + ': backout on ' + day + ', move the next candidate forward', context: ctxt,
+        startMs: ms_(l.Last_Backout_On) || now, open: { type: 'pipeline', line: id } });
+    }
   });
 
   // Filled positions with candidates still active at earlier stages (joined in the last 60 days).
@@ -910,4 +944,37 @@ function apiSaveTaskRules(list) {
   });
   setSetting_('TASK_RULES_JSON', JSON.stringify(over), 'To-do rule settings (edited in Admin \u2192 Task rules).');
   return apiTaskAdmin();
+}
+
+/**
+ * Read-only dry run (v193): replacement / reopen to-dos shown as open or missed although a candidate had already moved forward.
+ * Lists each stored to-do with the first forward move after its backout and what the corrected figure would be. Changes nothing.
+ */
+function taskRestateRows_() {
+  const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
+  const rows = readTable_(T.TASK.name).rows.filter(function (s) { return s.Rule === 'replacement_next' || s.Rule === 'backout_reopen'; });
+  let earliest = '';
+  rows.forEach(function (s) { const d = ymd_(s.First_Seen); if (d && (!earliest || d < earliest)) earliest = d; });
+  const moves = forwardMovesFrom_(earliest ? addDays_(earliest, -14) : '');
+  const out = [];
+  rows.forEach(function (s) {
+    const l = lines[s.Line_ID] || {}, parts = String(s.Task_Key).split('|');
+    const back = s.Rule === 'backout_reopen' ? parts[2] : ymd_((lines[l.Parent_Line_ID] || {}).Replaced_On) || ymd_(l.Created_At) || ymd_(s.First_Seen);
+    const first = forwardedSince_(moves, s.Line_ID, back);
+    if (!first) return;
+    const critDay = ymd_(s.Critical_At), resDay = ymd_(s.Resolved_At);
+    const wasMissed = !!critDay && (!resDay || resDay >= critDay);
+    const fm = ((moves._ms || {})[s.Line_ID] || []).filter(function (x) { return x.d >= back; }).map(function (x) { return x.ms; }).sort(function (a, b) { return a - b; })[0] || 0;
+    const nowMissed = !!ms_(s.Critical_At) && fm > ms_(s.Critical_At);   // forwarded after it turned critical (to the minute)
+    if (resDay && resDay <= first) return;            // already cleared on or before the forward move
+    out.push({ key: String(s.Task_Key), mrf: String(l.MRF_No || s.Line_ID), recruiter: String(s.Recruiter), backout: back, criticalAt: critDay,
+      firstForward: first, resolvedNow: resDay, resolvedCorrected: first, missedNow: wasMissed, missedCorrected: nowMissed });
+  });
+  return out;
+}
+function apiTaskRestatePreview() {
+  const u = currentUser_();
+  if (!can_(u, 'system')) throw new Error('Only the admin can see this list.');
+  const rows = taskRestateRows_();
+  return { rows: rows, wrongMissed: rows.filter(function (r) { return r.missedNow && !r.missedCorrected; }).length, note: 'Dry run: nothing is changed.' };
 }

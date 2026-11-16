@@ -251,6 +251,10 @@ function dataChecks_() {
   try { bgvLateCases_().forEach(function (x) { bl.items.push(x); }); } catch (e) { }
   const bx = add('bgv_excl_over', 'BGV excluded from the KRA past its release date', 'The former employer\u2019s data was expected by now: chase it, or revoke the exclusion in the BGV tracker.', 'MRF');
   try { bgvExclOverdue_().forEach(function (x) { bx.items.push(x); }); } catch (e) { }
+  const tst = add('todo_stuck', 'To-do still open although a candidate moved forward since the backout', 'The replacement / backout to-do should clear when a candidate on the MRF moves forward (v193). If it is listed, the 30-minute job has not yet resolved it, or the rule is broken.', 'MRF');
+  try {
+    taskRestateRows_().filter(function (r) { return !r.resolvedNow; }).forEach(function (r) { tst.items.push({ id: r.key, label: r.mrf + ' (' + r.recruiter + ')', detail: 'Backout ' + r.backout + ', first forward move ' + r.firstForward }); });
+  } catch (e) { }
   const cbc = add('backout_count', 'Backout count differs from the backouts on the cards', 'A position reopened after a backout keeps Backout_Count; it should equal the number of its cards that are Withdrawn at Offer or Pre-joining with a backout date (ADR-082). Correct the count on the position, or the card\u2019s backout date.', 'MRF');
   try {
     const mrfRows = readTable_(T.MRF.name).rows, boBy = backoutsByLine_(mrfRows.filter(function (l) { return Number(l.Backout_Count) > 0; }), readTable_(T.APP.name).rows);
