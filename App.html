@@ -412,7 +412,7 @@ function setRail(mini, save) {
   $('#shell').classList.toggle('rail-mini', mini);
   const t = $('#railToggle'), label = mini ? 'Expand menu' : 'Collapse menu';
   t.setAttribute('aria-expanded', String(!mini)); t.setAttribute('aria-label', label); t.title = label;
-  $$('#rail a').forEach(el => { if (mini) el.setAttribute('aria-label', el.dataset.label); else el.removeAttribute('aria-label'); });
+  $$('#rail a').forEach(el => { if (mini) { el.setAttribute('aria-label', el.dataset.label); el.removeAttribute('title'); } else { el.removeAttribute('aria-label'); el.title = el.dataset.label; } });
   if (save) { try { localStorage.setItem('bfcl.rail', mini ? 'mini' : 'full'); } catch (e) { } }
 }
 
