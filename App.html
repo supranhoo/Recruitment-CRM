@@ -587,6 +587,28 @@ function openDrawer(title, html, cls) {
   return $('#drawerBody');
 }
 function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/* ---- v204: a small menu button. The list opens under the button, takes the arrow keys (Home / End too), closes on Escape (focus back on the button), Tab,
+   a click outside or a choice. Items are ordinary buttons with role="menuitem"; their own handlers do the work. ---- */
+function menuButton(btn, list) {
+  if (!btn || !list) return;
+  const items = () => [...list.querySelectorAll('[role="menuitem"]')].filter(x => !x.hidden && !x.disabled);
+  const close = focus => { list.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (focus) btn.focus(); };
+  const open = () => { list.hidden = false; btn.setAttribute('aria-expanded', 'true'); const f = items()[0]; if (f) f.focus(); };
+  btn.onclick = e => { e.stopPropagation(); if (list.hidden) open(); else close(true); };
+  btn.onkeydown = e => { if (e.key === 'ArrowDown' && list.hidden) { e.preventDefault(); open(); } };
+  list.addEventListener('keydown', e => {
+    const it = items(), i = it.indexOf(document.activeElement); if (!it.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); it[(i + 1) % it.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); it[(i - 1 + it.length) % it.length].focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); it[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); it[it.length - 1].focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+    else if (e.key === 'Tab') close(false);
+  });
+  list.addEventListener('click', () => close(false));
+  const outside = e => { if (!btn.isConnected) { document.removeEventListener('click', outside); return; } if (!list.hidden && !list.contains(e.target) && e.target !== btn) close(false); };
+  document.addEventListener('click', outside);
+}
 /* ---- v202: check a form before it is sent. Every required field that is empty, and every value the field itself rejects (a date that is not a date, a negative
    number), is listed once at the top of the form with a link that jumps to it; the fields are marked invalid for assistive technology; nothing goes to the
    server until the list is empty. The server keeps its own checks as the second line. Returns true when the form can be sent. ---- */
@@ -8315,12 +8337,18 @@ async function viewPipeline(v) {
     const ready = fastRoute() ? [readyAll[0], ['Fast-track route', true, 'No JD or screening questions needed. Call the candidate, send to the department, attach its written confirmation, confirm the hiring, then join and onboard.']] : readyAll;
     const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
     const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
+    const hidFast = fastRoute() ? ' hidden' : '';   // v204: the fast-track route needs no JD, screening questions or job posts, so those actions are not offered
     late('#pBody').innerHTML = `
       ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${!replaced && Number(P.line.Backout_Count) > 0 ? `<div class="note">${esc(P.line.MRF_No || 'This MRF')} was reopened after ${Number(P.line.Backout_Count) === 1 ? 'a backout' : P.line.Backout_Count + ' backouts'}: ${(P.backouts || []).map(b => `${esc(b.name)} (${fmtDate(b.date)}${b.reason ? ', ' + esc(b.reason) : ''})`).join('; ')}. The TAT keeps running. ${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? '<button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
       <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d, v], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span>${v ? `<button class="linkbtn rview" data-rview="${v[0]}">${v[1]}</button>` : ''}</div></div>`).join('')}</div>
-        <div class="ready-actions"><button class="btn primary" id="pFlow">JD &amp; questions</button>${canEdit ? '<button class="btn" id="pJd">JD</button><button class="btn" id="pJdMake">Create JD</button><button class="btn" id="pQs">Screening questions</button><button class="btn" id="pPost">Job posts</button>' : ''}<button class="btn" id="pOpenPos">Position details / JD</button>${canEdit ? '<button class="btn" id="pClosePos">Close without hiring</button>' : ''}${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}${canWork ? '<button class="btn" id="pShareMany" title="Send several screened candidates to the department in one message, with one comparison of all their screening answers">Share candidates with department</button>' : ''}</div></section>
+        <div class="ready-actions">${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}${canWork ? '<button class="btn" id="pShareMany" title="Send several screened candidates to the department in one message, with one comparison of all their screening answers">Share candidates with department</button>' : ''}
+          <div class="pmenu"><button class="btn" id="pMenuBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="pMenuList">Position \u25be</button>
+            <div class="pmenu-list" id="pMenuList" role="menu" aria-label="Position set-up and details" hidden>
+              <button class="pmenu-item" role="menuitem" id="pFlow"${hidFast}>JD &amp; questions</button>${canEdit ? `<button class="pmenu-item" role="menuitem" id="pJd"${hidFast}>Choose a JD file</button><button class="pmenu-item" role="menuitem" id="pJdMake"${hidFast}>Create JD</button><button class="pmenu-item" role="menuitem" id="pQs"${hidFast}>Screening questions</button><button class="pmenu-item" role="menuitem" id="pPost"${hidFast}>Job posts</button>` : ''}
+              <button class="pmenu-item" role="menuitem" id="pOpenPos">Position details${fastRoute() ? '' : ' / JD'}</button>${canEdit ? '<button class="pmenu-item pmenu-danger" role="menuitem" id="pClosePos">Close without hiring</button>' : ''}
+            </div></div></div></section>
       ${closedSt ? `<div class="note warn-note">${P.line.Position_Status === 'On Hold' ? 'On hold' : 'Closed without a hire (' + esc(P.line.Position_Status) + ')'}${P.line.Closure_Reason ? ': ' + esc(P.line.Closure_Reason) : ''}. This board is read-only${P.line.Position_Status === 'On Hold' ? ' until the position is resumed' : ''}.${P.line.Position_Status === 'On Hold' && owns ? ' <button class="btn sm" id="pResume">Resume position</button>' : ''}</div>` : ''}
       <div id="pTasks"></div>
       <div class="board" role="list">${P_STAGES.filter(s => !fastRoute() || P.fastStages.includes(s) || shown.some(a => a.Stage === s)).map(s => {
@@ -8334,6 +8362,7 @@ async function viewPipeline(v) {
           </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
       }).join('')}</div>`;
     $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => { f.cardTab = 'work'; CARD_TL.delete(b.dataset.app); openApp(P.apps.find(a => a.App_ID === b.dataset.app)); });
+    menuButton($('#pMenuBtn'), $('#pMenuList'));
     $('#pOpenPos').onclick = () => positionDrawer(lineById(f.line));
     $('#pFlow').onclick = () => openDocFlow(f.line, async () => { try { const np = (await Promise.all([refreshLine(f.line), api('apiPipeline', f.line)]))[1]; reload(np); } catch (e) { } });
     $$('[data-rview]', $('#pBody')).forEach(b => b.onclick = () => {
@@ -8653,10 +8682,10 @@ async function viewPipeline(v) {
           ${a.screen ? `<section class="app-sec scr-card"><h3>Screening ${fitChip(a.screen.band)}</h3><p class="scr-cnt"><b>${a.screen.met}</b> of ${a.screen.total} met \u00b7 <b>${a.screen.partly}</b> partly \u00b7 <b>${a.screen.gaps}</b> gaps${a.screen.koFailed.length ? ' \u00b7 <b class="miss">knock-out not met</b>' : ''}</p>
             <p class="sub">${a.screen.status === 'Complete' ? 'Completed' : 'Draft'} ${fmtDate(a.screen.on)} \u00b7 questions v${a.screen.sqVersion}${a.screen.sharedOn ? ' \u00b7 shared with ' + esc(a.screen.sharedWith || 'department') + ' ' + fmtDate(a.screen.sharedOn) : ''}</p>
             <div class="btn-row"><button class="btn sm" id="apScrOpen">Open screening</button>${canWork && active && a.screen.status === 'Complete' ? '<button class="btn sm primary" id="apScrShare">Share with department</button>' : ''}</div></section>`
-            : P.hasFinalSq && canWork && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
+            : P.hasFinalSq && !fastRoute() && canWork && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
-          ${(can('voice_agent') || can('voice_review')) && active ? '<div id="apVoice"></div>' : ''}
+          ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? '<div id="apVoice"></div>' : ''}
           ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? '<div id="apCheckin"></div>' : ''}
           <div id="apBgv"></div>
           ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
