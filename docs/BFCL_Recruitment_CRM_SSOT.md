@@ -1525,6 +1525,12 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit of build 198, release 1: notice period and salary read as numbers** (no schema change; v209; 16 Nov 2026)
+- Finding: candidate rows showed "notice 1900-01-29d" and an expected CTC of "1900-01-05". Cause: the Notice_Days, Expected_CTC and Current_CTC cells held numbers in a Date-formatted cell, so Sheets returned dates (serial 30 is 29 Jan 1900, serial 6 is 5 Jan 1900). It is the same fault Total_Exp_Years had earlier; only that column was repaired then. On the workbook copy 21 cells are affected (17 notice, 4 expected CTC).
+- Effect beyond display: `Number("1900-01-29")` is NaN, so those candidates were dropped by the "Notice up to N days" search, and `lpa_()` read the date as a wrong figure, so the expected-CTC filter and the talent-pool match score were wrong.
+- Fix: `candUndate_` (Db.gs) turns such a Date back into the number on every read of Candidates (a 1900 date is the day count; a later-year date is a "6-8" style range Sheets had turned into a date, read as "6-8"). The row keeps a hidden `_dated` list. Data check `cand_numdate` lists the cells. Admin button "Write the plain values into these cells" (preview, confirmation, one audit line per cell; sets the three columns to plain text; no row deleted; second run says nothing to repair). The Candidates list shows "notice 30 days" and "expected CTC 6 LPA", or "notice: check value" when it is not a number.
+- Tested on the workbook copy: reads give 30 and 6; search keeps the candidate; the repair runs once and then reports 0.
+
 **UX audit batch 2, release 6 of 6: navigation** (no schema change; v208; 19 Nov 2026)
 - Finding 8: "Reassigned positions" was cut in the full-width menu. The full menu is now 244 px wide on screens of 1400 px and more (224 px before); below 1400 px the menu still starts slim by default and keeps 224 px when expanded. Every menu item carries its full name as a tooltip when the menu is full width (the slim menu keeps its own flyout label), so a name that is still cut can be read. No label was renamed: the wider menu was enough.
 - The menu keeps its own scroll bar but now shows a shadow at the top or bottom edge while there is more to scroll to, and on screens under 820 px high the rows are 36 px (were 40) and the group captions shorter, so it scrolls less. The frequent destinations (Overview, My day, Daily review, Positions, Pipeline, Candidates) stay first in the first group.

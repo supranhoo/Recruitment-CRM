@@ -2131,7 +2131,7 @@ async function viewCandidates(v) {
   const rowHtml = c => `<tr data-id="${esc(c.Candidate_ID)}">
       <td>${esc(c.Name)}${c._archived ? ' <span class="badge-arch">Archived</span>' : ''}<span class="sub">${esc(c.Email)}${c.Possible_Duplicate_Of ? ` \u00b7 may duplicate ${esc(c.Possible_Duplicate_Of)}` : ''}${c._archived && c.Last_Activity ? ` \u00b7 last active ${fmtDate(c.Last_Activity)}` : ''}</span></td>
       <td>${esc(c.Position || c.Function_Area || '')}${c._inPipeline ? ' <span class="badge-pipe">In pipeline</span>' : ''}<span class="sub">${esc(c.Dept || (c.Position ? c.Function_Area : '') || '')}${c.Key_Skills ? ' \u00b7 ' + esc(String(c.Key_Skills).slice(0, 60)) : ''}</span></td><td class="num">${esc(c.Mobile)}</td>
-      <td>${c._exp != null ? esc(c._exp) + ' yrs' : esc(c.Relevant_Experience || '')}<span class="sub">${[c.Current_Location, c.Notice_Days !== '' && c.Notice_Days != null ? 'notice ' + c.Notice_Days + 'd' : '', c.Expected_CTC ? 'exp. ' + c.Expected_CTC : ''].filter(Boolean).map(esc).join(' \u00b7 ')}</span></td>
+      <td>${c._exp != null ? esc(c._exp) + ' yrs' : esc(c.Relevant_Experience || '')}<span class="sub">${[c.Current_Location, c.Notice_Days !== '' && c.Notice_Days != null ? (isNaN(Number(c.Notice_Days)) ? 'notice: check value' : 'notice ' + c.Notice_Days + ' days') : '', c.Expected_CTC ? 'expected CTC ' + c.Expected_CTC + (/^\d{1,3}(\.\d+)?$/.test(String(c.Expected_CTC).trim()) ? ' LPA' : '') : ''].filter(Boolean).map(esc).join(' \u00b7 ')}</span></td>
       <td>${esc(c.Tech_Result || '')}</td><td>${esc(c.HR_Result)}</td><td>${esc(c.Sourced_By)}</td>
       <td>${c.CV_File_URL ? '<span class="cv-flag" title="CV on file">CV</span>' : ''}</td></tr>`;
   const bindRows = root => $$('tr[data-id]', root).forEach(tr => { tr.onclick = () => openCandidate(tr.dataset.id); });
@@ -4643,7 +4643,7 @@ async function viewAdmin(v) {
   const total = checks.reduce((s, c) => s + c.count, 0);
   el.innerHTML = `<p style="margin:0 0 14px;color:var(--ink-2)">${total ? `${total} records to look at. Click a record to open and fix it.` : 'No problems found.'}</p>
     ${checks.map(c => `<details class="check" ${c.count ? '' : 'data-ok'}><summary><span class="check-n ${c.count ? '' : 'zero'}">${c.count}</span><span><b>${esc(c.title)}</b><span class="sub">${esc(c.why)}</span></span></summary>
-      ${c.key === 'todo_stuck' && can('system') ? '<div style="margin:8px 0"><button class="btn sm" id="tdFix">Restate to-dos wrongly counted as missed</button> <span class="hint" id="tdMsg" role="status">' + esc(S.tdMsg || '') + '</span></div>' : ''}${c.key === 'daily_dup' && c.count && isLead() ? '<div style="margin:8px 0"><button class="btn sm" id="dupFix">Remove the identical duplicates</button></div>' : ''}${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
+      ${c.key === 'todo_stuck' && can('system') ? '<div style="margin:8px 0"><button class="btn sm" id="tdFix">Restate to-dos wrongly counted as missed</button> <span class="hint" id="tdMsg" role="status">' + esc(S.tdMsg || '') + '</span></div>' : ''}${c.key === 'cand_numdate' && c.count && can('system') ? '<div style="margin:8px 0"><button class="btn sm" id="cnFix">Write the plain values into these cells</button> <span class="hint" id="cnMsg" role="status"></span></div>' : ''}${c.key === 'daily_dup' && c.count && isLead() ? '<div style="margin:8px 0"><button class="btn sm" id="dupFix">Remove the identical duplicates</button></div>' : ''}${c.count ? `<div class="table-wrap"><table><tbody>${c.items.map(i => `<tr data-e="${c.entity}" data-id="${esc(i.id)}"><td class="nw">${esc(i.id)}</td><td>${esc(i.label)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>${c.count > c.items.length ? `<p class="pager">Showing the first ${c.items.length} of ${c.count}.</p>` : ''}` : ''}</details>`).join('')}`;
   if ($('#tdFix')) $('#tdFix').onclick = async e => {
     const btn = e.target, label = 'Restate to-dos wrongly counted as missed', msg = t => { S.tdMsg = t; const m = $('#tdMsg'); if (m) m.textContent = t; };
     busy(btn, true, 'Checking…'); msg('');
@@ -4657,6 +4657,19 @@ async function viewAdmin(v) {
       S.tdMsg = r.restated + ' to-do' + (r.restated === 1 ? '' : 's') + ' restated' + (r.rows && r.rows.length ? ': ' + r.rows.join(', ') : '') + '.';
       busy(btn, false, label); toast(S.tdMsg); S.posStale = true; go('admin', false);
     } catch (err) { msg('Not restated: ' + (err && err.message ? err.message : err)); failed(err, btn, label); }
+  };
+  if ($('#cnFix')) $('#cnFix').onclick = async e => {
+    const btn = e.target, label = 'Write the plain values into these cells', msg = t => { const m = $('#cnMsg'); if (m) m.textContent = t; };
+    busy(btn, true, 'Checking…'); msg('');
+    try {
+      const p = await api('apiCandNumRepairPreview');
+      if (!p.rows.length) { msg('Nothing to repair.'); toast('Nothing to repair.'); return busy(btn, false, label); }
+      busy(btn, false, label);
+      if (!await askConfirm('Write the plain value into ' + p.rows.length + ' cell' + (p.rows.length === 1 ? '' : 's') + ' (for example ' + p.rows.slice(0, 3).map(r => r.name + ': ' + r.col.replace(/_/g, ' ') + ' ' + r.was + ' becomes ' + r.now).join('; ') + ') and set those three columns to plain text? No row is deleted; each change is logged.')) return;
+      busy(btn, true, 'Repairing…');
+      const r = await api('apiCandNumRepairApply');
+      msg(r.repaired + ' cell' + (r.repaired === 1 ? '' : 's') + ' repaired.'); busy(btn, false, label); toast(r.repaired + ' cell' + (r.repaired === 1 ? '' : 's') + ' repaired.'); go('admin', false);
+    } catch (err) { msg('Not repaired: ' + (err && err.message ? err.message : err)); failed(err, btn, label); }
   };
   if ($('#dupFix')) $('#dupFix').onclick = async e => {
     if (!await askConfirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;

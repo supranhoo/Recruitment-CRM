@@ -181,6 +181,7 @@ function dataChecks_() {
   const c10 = add('kpi_gap', 'Joined positions the KPI cannot count', 'A joining date is entered but the position is not marked Offer sent (it stays Open), or it has no start date, so it cannot be timed for Timely closure. Use KPI scorecard \u2192 month \u2192 \u201cWhere are all the positions\u201d to see them.', 'MRF');
   const c13 = add('dates_disagree', 'Position dates do not agree', 'The TAT start is before the MRF received date, the approved / assigned dates are out of order, or a No vacancy / Not needed date sits on a position with another status. The KPI reports use these dates: correct the position.', 'MRF');
   const c12 = add('closed_nodate', 'Not needed / No vacancy without a closing date', 'The date the position was marked Not needed or No vacancy is blank, so the KPI cannot count the months it was worked on. Add the date on the position.', 'MRF');
+  const c15 = add('cand_numdate', 'Notice or salary stored as a date', 'The notice period, expected CTC or current CTC cell holds a date (Sheets turned the number into one). The app reads the number back, so screens and searches are right; an Admin can press the button to write the plain value into the cell and keep Sheets from changing it again.', 'CAND');
   const c11 = add('exp_cell', 'Experience stored as a date or an impossible number', 'The experience cell holds a date, a millisecond number, a negative number or more than 70 years. The app reads the years shown, but correct the cell so the candidate form and imports show it.', 'CAND');
   try {
     const lm = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lm[l.Line_ID] = l; });
@@ -227,6 +228,7 @@ function dataChecks_() {
       if (seen[k] && seen[k] !== c.Candidate_ID) c6.items.push({ id: c.Candidate_ID, label: label, detail: 'Same ' + (k[0] === 'm' ? 'mobile' : 'email') + ' as ' + seen[k] });
       else seen[k] = c.Candidate_ID;
     });
+    if (c._dated) c15.items.push({ id: c.Candidate_ID, label: label, detail: c._dated.map(function (d) { return d.col.replace(/_/g, ' ') + ' stored as ' + d.was + '; the app reads ' + c[d.col]; }).join('; ') });
     const ev = c.Total_Exp_Years;
     if (ev != null && ev !== '') {
       const raw = ev instanceof Date ? NaN : Number(String(ev).replace(/,/g, '')), isNum = !isNaN(raw) && /^\s*-?[\d.,]+\s*$/.test(String(ev));
@@ -391,4 +393,37 @@ function sendSummary_(to, test) {
   MailApp.sendEmail({ to: to.join(','), subject: (test ? '[Test] ' : '') + 'BFCL recruitment weekly summary \u00b7 ' + fmt_(new Date(), TZ, 'd MMM yyyy'),
     htmlBody: html, name: 'BFCL Recruitment CRM' });
   if (!test) PropertiesService.getScriptProperties().setProperty('WEEKLY_LAST_SENT', fmt_(new Date(), TZ, 'd MMM yyyy, HH:mm') + ' to ' + to.join(', '));
+}
+
+/**
+ * Repairs the candidate number cells that Sheets turned into dates (v209). Admin only. Preview first (nothing changes); apply writes the plain
+ * value into each such cell as text and sets the three columns to plain text so Sheets cannot turn them into dates again. One audit line per
+ * cell; no row is deleted or moved; running it again changes nothing.
+ */
+function candNumRepairRows_() {
+  const t = readTable_(T.CAND.name, true), out = [];
+  t.rows.forEach(function (c) { (c._dated || []).forEach(function (d) { out.push({ id: c.Candidate_ID, name: c.Name, col: d.col, was: d.was, now: String(c[d.col]), row: c._row }); }); });
+  return { table: t, rows: out };
+}
+function apiCandNumRepairPreview() {
+  const u = currentUser_();
+  if (!can_(u, 'system')) throw new Error('Only the admin can see this list.');
+  const r = candNumRepairRows_();
+  return { rows: r.rows.map(function (x) { return { id: x.id, name: x.name, col: x.col, was: x.was, now: x.now }; }), note: 'Dry run: nothing is changed.' };
+}
+function apiCandNumRepairApply() {
+  const u = currentUser_();
+  if (!can_(u, 'system')) throw new Error('Only the admin can repair these cells.');
+  return withLock_(function () {
+    const r = candNumRepairRows_();
+    if (!r.rows.length) return { repaired: 0 };
+    const sh = r.table.sheet, heads = r.table.headers, last = Math.max(2, sh.getMaxRows());
+    CAND_NUM_COLS_.forEach(function (h) { const ci = heads.indexOf(h) + 1; if (ci > 0) sh.getRange(2, ci, last - 1, 1).setNumberFormat('@'); });
+    r.rows.forEach(function (x) {
+      sh.getRange(x.row, heads.indexOf(x.col) + 1).setValue(x.now);
+      audit_(u, T.CAND.name, x.id, 'Update', x.col, x.was + ' (stored as a date)', x.now + ' (restored as plain text; v209)');
+    });
+    dropStale_(T.CAND.name);
+    return { repaired: r.rows.length };
+  });
 }
