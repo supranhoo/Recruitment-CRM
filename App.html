@@ -363,6 +363,7 @@ const bootStart = () => {
     el.textContent = String(msg).replace(new RegExp('^ACCESS:\\s*'), '');
   });
   ['input', 'change'].forEach(ev => $('#drawerBody').addEventListener(ev, markDrawerDirty));
+  rowsKeyboardStart();
   $('#drawerClose').addEventListener('click', closeDrawerSafe);
   $('#scrim').addEventListener('click', closeDrawerSafe);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.toastHide) { S.toastHide(); S.toastHide = null; return; } if (e.key === 'Escape' && !document.querySelector('dialog[open]') && $('#drawer').classList.contains('open')) closeDrawerSafe(); });   // Escape cancels the dialog on top, not the drawer under it
@@ -585,11 +586,69 @@ function openDrawer(title, html, cls) {
   return $('#drawerBody');
 }
 function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/* ---- v201: one dialog style. askConfirm / askText replace the browser's confirm() and prompt(): same wording, the app's own look, focus kept inside,
+   Escape cancels, Enter confirms; a destructive action gets a red button and starts on Cancel. They return promises: `if (!(await askConfirm(text))) return;`. ---- */
+function askDialog(build, o) {
+  o = o || {};
+  return new Promise(resolve => {
+    const opener = document.activeElement, d = document.createElement('dialog');
+    d.className = 'pm-dialog ask-dlg'; d.setAttribute('aria-labelledby', 'askTitle'); d.setAttribute('aria-describedby', 'askText');
+    d.innerHTML = `<h2 id="askTitle">${esc(o.title || 'Please confirm')}</h2>${build.html}<p class="ask-err miss" role="alert" hidden></p>
+      <div class="drawer-actions" style="position:static"><button type="button" class="btn" data-ask="no">${esc(o.cancel || 'Cancel')}</button><button type="button" class="btn ${o.danger ? 'danger' : 'primary'}" data-ask="yes">${esc(o.ok || 'OK')}</button></div>`;
+    document.body.appendChild(d);
+    let done = false;
+    const finish = v => { if (done) return; done = true; try { d.close(); } catch (e) { } d.remove(); try { if (opener && opener.isConnected) opener.focus(); } catch (e) { } resolve(v); };
+    const yes = d.querySelector('[data-ask="yes"]'), no = d.querySelector('[data-ask="no"]'), err = d.querySelector('.ask-err');
+    no.onclick = () => finish(build.cancelValue);
+    yes.onclick = () => { const r = build.read ? build.read(d) : { ok: true, value: true }; if (!r.ok) { err.textContent = r.msg; err.hidden = false; const f = d.querySelector('textarea,input'); if (f) f.focus(); return; } finish(r.value); };
+    d.addEventListener('cancel', e => { e.preventDefault(); finish(build.cancelValue); });
+    d.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') { e.preventDefault(); yes.click(); }
+      if (e.key === 'Tab') { const f = [...d.querySelectorAll('button,input,textarea')].filter(x => !x.disabled); if (!f.length) return; const a = f[0], z = f[f.length - 1]; if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); } else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); } }
+    });
+    d.showModal();
+    (build.focus === 'field' && d.querySelector('textarea,input') ? d.querySelector('textarea,input') : (o.danger ? no : yes)).focus();
+  });
+}
+/** A yes / no question. text may hold line breaks. opts: title, ok, cancel, danger. Resolves true or false. */
+function askConfirm(text, opts) {
+  return askDialog({ html: `<p id="askText" class="ask-text">${esc(text)}</p>`, cancelValue: false }, opts);
+}
+/** A question with a typed answer. Resolves the text, or null when cancelled. opts: required (default false), min (characters), title, ok, danger. */
+function askText(question, opts) {
+  opts = opts || {};
+  return askDialog({
+    html: `<p id="askText" class="ask-text">${esc(question)}</p><textarea class="ask-field" rows="3" aria-labelledby="askText" maxlength="500"></textarea>`, cancelValue: null, focus: 'field',
+    read: d => { const v = d.querySelector('textarea').value.trim(); if (opts.required && !v) return { ok: false, msg: 'Please give a short reason.' }; if (opts.min && v.length < opts.min) return { ok: false, msg: 'Please write at least ' + opts.min + ' characters.' }; return { ok: true, value: v }; }
+  }, Object.assign({ title: 'Reason needed', ok: 'Continue' }, opts));
+}
+/* v201: a table row that opens something when clicked (the pointer cursor marks it) can be reached with Tab and opened with Enter or Space. Done once for
+   the whole app: rows are marked as they appear, so no list needs its own code. Rows already focusable, read-only rows and rows with controls keep their behaviour. */
+function rowsKeyboard(root) {
+  $$('tbody tr:not([tabindex]):not(.ro):not([data-kb])', root || document).forEach(tr => {
+    tr.dataset.kb = '1';
+    let c = ''; try { c = getComputedStyle(tr).cursor; } catch (e) { }
+    if (c === 'pointer') tr.setAttribute('tabindex', '0');
+  });
+}
+function rowsKeyboardStart() {
+  let queued = false;
+  const run = () => { queued = false; ['#view', '#drawerBody'].forEach(q => { const r = $(q); if (r) rowsKeyboard(r); }); };
+  const queue = () => { if (!queued) { queued = true; requestAnimationFrame(run); } };
+  ['#view', '#drawerBody'].forEach(q => { const r = $(q); if (r && typeof MutationObserver !== 'undefined') new MutationObserver(queue).observe(r, { childList: true, subtree: true }); });
+  document.addEventListener('keydown', e => {
+    const tr = e.target;
+    if (!tr || tr.tagName !== 'TR' || tr.dataset.kb !== '1' || e.defaultPrevented) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tr.click(); }
+  });
+  queue();
+}
 /* v199: the drawer remembers whether the person has typed or chosen anything since it opened. Closing it from the X, the backdrop, Escape or a Cancel
    button then asks first; closes that follow a save call closeDrawer() directly and never ask. Search boxes and other controls marked data-nodirty do not count. */
 function drawerDirty() { return !!S.drawerDirty; }
-function closeDrawerSafe() {
-  if (drawerDirty() && !confirm('You have changes that are not saved. Discard them and close?')) return false;
+async function closeDrawerSafe() {
+  if (S.closing) return false;
+  if (drawerDirty()) { S.closing = true; const ok = await askConfirm('You have changes that are not saved. Discard them and close?', { title: 'Discard your changes?', ok: 'Discard and close', cancel: 'Keep editing', danger: true }); S.closing = false; if (!ok) return false; }
   closeDrawer(); return true;
 }
 function markDrawerDirty(e) {
@@ -774,7 +833,7 @@ async function findCandidatesDialog(lineId, after) {
     catch (e) { failed(e, b, 'Add to pipeline'); }
   });
   $$('[data-notsuit]', d).forEach(b => b.onclick = async () => {
-    const why = prompt('Why is this CV not suitable? (a short reason)'); if (why === null) return;
+    const why = await askText('Why is this CV not suitable? (a short reason)', { title: 'Reject this CV' }); if (why === null) return;
     busy(b, true);
     try { await api('apiRejectCv', b.dataset.notsuit, lineId, why); b.textContent = 'Rejected'; b.disabled = true; const a = b.parentElement.querySelector('[data-add]'); if (a) a.disabled = true; S.candStale = true; toast('Counted as sourced and reviewed, and rejected'); after && after(); }
     catch (e) { failed(e, b, 'Not suitable'); }
@@ -1467,11 +1526,11 @@ async function exemptSectionInto(el, p, afterChange) {
       <div class="btn-row"><button class="btn" id="texCancel">Cancel</button>${X.canRequest ? '<button class="btn" id="texSend">Send for approval</button>' : ''}${X.canDecide ? '<button class="btn primary" id="texGrant">Grant now</button>' : ''}</div></div></section>`;
     const run = async (b, fn, done) => { if (b) b.disabled = true; try { await fn(); if (done) toast(done); await afterChange(); } catch (e) { toast(e, true); } await load(); };
     $$('[data-nx]', el).forEach(b => b.onclick = () => { const a = b.dataset.nx; run(b, () => api('apiNoticeExtDecide', p.Line_ID, a, ''), a === 'Verify' ? 'Notice extension verified' : 'Old rejection cleared'); });
-    $$('[data-act]', el).forEach(b => b.onclick = () => {
+    $$('[data-act]', el).forEach(b => b.onclick = async () => {
       const a = b.dataset.act, id = b.dataset.id;
       if (a === 'Approve') return run(b, () => api('apiExemptionDecide', id, 'Approve', ''), 'Exemption approved; TAT recalculated');
       if (a === 'Withdraw') return run(b, () => api('apiExemptionWithdraw', id), 'Request withdrawn');
-      const note = prompt(a === 'Reject' ? 'Why is this request rejected?' : 'Why is this exemption revoked?'); if (!note) return;
+      const note = await askText(a === 'Reject' ? 'Why is this request rejected?' : 'Why is this exemption revoked?', { required: true }); if (!note) return;
       run(b, () => a === 'Reject' ? api('apiExemptionDecide', id, 'Reject', note) : api('apiExemptionRevoke', id, note), a === 'Reject' ? 'Request rejected' : 'Exemption revoked; TAT recalculated');
     });
     $$('.tex-up input', el).forEach(inp => inp.onchange = () => { const bad = checkAttachments(inp.closest('label')); if (bad) return toast(bad, true);
@@ -1594,9 +1653,9 @@ function positionDrawer(p) {
   const afterClose = () => { closeDrawer(); S.posStale = true; if (S.view === 'positions' || S.view === 'pipeline' || S.view === 'reconcile') go(S.view, false); };
   if ($('#posClose', body)) $('#posClose', body).onclick = () => closePositionDialog(p, afterClose);
   if ($('#posResume', body)) $('#posResume', body).onclick = () => resumePositionDialog(p, afterClose);
-  if ($('#posRestore', body)) $('#posRestore', body).onclick = async e => { const why = prompt('Why is this position being restored?'); if (!why) return; busy(e.target, true);
+  if ($('#posRestore', body)) $('#posRestore', body).onclick = async e => { const why = await askText('Why is this position being restored?', { required: true }); if (!why) return; busy(e.target, true);
     try { await api('apiRestorePosition', p.Line_ID, why); toast('Position restored.'); afterClose(); } catch (err) { failed(err, e.target); } };
-  if ($('#posUndoInt', body)) $('#posUndoInt', body).onclick = async e => { const why = prompt('Why is this internal fill being undone?'); if (!why) return; busy(e.target, true);
+  if ($('#posUndoInt', body)) $('#posUndoInt', body).onclick = async e => { const why = await askText('Why is this internal fill being undone?', { required: true, danger: true }); if (!why) return; busy(e.target, true);
     try { await api('apiUndoInternalFill', p.Line_ID, why); toast('Internal fill undone; the position is open again.'); afterClose(); } catch (err) { failed(err, e.target); } };
   /* v197: the notice period follows the offer letter date and the expected joining date (joining minus offer) while it is empty or was filled this way;
      a value the recruiter typed that differs is left alone. The result is shown under the field and can always be overwritten. */
@@ -1871,7 +1930,7 @@ async function dailyGrid(box, onRec, fixed) {
   const cut = S.boot.cutover, st = fixed ? { date: fixed.date } : (S.dlGrid = S.dlGrid || {});
   if (!st.date) st.date = today();
   const dirty = () => $$('tr.dg-dirty', box).length;
-  const guard = () => !dirty() || confirm('You have unsaved numbers. Discard them?');
+  const guard = async () => !dirty() || await askConfirm('You have unsaved numbers. Discard them?', { title: 'Discard your numbers?', ok: 'Discard', cancel: 'Keep editing', danger: true });
   const draw = async () => {
     const rec = fixed ? fixed.rec : (S.dlRec = dlDefaultRec()), pk = pipedKeys(st.date), piped = pk.length > 0, day = st.date;
     const cols = METRICS.filter(([k]) => !pk.includes(k));
@@ -1881,8 +1940,8 @@ async function dailyGrid(box, onRec, fixed) {
         <div class="field"><label for="dl_date">Date</label><input id="dl_date" type="date" value="${esc(day)}" max="${today()}"></div></div>`}
         <div id="dgBody">${skRows(4, 5)}</div>`;
     if (!fixed) {
-      $('#dl_rec', box).onchange = e => { if (!guard()) { e.target.value = rec; return; } S.dlRec = e.target.value; onRec(e.target.value); draw(); };
-      $('#dl_date', box).onchange = e => { if (!guard()) { e.target.value = day; return; } st.date = e.target.value || today(); draw(); };
+      $('#dl_rec', box).onchange = async e => { if (!(await guard())) { e.target.value = rec; return; } S.dlRec = e.target.value; onRec(e.target.value); draw(); };
+      $('#dl_date', box).onchange = async e => { if (!(await guard())) { e.target.value = day; return; } st.date = e.target.value || today(); draw(); };
     }
     let rows = [];
     try { rows = await fresh('apiListFunnel', { recruiter: '', from: day, to: day }); } catch (e) { toast(e, true); }
@@ -2129,7 +2188,7 @@ async function cvProfileSection(el, c) {
       ${d.missing.length ? `<p><b>Not found in the CV or the record:</b> ${esc(d.missing.join(', '))}</p>` : ''}
       <div class="drawer-actions" style="position:static"><button class="btn" id="cvpEdit">Review and correct</button><button class="btn" id="cvpRow">Copy as an Excel row</button><button class="btn" id="cvpRe">${R.reviewedBy ? 'Read the CV again…' : 'Read the CV again'}</button></div><span class="hint" id="cvpMsg"></span></section>`;
     $('#cvpEdit', el).onclick = () => edit(R);
-    $('#cvpRe', el).onclick = () => { if (R.reviewedBy && !confirm('This profile was reviewed. Reading the CV again replaces the reviewed facts with a fresh reading. Continue?')) return; build(!!R.reviewedBy); };
+    $('#cvpRe', el).onclick = async () => { if (R.reviewedBy && !await askConfirm('This profile was reviewed. Reading the CV again replaces the reviewed facts with a fresh reading. Continue?')) return; build(!!R.reviewedBy); };
     $('#cvpRow', el).onclick = async () => {
       const cur = emp.find(e => e.current) || emp[0] || {}, edu = p.education.slice().reverse().map(e => [e.level, e.discipline].filter(Boolean).join(' ') + (e.year ? ' ' + e.year : '')).join('; ');
       const row = [c.Name, c.Current_Designation || cur.role || 'Not Found', d.stated !== null ? d.stated : (d.counted.years === null ? 'Not Found' : d.counted.years), c.Current_Location || 'Not Found', p.skills.filter(s => s.cat === 'Technical' || s.cat === 'Functional').slice(0, 12).map(s => s.skill).join(', ') || 'Not Found', c.Current_Company || cur.employer || 'Not Found', edu || 'Not Found', p.certifications.map(x => x.name).join('; ') || 'Not Found'];
@@ -3006,7 +3065,7 @@ async function openJdMaker(lineId, templateId, after) {
     if ($('#jmMasterSave', body)) $('#jmMasterSave', body).onclick = async () => {
       const p = jmPayload(work), n = jmPayloadCount(p), html = jmSummary(p);
       if (!n) { toast('No reusable changes to save.'); return; }
-      const ok = window.confirm('Save these reusable JD Master changes?\n\n' + html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1400));
+      const ok = await askConfirm('Save these reusable JD Master changes?\n\n' + html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1400));
       if (!ok) return;
       const btn = $('#jmMasterSave', body); busy(btn, true, 'Saving\u2026');
       try { await api('apiJdmSaveResponsibilityChanges', work.templateId, p); toast('Reusable responsibilities saved to JD Master.'); openJdMaker(lineId, work.templateId, after); }
@@ -3391,7 +3450,7 @@ function mountSqEditor(host, items, o) {
     const t = s => host.querySelector(`[data-sqe="${s}"]`);
     t('add').onclick = () => { ed.push({ sec: 'R', type: 'text', imp: 'I', q: '', label: '' }); draw(); const qs = $$('.sqe-q', host); if (qs.length) qs[qs.length - 1].focus(); };
     if (t('draft')) t('draft').onclick = async e => {
-      if (ed.length && !confirm('Replace the questions below with a fresh draft from the final JD?')) return;
+      if (ed.length && !await askConfirm('Replace the questions below with a fresh draft from the final JD?')) return;
       e.target.disabled = true; try { ed = await o.draft(); toast(ed.length + ' questions drafted from the final JD. Review and edit before saving.'); draw(); } catch (err) { toast(err, true); e.target.disabled = false; }
     };
     t('save').onclick = async e => {
@@ -3519,7 +3578,7 @@ function renderScreening(d, S, after) {
   };
   if ($('#scrSave', d)) $('#scrSave', d).onclick = e => save(false, e.target);
   if ($('#scrDone', d)) $('#scrDone', d).onclick = e => save(true, e.target);
-  if ($('#scrRestart', d)) $('#scrRestart', d).onclick = async e => { if (!confirm('Start this screening again on the new questions? The current answers are replaced.')) return; e.target.disabled = true; try { renderScreening(d, await api('apiSaveScreening', S.appId, { answers: {}, restart: true }), after); } catch (err) { toast(err, true); e.target.disabled = false; } };
+  if ($('#scrRestart', d)) $('#scrRestart', d).onclick = async e => { if (!await askConfirm('Start this screening again on the new questions? The current answers are replaced.')) return; e.target.disabled = true; try { renderScreening(d, await api('apiSaveScreening', S.appId, { answers: {}, restart: true }), after); } catch (err) { toast(err, true); e.target.disabled = false; } };
   if ($('#scrPdf', d)) $('#scrPdf', d).onclick = async e => { e.target.disabled = true; try { const p = await pdfScreening(S); saveBlob(p.blob, p.name); } catch (err) { toast(err, true); } e.target.disabled = false; };
   if ($('#scrShare', d)) $('#scrShare', d).onclick = () => { d.close(); openShareDept(S.appId, after); };
 }
@@ -4176,7 +4235,7 @@ async function renderExemptAdmin(el) {
     $$('[data-stop]', el).forEach(a => a.onclick = e => e.stopPropagation());
     $$('tr[data-line]', el).forEach(tr => tr.onclick = async e => { if (e.target.closest('button')) return; try { await loadPositions(); const l = lineById(tr.dataset.line); if (l) positionDrawer(l); } catch (err) { toast(err, true); } });
     $$('[data-act]', el).forEach(b => b.onclick = async () => {
-      const a = b.dataset.act, note = a === 'Reject' ? prompt('Why is this request rejected?') : '';
+      const a = b.dataset.act, note = a === 'Reject' ? await askText('Why is this request rejected?', { required: true }) : '';
       if (a === 'Reject' && !note) return; b.disabled = true;
       try { await api('apiExemptionDecide', b.dataset.id, a, note || ''); await refresh(a === 'Approve' ? 'Approved; TAT recalculated' : 'Rejected'); } catch (e) { toast(e, true); b.disabled = false; }
     });
@@ -4510,7 +4569,7 @@ async function viewAdmin(v) {
       const p = await api('apiTaskRestatePreview'), w = p.rows.filter(r => r.missedNow && !r.missedCorrected);
       if (!w.length) { msg('Nothing to restate: already done or no to-do qualifies.'); toast('Nothing to restate.'); return busy(btn, false, label); }
       busy(btn, false, label);
-      if (!confirm('Restate ' + w.length + ' to-do' + (w.length === 1 ? '' : 's') + ' (' + w.map(r => r.mrf + ', ' + r.recruiter).join('; ') + ') as cleared when the first candidate was moved forward, so they no longer count as missed? Each change is logged.')) return;
+      if (!await askConfirm('Restate ' + w.length + ' to-do' + (w.length === 1 ? '' : 's') + ' (' + w.map(r => r.mrf + ', ' + r.recruiter).join('; ') + ') as cleared when the first candidate was moved forward, so they no longer count as missed? Each change is logged.')) return;
       busy(btn, true, 'Restating…');
       const r = await api('apiTaskRestateApply');
       S.tdMsg = r.restated + ' to-do' + (r.restated === 1 ? '' : 's') + ' restated' + (r.rows && r.rows.length ? ': ' + r.rows.join(', ') : '') + '.';
@@ -4518,7 +4577,7 @@ async function viewAdmin(v) {
     } catch (err) { msg('Not restated: ' + (err && err.message ? err.message : err)); failed(err, btn, label); }
   };
   if ($('#dupFix')) $('#dupFix').onclick = async e => {
-    if (!confirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;
+    if (!await askConfirm('Zero the counts of every extra entry that is identical to the first entry of its day? Nothing is deleted; each one is marked as a removed duplicate.')) return;
     busy(e.target, true, 'Removing…');
     try { const r = await api('apiRemoveDuplicateEntries'); toast(r.removed + ' duplicate' + (r.removed === 1 ? '' : 's') + ' removed' + (r.left ? '; ' + r.left + ' with different numbers left for you to check' : '')); S.posStale = true; go('admin', false); } catch (err) { failed(err, e.target, 'Remove the identical duplicates'); }
   };
@@ -5878,7 +5937,7 @@ async function orgPlanPanel(el, head, bind, redo) {
   };
   if ($('#opRep', el)) $('#opRep', el).onclick = async () => { try { await api('apiOrgPlanRestore', 'report'); f.edit = false; toast('A draft was started from the report'); redo(); } catch (x) { toast(x, true); } };
   if ($('#opDisc', el)) $('#opDisc', el).onclick = async () => {
-    if (!confirm('Discard this draft? The plan in force is not affected.')) return;
+    if (!await askConfirm('Discard this draft? The plan in force is not affected.')) return;
     try { await api('apiOrgPlanDiscard', p.draft.id); f.edits = {}; f.warn = null; toast('Draft discarded'); redo(); } catch (x) { toast(x, true); }
   };
   $('#opDown', el).onclick = async e => { busy(e.target, true, 'Preparing…'); try { await orgPlanDownload(p); } catch (x) { toast(x, true); } busy(e.target, false, 'Download Excel'); };
@@ -6466,7 +6525,7 @@ async function bgvGovernTab(el, B, v) {
     $('#gvPurge').onclick = async e => {
       const ids = picks(), reason = $('#gvReason').value.trim();
       if (reason.length < 10) return toast('Give the reason or approval reference (at least 10 characters).', true);
-      if (!confirm(`Purge ${ids.length} case${ids.length === 1 ? '' : 's'}?\n\nTheir files go to the Drive bin and the candidate’s name, findings and notes are blanked. This cannot be undone from the CRM.`)) return;
+      if (!await askConfirm(`Purge ${ids.length} case${ids.length === 1 ? '' : 's'}?\n\nTheir files go to the Drive bin and the candidate’s name, findings and notes are blanked. This cannot be undone from the CRM.`)) return;
       busy(e.target, true, 'Purging…');
       try { const r = await api('apiBgvPurge', ids, reason); toast(`Purged ${r.purged} case${r.purged === 1 ? '' : 's'}, ${r.files} file${r.files === 1 ? '' : 's'} deleted.` + (r.failed.length ? ' Not purged: ' + r.failed.join('; ') : ''), !!r.failed.length); bgvGovernTab(el, B, v); }
       catch (err) { failed(err, e.target, 'Purge now'); }
@@ -6517,7 +6576,7 @@ async function renderVoiceAdmin(el) {
     catch (e) { failed(e, btn, label); }
   };
   $('#vcSave').onclick = e => save({}, e.target, 'Save');
-  if ($('#vcClear')) $('#vcClear').onclick = e => { if (confirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
+  if ($('#vcClear')) $('#vcClear').onclick = async e => { if (await askConfirm('Remove the stored API key? Calls stop working until a new key is entered.')) save({ clearKey: true, apiKey: '' }, e.target, 'Remove the API key'); };
   const cc = document.createElement('div'); cc.id = 'vcCommand'; el.insertBefore(cc, el.firstChild); voiceCommand(cc);
   const host = document.createElement('div'); host.id = 'vcExtras'; el.appendChild(host);
   voiceAdminExtras(host);
@@ -6574,7 +6633,7 @@ function voiceBatchDialog(P, after) {
     busy(e.target, false, 'Check the ticked candidates');
   };
   $('#vbGo', d).onclick = async e => {
-    if (!confirm('Start calling ' + last.ready + ' candidate' + (last.ready === 1 ? '' : 's') + ' now?')) return;
+    if (!await askConfirm('Start calling ' + last.ready + ' candidate' + (last.ready === 1 ? '' : 's') + ' now?')) return;
     busy(e.target, true, 'Starting\u2026');
     try { const r = await api('apiVoiceBatchStart', ticked()); toast('Batch started: ' + r.queued + ' queued' + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + (r.inHours ? '' : '. Calls begin when the calling hours start')); d.close(); if (after) after(); } catch (err) { failed(err, e.target, 'Start the batch'); }
   };
@@ -6603,7 +6662,7 @@ async function voiceAdminExtras(host) {
       <div class="drawer-actions" style="position:static"><button class="btn primary" id="vdAdd">Add to the register</button></div>
       ${D.rows.length ? `<div class="table-wrap" style="margin-top:10px"><table class="bgv-table"><thead><tr><th>Number</th><th>Source</th><th>Note</th><th>Added</th><th></th></tr></thead><tbody>${D.rows.map(r => `<tr><td>${esc(String(r.phone).slice(0, 2))}\u2022\u2022\u2022\u2022\u2022\u2022${esc(String(r.phone).slice(-2))}</td><td>${esc(r.source)}</td><td>${esc(r.note)}</td><td class="nw">${esc(r.on)}<span class="sub">${esc(String(r.by).split('@')[0])}</span></td><td><button type="button" class="btn sm" data-vdrm="${esc(r.phone)}">Remove</button></td></tr>`).join('')}</tbody></table></div>${D.total > D.rows.length ? `<p class="hint">Showing the latest ${D.rows.length} of ${D.total}.</p>` : ''}` : ''}</section>`;
   $$('[data-vbstop]', host).forEach(b => b.onclick = async () => {
-    if (!confirm('Stop the calls still waiting in this batch? A call already placed carries on.')) return;
+    if (!await askConfirm('Stop the calls still waiting in this batch? A call already placed carries on.')) return;
     try { const r = await api('apiVoiceBatchStop', b.dataset.vbstop); toast(r.stopped + ' waiting call' + (r.stopped === 1 ? '' : 's') + ' stopped'); redo(); } catch (err) { toast(err, true); }
   });
   $('#vaSave', host).onclick = async e => {
@@ -6616,7 +6675,7 @@ async function voiceAdminExtras(host) {
     try { const r = await api('apiVoiceDndAdd', $('#vdText', host).value, $('#vdNote', host).value); toast(r.added + ' added' + (r.already ? ', ' + r.already + ' already on the list' : '') + (r.badCount ? ', ' + r.badCount + ' not valid numbers' : '')); redo(); } catch (err) { failed(err, e.target, 'Add to the register'); }
   };
   $$('[data-vdrm]', host).forEach(b => b.onclick = async () => {
-    const why = prompt('Why is this number being taken off the list?'); if (why === null) return;
+    const why = await askText('Why is this number being taken off the list?', { title: 'Take the number off the list' }); if (why === null) return;
     try { await api('apiVoiceDndRemove', b.dataset.vdrm, why); toast('Removed'); redo(); } catch (err) { toast(err, true); }
   });
 }
@@ -6657,7 +6716,7 @@ function dncBanner(dnc, ref) {
 function dncUndo(root, ref, done) {
   const b = $('[data-dnc-undo]', root); if (!b) return;
   b.onclick = async e => {
-    const why = prompt('Why is this number being taken off the Do Not Disturb register?'); if (!why) return;
+    const why = await askText('Why is this number being taken off the Do Not Disturb register?', { required: true }); if (!why) return;
     busy(e.target, true, 'Working\u2026');
     try { await api(ref.app ? 'apiVoiceDndUnmark' : 'apiVoiceDndUnmarkCandidate', ref.app || ref.cand, why); toast('The number is off the register.'); await done(); }
     catch (err) { failed(err, e.target, 'Undo'); }
@@ -6700,9 +6759,9 @@ async function voiceCardSection(el, a, P) {
     if (dk.listOnly) voicePlanDesk(a, dk, el, P); else legacy();
   };
   if ($('#vcFuPrev', el)) $('#vcFuPrev', el).onclick = e => openDesk(e.target, true, () => run(true, e.target, true));
-  if ($('#vcFu', el)) $('#vcFu', el).onclick = e => openDesk(e.target, true, () => { if (confirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); });
+  if ($('#vcFu', el)) $('#vcFu', el).onclick = e => openDesk(e.target, true, async () => { if (await askConfirm('Call ' + a.cand.name + ' again now to ask only the questions that still have no answer?')) run(false, e.target, true); });
   $('#vcDnc', el).onclick = async e => {
-    if (!confirm('Add ' + a.cand.name + '\u2019s number to the Do Not Disturb register? The voice agent will never call it.')) return;
+    if (!await askConfirm('Add ' + a.cand.name + '\u2019s number to the Do Not Disturb register? The voice agent will never call it.')) return;
     busy(e.target, true); try { const r = await api('apiVoiceDndMark', a.App_ID, 'Marked from the card'); toast(r.added ? 'Added to the register' : 'Already on the register'); } catch (err) { toast(err, true); } busy(e.target, false, 'Do not call this number');
   };
   if (a.dnc) {
@@ -6711,7 +6770,7 @@ async function voiceCardSection(el, a, P) {
     dncUndo(el, { app: a.App_ID }, async () => { a.dnc = null; await voiceCardSection(el, a, P); });
   }
   $('#vcPrev', el).onclick = e => run(true, e.target);
-  $('#vcGo', el).onclick = e => openDesk(e.target, false, () => { if (confirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); });
+  $('#vcGo', el).onclick = e => openDesk(e.target, false, async () => { if (await askConfirm('Call ' + a.cand.name + ' now to ask the screening questions?')) run(false, e.target); });
 }
 /** The call-plan desk: tick which questions the bot asks, in which order and wording, before the call is placed. */
 function voicePlanDesk(a, dk, el, P) {
@@ -6762,7 +6821,7 @@ function voicePlanDesk(a, dk, el, P) {
   };
   $('#dkGo', d).onclick = async e => {
     const n = plan().ids.length;
-    if (!confirm('Call ' + dk.candidate + ' now and ask ' + n + (n === 1 ? ' question' : ' questions') + '?')) return;
+    if (!await askConfirm('Call ' + dk.candidate + ' now and ask ' + n + (n === 1 ? ' question' : ' questions') + '?')) return;
     busy(e.target, true, 'Calling…');
     try { await api('apiVoiceStartScreening', a.App_ID, { followUp: dk.followUp, plan: plan() }); toast('The call has been placed.'); d.close(); voiceCardSection(el, a, P); }
     catch (err) { failed(err, e.target, 'Place the call'); }
@@ -6807,7 +6866,7 @@ function voiceResultDialog(r, ctx) {
   d.addEventListener('change', e => { if (e.target.classList.contains('vr-r')) left(); });
   const collect = () => { const o = {}; rows().forEach(t => { const a = $('.vr-a', t).value.trim(), rt = t.dataset.sec === 'P' ? '' : $('.vr-r', t).value; if (a || rt) o[t.dataset.id] = { a, r: rt }; }); return o; };
   const send = async (complete, btn, label) => {
-    if (complete) { const n = left(); if (n) return toast('Rate the remaining ' + n + ' (highlighted) first. Every eligibility and role-fit question needs a rating, even one you could not ask.', true); if (!confirm('Complete the screening of ' + (ctx.name || 'this candidate') + ' from this call and move them to Screened?')) return; }
+    if (complete) { const n = left(); if (n) return toast('Rate the remaining ' + n + ' (highlighted) first. Every eligibility and role-fit question needs a rating, even one you could not ask.', true); if (!await askConfirm('Complete the screening of ' + (ctx.name || 'this candidate') + ' from this call and move them to Screened?')) return; }
     busy(btn, true, 'Saving…');
     try {
       await api('apiVoiceReviewSave', c.id, { answers: collect(), complete: !!complete });
@@ -7049,7 +7108,7 @@ async function renderPolicyAdmin(el) {
     ${r.notCovered.length ? `<div class="table-wrap"><table><thead><tr><th>Question</th><th>Asked by</th><th>On</th></tr></thead><tbody>${r.notCovered.map(x => `<tr style="cursor:default"><td>${esc(x.q)}</td><td>${esc(x.by)}</td><td>${esc(x.at)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">None yet.</p>'}`;
   $('#plAdd', el).onclick = () => policyAddDrawer(live, () => renderPolicyAdmin(el));
   $$('[data-wd]', el).forEach(b => b.onclick = async () => {
-    const why = prompt('Why is this policy withdrawn? (at least 10 characters)'); if (!why) return;
+    const why = await askText('Why is this policy withdrawn? (at least 10 characters)', { required: true, min: 10, danger: true }); if (!why) return;
     busy(b, true, 'Withdrawing…');
     try { await api('apiPolicyWithdraw', b.dataset.wd, why); toast('Policy withdrawn.'); renderPolicyAdmin(el); } catch (e) { failed(e, b, 'Withdraw'); }
   });
@@ -8636,7 +8695,7 @@ async function viewPipeline(v) {
         try { np = await api('apiMoveStage', a.App_ID, next, payload); }
         catch (e0) {
           const m0 = String((e0 && e0.message) || e0).replace(/^Error:\s*/, '');
-          if (!m0.startsWith('BGV open:') || !confirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
+          if (!m0.startsWith('BGV open:') || !await askConfirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
           payload.bgvAck = true; np = await api('apiMoveStage', a.App_ID, next, payload);
         }
         if (!uploaded && $$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
