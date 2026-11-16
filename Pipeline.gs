@@ -455,8 +455,22 @@ function apiSetAppStatusRun_(appId, status, reason, backoutDate) {
     patch.Backout_Date = when; patch.Backout_Reason = clean_(String(reason || ''));
   }
   if (!backout) {
+    // v198: a candidate who holds the offer holds the position's offer details too. On hold at Offer / Pre-joining releases them (the position is Open again);
+    // reactivating restores them from the card, as long as nobody else holds the offer (checked above).
+    const atOffer = ['Offer', 'Prejoin'].indexOf(stage) >= 0, wasHold = String(app.Status) === 'On hold';
+    const release = status === 'On hold' && atOffer && String(app.Status) === 'Active';
+    const restore = status === 'Active' && atOffer && wasHold && !!ymd_(app.Offer_Date) && String(line.Offer_Sent || '').toUpperCase() !== 'YES';
     update_(T.APP, appId, patch, u);
-    appendHistory_(app, stage, stage, status, reason, u);
+    if (release) {
+      const mp = { Offer_Sent: 'No', Offer_Date: '', EDOJ: '' };
+      if (String(line.Candidate_ID || '') === String(app.Candidate_ID)) mp.Candidate_ID = '';
+      update_(T.MRF, line.Line_ID, mp, u);
+      bgvTouchLine_(line.Line_ID);
+    } else if (restore) {
+      update_(T.MRF, line.Line_ID, { Offer_Sent: 'Yes', Offer_Date: app.Offer_Date, EDOJ: app.EDOJ || line.EDOJ || '', Candidate_ID: app.Candidate_ID }, u);
+      bgvTouchLine_(line.Line_ID);
+    }
+    appendHistory_(app, stage, stage, status, (release ? 'Offer released on the position. ' : restore ? 'Offer restored on the position. ' : '') + String(reason || ''), u);
     return boardAfterWrite_(app.Line_ID);
   }
   // One backout is one piece of work: under one lock, and a retry after an interruption finishes the replacement

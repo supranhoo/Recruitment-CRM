@@ -255,6 +255,14 @@ function dataChecks_() {
   try {
     taskRestateRows_().filter(function (r) { return !r.resolvedNow; }).forEach(function (r) { tst.items.push({ id: r.key, label: r.mrf + ' (' + r.recruiter + ')', detail: 'Backout ' + r.backout + ', first forward move ' + r.firstForward }); });
   } catch (e) { }
+  const sto = add('offer_no_holder', 'Position shows an offer but no active candidate holds it', 'Offer sent is Yes and the joining is not recorded, yet no active card is at Offer, Pre-joining or Joined (v198). Put the card back, reactivate it, or clear the offer on the position.', 'MRF');
+  try {
+    const live = {}; readTable_(T.APP.name).rows.forEach(function (a) { if (String(a.Status) === 'Active' && STAGES.indexOf(String(a.Stage)) >= STAGES.indexOf('Offer')) live[String(a.Line_ID)] = true; });
+    readTable_(T.MRF.name).rows.forEach(function (l) {
+      if (positionStatus_(l) !== 'Offered' || String(l.Fill_Type || '') === 'Internal' || live[String(l.Line_ID)]) return;
+      sto.items.push({ id: l.Line_ID, label: String(l.MRF_No) + ' \u00b7 ' + l.Position + ' (' + l.Recruiter + ')', detail: 'Offer date ' + (ymd_(l.Offer_Date) || 'not recorded') + ', candidate ' + (l.Candidate_ID || 'none') });
+    });
+  } catch (e) { }
   const cbc = add('backout_count', 'Backout count differs from the backouts on the cards', 'A position reopened after a backout keeps Backout_Count; it should equal the number of its cards that are Withdrawn at Offer or Pre-joining with a backout date (ADR-082). Correct the count on the position, or the card\u2019s backout date.', 'MRF');
   try {
     const mrfRows = readTable_(T.MRF.name).rows, boBy = backoutsByLine_(mrfRows.filter(function (l) { return Number(l.Backout_Count) > 0; }), readTable_(T.APP.name).rows);
