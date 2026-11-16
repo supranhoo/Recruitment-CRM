@@ -336,7 +336,7 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   const u = currentUser_(); ensureSchema_();
   const t = docTarget_(entity, id, field);
   if (entity === 'MRF' && !canEditLine_(u, t.rec)) throw new Error('Only ' + t.rec.Recruiter + ' or a TA Lead or the Head of HR can attach files to this position.');
-  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !canEditLine_(u, l) && !(can_(u, 'onboard') && isFast_(l))) throw new Error('Only ' + l.Recruiter + ' or a TA Lead or the Head of HR can attach files for this position.'); }
+  if (entity === 'APP') { const l = lineOf_(t.rec.Line_ID); if (l && !onPosition_(u, l) && !(can_(u, 'onboard') && isFast_(l))) throw new Error('Only ' + positionPeople_(l) + ', a TA Lead or the Head of HR can attach files for this position.'); }
   if (entity === 'TEX') {
     const l = lineOf_(t.rec.Line_ID);
     if (l && !canEditLine_(u, l) && !can_(u, 'tat_exempt')) throw new Error('Only ' + l.Recruiter + ', a TA Lead or the Head of HR can attach proof for this exemption.');
@@ -344,7 +344,7 @@ function apiUploadDoc(entity, id, field, fileName, mimeType, base64) {
   }
   if (entity === 'CAND') {
     const l = t.rec.Line_ID ? lineOf_(t.rec.Line_ID) : null;
-    if (!(isLead_(u) || (l ? canEditLine_(u, l) : String(t.rec.Created_By || '').toLowerCase() === u.email))) throw new Error('Only the recruiter of this candidate\u2019s position, a TA Lead or the Head of HR can attach this file.');
+    if (!(isLead_(u) || (l ? onPosition_(u, l) : String(t.rec.Created_By || '').toLowerCase() === u.email))) throw new Error('Only the recruiters on this candidate\u2019s position, a TA Lead or the Head of HR can attach this file.');
   }
   if (entity === 'BGV') { bgvRequireWork_(u, t.rec); if (t.rec.Purged_On) throw new Error('This case was purged under the retention rule. Files cannot be added.'); }
   if (DOC_TYPES.indexOf(mimeType) < 0) throw new Error('Attach the file as PDF, Word, JPG or PNG.');
@@ -365,7 +365,7 @@ function docReadGuard_(u, entity, rec, field) {
   if (entity === 'BGV') { bgvRequireWork_(u, rec); return; }
   if (entity === 'APP' || entity === 'TEX') {
     const l = lineOf_(rec.Line_ID);
-    const ok = l && (canEditLine_(u, l) || (entity === 'APP' && can_(u, 'onboard') && isFast_(l)) || (entity === 'TEX' && can_(u, 'tat_exempt')));
+    const ok = l && (onPosition_(u, l) || (entity === 'APP' && can_(u, 'onboard') && isFast_(l)) || (entity === 'TEX' && can_(u, 'tat_exempt')));
     if (!ok) throw new Error('You do not have access to this file. Only ' + (l ? l.Recruiter + ', ' : '') + 'a TA Lead or the Head of HR can open it.');
     return;
   }
