@@ -1525,6 +1525,12 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Audit of build 198, release 2: the open drawer behaves as a dialog** (no schema change; v210; 16 Nov 2026)
+- Finding: with a form drawer open (Add candidate and the others), Tab moved into the page behind it, and closing the drawer left focus nowhere. Cause: `openDrawer` only moved focus in; nothing held it there or put it back.
+- Fix: while the drawer is open the page behind (menu and view) is inert; Tab and Shift+Tab wrap inside the drawer (and the CV preview pane when it is open beside it); the drawer is marked as a dialog (`role="dialog"`, `aria-modal`, named by its title); on close, focus returns to the control that opened it, or to the page area if that control is gone. Opening a second drawer from the first keeps the original opener. Escape, the backdrop and Cancel still ask before discarding edits (v199). The question dialogs are native and unchanged.
+- Menu at 200% zoom: not reproduced. At 640 x 700, 640 x 360, 640 x 300 and 390 x 700 the bottom bar sits fully inside the window (56 px, bottom edge at the window edge) with the real stylesheet. Nothing was changed. If it still looks hidden live, send a screenshot with the browser window size and zoom.
+- Tested in Chromium with the real drawer code: focus enters the first field, never leaves, wraps both ways, is pulled back from the page, returns to the opener, falls back to the page area when the opener is gone.
+
 **Audit of build 198, release 1: notice period and salary read as numbers** (no schema change; v209; 16 Nov 2026)
 - Finding: candidate rows showed "notice 1900-01-29d" and an expected CTC of "1900-01-05". Cause: the Notice_Days, Expected_CTC and Current_CTC cells held numbers in a Date-formatted cell, so Sheets returned dates (serial 30 is 29 Jan 1900, serial 6 is 5 Jan 1900). It is the same fault Total_Exp_Years had earlier; only that column was repaired then. On the workbook copy 21 cells are affected (17 notice, 4 expected CTC).
 - Effect beyond display: `Number("1900-01-29")` is NaN, so those candidates were dropped by the "Notice up to N days" search, and `lpa_()` read the date as a wrong figure, so the expected-CTC filter and the talent-pool match score were wrong.
