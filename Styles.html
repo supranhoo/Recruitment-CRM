@@ -385,11 +385,14 @@ tr.sel td{background:#EEF2F7}
 .app-grid{align-items:start}
 /* Candidate card: nearly full screen, three columns (next step | other actions and follow-ups | details and history). */
 .pm-dialog.app-dlg{width:min(1680px,97vw);max-height:94vh}
-.app-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;margin-top:4px}
+.app-grid3{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:start;margin-top:4px}
 .app-grid3 .app-sec .grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .app-grid3 .app-sec .grid .wide{grid-column:auto}.app-grid3 .app-sec .grid textarea{min-height:40px}
-@media (max-width:1300px){.app-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}.app-grid3>div:last-child{grid-column:1/-1}}
-@media (max-width:760px){.app-grid3{grid-template-columns:1fr}}
+@media (max-width:1000px){.app-grid3{grid-template-columns:1fr}}
+.app-now{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:10px 0 14px;padding:9px 14px;border-radius:var(--r-md);background:var(--line-2);color:var(--ink)}.app-now-stage{font-weight:700;font-size:16px;color:var(--navy)}
+.app-fold{border:1px solid var(--line);border-radius:var(--r-md);margin:0 0 12px;background:#fff}.app-fold>summary{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-weight:600;list-style:none}.app-fold>summary::-webkit-details-marker{display:none}
+.app-fold>summary::before{content:"\25B8";color:var(--muted);transition:transform .15s}.app-fold[open]>summary::before{transform:rotate(90deg)}.app-fold>summary:focus-visible{outline:2px solid #2563eb;outline-offset:-2px;border-radius:var(--r-md)}
+.app-fold>summary .sub{font-weight:400}.app-fold-body{padding:0 14px 12px}.app-fold-body .app-sec,.app-fold>.app-sec{border:0;padding:0;margin:0 0 8px}#apIvSec>h3:first-child{display:none}.app-exc>.app-sec{padding:0 14px 12px;margin:0}
 .app-sec{border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;margin-bottom:12px}
 .app-sec h3{margin:0 0 10px;font-size:15px;display:flex;gap:8px;align-items:center}
 .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}

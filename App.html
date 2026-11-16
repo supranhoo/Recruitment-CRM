@@ -587,6 +587,11 @@ function openDrawer(title, html, cls) {
   return $('#drawerBody');
 }
 function closeDrawer() { hideCv(); S.drawerDirty = false; $('#drawer').className = 'drawer'; $('#drawer').setAttribute('aria-hidden', 'true'); hideScrim(); }
+/* ---- v205: the candidate dialog's folds. appFold wraps a supporting tool in a native <details>; foldOpen says for which stages it starts open, so the stage's own
+   tools are in view and the rest are one click away. The containers inside keep their ids, so the code that fills them is unchanged. ---- */
+const FOLD_OPEN_AT = { voice: ['Sourced', 'Screened'], bgv: ['Offer', 'Prejoin', 'Joined'], ctc: ['Docs', 'Offer'], checkin: ['Prejoin', 'Joined'], interview: ['Confirmed', 'Technical', 'HR'] };
+function foldOpen(kind, stage) { return (FOLD_OPEN_AT[kind] || []).includes(String(stage)); }
+function appFold(title, inner, open, cls) { return `<details class="app-fold ${cls || ''}"${open ? ' open' : ''}><summary>${esc(title)}</summary><div class="app-fold-body">${inner}</div></details>`; }
 /* ---- v204: a small menu button. The list opens under the button, takes the arrow keys (Home / End too), closes on Escape (focus back on the button), Tab,
    a click outside or a choice. Items are ordinary buttons with role="menuitem"; their own handlers do the work. ---- */
 function menuButton(btn, list) {
@@ -8649,6 +8654,7 @@ async function viewPipeline(v) {
     const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Actual_DOJ && ['Joined', 'Onboarded'].includes(a.Stage) ? '\u00b7 <b>Joined on ' + esc(fmtDate(a.Actual_DOJ)) + '</b> ' : ''}${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
       <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); const skipped = s === 'HR' && !fastRoute() && k < i && !reached[s]; const inner = `<span>${PN(s)}</span><small>${esc(reached[s] || (skipped ? 'not held' : ''))}</small>`; const tk = lead && CARD_TAB_OF[s] && cardTabs.some(t => t.k === CARD_TAB_OF[s]) ? CARD_TAB_OF[s] : ''; return `<li class="${skipped ? 'done skip' : k < i ? 'done' : k === i ? 'now' : ''}${tk && tk === curTab ? ' sel' : ''}">${tk ? `<button type="button" class="trk-btn" data-tab="${tk}" title="See where this step was updated">${inner}</button>` : inner}</li>`; }).join('')}</ol>
+      <div class="app-now" role="group" aria-label="Where this candidate is now"><span class="app-now-stage">${esc(PN(a.Stage))}</span><span>${a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0} days in this stage</span>${active && next ? `<span>Next step: <b>${esc(PN(next))}</b></span>` : active ? '<span>Final stage</span>' : `<span class="miss">${esc(a.Status)}</span>`}${a.Risk && active ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</div>
       ${lead ? `<div class="tabs card-tabs" role="tablist" aria-label="Where this candidate was updated">${[{ k: 'work', l: 'Work' }].concat(cardTabs).map(t => `<button type="button" role="tab" data-tab="${t.k}" aria-selected="${t.k === curTab}" tabindex="${t.k === curTab ? 0 : -1}" aria-controls="${t.k === 'work' ? 'apTabWork' : 'apTabDetail'}">${esc(t.k === 'work' ? 'Work' : tabName(t))}</button>`).join('')}</div>` : ''}
       ${lead ? `<div id="apTabWork" role="tabpanel"${curTab === 'work' ? '' : ' hidden'}>` : ''}
       <div class="app-grid3">
@@ -8657,6 +8663,7 @@ async function viewPipeline(v) {
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apScreen">${a.screen ? 'Continue screening' : 'Record screening'}</button></div></section>` : ''}
           ${canNext(next) && active && next && !(next === 'Screened' && P.hasFinalSq) ? `<section class="app-sec"><h3>Next: ${PN(next)}</h3>${fastRoute() ? `<p class="hint">${esc(FAST_HINTS[next] || '')}</p>` : ''}${hrOptional ? `<p class="hint">${hr ? 'Optional: record an HR interview only if one was held.' : 'The HR interview is optional: the recruiter can discuss with the candidate while verifying documents.'}</p>` : ''}<div id="apNext">${wrapForm(form(nextFields, stageDefaults(next, a)))}</div>
             <div class="drawer-actions" style="position:static"><button class="btn primary" id="apMove">${fastRoute() ? esc(FAST_BTN[next] || 'Move to ' + PN(next)) : 'Move to ' + PN(next)}</button>${hrOptional ? (hr ? '<button class="btn sm" id="apHrBack" type="button">No HR interview: back to Documents verified</button>' : '<button class="btn sm" id="apHr" type="button">Record an HR interview (optional)</button>') : ''}</div></section>` : ''}
+          ${(() => { const h = interviewSecHtml(a, canWork && active); return h ? appFold('Interviews', h, foldOpen('interview', a.Stage)) : ''; })()}
           ${fastRoute() && active && (canWork || onboardOnly) ? `<section class="app-sec"><h3>Papers</h3><p class="hint">Attach or replace the papers at any time.</p><div id="apPapers">${wrapForm(form([{ k: 'Dept_Confirm_File', l: 'Department\u2019s written confirmation', t: 'file', wide: true }, { k: 'Offer_Letter_File', l: 'Offer letter (if any)', t: 'file', wide: true }, { k: 'Appointment_Letter_File', l: 'Appointment letter', t: 'file', wide: true }, { k: 'Docs_File', l: 'Joining documents', t: 'file', wide: true }], a))}</div>
             <div class="drawer-actions" style="position:static"><button class="btn" id="apPapersUp">Upload chosen files</button></div></section>` : ''}
           ${['Offer', 'Prejoin', 'Joined'].includes(a.Stage) ? `<section class="app-sec"><h3>Joining follow-ups ${a.Risk ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</h3>
@@ -8665,10 +8672,7 @@ async function viewPipeline(v) {
               { k: 'response', l: 'What the candidate said', wide: true }, { k: 'risk', l: 'Risk of not joining', t: 'select', opts: ['Green', 'Amber', 'Red'], noBlank: true },
               { k: 'next', l: 'Next check-in', t: 'date' }, { k: 'note', l: 'Note', wide: true }], { date: today(), mode: 'Call', risk: a.Risk || 'Green', next: daysAhead(3) }))}</div>
               <div class="drawer-actions" style="position:static"><button class="btn" id="apFuSave">Log check-in</button></div>` : ''}</section>` : ''}
-        </div>
-        <div>
-          ${interviewSecHtml(a, canWork && active)}
-          ${canAct(a) ? `<section class="app-sec"><h3>Other actions</h3><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
+          ${canAct(a) ? `<details class="app-fold app-exc"${active ? '' : ' open'}><summary>Other actions <span class="sub">hold, reject, back out, correct</span></summary><section class="app-sec"><div class="field"><label for="apReason">Reason</label><input id="apReason" placeholder="Required to reject, hold or withdraw"></div>
             ${active && ['Offer', 'Prejoin'].includes(a.Stage) ? `<div class="field" style="margin-top:8px"><label for="apBoDate">Backout date</label><input id="apBoDate" type="date" value="${today()}" max="${today()}"></div>
               <div class="field" style="margin-top:8px"><label for="apEdoj">Expected joining date</label><div class="rc-act"><input id="apEdoj" type="date" value="${esc(a.EDOJ || P.line.EDOJ || '')}"><button class="btn sm" id="apEdojSave">Change</button></div></div>
               <p class="hint" id="apBoHint">${esc(backoutHint(P.line, P.reopenFrom, today()))}</p>` : ''}
@@ -8676,7 +8680,7 @@ async function viewPipeline(v) {
             ${isLead() ? `<details class="rc-keep" style="margin-top:10px"><summary>Linked in error? (head and admin)</summary><div class="rc-act"><input id="apUnlinkWhy" placeholder="Reason for the correction (required)" aria-label="Reason"><button class="btn sm" id="apUnlink">Remove this card</button></div><p class="hint">Removes the card without recording a backout, and sends the position back to the switch-over check so the right candidate can be linked. The history is kept.</p></details>` : ''}
             ${moveToLineHtml(a, active)}
             <div class="btn-row">${active ? '<button class="btn" data-st="Rejected">Reject</button><button class="btn" data-st="On hold">Put on hold</button><button class="btn" data-st="Withdrawn">' + (['Offer', 'Prejoin'].includes(a.Stage) ? 'Record backout' : 'Candidate withdrew') + '</button>' : '<button class="btn" data-st="Active">Reactivate</button>'}</div>
-            ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section>` : ''}
+            ${isLead() && active && i > 0 ? `<div class="field" style="margin-top:10px"><label for="apBack">Move back to (head only)</label><select id="apBack">${opts(P_STAGES.slice(0, i).map(s => [s, P_NAMES[s]]), '', true)}</select></div>` : ''}</section></details>` : ''}
         </div>
         <div>
           ${a.screen ? `<section class="app-sec scr-card"><h3>Screening ${fitChip(a.screen.band)}</h3><p class="scr-cnt"><b>${a.screen.met}</b> of ${a.screen.total} met \u00b7 <b>${a.screen.partly}</b> partly \u00b7 <b>${a.screen.gaps}</b> gaps${a.screen.koFailed.length ? ' \u00b7 <b class="miss">knock-out not met</b>' : ''}</p>
@@ -8685,13 +8689,13 @@ async function viewPipeline(v) {
             : P.hasFinalSq && !fastRoute() && canWork && active && a.Stage !== 'Sourced' ? `<section class="app-sec scr-card"><h3>Screening</h3><p class="sub">Not screened on the confirmed questions yet.</p><div class="btn-row"><button class="btn sm" id="apScrOpen">Record screening</button></div></section>` : ''}
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
-          ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? '<div id="apVoice"></div>' : ''}
-          ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? '<div id="apCheckin"></div>' : ''}
-          <div id="apBgv"></div>
-          ${can('ctc_use') ? '<div id="apCtc"></div>' : ''}
+          ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? appFold('Voice screening', '<div id="apVoice"></div>', foldOpen('voice', a.Stage)) : ''}
+          ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? appFold('Joining check-in', '<div id="apCheckin"></div>', foldOpen('checkin', a.Stage)) : ''}
+          ${appFold('Background verification', '<div id="apBgv"></div>', foldOpen('bgv', a.Stage))}
+          ${can('ctc_use') ? appFold('CTC calculator', '<div id="apCtc"></div>', foldOpen('ctc', a.Stage)) : ''}
           ${a.Offer_CTC || a.Offer_Letter_File ? `<section class="app-sec"><h3>Offer</h3><p>CTC: ${esc(a.Offer_CTC) || '\u2014'}${a.Offer_Accepted_On ? ` \u00b7 accepted ${fmtDate(a.Offer_Accepted_On)}` : ''}</p>${a.Offer_Letter_File ? '<button class="btn att-view" data-field="Offer_Letter_File">View offer letter</button>' : ''}</section>` : ''}
           ${Object.keys(a.Onboard_JSON || {}).length ? `<section class="app-sec"><h3>Onboarding</h3><dl class="kv">${[['induction', 'Induction'], ['buddy', 'Buddy'], ['hrms', 'HRMS and access set up'], ['m1', '1-month check-in'], ['m2', '2-month check-in'], ['m3', '3-month check-in']].map(([k, n]) => `<dt>${n}</dt><dd>${esc(a.Onboard_JSON[k] || '\u2014')}</dd>`).join('')}</dl></section>` : ''}
-          <section class="app-sec"><h3>History</h3><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.who || h.by)}${h.for ? ' for ' + esc(h.for) : ''}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></section>
+          <details class="app-fold"><summary>History <span class="sub">(${a.history.length})</span></summary><div class="app-fold-body"><ol class="hist">${a.history.slice().reverse().map(h => `<li><b>${h.from === h.to ? esc(h.outcome || 'Update') : esc(P_NAMES[h.to] || h.to)}</b>${h.outcome && h.from !== h.to ? ` \u00b7 ${esc(h.outcome)}` : ''}<span class="sub">${esc(h.at)} \u00b7 ${esc(h.who || h.by)}${h.for ? ' for ' + esc(h.for) : ''}${h.note ? ' \u00b7 ' + esc(h.note) : ''}</span></li>`).join('')}</ol></div></details>
         </div></div>
       ${lead ? `</div><div id="apTabDetail" role="tabpanel" class="tl-panel" aria-live="polite"${curTab === 'work' ? ' hidden' : ''}></div>` : ''}
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');
