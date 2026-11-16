@@ -2127,6 +2127,9 @@ async function viewCandidates(v) {
   loadPositions().catch(() => { });   // only the drawer's position picker needs the list: the search does not wait for it
   const f = S.candFilter = S.candFilter || { q: '', hr: '', src: '', dup: false, page: 0, arch: 'no', pool: false, func: '', expMin: '', expMax: '', loc: '', noticeMax: '', ctcMax: '' };
   f.arch = f.arch || 'no';
+  /* v211: the common filters stay in view; the rest sit behind "More filters", which opens by itself when one of them is set. Every filter in use shows as a chip. */
+  const moreN = [f.cv, f.dup, f.pool, f.func, f.expMin, f.expMax, f.loc, f.noticeMax, f.ctcMax].filter(x => x !== '' && x != null && x !== false).length;
+  const moreOpen = !!(f.more || moreN);
   const numIn = (id, label, val, ph) => `<div class="field" style="max-width:120px"><label for="${id}">${label}</label><input id="${id}" type="number" min="0" step="0.5" value="${esc(val == null ? '' : val)}" placeholder="${ph}"></div>`;
   v.innerHTML = `
     <div class="page-head"><div><h1>Candidates</h1><p>The CV bank. Search before adding someone new; the app warns you when a mobile number or email already exists, including archived candidates.</p></div>
@@ -2136,16 +2139,18 @@ async function viewCandidates(v) {
       <div class="field"><label for="chr">HR result</label><select id="chr">${opts(list('Interview_Result'), f.hr)}</select></div>
       <div class="field"><label for="csrc">Sourced by</label><select id="csrc">${opts(S.boot.recruiters, f.src)}</select></div>
       <div class="field"><label for="carch">Archived</label><select id="carch">${opts([['no', 'Active only'], ['include', 'Include archived'], ['only', 'Archived only']], f.arch, false)}</select></div>
+      <div class="field" style="justify-content:flex-end"><button type="button" class="btn" id="cMoreBtn" aria-expanded="${moreOpen ? 'true' : 'false'}" aria-controls="cMore">More filters${moreN ? ` <span class="badge">${moreN}</span>` : ''}</button></div>
+    </div>
+    <div class="filters" id="cMore" style="margin-top:-6px"${moreOpen ? '' : ' hidden'}>
       <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="ccv" ${f.cv ? 'checked' : ''}> Has CV</label>
       <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" id="cdup" ${f.dup ? 'checked' : ''}> Possible duplicates only</label>
-    </div>
-    <div class="filters" style="margin-top:-6px">
       <div class="field"><label for="cpool">Show</label><select id="cpool">${opts([['', 'All candidates'], ['1', 'Talent pool (not in any active pipeline)']], f.pool ? '1' : '', false)}</select></div>
       <div class="field"><label for="cfunc">Function / area</label><select id="cfunc">${opts(list('Function_Area'), f.func)}</select></div>
       ${numIn('cexp1', 'Exp. from (yrs)', f.expMin, 'any')}${numIn('cexp2', 'Exp. to (yrs)', f.expMax, 'any')}
       <div class="field" style="max-width:160px"><label for="cloc">Location</label><input id="cloc" value="${esc(f.loc)}" placeholder="e.g. Ranchi"></div>
       ${numIn('cnot', 'Notice up to (days)', f.noticeMax, 'any')}${numIn('cctc', 'Expected CTC up to (LPA)', f.ctcMax, 'any')}
     </div>
+    <div class="chips-row" id="cChips" role="status" aria-live="polite"></div>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Position</th><th class="num">Mobile</th><th>Experience</th><th>Tech</th><th>HR</th><th>Sourced by</th><th>CV</th></tr></thead><tbody id="ctbody"></tbody></table></div>
     <div class="pager" id="cpager"></div>`;
   let seq = 0, timer = null;
@@ -2190,8 +2195,23 @@ async function viewCandidates(v) {
     const merged = Object.assign({}, rowsById.get(c.Candidate_ID) || {}, c); rowsById.set(c.Candidate_ID, merged);
     tr.outerHTML = rowHtml(merged); bindRows($('#ctbody'));
   };
-  const again = () => { f.page = 0; fetchPage(); };
-  $('#cq').addEventListener('input', e => { f.q = e.target.value; clearTimeout(timer); timer = setTimeout(again, 350); });
+  const CHIPS = [['q', 'Search', '', v => '\u201c' + v + '\u201d', 'cq'], ['hr', 'HR result', '', v => v, 'chr'], ['src', 'Sourced by', '', v => v, 'csrc'], ['arch', 'Archived', 'no', v => v === 'include' ? 'included' : 'only', 'carch'],
+    ['cv', 'Has CV', false, () => 'yes', 'ccv'], ['dup', 'Possible duplicates', false, () => 'only', 'cdup'], ['pool', 'Show', false, () => 'talent pool', 'cpool'], ['func', 'Function', '', v => v, 'cfunc'],
+    ['expMin', 'Experience from', '', v => v + ' yrs', 'cexp1'], ['expMax', 'Experience to', '', v => v + ' yrs', 'cexp2'], ['loc', 'Location', '', v => v, 'cloc'], ['noticeMax', 'Notice up to', '', v => v + ' days', 'cnot'], ['ctcMax', 'Expected CTC up to', '', v => v + ' LPA', 'cctc']];
+  const syncControls = () => CHIPS.forEach(([k, , def, , id]) => { const el = $('#' + id); if (!el) return; if (el.type === 'checkbox') el.checked = !!f[k]; else el.value = k === 'pool' ? (f.pool ? '1' : '') : (f[k] == null ? '' : f[k]); });
+  const paintChips = () => {
+    const on = CHIPS.filter(([k, , def]) => f[k] !== def && f[k] !== '' && f[k] != null && f[k] !== false);
+    const el = $('#cChips'); if (!el) return;
+    el.innerHTML = on.length ? on.map(([k, l, , fmt]) => `<button type="button" class="chip" data-k="${k}" aria-label="Remove filter ${esc(l)}">${esc(l)}: ${esc(fmt(f[k]))} <span aria-hidden="true">\u2715</span></button>`).join('') + '<button type="button" class="btn sm" id="cClear">Clear all</button>' : '';
+    $$('.chip', el).forEach(b => b.onclick = () => { const c = CHIPS.find(x => x[0] === b.dataset.k); f[c[0]] = c[2]; syncControls(); again(); });
+    if ($('#cClear')) $('#cClear').onclick = () => { CHIPS.forEach(c => { f[c[0]] = c[2]; }); syncControls(); again(); $('#cq').focus(); };
+    const n = [f.cv, f.dup, f.pool, f.func, f.expMin, f.expMax, f.loc, f.noticeMax, f.ctcMax].filter(x => x !== '' && x != null && x !== false).length;
+    const mb = $('#cMoreBtn'); if (mb) mb.innerHTML = 'More filters' + (n ? ` <span class="badge">${n}</span>` : '');
+  };
+  const again = () => { f.page = 0; paintChips(); fetchPage(); };
+  $('#cMoreBtn').onclick = () => { f.more = $('#cMore').hidden; $('#cMore').hidden = !f.more; $('#cMoreBtn').setAttribute('aria-expanded', f.more ? 'true' : 'false'); };
+  paintChips();
+  $('#cq').addEventListener('input', e => { f.q = e.target.value; paintChips(); clearTimeout(timer); timer = setTimeout(again, 350); });
   $('#chr').onchange = e => { f.hr = e.target.value; again(); };
   $('#csrc').onchange = e => { f.src = e.target.value; again(); };
   $('#carch').onchange = e => { f.arch = e.target.value; again(); };
@@ -2199,7 +2219,7 @@ async function viewCandidates(v) {
   $('#ccv').onchange = e => { f.cv = e.target.checked; again(); };
   $('#cpool').onchange = e => { f.pool = !!e.target.value; again(); };
   $('#cfunc').onchange = e => { f.func = e.target.value; again(); };
-  [['cexp1', 'expMin'], ['cexp2', 'expMax'], ['cloc', 'loc'], ['cnot', 'noticeMax'], ['cctc', 'ctcMax']].forEach(([id, k]) => $('#' + id).addEventListener('input', e => { f[k] = e.target.value; clearTimeout(timer); timer = setTimeout(again, 400); }));
+  [['cexp1', 'expMin'], ['cexp2', 'expMax'], ['cloc', 'loc'], ['cnot', 'noticeMax'], ['cctc', 'ctcMax']].forEach(([id, k]) => $('#' + id).addEventListener('input', e => { f[k] = e.target.value; paintChips(); clearTimeout(timer); timer = setTimeout(again, 400); }));
   $('#newCand').onclick = () => candidateDrawer(null);
   $('#bulkCv').onclick = () => cvBulkDialog();
   $('#profExport').onclick = () => profileExportCsv();
