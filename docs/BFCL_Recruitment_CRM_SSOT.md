@@ -1525,6 +1525,10 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Past "missed" to-dos restated, with the owner's approval** (no schema change; v194; 16 Nov 2026)
+- The owner approved the dry-run list of v193. New `apiTaskRestateApply` (Admin; button "Restate to-dos wrongly counted as missed" on the `todo_stuck` data check) sets `Resolved_At` of the replacement / reopen to-dos that a forward move had already cleared before they turned critical to the time of that first forward move, with one Audit_Log line per row; running it again changes nothing.
+- Rows: J00090-R1, J00056-R1, J000178-R1. On the workbook copy the monthly missed total goes from 131 to 130 for October and from 50 to 48 for November. Nothing else is touched.
+
 **The "move the next candidate forward" to-do clears when a candidate is moved forward** (no schema change; v193; 16 Nov 2026)
 - Audit: the to-dos `replacement_next` (legacy replacement MRF) and `backout_reopen` (reopened MRF, off until `BACKOUT_REOPEN_FROM` is set) were raised for every Open replacement / reopened position and cleared only when the position was offered or closed; they have no Done button. Live cases on the 13 Nov copy: J00056-R1 (backout 11 Nov, three cards moved on 12 Nov) and J000178-R1 (backout 12 Nov, two cards at Dept confirmed, interviews scheduled) still showed a critical to-do. Of the 9 such to-dos on record, 7 cleared only at offer time; 6 were counted in "Missed to-dos".
 - Root cause: the rule tested the position (replacement and Open), never the movement of candidates, and had no "clears when" condition or test. 5-Why and CAPA are in the session notes of this release.

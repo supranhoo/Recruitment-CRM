@@ -968,7 +968,7 @@ function taskRestateRows_() {
     const nowMissed = !!ms_(s.Critical_At) && fm > ms_(s.Critical_At);   // forwarded after it turned critical (to the minute)
     if (resDay && resDay <= first) return;            // already cleared on or before the forward move
     out.push({ key: String(s.Task_Key), mrf: String(l.MRF_No || s.Line_ID), recruiter: String(s.Recruiter), backout: back, criticalAt: critDay,
-      firstForward: first, resolvedNow: resDay, resolvedCorrected: first, missedNow: wasMissed, missedCorrected: nowMissed });
+      firstForward: first, firstForwardMs: fm, resolvedNow: resDay, resolvedCorrected: first, missedNow: wasMissed, missedCorrected: nowMissed });
   });
   return out;
 }
@@ -977,4 +977,31 @@ function apiTaskRestatePreview() {
   if (!can_(u, 'system')) throw new Error('Only the admin can see this list.');
   const rows = taskRestateRows_();
   return { rows: rows, wrongMissed: rows.filter(function (r) { return r.missedNow && !r.missedCorrected; }).length, note: 'Dry run: nothing is changed.' };
+}
+
+/**
+ * Restates the stored clearing time of the to-dos the dry run shows as wrongly missed (owner approved 16 Nov 2026): Resolved_At becomes the
+ * time of the first forward move. Admin only; one audit line per row; running it again changes nothing.
+ */
+function apiTaskRestateApply() {
+  const u = currentUser_();
+  if (!can_(u, 'system')) throw new Error('Only the admin can restate these to-dos.');
+  ensureSchema_();
+  const todo = taskRestateRows_().filter(function (r) { return r.missedNow && !r.missedCorrected && r.firstForwardMs; });
+  if (!todo.length) return { restated: 0, rows: [] };
+  return withLock_(function () {
+    const st = taskState_(), sh = st.table.sheet, col = st.table.headers.indexOf('Resolved_At') + 1, ucol = st.table.headers.indexOf('Updated_At') + 1;
+    if (col < 1) throw new Error('The Tasks sheet has no Resolved_At column.');
+    const done = [];
+    todo.forEach(function (r) {
+      const s = st.map[r.key]; if (!s) return;
+      const to = new Date(r.firstForwardMs);
+      sh.getRange(s._row, col).setValue(to);
+      if (ucol > 0) sh.getRange(s._row, ucol).setValue(new Date());
+      audit_(u, T.TASK.name, r.key, 'Update', 'Resolved_At', ymd_(s.Resolved_At) || '(open)', fmt_(to, TZ, 'yyyy-MM-dd HH:mm') + ' (restated: first forward move; v193)');
+      done.push(r.mrf);
+    });
+    dropStale_(T.TASK.name);
+    return { restated: done.length, rows: done };
+  });
 }
