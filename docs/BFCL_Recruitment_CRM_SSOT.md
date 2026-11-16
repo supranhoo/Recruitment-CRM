@@ -1525,6 +1525,12 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**A hold at Offer releases the position's offer; a Replaced MRF keeps it as the record** (no schema change; v198; 17 Nov 2026)
+- Audit: a card leaves the Offer stage by a move back (clears the position's offer details), a backout (the original MRF becomes Replaced and keeps its offer, joining and backout details as the record; the -R1 MRF starts clean), a refused reject, or **On hold**. On hold changed nothing on the position: it stayed Offered with Offer sent Yes, the offer date and the candidate, and the offer-based notice kept counting.
+- Fix: putting an Active card at Offer or Pre-joining On hold now clears Offer sent, offer date, joining date and the candidate on the position (the position is Open again) and cancels the held candidate's BGV cases; the card keeps its own offer date and joining date. Reactivating the card restores the position's offer details from the card, unless another candidate holds the offer meanwhile (the existing one-live-offer message). History lines say "Offer released on the position" / "Offer restored on the position". Holds at earlier stages, rejects and backouts are unchanged.
+- New data check `offer_no_holder`: a position that is Offered (not internal) with no active card at Offer, Pre-joining or Joined; 0 rows on the 13 Nov copy.
+- Checked by running the real server code on the workbook copy: hold at Offer gave Open with cleared fields (before: Offered with Offer sent Yes), reactivation restored the same offer date and candidate; the same at Pre-joining (joining date restored); a hold at Screened left an Offered line untouched; the check lists a hand-made drift.
+
 **The notice period is calculated from the offer and joining dates** (no schema change; v197; 17 Nov 2026)
 - Position form, Offer and joining: when Offer sent is Yes and both the offer letter date and the expected joining date are set, the notice period is filled with expected joining minus offer date and the TAT readout updates at once. It follows later date changes while it is empty or was filled this way; a value the recruiter typed (or a saved value that differs from the calculation) is left alone. The recruiter can always overwrite it. Existing records are not changed and nothing is written by the server.
 - Why not locked: on the 13 Nov data the notice equals joining minus offer for 236 of 359 offers; 123 differ, and the notice sets the extra TAT days (days beyond the grace), so a forced value would change TAT.
