@@ -180,7 +180,7 @@ function apiKpiSetup() {
   const scoreOut = Object.keys(KPI_DEFS).filter(function (k) { return KPI_DEFS[k].scored; }).map(function (kpi) {
     const rules = kpiRulesFor_(scoring, kpi, now), vs = scoring.filter(function (v) { return v.kpi === kpi; });
     const cur = vs.filter(function (v) { return v.from <= now; }).sort(function (a, b) { return a.from < b.from ? 1 : a.from > b.from ? -1 : b.idx - a.idx; })[0];
-    return { kpi: kpi, name: KPI_DEFS[kpi].name, kind: KPI_DEFS[kpi].count ? 'COUNT' : 'PERCENT', rules: rules, isDefault: !cur, from: cur ? cur.from : '', unit: KPI_DEFS[kpi].unit || '',
+    return { kpi: kpi, name: KPI_DEFS[kpi].name, kind: KPI_DEFS[kpi].count ? 'COUNT' : 'PERCENT', rules: rules, isDefault: !cur, follows: !cur && kpi === KPI_FLAT_DAYS_, from: cur ? cur.from : '', unit: KPI_DEFS[kpi].unit || '',
       upcoming: vs.filter(function (v) { return v.from > now; }).map(function (v) { return { from: v.from, rules: v.rules, id: v.id }; }) };
   });
   // The change history: every version row (newest first), then the rows that were in the sheet before the app could edit it.
