@@ -33,7 +33,7 @@ function kpiEditGuard_(u) { if (!can_(u, 'kpi_edit')) throw new Error('Only the 
 function kpiTargetText_(t) {
   if (!t) return 'none';
   if (t.active === false) return 'override ended (team target applies)';
-  return 'each grade\u2019s TAT rule · ' + String(t.levels || 'All') + ' levels · notice ' + (t.exempt ? 'exempt' : 'not exempt');
+  return (t.kpi === KPI_FLAT_DAYS_ ? 'standard ' + t.days + ' days for every position' : 'each grade\u2019s TAT rule') + ' · ' + String(t.levels || 'All') + ' levels · notice ' + (t.exempt ? 'exempt' : 'not exempt');
 }
 function kpiRulesText_(kpi, rules) {
   if (KPI_DEFS[kpi] && KPI_DEFS[kpi].count) {
@@ -91,7 +91,7 @@ function kpiParseDraft_(d) {
   const saved = kpiTargets_(), scoring = kpiScoring_();
   if (type === 'TARGET') {
     const kpi = String(d.kpi || '').toUpperCase();
-    if (KPI_TAT_.indexOf(kpi) < 0) throw new Error('Pick Timely closure, M-level or W-level fulfilment.');
+    if (KPI_TAT_.indexOf(kpi) < 0) throw new Error('Pick Timely closure, its standard-days monitor, M-level or W-level fulfilment.');
     let who = d.who === undefined || d.who === null ? '*' : String(d.who).trim();
     if (!who) throw new Error('Pick the recruiter, or choose the whole team.');
     if (who !== '*') {
@@ -107,7 +107,7 @@ function kpiParseDraft_(d) {
       out.targets.push({ recruiter: key, kpi: kpi, levels: cur.levels, days: cur.days, exempt: cur.exempt, from: from, active: false, id: '', _who: who });
       out.label = KPI_DEFS[kpi].name + ' · ' + who + ': override ends';
     } else {
-      const days = d.days === undefined || d.days === null || d.days === '' ? (cur ? cur.days : 0) : kpiInt_(d.days, 1, 365, 'The target days');   // v167: the days come from the TAT rules; the stored number is kept but not used
+      const days = kpi === KPI_FLAT_DAYS_ ? kpiInt_(d.days, 1, 365, 'The standard days') : d.days === undefined || d.days === null || d.days === '' ? (cur ? cur.days : 0) : kpiInt_(d.days, 1, 365, 'The target days');   // v214: the standard-days KPI needs its number   // v167: the days come from the TAT rules; the stored number is kept but not used
       const lv = KPI_LEVEL_CHOICES_.filter(function (l) { return l.toLowerCase() === String(d.levels || '').trim().toLowerCase(); })[0];
       if (!lv) throw new Error('Levels must be All, M, W or T.');
       const row = { recruiter: key, kpi: kpi, levels: lv, days: days, exempt: true, from: from, active: true, id: '', _who: who };   // notice beyond the grace is always exempt (v151): there is nothing to choose
@@ -175,7 +175,7 @@ function apiKpiSetup() {
     rows.filter(function (t) { return t.from > now; }).sort(function (a, b) { return a.from < b.from ? -1 : 1; }).forEach(function (t) {
       upcoming.push({ who: whoLabel(t.recruiter), days: t.days, levels: String(t.levels || 'All'), exempt: t.exempt, active: t.active, from: t.from, id: t.id });
     });
-    return { kpi: kpi, name: KPI_DEFS[kpi].name, team: team ? { days: team.days, levels: String(team.levels || 'All'), exempt: team.exempt, from: team.from, id: team.id } : null, overrides: overrides, upcoming: upcoming };
+    return { kpi: kpi, flat: kpi === KPI_FLAT_DAYS_, name: KPI_DEFS[kpi].name, team: team ? { days: team.days, levels: String(team.levels || 'All'), exempt: team.exempt, from: team.from, id: team.id } : null, overrides: overrides, upcoming: upcoming };
   });
   const scoreOut = Object.keys(KPI_DEFS).filter(function (k) { return KPI_DEFS[k].scored; }).map(function (kpi) {
     const rules = kpiRulesFor_(scoring, kpi, now), vs = scoring.filter(function (v) { return v.kpi === kpi; });

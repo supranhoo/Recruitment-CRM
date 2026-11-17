@@ -8,6 +8,7 @@ const KPI_DEFS = {
   TIMELY_CLOSURE: { name: 'Timely closure of vacant positions', scored: true },
   M_FULFILMENT: { name: 'Fulfilment of M-level positions within TAT', scored: true },
   W_FULFILMENT: { name: 'Fulfilment of W-level positions within TAT', scored: true },
+  TIMELY_STD: { name: 'Timely closure at standard days (monitor)', scored: false },   // v214: the same positions as Timely closure, every one judged on one flat number of days
   OFFER_BACKOUT: { name: 'Offer backout rate', scored: false },
   PSYCHOMETRIC: { name: 'Mettl psychometric test (Manager & above)', scored: true, count: true, unit: 'missed' },
   MRF_ADHERENCE: { name: 'MRF & assessment process adherence', scored: true, count: true, unit: 'logged' },
@@ -15,12 +16,15 @@ const KPI_DEFS = {
   TRACKER_ACCURACY: { name: 'Recruitment & CV tracker accuracy', scored: true, count: true, unit: 'errors' }
 };
 /** The KPIs placed by kpiDue_ (target days, level and notice exemption from KPI_Targets); each has "worked on", a reconciliation and a drill-down. */
-const KPI_TAT_ = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
+const KPI_TAT_ = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT', 'TIMELY_STD'];
+/** The KPI judged on the target's own flat days (v214), not on each grade's TAT rule. */
+const KPI_FLAT_DAYS_ = 'TIMELY_STD';
 /** The team default of every TAT KPI. Seeded with the sheet, and appended to an existing sheet when its KPI has no row at all (never edits a row). */
 const KPI_DEFAULT_TARGETS_ = [
   ['*', 'TIMELY_CLOSURE', 'All', 60, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
   ['*', 'M_FULFILMENT', 'M', 50, 'Yes', '2025-04', 'Team default. Levels: All, M, W or T.'],
-  ['*', 'W_FULFILMENT', 'W', 20, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.']
+  ['*', 'W_FULFILMENT', 'W', 20, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
+  ['*', 'TIMELY_STD', 'All', 60, 'Yes', '2025-04', 'Standard days for every position (monitor KPI, not scored). Add a row per recruiter to override.']
 ];
 /** The default rows whose KPI has no row in the sheet. `have` is a set of KPI keys. */
 function kpiMissingDefaults_(have) {
@@ -454,7 +458,7 @@ function kpiDue_(l, kpi, targets, rec, clk, status, flatDays) {
   // Notice beyond the grace is always added (v151); an offer sent within the TAT runs the full notice from the offer (v152).
   /* v167: the days are the grade's own TAT rule (clk.std); the KPI target only says which levels count. flatDays = the target's single
      number, as before v167, used only for the comparison download (and when a clock carries no grade days). */
-  const std = !flatDays && clk.std ? clk.std : t.days;
+  const std = kpi === KPI_FLAT_DAYS_ || flatDays || !clk.std ? t.days : clk.std;   // v214: the standard-days KPI always uses the target's own number
   const shut = !clk.doj && !!clk.end && !clk.handover;   // closed without a hire (v174): nobody joins, so the notice period plays no part
   const a = tatAllowed_(clk.receipt, std + clk.ex.days, shut ? 0 : clk.notice, shut ? 0 : clk.noticeDays, clk.hold, clk.paused, shut ? '' : clk.offer), allowed = a.allowed;
   const due = addDays_(clk.receipt, allowed + clk.hold + clk.paused), dueM = due.slice(0, 7), filledM = (clk.doj || clk.end) ? (clk.doj || clk.end).slice(0, 7) : '';

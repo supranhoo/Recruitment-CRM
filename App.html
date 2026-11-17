@@ -4387,7 +4387,7 @@ function kpiBandsText(rules) {
   return b.length ? b.map(x => `${x.score} for ${x.min}%${x.min === 100 ? '' : '+'}`).join(', ') + `, 0 below ${b[b.length - 1].min}%` : '';
 }
 function kpiStepsText(r) { return (r.steps || []).map(x => `${x.score} for up to ${x.max}`).join(', ') + `, ${r.otherwise || 0} for more`; }
-function kpiTatText(t) { return `each grade\u2019s TAT rule · ${t.levels} levels · notice ${t.exempt ? '' : 'not '}exempt`; }
+function kpiTatText(t, flat) { return `${flat ? 'standard ' + t.days + ' days for every position' : 'each grade\u2019s TAT rule'} · ${t.levels} levels · notice ${t.exempt ? '' : 'not '}exempt`; }
 function kpiNextMonth(m) { const [y, mm] = m.split('-').map(Number), t = y * 12 + mm; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; }
 function kpiCellText(c, count, unit) {
   if (!c) return '–';
@@ -4404,10 +4404,10 @@ async function renderKpiTargets(el, setup) {
   }
   const edit = s.canEdit;
   const tatCard = (t, ti) => `<section class="panel kpia-card"><h3>${esc(t.name)}</h3>
-    <p class="kpia-team">${t.team ? `<b>Whole team:</b> ${esc(kpiTatText(t.team))} <span class="sub">in force since ${esc(monthLabel(t.team.from))}${t.team.id ? ' · ' + esc(t.team.id) : ''}</span>` : '<span class="miss">No team target is set.</span>'}</p>
-    ${t.overrides.length ? `<ul class="kpia-list">${t.overrides.map((o, oi) => `<li><span><b>${esc(o.who)}</b> \u00b7 ${esc(o.levels)} levels \u00b7 notice ${o.exempt ? '' : 'not '}exempt <span class="sub">override since ${esc(monthLabel(o.from))}${o.id ? ' \u00b7 ' + esc(o.id) : ''}</span></span>
+    <p class="kpia-team">${t.team ? `<b>Whole team:</b> ${esc(kpiTatText(t.team, t.flat))} <span class="sub">in force since ${esc(monthLabel(t.team.from))}${t.team.id ? ' · ' + esc(t.team.id) : ''}</span>` : '<span class="miss">No team target is set.</span>'}</p>
+    ${t.overrides.length ? `<ul class="kpia-list">${t.overrides.map((o, oi) => `<li><span><b>${esc(o.who)}</b> \u00b7 ${t.flat ? esc(o.days) + ' days \u00b7 ' : ''}${esc(o.levels)} levels \u00b7 notice ${o.exempt ? '' : 'not '}exempt <span class="sub">override since ${esc(monthLabel(o.from))}${o.id ? ' \u00b7 ' + esc(o.id) : ''}</span></span>
       ${edit ? `<span class="kpia-acts"><button class="btn sm" data-a="ochg" data-t="${ti}" data-o="${oi}">Change</button><button class="btn sm" data-a="oend" data-t="${ti}" data-o="${oi}">End override</button></span>` : ''}</li>`).join('')}</ul>` : '<p class="hint">No recruiter has an override: everyone follows the team target.</p>'}
-    ${t.upcoming.length ? `<p class="hint"><b>Starting later:</b> ${t.upcoming.map(u => `${esc(u.who)}: ${u.active === false ? 'override ends' : esc(kpiTatText(u))} from ${esc(monthLabel(u.from))}`).join('; ')}</p>` : ''}
+    ${t.upcoming.length ? `<p class="hint"><b>Starting later:</b> ${t.upcoming.map(u => `${esc(u.who)}: ${u.active === false ? 'override ends' : esc(kpiTatText(u, t.flat))} from ${esc(monthLabel(u.from))}`).join('; ')}</p>` : ''}
     ${edit ? `<div class="btn-row"><button class="btn" data-a="team" data-t="${ti}">Change team target</button><button class="btn" data-a="add" data-t="${ti}">Add recruiter override</button></div>` : ''}</section>`;
   const sc = k => s.scoring.find(x => x.kpi === k);
   const scoreRow = (x, xi) => `<tr style="cursor:default"><td><b>${esc(x.name)}</b>${x.isDefault ? '<span class="sub">default rules</span>' : `<span class="sub">since ${esc(monthLabel(x.from))}</span>`}</td>
@@ -4431,7 +4431,7 @@ async function renderKpiTargets(el, setup) {
   const open = cfg => kpiaDrawer(s, cfg, ns => renderKpiTargets(el, ns));
   $$('[data-a]', el).forEach(b => b.onclick = () => {
     const a = b.dataset.a, t = s.tat[+b.dataset.t], o = t && t.overrides[+b.dataset.o];
-    if (a === 'team') open({ kind: 'TARGET', title: 'Change the team target', kpi: t.kpi, who: '*', cur: t.team, name: t.name });
+    if (a === 'team') open({ kind: 'TARGET', title: 'Change the team target', kpi: t.kpi, who: '*', cur: t.team, name: t.name, flat: t.flat });
     else if (a === 'add') open({ kind: 'TARGET', title: 'Add a recruiter override', kpi: t.kpi, cur: t.team, name: t.name });
     else if (a === 'ochg') open({ kind: 'TARGET', title: 'Change ' + o.who + '’s override', kpi: t.kpi, who: o.who, cur: o, name: t.name });
     else if (a === 'oend') open({ kind: 'TARGET', title: 'End ' + o.who + '’s override', kpi: t.kpi, who: o.who, end: true, cur: t.team, name: t.name });
@@ -4448,10 +4448,11 @@ function kpiaDrawer(s, cfg, done) {
   let body = '';
   if (k === 'TARGET') {
     const c = cfg.cur || { days: '', levels: 'All', exempt: true };
+    const flat = cfg.kpi === 'TIMELY_STD';
     body = `<p class="hint">${esc(cfg.name)}</p>
       <div class="field"><label for="kfWho">Applies to</label><select id="kfWho" ${cfg.who ? 'disabled' : ''}>${opts(cfg.who ? [[cfg.who, cfg.who === '*' ? 'Whole team' : cfg.who]] : s.recruiters.map(r => [r, r]), cfg.who || '', !cfg.who)}</select></div>
-      ${cfg.end ? `<p>From the month below this recruiter follows the team target again (${esc(kpiTatText(cfg.cur))}).</p>` : `
-      <p class="note" style="margin:8px 0">The days are not set here. Each position is judged on the standard TAT of its own grade (W1 to W5, M1 to M7, T), from <b>Admin \u2192 TAT rules</b>, as in force on the day its clock started.</p>
+      ${cfg.end ? `<p>From the month below this recruiter follows the team target again (${esc(kpiTatText(cfg.cur, flat))}).</p>` : `
+      ${flat ? `<div class="field"><label for="kfDays">Standard days for every position</label><input id="kfDays" type="number" min="1" max="365" step="1" value="${esc(c.days)}" required><span class="hint">One number for all grades. Notice beyond ${s.grace} days, approved exemptions, hold and paused days are added as for the other TAT rows. This KPI is not scored.</span></div>` : `<p class="note" style="margin:8px 0">The days are not set here. Each position is judged on the standard TAT of its own grade (W1 to W5, M1 to M7, T), from <b>Admin \u2192 TAT rules</b>, as in force on the day its clock started.</p>`}
       <div class="field"><label for="kfLv">Levels counted</label><select id="kfLv">${opts(s.levels.map(l => [l, l]), c.levels, false)}</select></div>
       <p class="hint">Notice beyond ${s.grace} days is always exempt: it is added to the allowed days and does not affect the TAT.</p>`}`;
   } else if (k === 'BANDS') {
@@ -4475,7 +4476,7 @@ function kpiaDrawer(s, cfg, done) {
     const d = { type: k, from: $('#kfFrom', root).value, reason: $('#kfWhy', root).value, base: s.base };
     if (k === 'TARGET') {
       d.kpi = cfg.kpi; d.who = cfg.who || $('#kfWho', root).value;
-      if (cfg.end) d.active = false; else { d.levels = $('#kfLv', root).value; d.exempt = 'Yes'; }
+      if (cfg.end) d.active = false; else { d.levels = $('#kfLv', root).value; d.exempt = 'Yes'; if ($('#kfDays', root)) d.days = $('#kfDays', root).value; }
     } else if (k === 'BANDS' || k === 'COUNTS') {
       const rows = $$('.kpia-row', root).map(r => [$('.kr-a', r).value, $('.kr-b', r).value]);
       if (k === 'BANDS') { d.kpis = $$('.kf-kpi', root).filter(x => x.checked).map(x => x.value); d.bands = rows.map(r => ({ min: r[0], score: r[1] })); }
@@ -4725,8 +4726,8 @@ async function viewAdmin(v) {
 }
 
 /** The KPIs placed by their target days and level (Timely closure, M-level, W-level): each has a worked-on line and a reconciliation. */
-const KPI_TAT = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];
-const KPI_WORKED_BASIS = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT'];   // scored on positions worked on (v153, v157); W-level on time \u00f7 due
+const KPI_TAT = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT', 'TIMELY_STD'];
+const KPI_WORKED_BASIS = ['TIMELY_CLOSURE', 'M_FULFILMENT', 'W_FULFILMENT', 'TIMELY_STD'];   // scored on positions worked on (v153, v157); W-level on time \u00f7 due
 const KPI_PCT_DEFAULT_RULES = [{ min: 100, score: 5 }, { min: 95, score: 4 }, { min: 90, score: 3 }, { min: 85, score: 2 }, { min: 80, score: 1 }];
 const KPI_NOTES = {
   OFFER_BACKOUT: 'Candidates who backed out ÷ positions worked on in the month × 100 · lower is better · not scored',
@@ -4740,6 +4741,7 @@ const KPI_HOW = {
   TIMELY_CLOSURE: { f: 'Positions worked on in the month without a TAT miss \u00f7 positions worked on in the month \u00d7 100.', yes: 'Every position the recruiter worked on in the month, all levels. A position falls due on its start date + TAT, plus notice beyond the grace days and any approved exemption.', no: 'A position that falls due later this month and has not joined yet is not counted until it joins or its due date passes. A miss is counted once, in the month it fell due. Trainee positions (T, T1 to T3) are counted here only, so this row equals M-level + W-level + Trainee.', ex: '10 positions worked on, 2 joined after their due date: 8 \u00f7 10 = 80%.' },
   M_FULFILMENT: { f: 'Same as Timely closure, for M-level positions only, with the M-level TAT days.', yes: 'M-level positions worked on in the month.', no: 'Other levels. A position can be on time in Timely closure and late here, because each KPI has its own TAT days.', ex: '5 M-level positions worked on, 1 late: 4 \u00f7 5 = 80%.' },
   W_FULFILMENT: { f: 'Same as Timely closure, for W-level positions only, with the W-level TAT days: positions worked on in the month without a TAT miss \u00f7 positions worked on \u00d7 100.', yes: 'W-level positions (W1 to W5) worked on in the month.', no: 'Other levels, including Trainee. A position that falls due later in the current month is not counted until it joins or its due date passes.', ex: '4 W-level positions worked on, 1 late: 3 \u00f7 4 = 75%.' },
+  TIMELY_STD: { f: 'Positions worked on in the month without a TAT miss \u00f7 positions worked on in the month \u00d7 100, with one flat number of standard days for every position.', yes: 'The same positions as Timely closure (all levels), with the same conditions: notice beyond the grace days, the offer rule, approved exemptions, hold and paused days.', no: 'The grade TAT rules are not used here. The standard days are set in Admin \u2192 KPI targets (team default 60, a recruiter row can differ). This row is a monitor and is not scored.', ex: '10 positions worked on, 1 joined after 60 days plus its allowances: 9 \u00f7 10 = 90%.' },
   OFFER_BACKOUT: { f: 'Candidates who backed out \u00f7 positions worked on in the month \u00d7 100. Lower is better.', yes: 'Offered candidates who backed out in the month.', no: 'It is not scored.', ex: '1 backout in 10 positions worked on: 10%.' },
   PSYCHOMETRIC: { f: 'Count of shortlisted Manager and above candidates who have no Mettl test.', yes: 'Candidates at Manager level or above who were shortlisted in the month.', no: 'Below Manager level. Months before the capture start date.', ex: '1 shortlisted Manager without a test: score 3 (0 gives 5, more than 1 gives 0).' },
   MRF_ADHERENCE: { f: 'Count of process observations logged against the recruiter in the month.', yes: 'Observations recorded in the month (the drill-down lists each one).', no: 'Months before the capture start date.', ex: '2 observations: the score for 2 on the scale (0 gives 5, more than 4 gives 0).' },
@@ -4772,9 +4774,9 @@ async function viewKpi(v, fresh) {
     const newest = w => k.targets.filter(t => t.kpi === kpi && t.recruiter === w && t.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0];
     let t = who !== '*' ? newest(who) : null; if (t && t.active === false) t = null;
     t = t || newest('*') || k.targets.filter(x => x.kpi === kpi && x.recruiter === '*').sort((a, b) => (a.from < b.from ? 1 : -1))[0]; if (!t) return '';
-    return `each grade\u2019s TAT rule \u00b7 ${String(t.levels || 'All')} levels${t.exempt ? ` \u00b7 notice beyond ${grace} days exempt` : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' \u00b7 team default' : ''}`;
+    return `${kpi === 'TIMELY_STD' ? 'standard ' + t.days + ' days for every position' : 'each grade\u2019s TAT rule'} \u00b7 ${String(t.levels || 'All')} levels${t.exempt ? ` \u00b7 notice beyond ${grace} days exempt` : ''}${t.recruiter === '*' && f.rec !== 'TEAM_TOTAL' ? ' \u00b7 team default' : ''}`;
   };
-  const teamDays = kpi => { const t = k.targets.filter(x => x.kpi === kpi && x.recruiter === '*' && x.active !== false && x.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0]; return t ? t.days : ({ TIMELY_CLOSURE: 60, M_FULFILMENT: 50, W_FULFILMENT: 20 })[kpi]; };
+  const teamDays = kpi => { const t = k.targets.filter(x => x.kpi === kpi && x.recruiter === '*' && x.active !== false && x.from <= nowM).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0)))[0]; return t ? t.days : ({ TIMELY_CLOSURE: 60, M_FULFILMENT: 50, W_FULFILMENT: 20, TIMELY_STD: 60 })[kpi]; };
   const pctRules = KPI_PCT_KPIS.map(x => k.scoring && k.scoring[x] ? k.scoring[x].rules : null);
   const bandsLegend = pctRules.every(r => r && JSON.stringify(r) === JSON.stringify(pctRules[0])) ? kpiBandsText(pctRules[0] || KPI_PCT_DEFAULT_RULES) : `Timely closure ${kpiBandsText(pctRules[0])}; M-level ${kpiBandsText(pctRules[1])}; W-level ${kpiBandsText(pctRules[2])}`;
   const noteOf = kpi => {
@@ -4811,7 +4813,7 @@ async function viewKpi(v, fresh) {
       ${Object.keys(k.defs).map(kpi => `<tr><th class="kname" scope="row">${esc(k.defs[kpi].name)}<span class="sub">${esc([noteOf(kpi) || tgt(kpi), KPI_WORKED_BASIS.includes(kpi) ? 'achieved \u00f7 worked on' : ''].filter(Boolean).join(' \u00b7 '))}</span>${kpi === 'TIMELY_CLOSURE' ? '<span class="sub">includes Trainee positions, which no other row counts</span>' : ''}<button type="button" class="linkbtn kpi-howbtn" data-how="${kpi}">How calculated</button></th>
         ${k.months.map(m => cellHtml(kpi, m)).join('')}</tr>`).join('')}
     </tbody></table></div>
-    <p class="legend">Score: ${esc(bandsLegend)}. A position falls due on its start date + TAT, with notice beyond ${grace} days and approved exemptions added; when the offer went out within the TAT, the notice runs from the offer, so the position is due on the later of that date and the offer date + its notice period. Timely closure (${teamDays('TIMELY_CLOSURE')} days, all levels) and M-level fulfilment (${teamDays('M_FULFILMENT')} days) = positions worked on in the month without a TAT miss \u00f7 positions worked on; a miss is a position that fell due in the month and joined after its due date or has not joined, counted once, in that month. W-level fulfilment (${teamDays('W_FULFILMENT')} days) is worked out the same way, for W-level positions only. Timely closure counts every level, so it equals M-level + W-level + Trainee positions; Trainee positions (grades T, T1 to T3) have no row of their own. A position that falls due later in the current month is not counted until it joins or its due date passes. An M-level or W-level position is also part of Timely closure, which has its own ${teamDays('TIMELY_CLOSURE')} days, so it can be on time there and late in its level KPI. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Admin \u2192 KPI targets); tracker accuracy shows only for months with an audit sample.</p>`;
+    <p class="legend">Score: ${esc(bandsLegend)}. A position falls due on its start date + TAT, with notice beyond ${grace} days and approved exemptions added; when the offer went out within the TAT, the notice runs from the offer, so the position is due on the later of that date and the offer date + its notice period. Timely closure (all levels) and M-level fulfilment, each position on its own grade\u2019s TAT days, = positions worked on in the month without a TAT miss \u00f7 positions worked on; a miss is a position that fell due in the month and joined after its due date or has not joined, counted once, in that month. W-level fulfilment is worked out the same way, for W-level positions only. Timely closure counts every level, so it equals M-level + W-level + Trainee positions; Trainee positions (grades T, T1 to T3) have no row of their own. A position that falls due later in the current month is not counted until it joins or its due date passes. The row \u201cTimely closure at standard days (monitor)\u201d counts the same positions as Timely closure but judges every one on one flat number of days (${teamDays('TIMELY_STD')}, set in Admin \u2192 KPI targets); it is not scored. Click a cell, then \u201cWhere are all the positions of this month?\u201d, to reconcile any of the three by hand. Psychometric, BGV, observation and audit KPIs are scored from ${esc(monthLabel(k.captureFrom))} (Admin \u2192 KPI targets); tracker accuracy shows only for months with an audit sample.</p>`;
   $$('.kpi-howbtn', v).forEach(b => b.onclick = () => kpiHow(k, b.dataset.how, noteOf(b.dataset.how)));
   /* v212: the table opens with the current month in view (the KPI column stays); a past year opens at its start */
   { const wrap = $('.ktable', v) && $('.ktable', v).closest('.table-wrap'), cur = $('.ktable th.kcur', v), nm = $('.ktable th.kname', v);
