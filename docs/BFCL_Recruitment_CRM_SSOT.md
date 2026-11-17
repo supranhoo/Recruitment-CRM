@@ -1122,6 +1122,9 @@ Context: Policy 9.5 (ADR-015) closes the MRF as Replaced and raises `-R1` (a new
 Decision: (1) a backout dated on or after `BACKOUT_REOPEN_FROM` reopens the same line (offer fields cleared, status Open, TAT start unchanged so the clock keeps running, the original approval carries over); (2) every backout stays on record as a dated event on the candidate's card (`backoutEvents_`), because the line's single-value fields are overwritten; (3) existing replacement chains and old reopened lines are not migrated or merged; (4) the written policy clause 9.5 needs the Head of HR's amendment before the setting is filled in.
 Status: **built in v191 and switched off** (the setting is empty). Consequences: until the legacy chains age out two models run side by side; the readers of `MRF.Backout_Date` (KPI backout rate, Daily review, dashboard, weekly e-mail, reassign report, BGV) move to `backoutEvents_` first (Phase 2), the reopen path itself comes last (Phase 3). Rollback: empty the setting.
 
+**ADR-084 — A monitor KPI for Timely closure at standard days** (17 Nov, user decision; v214)
+- Beside the three grade-TAT KPIs (ADR-080) a fourth, unscored row judges the Timely closure positions on one configurable flat number of days (default 60). It is a pilot for comparison; whether to keep the current rules, adopt the flat days, or define M-level and W-level days per person is decided after it is seen.
+
 **ADR-080 — KPI days come from the TAT rules per grade, for all three TAT KPIs** (12 Nov, user decision; v167)
 - One number of days per KPI judged W4/W5 against 20 days although their TAT differs. The TAT rules are now the single source of days for the position's TAT bar and for the KPIs; KPI targets keep only the levels counted.
 
@@ -1524,6 +1527,15 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - Tests: E2E group O1–O22; local checks reproduce Report_4 (approved 2,510, existing 2,195, net 315; 410 vacant, 95 over-strength, 207 covered).
 
 ### 2026-09-30
+
+**New monitor KPI: Timely closure at standard days** (no schema change; v214; 17 Nov 2026; ADR-084)
+- Request: measure Timely closure with a standard 60 days for every position, with the 60 configurable; M-level and W-level days may be defined per person. The owner chose the low-risk route: add one new KPI beside the existing three, leave those untouched, compare, and decide later.
+- New KPI `TIMELY_STD`, "Timely closure at standard days (monitor)": the same positions, the same Achieved or Missed rule and the same conditions as Timely closure (notice beyond the grace days, the offer rule, approved exemptions, hold and paused days, the not-yet-due rule, tagged-recruiter credit, handed-over stretches), but every position is judged on **one flat number of days** from the KPI targets table, not on its grade's TAT rule. Team default 60, seeded as one new row (appended only; no existing row is edited). A recruiter row can use another number from a month onward.
+- **Not scored**: it shows the percentage and the achieved and worked counts, with no score, so nothing feeds appraisals. Timely closure, M-level and W-level, their scores and every other KPI are unchanged.
+- Admin, KPI targets: the new KPI has a "Standard days" field (whole number from 1 to 365, required; the other three rows still take their days from the TAT rules). Saves use the existing preview and versioning.
+- Texts made true: the legend under the scorecard printed "60 days" and "50 days" for the grade-based rows, which stopped being true in v167 (ADR-080). It no longer prints them; it names the new row and its days from the targets. Row note, drill-down, reconciliation, PDF and the "How calculated" panel cover the new row.
+- Whole team, same positions, grade TAT versus standard 60 (13 Nov copy): Aug 90.8% vs 93.1%, Sep 86.8% vs 94.7%, Oct 89.4% vs 96.5%, Nov 82.3% vs 90.3%. The gap is only the days basis; worked counts are equal.
+- Tested on the workbook copy against v213: all 225 cells of the other KPIs identical; the new row equals the old flat-days comparison for all 46 cells and has the same worked counts as Timely closure; a 45-day recruiter row changes only that recruiter's new-KPI cells and the team total; validation rejects blank, 0 and text.
 
 **KPI scorecard: Timely closure reconciles with M-level and W-level** (no schema change, no score change; v213; 17 Nov 2026)
 - Question: October showed Timely closure 103 of 115, M-level 58 of 65 and W-level 36 of 41, and 65 + 41 is not 115. Was the grade-TAT rule (v167) applied to Timely closure only?
