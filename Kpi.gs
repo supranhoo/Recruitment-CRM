@@ -443,6 +443,10 @@ function kpiMonthStatus_(clk, d, month, today) {
   const ok = d.due >= cut;
   return { ok: ok, why: ok ? 'within' : 'overdue', cut: cut };
 }
+/** v213: the level group of a grade, for the split under Timely closure: M, W, T (trainee) or O (any other). */
+function kpiLevelKey_(grade) { const g = String(grade || '').trim().toUpperCase().charAt(0); return g === 'M' || g === 'W' || g === 'T' ? g : 'O'; }
+function kpiLvNew_() { return { M: { w: 0, n: 0 }, W: { w: 0, n: 0 }, T: { w: 0, n: 0 }, O: { w: 0, n: 0 } }; }
+function kpiLvAdd_(dst, src) { if (!src) return dst || null; dst = dst || kpiLvNew_(); Object.keys(src).forEach(function (k) { dst[k].w += src[k].w; dst[k].n += src[k].n; }); return dst; }
 function kpiDue_(l, kpi, targets, rec, clk, status, flatDays) {
   if (!clk.receipt || (['Open', 'Offered', 'Closed'].indexOf(status) < 0 && !(clk.end && ['Not Needed', 'No Vacancy', 'Handed over'].indexOf(status) >= 0)) || String(l.Fill_Type || '') === 'Internal') return null;
   const t = kpiTargetFor_(l, kpi, targets, rec, clk);
@@ -523,7 +527,11 @@ function computeKpis_(fy) {
             else if (clk.notice) it.notice = clk.notice;
             c.items.push(it);
           }
-          if (kpi === 'TIMELY_CLOSURE') bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
+          if (kpi === 'TIMELY_CLOSURE') {
+            bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
+            const lk = kpiLevelKey_(l.Grade), lv = c.lv = c.lv || kpiLvNew_();   // v213: how many of the cell's positions are M-level, W-level, Trainee or other
+            lv[lk].w++; if (st.ok) lv[lk].n++;
+          }
         };
         if (ck) { const key = rec + '|' + ck + '|' + kpi + '|' + m; (pend[key] = pend[key] || []).push({ ok: st.ok, live: !vs, apply: apply }); }   // v183: one entry per holder, vacancy and month
         else apply();
@@ -647,6 +655,7 @@ function computeKpis_(fy) {
         t.worked += src.worked || 0; t.workedOk += src.workedOk || 0;
         t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0); t.notDue += src.notDue || 0;
         t.oNum = (t.oNum || 0) + (src.oNum || 0);
+        if (src.lv) t.lv = kpiLvAdd_(t.lv, src.lv);
         src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
         (src.notDueItems || []).forEach(function (it) { t.notDueItems.push(Object.assign({ recruiter: rec }, it)); });
       });
@@ -659,6 +668,7 @@ function computeKpis_(fy) {
         const src = extra[rec][kpi][m], dst = bucketMain(rec, kpi, m);
         dst.num += src.num; dst.den += src.den; dst.worked += src.worked; dst.workedOk += src.workedOk; dst.notDue += src.notDue;
         dst.oNum = (dst.oNum || 0) + (src.oNum || 0);
+        if (src.lv) dst.lv = kpiLvAdd_(dst.lv, src.lv);
         src.items.forEach(function (it) { dst.items.push(it); });
         src.notDueItems.forEach(function (it) { dst.notDueItems.push(it); });
       });
@@ -675,7 +685,7 @@ function computeKpis_(fy) {
     const tat = KPI_TAT_.indexOf(kpi) >= 0, missed = c.den - c.num;
     const pct = c.den ? Math.round(1000 * c.num / c.den) / 10 : null;
     const o = { num: c.num, den: c.den, pct: pct, score: KPI_DEFS[kpi].scored ? kpiScoreFor_(scoring, kpi, pct, m) : null, items: c.items,
-      worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: tat ? missed : undefined };
+      worked: tat ? c.worked : undefined, workedOk: tat ? c.workedOk : undefined, missed: tat ? missed : undefined, lv: c.lv || undefined };
     if (tat) {   // the result with the KPI target's single number of days (before v167), for the comparison download only
       o.oldMissed = c.worked - (c.oNum || 0);
       o.oldPct = c.worked ? Math.round(1000 * (c.oNum || 0) / c.worked) / 10 : null;
