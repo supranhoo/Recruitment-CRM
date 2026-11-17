@@ -1123,7 +1123,7 @@ Decision: (1) a backout dated on or after `BACKOUT_REOPEN_FROM` reopens the same
 Status: **built in v191 and switched off** (the setting is empty). Consequences: until the legacy chains age out two models run side by side; the readers of `MRF.Backout_Date` (KPI backout rate, Daily review, dashboard, weekly e-mail, reassign report, BGV) move to `backoutEvents_` first (Phase 2), the reopen path itself comes last (Phase 3). Rollback: empty the setting.
 
 **ADR-084 — A monitor KPI for Timely closure at standard days** (17 Nov, user decision; v214)
-- Beside the three grade-TAT KPIs (ADR-080) a fourth, unscored row judges the Timely closure positions on one configurable flat number of days (default 60). It is a pilot for comparison; whether to keep the current rules, adopt the flat days, or define M-level and W-level days per person is decided after it is seen.
+- Beside the three grade-TAT KPIs (ADR-080) a fourth row (unscored in v214, scored from v215 on Timely closure's bands until its own are saved) judges the Timely closure positions on one configurable flat number of days (default 60). It is a pilot for comparison; whether to keep the current rules, adopt the flat days, or define M-level and W-level days per person is decided after it is seen.
 
 **ADR-080 — KPI days come from the TAT rules per grade, for all three TAT KPIs** (12 Nov, user decision; v167)
 - One number of days per KPI judged W4/W5 against 20 days although their TAT differs. The TAT rules are now the single source of days for the position's TAT bar and for the KPIs; KPI targets keep only the levels counted.
@@ -1527,6 +1527,14 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 - Tests: E2E group O1–O22; local checks reproduce Report_4 (approved 2,510, existing 2,195, net 315; 410 vacant, 95 over-strength, 207 covered).
 
 ### 2026-09-30
+
+**Timely closure at standard days is now scored** (no schema change; v215; 17 Nov 2026; ADR-084 addendum)
+- Request: the new row from v214 had no rating; add the same option as the other TAT KPIs in Admin > KPI targets > Score bands and count thresholds.
+- The KPI is scored. It appears in the Score bands table with a Change button (the same drawer, impact preview and versioned save as the others) and in the "Apply to" tick boxes. Until its own bands are saved it is scored on **Timely closure's bands of the same month**, so the two rows compare like for like; the table says "same as Timely closure until changed". Saving its own bands from a month on stops that fallback from that month; earlier months keep following Timely closure.
+- Scorecard cells for the new row now show a score badge; the legend lists its bands when they differ from the others. The wording "not scored" is removed from the How calculated panel, the legend and the Standard days field.
+- Nothing adds scores together in the app, so no total changes. Timely closure, M-level, W-level and all other KPIs are unchanged.
+- The note on the seeded KPI-targets row in the sheet still reads "monitor KPI, not scored" (an existing row is never edited by the app); it can be reworded by hand.
+- Tested on the workbook copy against v214: all 225 other cells identical; the 46 new-row cells keep their values and gain scores equal to what Timely closure's bands give for the same percentage; with its own bands saved from a month, only its later months use them; the score-band row is returned as a percentage KPI that follows Timely closure.
 
 **New monitor KPI: Timely closure at standard days** (no schema change; v214; 17 Nov 2026; ADR-084)
 - Request: measure Timely closure with a standard 60 days for every position, with the 60 configurable; M-level and W-level days may be defined per person. The owner chose the low-risk route: add one new KPI beside the existing three, leave those untouched, compare, and decide later.

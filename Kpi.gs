@@ -8,7 +8,7 @@ const KPI_DEFS = {
   TIMELY_CLOSURE: { name: 'Timely closure of vacant positions', scored: true },
   M_FULFILMENT: { name: 'Fulfilment of M-level positions within TAT', scored: true },
   W_FULFILMENT: { name: 'Fulfilment of W-level positions within TAT', scored: true },
-  TIMELY_STD: { name: 'Timely closure at standard days (monitor)', scored: false },   // v214: the same positions as Timely closure, every one judged on one flat number of days
+  TIMELY_STD: { name: 'Timely closure at standard days (monitor)', scored: true },   // v214: the same positions as Timely closure, every one judged on one flat number of days; scored since v215
   OFFER_BACKOUT: { name: 'Offer backout rate', scored: false },
   PSYCHOMETRIC: { name: 'Mettl psychometric test (Manager & above)', scored: true, count: true, unit: 'missed' },
   MRF_ADHERENCE: { name: 'MRF & assessment process adherence', scored: true, count: true, unit: 'logged' },
@@ -24,7 +24,7 @@ const KPI_DEFAULT_TARGETS_ = [
   ['*', 'TIMELY_CLOSURE', 'All', 60, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
   ['*', 'M_FULFILMENT', 'M', 50, 'Yes', '2025-04', 'Team default. Levels: All, M, W or T.'],
   ['*', 'W_FULFILMENT', 'W', 20, 'Yes', '2025-04', 'Team default. Add a row per recruiter to override.'],
-  ['*', 'TIMELY_STD', 'All', 60, 'Yes', '2025-04', 'Standard days for every position (monitor KPI, not scored). Add a row per recruiter to override.']
+  ['*', 'TIMELY_STD', 'All', 60, 'Yes', '2025-04', 'Standard days for every position (monitor KPI). Add a row per recruiter to override.']
 ];
 /** The default rows whose KPI has no row in the sheet. `have` is a set of KPI keys. */
 function kpiMissingDefaults_(have) {
@@ -76,6 +76,7 @@ function kpiScoring_() {
 function kpiRulesFor_(scoring, kpi, month) {
   const rows = (scoring || []).filter(function (r) { return r.kpi === kpi && r.from <= month; })
     .sort(function (a, b) { return a.from < b.from ? 1 : a.from > b.from ? -1 : (b.idx || 0) - (a.idx || 0); });
+  if (!rows.length && kpi === KPI_FLAT_DAYS_) return kpiRulesFor_(scoring, 'TIMELY_CLOSURE', month);   // v215: until its own bands are saved, the standard-days KPI is scored on Timely closure's bands of that month
   return rows.length ? rows[0].rules : kpiDefaultRules_(kpi);
 }
 /** The score (0-5) of a value under the rules in force in `month`; null when there is no value. With no saved version it equals kpiScore_ / COUNT_SCORES. */
