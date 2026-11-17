@@ -1525,6 +1525,14 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**KPI scorecard: Timely closure reconciles with M-level and W-level** (no schema change, no score change; v213; 17 Nov 2026)
+- Question: October showed Timely closure 103 of 115, M-level 58 of 65 and W-level 36 of 41, and 65 + 41 is not 115. Was the grade-TAT rule (v167) applied to Timely closure only?
+- Finding: no. All three rows run the same code (`computeKpis_` loop over the three TAT KPIs; `kpiDue_` takes the days from the position's own grade rule in each; the KPI target only chooses which levels count). The gap is the Trainee grades (T, T1 to T3): Timely closure counts every level, M-level and W-level match by the grade's first letter, so a Trainee position is in Timely closure and in neither of the other two. October: 115 = M 65 + W 41 + Trainee 9; achieved 103 = 58 + 36 + 9. Nothing is double counted or lost.
+- Owner decision: keep Trainee positions in Timely closure only and show the split. Counting them in W-level, or a Trainee KPI row, would change scores or add a scored KPI and wait for the Head of HR.
+- Change: each Timely closure cell carries a small split by level (`lv`: worked and achieved for M, W, T, other), summed the same way as the cell itself (tagged-recruiter credit, handed-over stretches). The Timely closure drill-down starts with "115 positions (103 achieved) = M-level 65 (58 achieved) + W-level 41 (36 achieved) + Trainee 9 (9 achieved)". The row says it includes Trainee positions, and the legend says Timely closure equals M + W + Trainee.
+- Correction: the legend (older) and the v212 "How calculated" panel said W-level is joined on time divided by positions due. The code scores W-level on positions worked on, like the other two. Both texts now say so.
+- Tested on the workbook copy: for all 46 Timely closure cells (every recruiter and the team, every month) the split adds up to the cell's worked and achieved counts, the M part equals the M-level row and the W part the W-level row; no existing cell value changed against the previous version. Copy figures: October 113 = 63 + 41 + 9, November 62 = 42 + 14 + 6.
+
 **Audit of build 198, release 4: BGV and KPI readability** (no schema change; v212; 16 Nov 2026)
 - BGV tracker: with no cases, a short explanation leads instead of ten zero tiles. It says a case opens automatically when an offer is recorded on a position that needs verification (the rules decide the grades), shows the start-within-days limit from the rules, and for a TA Lead points to the Rules tab and the vendor import. When there are cases the tiles show as before.
 - KPI scorecard: the table opens with the current month in view, beside the KPI column (which stays in place); the current month heading is marked and underlined. A past financial year opens at its start. The year is still fully reachable by scrolling.
