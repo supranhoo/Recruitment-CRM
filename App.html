@@ -8455,8 +8455,14 @@ async function viewPipeline(v) {
       ['Job posted', posts.length > 0, posts.length ? posts.map(x => x.Channel).join(', ') : P.docs.readyToPost ? 'ready to post' : 'after the JD and questions are final']];
     const ready = fastRoute() ? [readyAll[0], ['Fast-track route', true, 'No JD or screening questions needed. Call the candidate, send to the department, attach its written confirmation, confirm the hiring, then join and onboard.']] : readyAll;
     const shown = P.apps.filter(a => f.closed || a.Status === 'Active' || a.Status === 'On hold');
-    const boardList = () => !shown.length ? '<p class="hint">No candidates on this position yet.</p>' : `<div class="table-wrap"><table class="pipe-list"><thead><tr><th>Candidate</th><th>Stage</th><th>In stage</th><th>Added by</th><th>Status</th></tr></thead><tbody>${P_STAGES.flatMap(st => shown.filter(a => a.Stage === st)).map(a => `<tr class="pcard ${a.Status !== 'Active' ? 'inactive' : ''}" data-app="${esc(a.App_ID)}"><td><b>${esc(a.cand.name || a.Candidate_ID)}</b><span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span></td><td>${esc(PN(a.Stage))}</td><td>${a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0} d</td><td>${esc(a.owner || '')}</td><td>${a.Status !== 'Active' ? esc(a.Status) : 'Active'}${a.Risk ? ` <span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    const boardList = () => !shown.length ? '<p class="hint">No candidates on this position yet.</p>' : `<div class="table-wrap"><table class="pipe-list"><thead><tr><th>Candidate</th><th>Stage</th><th>In stage</th><th>Added by</th><th>Status</th></tr></thead><tbody>${P_STAGES.flatMap(st => shown.filter(a => a.Stage === st)).map(a => `<tr class="pcard ${a.Status !== 'Active' ? 'inactive' : ''}" data-app="${esc(a.App_ID)}"><td><b>${esc(a.cand.name || a.Candidate_ID)}</b><span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span></td><td>${esc(PN(a.Stage))}</td><td>${a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0} d</td><td>${esc(a.owner || '')}</td><td>${a.Status !== 'Active' ? esc(a.Status) : 'Active'}${furtherTag(a)}${a.Risk ? ` <span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
     const days = a => a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0;
+    /* v218: a further interview round (v217) that has no result yet shows as a small tag on the card. */
+    const furtherTag = a => {
+      if (a.Status !== 'Active') return '';
+      const open = (P.interviews || []).filter(x => x.App_ID === a.App_ID && x.Round === 'Further' && ['Scheduled', 'Panel unavailable'].includes(x.Status));
+      return open.length ? `<span class="pfurther" title="${esc(open.map(x => (x.Round_Label || 'Further round') + ' \u00b7 ' + x.startText).join('; '))}">${open.length === 1 ? 'further round: ' + esc(open[0].Round_Label || 'Further round') : open.length + ' further rounds'}</span>` : '';
+    };
     const hidFast = fastRoute() ? ' hidden' : '';   // v204: the fast-track route needs no JD, screening questions or job posts, so those actions are not offered
     late('#pBody').innerHTML = `
       ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only${P.apps.some(canBringBack) ? ', except that a lead can bring a rejected card back (open the card)' : ''}. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
@@ -8480,7 +8486,7 @@ async function viewPipeline(v) {
             <span class="sub">${esc([a.cand.exp ? a.cand.exp + ' yrs' : '', a.cand.ctc ? 'CTC ' + a.cand.ctc : ''].filter(Boolean).join(' \u00b7 '))}</span>
             ${a.owner ? `<span class="powner" title="Added by ${esc(a.owner)}"><span class="pown-ini" aria-hidden="true">${esc(a.owner.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase())}</span>${esc(a.owner)}</span>` : ''}
             <span class="pmeta">${a.Status !== 'Active' ? `<span class="pstatus">${esc(a.Status)}</span>` : `${days(a)}d in stage`}${a.Risk ? `<span class="risk r-${esc(a.Risk)}" title="Joining risk ${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}${a.cand.hasCv ? '<span class="cv-flag">CV</span>' : ''}${a.dnc ? `<span class="dnc-flag" title="${esc(a.dnc.why)}">Do not call</span>` : ''}${a.screen && a.screen.status === 'Complete' ? fitChip(a.screen.band) : ''}</span>
-          </button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
+          ${furtherTag(a)}</button>`).join('') || '<p class="hint" style="padding:6px">\u2014</p>'}</section>`;
       }).join('')}</div>`}`;
     $('#pListToggle').onclick = () => { f.list = !f.list; renderBoard(); };
     $$('.pcard', $('#pBody')).forEach(b => b.onclick = () => { f.cardTab = 'work'; CARD_TL.delete(b.dataset.app); openApp(P.apps.find(a => a.App_ID === b.dataset.app)); });
@@ -8938,11 +8944,17 @@ async function viewPipeline(v) {
       try {
         let np, uploaded = false;
         if (needPaper && paperChosen) { await uploadAttachments('APP', a.App_ID, root); uploaded = true; delete payload.paperException; }   /* the paper must be on the card before the hiring can be confirmed */
-        try { np = await api('apiMoveStage', a.App_ID, next, payload); }
-        catch (e0) {
-          const m0 = String((e0 && e0.message) || e0).replace(/^Error:\s*/, '');
-          if (!m0.startsWith('BGV open:') || !await askConfirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
-          payload.bgvAck = true; np = await api('apiMoveStage', a.App_ID, next, payload);
+        for (;;) {
+          try { np = await api('apiMoveStage', a.App_ID, next, payload); break; }
+          catch (e0) {
+            const m0 = String((e0 && e0.message) || e0).replace(/^Error:\s*/, '');
+            if (m0.startsWith('Further round open:') && !payload.roundAck) {   // v218: warned about, not blocked
+              if (!await askConfirm(m0.replace(/^Further round open:\s*/, '') + '\n\nMove on anyway? It stays visible on the card and in the history.', { title: 'A further interview has no result yet', ok: 'Move on anyway', cancel: 'Keep the card here' })) { busy(b, false, `Move to ${PN(next)}`); return; }
+              payload.roundAck = true; continue;
+            }
+            if (!m0.startsWith('BGV open:') || payload.bgvAck || !await askConfirm(m0.replace(/^BGV open:\s*/, 'Background verification is still open. ') + '\n\nMove to Joined anyway?')) throw e0;
+            payload.bgvAck = true;
+          }
         }
         if (!uploaded && $$('.att-input', root).some(x => x.files[0])) { await uploadAttachments('APP', a.App_ID, root); np = await api('apiPipeline', f.line); }
         applyBoard(np, a.Line_ID);
