@@ -43,7 +43,7 @@ function histBuild_(src) {
   });
   (src.ivs || []).forEach(function (i) {
     ev.push({ kind: 'interview', ms: ms_(i.Start) || ms_(i.Created_At), at: histWhen_(i.Start || i.Created_At), by: String(i.Created_By || ''), app: String(i.App_ID), position: label(i.Line_ID), origin: origin(i),
-      title: String(i.Round || 'Interview') + ' interview', status: String(i.Status || ''), mode: String(i.Mode || ''), panel: String(i.Panel || ''), attendance: String(i.Attendance_Confirmed || ''),
+      title: String(i.Round) === 'Further' ? String(i.Round_Label || 'Further round') : String(i.Round || 'Interview') + ' interview', status: String(i.Status || ''), mode: String(i.Mode || ''), panel: String(i.Panel || ''), attendance: String(i.Attendance_Confirmed || ''),
       unavailable: String(i.Unavailable || ''), note: String(i.Notes || '') });
   });
   (src.scrs || []).forEach(function (s) {
