@@ -105,8 +105,13 @@ function interviewRoundFor_(stage, interviews) {
 }
 /** Whether the "verify documents and release the offer" to-do applies: at HR or Documents, or at Technical once selected with no HR interview pending. */
 function offerTodoApplies_(stage, techResult, interviews) {
-  if (stage === 'HR' || stage === 'Docs') return true;
-  return stage === 'Technical' && /select|shortlist/i.test(String(techResult || '')) && !hrInterviewOpen_(interviews);
+  if (stage === 'Docs') return true;
+  if (stage === 'HR') return !furtherOpen_(interviews).length;   // v218: not while a further interview is still to happen
+  return stage === 'Technical' && /select|shortlist/i.test(String(techResult || '')) && !hrInterviewOpen_(interviews) && !furtherOpen_(interviews).length;
+}
+/** v218: the further interview rounds (v217) that are booked and have no result yet: Scheduled, or Panel unavailable (to be rescheduled). */
+function furtherOpen_(interviews) {
+  return (interviews || []).filter(function (i) { return String(i.Round) === 'Further' && (i.Status === 'Scheduled' || i.Status === 'Panel unavailable'); });
 }
 
 /**
@@ -288,6 +293,33 @@ function computeTasks_() {
         }
       }
     }
+
+    // 6b. v218: a further interview round (booked by the recruiter, any number): its own reschedule, attendance and result to-dos, per booking.
+    if (['Technical', 'HR'].indexOf(st) >= 0 && since) furtherOpen_(mine).forEach(function (x) {
+      const label = String(x.Round_Label || 'Further round'), open = { type: 'app', line: a.Line_ID, app: a.App_ID };
+      if (x.Status === 'Panel unavailable') {
+        add('reschedule', { key: 'reschedule|' + x.Interview_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
+          title: 'Reschedule the ' + label + ' interview', context: ctxt + ' \u00b7 unavailable: ' + x.Unavailable,
+          startMs: ms_(x.Updated_At) || now, forceCritical: true, open: open });
+        return;
+      }
+      const start = ms_(x.Start), end = start + (Number(x.Duration_Min) || 60) * 60000;
+      const startDay = ymd_(x.Start), tomorrow = ymd_(new Date(now + 86400000));
+      if (now < start && (startDay === today || startDay === tomorrow) && String(x.Attendance_Confirmed) !== 'Yes') {
+        const emails = String(x.Panel || '').split(';').map(function (n) { return panel[panelKey_(n)] || ''; }).filter(String);
+        if (c.Email) emails.push(String(c.Email));
+        const msg = 'Reminder: ' + label + ' interview for ' + who + ' (' + l.Position + ') on ' + istTime_(x.Start)
+          + (x.Mode === 'Teams' ? ' on Microsoft Teams (link in the invitation).' : ' at ' + (x.Location || 'the office') + '.') + ' Please confirm you can attend.';
+        add('confirm_attendance', { key: 'confirm_attendance|' + x.Interview_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
+          title: 'Confirm attendance: ' + label + ' interview ' + (startDay === today ? 'today' : 'tomorrow') + ' ' + fmt_(x.Start, TZ, 'HH:mm'),
+          context: ctxt + ' \u00b7 panel: ' + x.Panel, startMs: Math.min(now, start - 36 * HOUR_MS_), manual: true, message: msg,
+          link: emails.length ? { type: 'teamsChat', to: emails, message: msg } : null, interview: x.Interview_ID });
+      }
+      if (now >= end) {
+        add('record_result', { key: 'record_result|' + x.Interview_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
+          title: 'Record the ' + label + ' interview result', context: ctxt + ' \u00b7 held ' + istTime_(x.Start), startMs: end, open: open });
+      }
+    });
 
     // 7. Psychometric test before Documents verified (Manager and above); the HR interview is optional, so it no longer marks the deadline.
     if ((st === 'Technical' || st === 'HR') && since && managerPlus_(l.Grade, l.Position)) {

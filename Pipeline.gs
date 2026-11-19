@@ -348,6 +348,15 @@ function apiMoveStageRun_(appId, toStage, data) {
     if (holder) throw new Error(holder + ' already holds the offer for this position. Only one live offer is allowed: record their backout first (it creates the replacement MRF), or ask a TA Lead or the Head of HR.');
   }
   if (ti <= fi && !isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can move a candidate back to an earlier stage.');
+  let roundNote = '';
+  if (ti > STAGES.indexOf('HR') && fi >= STAGES.indexOf('Technical') && fi <= STAGES.indexOf('HR')) {   // v218: leaving the interview stages with a further round still open is warned about, not blocked
+    const open = furtherOpen_(readTable_(T.INT.name, true).rows.filter(function (i) { return i.App_ID === appId; }));
+    if (open.length) {
+      const names = open.map(function (i) { return String(i.Round_Label || 'Further round'); }).join(', ');
+      if (!data.roundAck) throw new Error('Further round open: ' + (open.length === 1 ? 'A further interview (' + names + ') has' : open.length + ' further interviews (' + names + ') have') + ' no result yet.');
+      roundNote = 'Moved on with a further round open: ' + names + '.';
+    }
+  }
   if (ti < fi) daySnapDropAll_();
   const patch = { Stage: toStage, Stage_Since: new Date() };
   const backWrites = [];   // what a move back undoes on the position and the candidate: written only after every check below has passed
@@ -431,7 +440,7 @@ function apiMoveStageRun_(appId, toStage, data) {
   if (fastOut) { Object.keys(fastOut.patch).forEach(function (k) { patch[k] = fastOut.patch[k]; }); if (fastOut.outcome) outcome = fastOut.outcome; }
   backWrites.forEach(function (w) { w(); });   // every check has passed: now the move back is written
   update_(T.APP, appId, patch, u);
-  appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note].filter(function (x) { return x; }).join(' '), u);
+  appendHistory_(app, from, toStage, outcome, [data.note, fastOut && fastOut.note, roundNote].filter(function (x) { return x; }).join(' '), u);
   if (toStage === 'Offer' || toStage === 'Joined' || ti < fi) bgvTouchLine_(app.Line_ID);
   return boardAfterWrite_(app.Line_ID);
 }
