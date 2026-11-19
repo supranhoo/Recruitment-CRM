@@ -8619,20 +8619,26 @@ async function viewPipeline(v) {
     $('#jpSave').onclick = async () => { try { const x = await api('apiSaveJobPost', Object.assign({ Line_ID: f.line }, readForm($('#jpForm')), $('#jpWhy') ? { Override_Reason: $('#jpWhy').value } : {})); P.posts.push(x); toast('Job post added'); renderBoard(); postsDialog(); } catch (e) { toast(e, true); } };
   };
   const ivRound = a => a.Stage === 'Confirmed' ? 'Technical' : a.Stage === 'Technical' ? 'HR' : '';
-  const ivLabel = r => r === 'HR' ? 'HR / final (optional)' : 'Technical';
+  const ivLabel = (r, x) => r === 'HR' ? 'HR / final (optional)' : r === 'Further' ? ((x && x.Round_Label) || 'Further round') : 'Technical';
+  /* v217: a further round can be added to a card at Technical or HR on the standard route; it never changes the stage and the first round is not needed for it to exist. */
+  const furtherOk = (a, can) => can && !fastRoute() && a.Status === 'Active' && ['Technical', 'HR'].includes(a.Stage);
   const inviteUrl = (x, a) => {
     const to = (x.panelEmails || []).concat(a.cand.email ? [a.cand.email] : []);
-    const m = { subject: `${ivLabel(x.Round)} interview: ${a.cand.name} for ${P.line.Position}`, start: x.startIso, minutes: Number(x.Duration_Min) || 60, to, location: x.Location,
+    const m = { subject: `${ivLabel(x.Round, x)} interview: ${a.cand.name} for ${P.line.Position}`, start: x.startIso, minutes: Number(x.Duration_Min) || 60, to, location: x.Location,
       content: `Candidate: ${a.cand.name}${a.cand.mobile ? ' (' + a.cand.mobile + ')' : ''}\nPosition: ${P.line.Position} (${P.line.MRF_No || ''}), ${P.line.Dept}\nPanel: ${x.Panel}${x.Notes ? '\nNotes: ' + x.Notes : ''}` };
     return x.Mode === 'Teams' ? teamsMeetingUrl(m) : outlookMeetingUrl(m);
   };
   const interviewSecHtml = (a, can) => {
     const round = ivRound(a), mine = (P.interviews || []).filter(x => x.App_ID === a.App_ID);
-    if (!round && !mine.length) return '';
+    if (!round && !mine.length && !furtherOk(a, can)) return '';
     const panelDefault = String(P.line[round === 'HR' ? 'Final_Panel' : 'Tech_Panel'] || '');
     return `<section class="app-sec" id="apIvSec"><h3>Interviews</h3>
-      ${mine.length ? `<ul class="ints">${mine.map(x => `<li class="int st-${esc(String(x.Status).split(' ').join('-'))}"><div><b>${ivLabel(x.Round)} \u00b7 ${esc(x.startText)}</b>
-        <span class="sub">${esc(x.Mode)}${x.Location ? ' \u00b7 ' + esc(x.Location) : ''} \u00b7 panel: ${esc(x.Panel)} \u00b7 <b>${esc(x.Status)}</b>${x.Attendance_Confirmed === 'Yes' ? ' \u00b7 attendance confirmed' : ''}${x.Unavailable ? ' \u00b7 unavailable: ' + esc(x.Unavailable) : ''}</span></div>
+      ${mine.length ? `<ul class="ints">${mine.map(x => `<li class="int st-${esc(String(x.Status).split(' ').join('-'))}"><div><b>${esc(ivLabel(x.Round, x))} \u00b7 ${esc(x.startText)}</b>
+        <span class="sub">${esc(x.Mode)}${x.Location ? ' \u00b7 ' + esc(x.Location) : ''} \u00b7 panel: ${esc(x.Panel)} \u00b7 <b>${esc(x.Status)}</b>${x.Attendance_Confirmed === 'Yes' ? ' \u00b7 attendance confirmed' : ''}${x.Unavailable ? ' \u00b7 unavailable: ' + esc(x.Unavailable) : ''}${x.Result ? ` \u00b7 result: <b>${esc(x.Result)}</b>${x.Result_By ? ' by ' + esc(x.Result_By) : ''}${x.Result_Note ? ' \u00b7 ' + esc(x.Result_Note) : ''}` : ''}</span></div>
+        ${x.Round === 'Further' && !x.Result && ['Scheduled', 'Panel unavailable'].includes(x.Status) && can ? `<div class="btn-row"><button class="btn sm" data-iv="result" data-id="${esc(x.Interview_ID)}">Record result</button></div>
+          <div class="iv-result" data-for="${esc(x.Interview_ID)}" hidden><div class="field"><label>Result</label><select class="ivr-res" aria-label="Result"><option value="Selected">Selected</option><option value="Rejected">Rejected</option><option value="Hold">Hold</option></select></div>
+            <div class="field"><label>Interviewed by</label><input class="ivr-by" value="${esc(x.Panel)}" aria-label="Interviewed by"></div><div class="field"><label>Note (optional)</label><input class="ivr-note" aria-label="Note"></div>
+            <p class="hint">Selected leaves the card where it is. Rejected or Hold changes the card\u2019s status.</p><button class="btn sm primary" data-iv="resultSave" data-id="${esc(x.Interview_ID)}">Save result</button></div>` : ''}
         ${x.Status === 'Scheduled' && can ? `<div class="btn-row"><a class="btn sm primary" target="_blank" rel="noopener" href="${esc(inviteUrl(x, a))}">${x.Mode === 'Teams' ? 'Open in Teams' : 'Open in Outlook'}</a>
           ${x.Attendance_Confirmed === 'Yes' ? '' : `<button class="btn sm" data-iv="confirm" data-id="${esc(x.Interview_ID)}">Attendance confirmed</button>`}
           <button class="btn sm" data-iv="unavail" data-id="${esc(x.Interview_ID)}">Panel unavailable</button><button class="btn sm" data-iv="cancel" data-id="${esc(x.Interview_ID)}">Cancel</button></div>
@@ -8648,7 +8654,18 @@ async function viewPipeline(v) {
           { k: 'iv_panel', l: 'Panel', t: 'multi', wide: true, pref: panelDefault },
           { k: 'iv_notes', l: 'Notes for the panel', wide: true }],
           { iv_round: round, iv_mode: 'Teams', iv_date: daysAhead(1), iv_time: '11:00', iv_duration: '60', iv_panel: panelDefault }))}
-        <div class="drawer-actions" style="position:static"><button class="btn primary" id="apIvSave">Save interview</button></div></div>` : ''}</section>`;
+        <div class="drawer-actions" style="position:static"><button class="btn primary" id="apIvSave">Save interview</button></div></div>` : ''}
+      ${furtherOk(a, can) ? `<details class="rc-keep" style="margin-top:10px"><summary>Add a further interview round <span class="sub">(optional)</span></summary>
+        <p class="hint">For another interview after one has been cleared, for example a second technical interview with someone else. It does not change the stage. Name each round; booking the same name again replaces that booking.</p>
+        <div id="apFv">${wrapForm(form([{ k: 'fv_label', l: 'Round name', req: true, wide: true, hint: 'e.g. Technical 2 - Plant Head' },
+          { k: 'fv_mode', l: 'Mode', t: 'select', opts: ['Teams', 'In person'], noBlank: true },
+          { k: 'fv_date', l: 'Date', t: 'date', req: true }, { k: 'fv_time', l: 'Time', t: 'time', req: true },
+          { k: 'fv_duration', l: 'Duration', t: 'select', opts: [['30', '30 minutes'], ['45', '45 minutes'], ['60', '1 hour'], ['90', '1.5 hours']], noBlank: true },
+          { k: 'fv_location', l: 'Location (in person)' },
+          { k: 'fv_panel', l: 'Panel', t: 'multi', wide: true, pref: String(P.line.Tech_Panel || '') },
+          { k: 'fv_notes', l: 'Notes for the panel', wide: true }],
+          { fv_mode: 'Teams', fv_date: daysAhead(1), fv_time: '11:00', fv_duration: '60', fv_panel: String(P.line.Tech_Panel || '') }))}
+          <div class="drawer-actions" style="position:static"><button class="btn primary" id="apFvSave">Save further round</button></div></div></details>` : ''}</section>`;
   };
   const bindInterviewSec = (d, a) => {
     const sec = $('#apIvSec', d); if (!sec) return;
@@ -8670,8 +8687,38 @@ async function viewPipeline(v) {
         } else { failed(e, btn, override ? 'Schedule anyway' : 'Save interview'); }
       }
     };
+    if ($('#apFvSave', sec)) $('#apFvSave', sec).onclick = async () => {
+      const r = readForm($('#apFv', sec)), btn = $('#apFvSave', sec);
+      if (String(r.fv_label).trim().length < 3) return toast('Name the round, for example \u201cTechnical 2 - Plant Head\u201d.', true);
+      busy(btn, true, 'Saving\u2026');
+      const override = !!btn.dataset.override;
+      try {
+        const res = await api('apiScheduleInterview', a.App_ID, { round: 'Further', label: r.fv_label, mode: r.fv_mode, date: r.fv_date, time: r.fv_time, duration: r.fv_duration, location: r.fv_location, panel: r.fv_panel, notes: r.fv_notes, override });
+        toast('Further round saved. Now click \u201cOpen in ' + (r.fv_mode === 'Teams' ? 'Teams' : 'Outlook') + '\u201d to send the invitation.'); after(res);
+      } catch (e) {
+        const msg = String(e && e.message || e);
+        if (/^Panel unavailable:/.test(msg)) {
+          let w = $('#apFvWarn', sec);
+          if (!w) { btn.insertAdjacentHTML('beforebegin', '<div class="note warn-note" id="apFvWarn" role="alert"></div>'); w = $('#apFvWarn', sec); }
+          w.innerHTML = `${esc(msg)} Change the date or the panel, or save anyway if the member has confirmed.`;
+          btn.dataset.override = '1'; busy(btn, false, 'Schedule anyway');
+        } else failed(e, btn, override ? 'Schedule anyway' : 'Save further round');
+      }
+    };
     $$('[data-iv]', sec).forEach(b => b.onclick = async () => {
       const id = b.dataset.id, act = b.dataset.iv, box = $(`.iv-unavail[data-for="${id}"]`, sec);
+      if (act === 'result') { const rb = $(`.iv-result[data-for="${id}"]`, sec); rb.hidden = !rb.hidden; return; }
+      if (act === 'resultSave') {
+        const rb = $(`.iv-result[data-for="${id}"]`, sec), res = $('.ivr-res', rb).value;
+        if (res !== 'Selected' && !await askConfirm(`${res === 'Rejected' ? 'Reject' : 'Put on hold'} ${a.cand.name}? This changes the card\u2019s status. ${res === 'Rejected' ? 'A lead can reactivate it later.' : ''}`, { title: res === 'Rejected' ? 'Reject this candidate?' : 'Put this candidate on hold?', ok: res === 'Rejected' ? 'Reject' : 'Put on hold', danger: res === 'Rejected' })) return;
+        busy(b, true, 'Saving\u2026');
+        try {
+          const out = await api('apiRecordRoundResult', id, { result: res, by: $('.ivr-by', rb).value, note: $('.ivr-note', rb).value });
+          toast('Result recorded: ' + res);
+          if (out.board) { applyBoard(out.board, a.Line_ID); d.close(); reload(out.board); } else after(out.interviews);
+        } catch (e) { failed(e, b, 'Save result'); }
+        return;
+      }
       if (act === 'unavail') { box.hidden = !box.hidden; return; }
       let data = {};
       if (act === 'unavailSave') data = { members: $$('input[type=checkbox]:checked', box).map(x => x.value), reason: $('.iv-reason', box).value };

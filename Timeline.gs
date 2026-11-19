@@ -18,7 +18,7 @@ const TL_FIELDS_ = {
     Met: 'Met', Partly: 'Partly met', Gaps: 'Gaps', SQ_Version: 'Questions version', JD_Version: 'JD version',
     Shared_On: 'Shared on', Shared_With: 'Shared with', Share_Reason: 'Reason for sharing' },
   Interviews: { Round: 'Round', Mode: 'Mode', Start: 'Interview date', Duration_Min: 'Duration (min)', Location: 'Location', Panel: 'Panel', Status: 'Interview status',
-    Attendance_Confirmed: 'Attendance confirmed', Unavailable: 'Panel unavailable', Notes: 'Notes' },
+    Attendance_Confirmed: 'Attendance confirmed', Unavailable: 'Panel unavailable', Notes: 'Notes', Round_Label: 'Round name', Result: 'Result', Result_On: 'Result recorded on', Result_By: 'Result by', Result_Note: 'Result note' },
   Candidates: { Tech_Interview_Date: 'Technical interview date', Tech_Interview_By: 'Technical interview by', Tech_Result: 'Technical result',
     HR_Interview_Date: 'HR interview date', HR_Interview_By: 'HR interview by', HR_Result: 'HR result',
     Psychometric_Status: 'Psychometric test status', Psychometric_Date: 'Psychometric test date', Psychometric_Score: 'Psychometric score' }
@@ -196,9 +196,9 @@ function apiAppTimeline(appId) {
   const ps = String(cand.Psychometric_Status || '');
   if (ps || ymd_(cand.Psychometric_Date) || cand.Psychometric_Score) tech.facts.push(['Psychometric test', [ps, ymd_(cand.Psychometric_Date) ? tlDay_(cand.Psychometric_Date) : '', cand.Psychometric_Score ? 'score ' + cand.Psychometric_Score : ''].filter(String).join(' · ')]);
   ivs.filter(function (i) { return String(i.Round) !== 'HR'; }).forEach(function (i) {
-    tech.facts.push(['Scheduled interview', (i.Start instanceof Date ? tlWhen_(i.Start) : '') + ' · ' + String(i.Mode || '') + ' · ' + String(i.Status || '') + (i.Attendance_Confirmed === 'Yes' ? ' · attendance confirmed' : '') + ' · booked by ' + String(i.Created_By || '')]);
+    tech.facts.push([String(i.Round) === 'Further' ? 'Further round: ' + String(i.Round_Label || '') : 'Scheduled interview', (i.Start instanceof Date ? tlWhen_(i.Start) : '') + ' · ' + String(i.Mode || '') + ' · ' + String(i.Status || '') + (i.Attendance_Confirmed === 'Yes' ? ' · attendance confirmed' : '') + (i.Result ? ' · result ' + String(i.Result) + (i.Result_By ? ' (' + String(i.Result_By) + ')' : '') + (i.Result_Note ? ': ' + String(i.Result_Note) : '') : '') + ' · booked by ' + String(i.Created_By || '')]);
   });
-  tech.notes.push('The interview result is stored on the candidate and in the move above; the scheduled interview itself has no result record.');
+  tech.notes.push('The interview result is stored on the candidate and in the move above; the first technical interview has no result record of its own, a further round has.');
   tech.notes.push('The HR interview (optional) is in All activity.');
 
   all.notes.push('Every stage move and status change, and every edit shown in the other tabs, plus the HR interview fields.');
