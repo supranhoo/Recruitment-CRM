@@ -209,6 +209,74 @@ function apiAddToPipeline(candidateId, lineId) {
   return appClient_(created);
 }
 
+/**
+ * The writes that take a card from one position to another (v216, lifted out of apiMoveToLine so the two actions cannot drift): its interviews,
+ * follow-ups, screenings and voice calls first, then the candidate's own position when it is the old one, and the card last. `extra` is merged into
+ * the card's own update (the bring-back action sets Status Active there). The caller has done every check and writes the history line.
+ */
+function moveCardRecords_(app, from, to, u, extra) {
+  const toId = String(to.Line_ID);
+  const sameApp = function (def) {
+    if (!ss_().getSheetByName(def.name)) return [];
+    return readTable_(def.name, true).rows.filter(function (r) { return String(r.App_ID) === String(app.App_ID) && String(r.Line_ID) !== toId; });
+  };
+  sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+  sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+  sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+  if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
+  const cand = readTable_(T.CAND.name, true).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
+  if (cand && String(cand.Line_ID) === String(from.Line_ID)) update_(T.CAND, app.Candidate_ID, { Line_ID: toId }, u);
+  update_(T.APP, app.App_ID, Object.assign({ Line_ID: toId, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, extra || {}), u);
+}
+
+/** The live position that took over from a Replaced one: follows Replaced_By to the newest position that is not itself Replaced (null when there is none). */
+function replacementTarget_(lines, line) {
+  const byId = {}; lines.forEach(function (l) { byId[String(l.Line_ID)] = l; });
+  let cur = line, hops = 0;
+  while (cur && positionStatus_(cur) === 'Replaced' && hops++ < 10) cur = byId[String(cur.Replaced_By || '')];
+  return cur && positionStatus_(cur) !== 'Replaced' && String(cur.Line_ID) !== String(line.Line_ID) ? cur : null;
+}
+
+/**
+ * v216: a lead brings back a card that was rejected (or put on hold) on a position that has since been replaced after a backout. Only Active and On hold
+ * cards move to the replacement when it is created, so a Rejected one stays on the frozen position; this moves it to the live replacement and makes it
+ * Active at the same stage, with its interviews, follow-ups and screening. Before Offer only (no offer data on the card). One locked step; a repeated
+ * call for a card that is already back changes nothing.
+ */
+function apiBringBack(appId, reason) {
+  const u = currentUser_(); ensureSchema_();
+  if (!isLead_(u)) throw new Error('Only a TA Lead or the Head of HR can bring a card back from a replaced position.');
+  reason = clean_(String(reason || '')).trim();
+  if (reason.length < 3) throw new Error('Give a short reason.');
+  return withLock_(function () {
+    const app = appOf_(appId);
+    const lines = readTable_(T.MRF.name, true).rows;
+    const from = lines.filter(function (l) { return l.Line_ID === app.Line_ID; })[0];
+    if (!from) throw new Error('The card\u2019s position was not found.');
+    if (positionStatus_(from) !== 'Replaced') {
+      if (String(app.Status) === 'Active') return boardAfterWrite_(app.Line_ID);   // a repeated click: the card is already back
+      throw new Error('This position is not replaced. Use Reactivate on the card instead.');
+    }
+    if (['Rejected', 'On hold'].indexOf(String(app.Status)) < 0) throw new Error('This card is ' + String(app.Status).toLowerCase() + '. Only a rejected or on-hold card can be brought back.');
+    if (STAGES.indexOf(String(app.Stage)) >= STAGES.indexOf('Offer')) throw new Error('A card at Offer or later cannot be brought back here, because the offer and joining dates sit on the position.');
+    const to = replacementTarget_(lines, from);
+    if (!to) throw new Error('This position has no open replacement to bring the card back to.');
+    requireActiveLine_(to);
+    if (routeOf_(from) !== routeOf_(to)) throw new Error('The two positions use different hiring routes (' + routeOf_(from) + ' and ' + routeOf_(to) + '), so their stages differ.');
+    const dup = readTable_(T.APP.name, true).rows.filter(function (a) { return a.Candidate_ID === app.Candidate_ID && a.Line_ID === String(to.Line_ID); })[0];
+    if (dup) throw new Error('This candidate already has a card (' + String(dup.Status).toLowerCase() + ') in ' + (to.MRF_No || to.Line_ID) + ' \u00b7 ' + to.Position + '.');
+    ensureActiveCandidate_(app.Candidate_ID, u);
+    const was = String(app.Status);
+    moveCardRecords_(app, from, to, u, { Status: 'Active', Status_Reason: '' });
+    appendHistory_(Object.assign({}, app, { Line_ID: to.Line_ID, Recruiter: to.Recruiter, Status: 'Active' }), String(app.Stage), String(app.Stage), 'Active',
+      'Brought back from ' + (from.MRF_No || from.Line_ID) + ' to ' + (to.MRF_No || to.Line_ID) + ' (was ' + was.toLowerCase() + '): ' + reason, u);
+    bgvTouchLine_(from.Line_ID); bgvTouchLine_(to.Line_ID);
+    const out = boardAfterWrite_(from.Line_ID);
+    out.broughtBackTo = { line: String(to.Line_ID), mrf: String(to.MRF_No || ''), position: String(to.Position || '') };
+    return out;
+  });
+}
+
 /** The MRF a position belongs to, as a key that ignores case and spaces ('' when it has none). Positions of one MRF share it. */
 function mrfKey_(l) { return String((l && l.MRF_No) || '').trim().toUpperCase(); }
 
@@ -242,17 +310,7 @@ function apiMoveToLine(appId, toLineId, reason) {
     const dup = readTable_(T.APP.name, true).rows.filter(function (a) { return a.Candidate_ID === app.Candidate_ID && a.Line_ID === toId; })[0];
     if (dup) throw new Error('This candidate already has a card (' + String(dup.Status).toLowerCase() + ') in ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + '.');
     // Every check has passed. Related records first, then the candidate, then the card, then the history: a retry repeats safely.
-    const sameApp = function (def) {
-      if (!ss_().getSheetByName(def.name)) return [];
-      return readTable_(def.name, true).rows.filter(function (r) { return String(r.App_ID) === String(app.App_ID) && String(r.Line_ID) !== toId; });
-    };
-    sameApp(T.INT).forEach(function (r) { update_(T.INT, r.Interview_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
-    sameApp(T.FU).forEach(function (r) { update_(T.FU, r.FU_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
-    sameApp(T.SCR).forEach(function (r) { update_(T.SCR, r.Screen_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
-    if (typeof VOICE_CALLS_ !== 'undefined') sameApp(VOICE_CALLS_).forEach(function (r) { update_(VOICE_CALLS_, r.Call_ID, { Line_ID: toId, Origin_Line_ID: String(r.Origin_Line_ID || from.Line_ID) }, u); });
-    const cand = readTable_(T.CAND.name, true).rows.filter(function (c) { return c.Candidate_ID === app.Candidate_ID; })[0];
-    if (cand && String(cand.Line_ID) === String(from.Line_ID)) update_(T.CAND, app.Candidate_ID, { Line_ID: toId }, u);
-    update_(T.APP, app.App_ID, { Line_ID: toId, MRF_No: to.MRF_No, Recruiter: to.Recruiter }, u);
+    moveCardRecords_(app, from, to, u);
     appendHistory_(Object.assign({}, app, { Line_ID: toId, Recruiter: to.Recruiter }), String(app.Stage), String(app.Stage), 'Moved',
       'Moved from ' + (from.MRF_No || from.Line_ID) + ' · ' + from.Position + ' (' + (from.Recruiter || 'not assigned') + ') to ' + (to.MRF_No || to.Line_ID) + ' · ' + to.Position + ' (' + (to.Recruiter || 'not assigned') + '): ' + reason, u);
     bgvTouchLine_(from.Line_ID); bgvTouchLine_(toId);
