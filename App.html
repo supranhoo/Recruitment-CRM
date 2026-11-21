@@ -8860,14 +8860,15 @@ async function viewPipeline(v) {
       }
     };
     const show = (k, focus) => {
+      if (!k || (k !== 'work' && !cardTabs.some(t => t.k === k))) return;   // v223: never switch to a tab that does not exist
       f.cardTab = k;
       $$('[role=tab]', strip).forEach(b => { const on = b.dataset.tab === k; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
-      $$('.trk-btn', d).forEach(b => b.closest('li').classList.toggle('sel', b.dataset.tab === k));
+      $$('.trk-btn[data-tab]', d).forEach(b => b.closest('li').classList.toggle('sel', b.dataset.tab === k));
       work.hidden = k !== 'work'; det.hidden = k === 'work';
       if (k !== 'work') load(k);
     };
     $$('[role=tab]', strip).forEach(b => b.onclick = () => show(b.dataset.tab));
-    $$('.trk-btn', d).forEach(b => b.onclick = () => show(b.dataset.tab));
+    $$('.trk-btn[data-tab]', d).forEach(b => b.onclick = () => show(b.dataset.tab));   // v223: only the stage buttons; the further-round buttons have their own handlers
     strip.addEventListener('keydown', e => {
       const tabs = $$('[role=tab]', strip), at = tabs.findIndex(b => b.getAttribute('aria-selected') === 'true');
       const to = e.key === 'ArrowRight' ? (at + 1) % tabs.length : e.key === 'ArrowLeft' ? (at - 1 + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;

@@ -1534,6 +1534,9 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Fix: the further-round buttons on the stage track did nothing and broke the card for leads** (client only; v223; 21 Nov 2026)
+- In v222 the "+ Further round" slot and the round markers shared a style class with the stage buttons that open the "where it was updated" tabs. For a TA Lead, Head of HR or Admin the tab code took over those buttons, so a click showed "Cannot read properties of undefined (reading 'l')" and hid the Work panel. The tab code now binds only the stage buttons, and ignores a tab that does not exist. Recruiters were not affected.
+
 **Further interview rounds on the card's stage track** (client only, no schema change; v222; 21 Nov 2026; extends ADR-085)
 - The card's stage track at the top now shows each further round **between Technical interview and HR interview**, as a marker with the round name and its state ("Scheduled 14 Nov", "Panel unavailable", or the result: Selected, Rejected, Hold). Cancelled rounds are left out. Markers have a dashed line (amber while open, red for Rejected or Hold) so they are not mistaken for stages; they never move the card, are not counted in "days in this stage" and do not change the stage list.
 - Where a round can be added (card Active at Technical or HR, standard route, the usual people) the track shows a dotted "+ Further round / optional" slot after Technical. It opens the Interviews section with the add form, and clicking a marker opens the Interviews section at that round (with its Record result button). The existing form, result form, board tag, to-dos, warnings, KPI and TAT are unchanged.
