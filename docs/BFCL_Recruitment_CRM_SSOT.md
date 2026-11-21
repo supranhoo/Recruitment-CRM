@@ -1534,6 +1534,11 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Further interview rounds on the card's stage track** (client only, no schema change; v222; 21 Nov 2026; extends ADR-085)
+- The card's stage track at the top now shows each further round **between Technical interview and HR interview**, as a marker with the round name and its state ("Scheduled 14 Nov", "Panel unavailable", or the result: Selected, Rejected, Hold). Cancelled rounds are left out. Markers have a dashed line (amber while open, red for Rejected or Hold) so they are not mistaken for stages; they never move the card, are not counted in "days in this stage" and do not change the stage list.
+- Where a round can be added (card Active at Technical or HR, standard route, the usual people) the track shows a dotted "+ Further round / optional" slot after Technical. It opens the Interviews section with the add form, and clicking a marker opens the Interviews section at that round (with its Record result button). The existing form, result form, board tag, to-dos, warnings, KPI and TAT are unchanged.
+- The track columns now follow the number of cells (they wrap on narrow screens); with no further rounds and no add slot the track looks as before.
+
 **Daily review and My day: the three dates of a position, labelled** (no schema change; v221; 21 Nov 2026)
 - In "CVs by position" the position cell used to show one unlabelled date (the MRF received date), which confused the TA team. It now shows three labelled dates under the department: **Received** (MRF received), **Approved** (MRF approved) and **Assigned** (assigned to the recruiter). A missing date shows a dash. Where the approved date was filled in automatically from the received date (`Approved_Date_Check` = Default) it is marked "(assumed)". Server: `DayReview.gs` adds `approvedOn`, `approvedAssumed`, `assignedOn` to each position row (`mrfDate` unchanged); client: `posDates` in `App.html`. No figure changes.
 - A past day whose saved snapshot has no such dates is worked out again on first open, so earlier days show them too.
