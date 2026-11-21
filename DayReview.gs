@@ -223,6 +223,9 @@ function dayData_(date, onlyRecruiter) {
   Object.keys(recs).forEach(function (k) { Object.keys(recs[k].byPosition).forEach(function (id) {
     const g = recs[k].byPosition[id]; g.day = dsMap[id] || null;
     g.mrfDate = lineById[id] ? ymd_(lineById[id].Receipt_Date) : '';
+    g.approvedOn = lineById[id] ? ymd_(lineById[id].Approved_On) : '';
+    g.approvedAssumed = !!lineById[id] && String(lineById[id].Approved_Date_Check || '') === 'Default';
+    g.assignedOn = lineById[id] ? ymd_(lineById[id].Assigned_On) : '';
     if (g.noActivity && stages.some(function (m) { return g[m]; })) g.noActivity = false;
   }); });
   const out = Object.keys(recs).map(function (k) {
@@ -271,6 +274,7 @@ function apiDaySummaryRun_(date) {
   const past = date < ymd_(new Date());
   let full = past ? daySnapGet_(date) : null;
   if (full && (full.recruiters || []).some(function (r) { return !r.dayStatusList; })) full = null;
+  if (full && (full.recruiters || []).some(function (r) { return (r.byPosition || []).some(function (g) { return g.approvedOn === undefined; }); })) full = null;   // v221: a day saved before the three dates were added is worked out again
   if (!full) { full = dayData_(date, ''); if (past) daySnapPut_(date, full); }
   return isLead_(u) ? full : dayForRecruiter_(full, u.recruiter);
 }
