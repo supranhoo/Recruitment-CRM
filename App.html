@@ -510,6 +510,14 @@ function lineById(id) {
   return lineIdx.map.get(id);
 }
 function lineLabel(p) { return p ? `${p.MRF_No || '—'} · ${p.Position} · ${p.Dept}` : ''; }
+/* v220: everyone on a position: the lead recruiter first, then the tagged recruiters ("Tishar, Aditya"). */
+function lineWho(p) {
+  if (!p) return '';
+  const lead = String(p.Recruiter || '').trim(), out = lead ? [lead] : [];
+  (p.Tagged || []).forEach(n => { n = String(n).trim(); if (n && !out.some(x => x.toLowerCase() === n.toLowerCase())) out.push(n); });
+  return out.join(', ');
+}
+function lineLabelWho(p) { const w = lineWho(p); return lineLabel(p) + (w ? ' · ' + w : ''); }
 
 function tatView(p) {
   const pos = isLead() && p.Pos_Final_TAT != null && p.Pos_Final_TAT !== '';
@@ -1126,7 +1134,7 @@ async function closePositionDialog(p, after) {
   const isOffer = a => a.Status === 'Active' && st.indexOf(a.Stage) >= offerIdx;
   const opts = sel => `<option value="reject"${sel === 'reject' ? ' selected' : ''}>Close (not taken forward)</option><option value="hold"${sel === 'hold' ? ' selected' : ''}>Keep on hold</option>${targets.map(t => `<option value="move:${esc(t.Line_ID)}">Move to ${esc(t.MRF_No || t.Line_ID)} \u00b7 ${esc(t.Position)}</option>`).join('')}`;
   const d = cpDlg(`<h2 id="cpTitle">Close ${esc(p.MRF_No || p.Line_ID)} without hiring</h2>
-    <p class="hint">${esc(p.Position)} \u00b7 ${esc(p.Dept)} \u00b7 ${esc(p.Recruiter)}</p>
+    <p class="hint">${esc(p.Position)} \u00b7 ${esc(p.Dept)} \u00b7 ${esc(lineWho(p))}</p>
     <div class="rc-grid">
       <label>Outcome<select id="cpOutcome"><option value="Not Needed">Cancelled by the department (Not Needed)</option><option value="No Vacancy">Headcount withdrawn (No Vacancy)</option><option value="On Hold">On hold: TAT pauses until resumed</option><option value="Filled Internally">Filled internally (transfer / IJP)</option><option value="Created in Error">Created in error: remove the position</option></select></label>
       <label>Date<input type="date" id="cpDate" value="${today()}" max="${today()}"></label>
@@ -1437,7 +1445,7 @@ async function viewPositions(v) {
     const slice = rows.slice(f.page * PAGE, (f.page + 1) * PAGE);
     late('#ptbody').innerHTML = slice.length ? slice.map(p => `<tr data-id="${esc(p.Line_ID)}">
       <td class="nw">${esc(p.MRF_No)}<span class="sub">${esc(p.Line_ID)}</span></td>
-      <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}${p.Designation ? `<span class="sub">${esc(p.Designation)}</span>` : ''}</td><td>${esc(p.Recruiter)}</td>
+      <td>${esc(p.Position)}<span class="sub">${esc(p.Dept)}</span></td><td>${esc(p.Grade)}${p.Designation ? `<span class="sub">${esc(p.Designation)}</span>` : ''}</td><td>${esc(lineWho(p))}</td>
       <td class="nw">${fmtDate(p.Receipt_Date)}</td><td>${status(p.Position_Status)}</td><td>${burn(p)}${exemptBadge(p)}</td>
       <td class="nw">${p.Actual_DOJ ? fmtDate(p.Actual_DOJ) : p.EDOJ ? fmtDate(p.EDOJ) + '<span class="sub">expected</span>' : ''}</td></tr>`).join('')
       : `<tr><td colspan="8" class="empty">No positions match these filters.</td></tr>`;
@@ -1938,7 +1946,7 @@ function activeLineOptions(selected, rec) {
     const groups = {}; ls.forEach(p => { (groups[dlRecOf(p)] = groups[dlRecOf(p)] || []).push(p); });
     return '<option value=""></option>' + Object.keys(groups).sort((a, b) => a.localeCompare(b)).map(g => `<optgroup label="${esc(g === DL_NONE ? 'Not assigned' : g)}">${groups[g].sort(byMrf).map(p => `<option value="${esc(p.Line_ID)}"${p.Line_ID === selected ? ' selected' : ''}>${esc(lineLabel(p))}</option>`).join('')}</optgroup>`).join('');
   }
-  const o = opts(ls.sort(byMrf).map(p => [p.Line_ID, lineLabel(p)]), selected, false);
+  const o = opts(ls.sort(byMrf).map(p => [p.Line_ID, lineLabelWho(p)]), selected, false);
   return (ls.length === 1 ? '' : '<option value=""></option>') + o;
 }
 function dailyFormHtml(fixedLine, data) {
@@ -2107,7 +2115,7 @@ async function viewDaily(v) {
     <section class="panel" id="dailyNew">${skRows(4, 5)}</section>
     <h2 style="margin:22px 0 0;font-size:16px">History</h2><p class="hint" style="margin:2px 0 0">Follows the Recruiter chosen above, or pick one position to see its totals and every recruiter's entries. Pick a date range to look back or change an earlier entry.</p>
     <div class="filters" style="margin-top:6px">
-      <div class="field"><label for="dfline">Position</label><select id="dfline"><option value="">All positions</option>${posList.map(p => `<option value="${esc(p.Line_ID)}"${p.Line_ID === f.line ? ' selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(p.Recruiter || 'Not assigned')}</option>`).join('')}</select></div>
+      <div class="field"><label for="dfline">Position</label><select id="dfline"><option value="">All positions</option>${posList.map(p => `<option value="${esc(p.Line_ID)}"${p.Line_ID === f.line ? ' selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(lineWho(p) || 'Not assigned')}</option>`).join('')}</select></div>
       <div class="field"><label for="dffrom">From</label><input id="dffrom" type="date" value="${f.from}"></div>
       <div class="field"><label for="dfto">To</label><input id="dfto" type="date" value="${f.to}"></div>
     </div>
@@ -2239,9 +2247,9 @@ async function viewCandidates(v) {
 function candidateFields(data) {
   data = data || {};
   const used = ks => ks.some(k => String(data[k] == null ? '' : data[k]).trim() !== '');
-  const lines = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)).map(p => [p.Line_ID, lineLabel(p)]);
+  const lines = S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)).map(p => [p.Line_ID, lineLabelWho(p)]);
   const curLine = data.Line_ID && lineById(data.Line_ID);   // the position the candidate is on, even if it is closed now, so a save keeps the link
-  if (curLine && !lines.some(l => l[0] === curLine.Line_ID)) lines.push([curLine.Line_ID, lineLabel(curLine) + ' (' + curLine.Position_Status + ')']);
+  if (curLine && !lines.some(l => l[0] === curLine.Line_ID)) lines.push([curLine.Line_ID, lineLabelWho(curLine) + ' (' + curLine.Position_Status + ')']);
   return [
     { section: 'Candidate' },
     { k: 'Name', l: 'Full name', req: true, wide: true },
@@ -4449,6 +4457,45 @@ async function renderKpiTargets(el, setup) {
     else if (a === 'counts') open({ kind: 'COUNTS', title: 'Change the count thresholds', kpi: s.scoring[+b.dataset.s].kpi });
     else if (a === 'capture') open({ kind: 'CAPTURE', title: 'Change when compliance scoring starts' });
   });
+  splitPanel(el, s);
+}
+/* v220: the split-credit switch. A position with a recruiter tagged on or after the date is credited per person (Daily log rows, card events, position measures).
+   The preview shows which positions would split and how many scorecard cells change before the date is set. */
+function splitPanel(el, s) {
+  const edit = s.canEdit, cur = s.splitFrom || '';
+  el.insertAdjacentHTML('beforeend', `<section class="panel" id="splitPanel" style="margin-top:22px"><h3>Positions with several recruiters: split credit</h3>
+    <p class="hint">${cur ? `On from <b>${esc(fmtDate(cur))}</b>.` : '<b>Off.</b>'} A position with a recruiter tagged on or after the date is credited per person: each recruiter has their own Daily log row, card events count for the recruiter who added the card, and tagged recruiters get their own position measures in the scorecard (from the day they were tagged). Earlier days and positions with no tagged recruiter do not change.</p>
+    ${edit ? `<div class="filters"><div class="field"><label for="spDate">Start date</label><input id="spDate" type="date" value="${esc(cur || today())}" max="${today()}"></div>
+      <div class="field" style="justify-content:flex-end"><button class="btn" id="spPrev">Preview what changes</button></div>
+      <div class="field" style="justify-content:flex-end"><button class="btn primary" id="spSet" disabled>Switch on from this date</button></div>
+      ${cur ? '<div class="field" style="justify-content:flex-end"><button class="btn" id="spOff">Switch off</button></div>' : ''}</div><div id="spOut" role="status"></div>` : '<p class="hint">Only the Head of HR or the Admin can change this.</p>'}</section>`);
+  if (!edit) return;
+  let seen = '';
+  const out = $('#spOut', el), dateV = () => $('#spDate', el).value;
+  $('#spDate', el).oninput = $('#spDate', el).onchange = () => { $('#spSet', el).disabled = dateV() !== seen || !seen; };
+  $('#spPrev', el).onclick = async () => {
+    const b = $('#spPrev', el), d = dateV(); if (!d) return toast('Pick the start date.', true);
+    busy(b, true, 'Working out\u2026'); out.innerHTML = '<p class="hint">Working out what would change\u2026 this takes a few seconds.</p>';
+    try {
+      const r = await api('apiSplitCreditPreview', d); seen = d; $('#spSet', el).disabled = false;
+      out.innerHTML = `<p><b>${r.splitCount} of ${r.positions.length}</b> position${r.positions.length === 1 ? '' : 's'} with a tagged recruiter would be split from ${esc(fmtDate(d))} (those tagged on or after it). ${r.kpi.changed ? `<b>${r.kpi.changed}</b> scorecard cell${r.kpi.changed === 1 ? '' : 's'} for FY ${r.kpi.fy}-${String(r.kpi.fy + 1).slice(2)} would change${r.kpi.recruiters.length ? ' (' + r.kpi.recruiters.map(x => esc(x.name) + ' ' + x.cells).join(', ') + ')' : ''}.` : 'No scorecard cell would change.'}</p>
+        ${r.positions.length ? `<div class="table-wrap"><table><thead><tr><th>Position</th><th>Lead</th><th>Tagged</th><th>Tagged on</th><th>Split?</th></tr></thead><tbody>${r.positions.map(p => `<tr style="cursor:default"><td>${esc(p.mrf)} \u00b7 ${esc(p.position)}<span class="sub">${esc(p.status)}</span></td><td>${esc(p.lead)}</td><td>${esc(p.tagged)}</td><td class="nw">${esc(fmtDate(p.from))}</td><td>${p.split ? 'Yes' : 'No, tagged before the date'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No position has a tagged recruiter.</p>'}
+        <p class="hint">Setting the date also rebuilds the scorecard, the dashboard and the day snapshots. It can be changed or switched off again.</p>`;
+    } catch (e) { out.innerHTML = ''; failed(e, b, 'Preview what changes'); return; }
+    busy(b, false, 'Preview what changes');
+  };
+  $('#spSet', el).onclick = async () => {
+    const b = $('#spSet', el), d = dateV();
+    if (!await askConfirm(`Switch split credit on from ${fmtDate(d)}? The scorecard, dashboard and Daily review are rebuilt, and tagged positions are credited per person from that date.`, { title: 'Switch on split credit?', ok: 'Switch on' })) return;
+    busy(b, true, 'Saving\u2026');
+    try { await api('apiSetSplitCredit', d); S.posStale = true; toast('Split credit is on from ' + fmtDate(d)); renderKpiTargets(el); } catch (e) { failed(e, b, 'Switch on from this date'); }
+  };
+  if ($('#spOff', el)) $('#spOff', el).onclick = async () => {
+    const b = $('#spOff', el);
+    if (!await askConfirm('Switch split credit off? Everything is credited to the lead recruiter again, as before the switch.', { title: 'Switch off split credit?', ok: 'Switch off', danger: true })) return;
+    busy(b, true, 'Saving\u2026');
+    try { await api('apiSetSplitCredit', ''); S.posStale = true; toast('Split credit is off'); renderKpiTargets(el); } catch (e) { failed(e, b, 'Switch off'); }
+  };
 }
 
 /** The change drawer: fill in, Preview impact, then Save as a new version (enabled only for exactly what was previewed). */
@@ -5093,7 +5140,7 @@ async function renderObservations(el, f) {
 }
 
 function obDrawer(r, after) {
-  const lines = S.positions.filter(p => p.Position_Status !== 'Removed').sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date))).map(p => [p.Line_ID, lineLabel(p) + ' \u00b7 ' + p.Recruiter]);
+  const lines = S.positions.filter(p => p.Position_Status !== 'Removed').sort((a, b) => String(b.Receipt_Date).localeCompare(String(a.Receipt_Date))).map(p => [p.Line_ID, lineLabelWho(p)]);
   const data = r || { Obs_Date: today(), Status: 'Open' };
   const fields = [{ k: 'Obs_Date', l: 'Date', t: 'date', req: true }, { k: 'Status', l: 'Status', t: 'select', opts: ['Open', 'Closed'], noBlank: true },
     { k: 'Type', l: 'Observation', t: 'select', opts: OBS_TYPES, req: true, wide: true },
@@ -8398,8 +8445,8 @@ async function viewPipeline(v) {
     const list = shown(), cur = mine.find(p => p.Line_ID === f.line), has = list.some(p => p.Line_ID === f.line);
     const act = list.filter(p => ['Open', 'Offered'].includes(p.Position_Status)), rest = list.filter(p => !act.includes(p));
     const opt = (p, tail) => `<option value="${esc(p.Line_ID)}" ${p.Line_ID === f.line ? 'selected' : ''}>${esc(lineLabel(p))} \u00b7 ${esc(tail)}</option>`;
-    late('#pLine').innerHTML = (cur && !has ? `<optgroup label="Open now (not in this list)">${opt(cur, cur.Recruiter || cur.Position_Status)}</optgroup>` : '')
-      + (act.length ? `<optgroup label="Open and offered">${act.map(p => opt(p, p.Recruiter || 'Not assigned')).join('')}</optgroup>` : '')
+    late('#pLine').innerHTML = (cur && !has ? `<optgroup label="Open now (not in this list)">${opt(cur, lineWho(cur) || cur.Position_Status)}</optgroup>` : '')
+      + (act.length ? `<optgroup label="Open and offered">${act.map(p => opt(p, lineWho(p) || 'Not assigned')).join('')}</optgroup>` : '')
       + (rest.length ? `<optgroup label="Other positions">${rest.slice(0, 400).map(p => opt(p, p.Position_Status)).join('')}</optgroup>` : '');
     order = (cur && !has ? [cur] : []).concat(act, rest.slice(0, 400)).map(p => p.Line_ID);
     const n = list.length; late('#pfCount').textContent = n === mine.filter(p => p.Position_Status !== 'Removed').length ? `\u00b7 ${n} positions` : `\u00b7 ${n} of ${mine.filter(p => p.Position_Status !== 'Removed').length}`;
@@ -8475,6 +8522,7 @@ async function viewPipeline(v) {
     };
     const hidFast = fastRoute() ? ' hidden' : '';   // v204: the fast-track route needs no JD, screening questions or job posts, so those actions are not offered
     late('#pBody').innerHTML = `
+      ${(P.line.Tagged || []).length ? `<p class="hint pos-who">Recruiters on this position: <b>${esc(String(P.line.Recruiter || 'not assigned'))}</b> (lead)${(P.line.Tagged || []).map(n => ', <b>' + esc(n) + '</b>').join('')}. Everyone sees all candidates here; each card shows who added it.</p>` : ''}
       ${replaced ? `<div class="note warn-note">Closed after a backout on ${fmtDate(P.line.Replaced_On)}. Replaced by <b>${esc(P.line.replacedByMrf || P.line.Replaced_By)}</b> (policy 9.5). This board is read-only${P.apps.some(canBringBack) ? ', except that a lead can bring a rejected card back (open the card)' : ''}. <button class="btn sm" id="pGoRepl">Open ${esc(P.line.replacedByMrf || 'the replacement')}</button>${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? ' <button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${!replaced && Number(P.line.Backout_Count) > 0 ? `<div class="note">${esc(P.line.MRF_No || 'This MRF')} was reopened after ${Number(P.line.Backout_Count) === 1 ? 'a backout' : P.line.Backout_Count + ' backouts'}: ${(P.backouts || []).map(b => `${esc(b.name)} (${fmtDate(b.date)}${b.reason ? ', ' + esc(b.reason) : ''})`).join('; ')}. The TAT keeps running. ${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? '<button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
@@ -8758,7 +8806,7 @@ async function viewPipeline(v) {
   const moveToLineHtml = (a, active) => {
     const t = moveTargets(a); if (!t.length) return '';
     return `<details class="rc-keep" style="margin-top:10px"><summary>Move to another position of ${esc(P.line.MRF_No)}</summary>
-      <div class="field"><label for="apMvTo">Position</label><select id="apMvTo">${opts(t.map(p => [p.Line_ID, lineLabel(p) + ' \u00b7 ' + (p.Recruiter || 'Not assigned') + ' \u00b7 ' + p.Position_Status]), '', true)}</select></div>
+      <div class="field"><label for="apMvTo">Position</label><select id="apMvTo">${opts(t.map(p => [p.Line_ID, lineLabel(p) + ' \u00b7 ' + (lineWho(p) || 'Not assigned') + ' \u00b7 ' + p.Position_Status]), '', true)}</select></div>
       <div class="rc-act"><input id="apMvWhy" placeholder="Reason for the move (required)" aria-label="Reason for the move"><button class="btn sm" id="apMvGo">Move</button></div>
       <p class="hint">The card keeps its stage and its history and appears at the same stage on that position's board. Its interviews and screening go with it, and its to-dos pass to that position's recruiter.</p></details>`;
   };
