@@ -79,7 +79,7 @@ function tasksSchema_() {
   addSheet_(T.TACT.name, ['Action_ID', 'Task_Key', 'Rule', 'Recruiter', 'Line_ID', 'Action', 'Note', 'Created_By', 'Created_At']);
   addSheet_(T.INT.name, ['Interview_ID', 'App_ID', 'Candidate_ID', 'Line_ID', 'Recruiter', 'Round', 'Mode', 'Start', 'Duration_Min',
     'Location', 'Panel', 'Status', 'Attendance_Confirmed', 'Unavailable', 'Notes', 'Created_By', 'Created_At', 'Updated_By', 'Updated_At']);
-  addColumns_(T.INT.name, ['Round_Label', 'Result', 'Result_On', 'Result_By', 'Result_Note']);   // v217: further interview rounds carry their own label and result
+  addColumns_(T.INT.name, ['Round_Label', 'Result', 'Result_On', 'Result_By', 'Result_Note', 'Historic']);   // v217: further interview rounds carry their own label and result
   addColumns_('M_Departments', ['HOD_Name', 'HOD_Email']);
 }
 
@@ -263,12 +263,13 @@ function computeTasks_() {
     const round = interviewRoundFor_(st, mine);
     if (round && since) {
       const live = mine.filter(function (i) { return i.Round === round && i.Status === 'Scheduled'; })[0];
+      const heldPast = mine.some(function (i) { return i.Round === round && i.Status === 'Held' && String(i.Historic) === 'Yes'; });   // v224: an interview entered after it was held
       const unavailable = mine.filter(function (i) { return i.Round === round && i.Status === 'Panel unavailable'; })[0];
       if (!live && unavailable) {
         add('reschedule', { key: 'reschedule|' + unavailable.Interview_ID, recruiter: rec, line: a.Line_ID, app: a.App_ID,
           title: 'Reschedule the ' + round + ' interview', context: ctxt + ' \u00b7 unavailable: ' + unavailable.Unavailable,
           startMs: ms_(unavailable.Updated_At) || now, forceCritical: true, open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
-      } else if (!live) {
+      } else if (!live && !heldPast) {
         add('schedule_interview', { key: 'schedule_interview|' + a.App_ID + '|' + round, recruiter: rec, line: a.Line_ID, app: a.App_ID,
           title: 'Schedule the ' + (round === 'HR' ? 'HR / final' : 'technical') + ' interview', context: ctxt, startMs: since,
           open: { type: 'app', line: a.Line_ID, app: a.App_ID } });
@@ -896,22 +897,51 @@ function apiScheduleInterview(appId, d) {
   if (['Teams', 'In person'].indexOf(d.mode) < 0) throw new Error('Pick Teams or in person.');
   const panelNames = String(d.panel || '').split(/[;,]/).map(function (s) { return s.trim(); }).filter(String);
   if (!panelNames.length) throw new Error('Pick at least one panel member.');
-  if (!d.override) {
+  const p = d.date.split('-'), tm = d.time.split(':');
+  const start = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]), Number(tm[0]), Number(tm[1])) - IST_OFFSET_MS);
+  const historic = start.getTime() < Date.now() - HOUR_MS_;   // v224: an interview that has already been held
+  let hResult = '';
+  if (historic) {
+    const hours = historicHours_();
+    if (!isLead_(u) && start.getTime() < Date.now() - hours * HOUR_MS_) throw new Error('This interview was more than ' + hours + ' hours ago. Ask a TA Lead to add it.');
+    if (ymd_(start) < ymd_(lineF.Receipt_Date)) throw new Error('The interview date is before the position\u2019s MRF was received (' + ymd_(lineF.Receipt_Date) + ').');
+    if (further) {
+      hResult = String(d.result || '');
+      if (['Selected', 'Rejected', 'Hold'].indexOf(hResult) < 0) throw new Error('This interview has already happened. Pick its result: Selected, Rejected or Hold.');
+      if (hResult !== 'Selected') requireCardAct_(u, a);
+    }
+  }
+  if (!d.override && !historic) {
     const endT = (function () { const p = String(d.time || '00:00').split(':'); const mins = Number(p[0]) * 60 + Number(p[1]) + (Number(d.duration) || 60); return ('0' + Math.floor(mins / 60)).slice(-2) + ':' + ('0' + (mins % 60)).slice(-2); })();
     const cf = panelConflicts_(panelNames, String(d.date), String(d.time || ''), endT);
     if (cf.length) throw new Error('Panel unavailable: ' + cf.map(panelConflictText_).join('; ') + '.');
   }
-  const p = d.date.split('-'), tm = d.time.split(':');
-  const start = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]), Number(tm[0]), Number(tm[1])) - IST_OFFSET_MS);
-  if (start.getTime() < Date.now() - HOUR_MS_) throw new Error('The interview time is in the past.');
   readTable_(T.INT.name, true).rows.forEach(function (i) {
     if (i.App_ID === appId && i.Round === d.round && (!further || String(i.Round_Label || '').toLowerCase() === label.toLowerCase()) && (i.Status === 'Scheduled' || i.Status === 'Panel unavailable')) update_(T.INT, i.Interview_ID, { Status: 'Rescheduled' }, u);
   });
   const rec = insert_(T.INT, { App_ID: appId, Candidate_ID: a.Candidate_ID, Line_ID: a.Line_ID, Recruiter: a.Recruiter, Round: d.round, Mode: d.mode,
     Start: start, Duration_Min: Number(d.duration) || 60, Location: String(d.location || '').slice(0, 200), Panel: panelNames.join('; '),
-    Status: 'Scheduled', Attendance_Confirmed: '', Unavailable: '', Notes: String(d.notes || '').slice(0, 500), Round_Label: label }, u);
-  appendHistory_(a, a.Stage, a.Stage, 'Interview scheduled', (further ? 'Further round: ' + label : d.round) + ' \u00b7 ' + fmt_(start, TZ, 'd MMM yyyy, HH:mm') + ' \u00b7 ' + d.mode, u);
-  return interviewsFor_(a.Line_ID);
+    Status: historic ? 'Held' : 'Scheduled', Attendance_Confirmed: '', Unavailable: '', Notes: String(d.notes || '').slice(0, 500), Round_Label: label, Historic: historic ? 'Yes' : '' }, u);
+  if (!historic) {
+    appendHistory_(a, a.Stage, a.Stage, 'Interview scheduled', (further ? 'Further round: ' + label : d.round) + ' \u00b7 ' + fmt_(start, TZ, 'd MMM yyyy, HH:mm') + ' \u00b7 ' + d.mode, u);
+    return interviewsFor_(a.Line_ID);
+  }
+  appendHistory_(a, a.Stage, a.Stage, 'Interview recorded after it was held', (further ? 'Further round: ' + label : d.round) + ' \u00b7 ' + fmt_(start, TZ, 'd MMM yyyy, HH:mm') + ' \u00b7 ' + d.mode + ' \u00b7 entered by ' + u.name, u);
+  let board = null;
+  if (further) board = applyRoundResult_(u, rec, a, hResult, clean_(String(d.by || panelNames.join('; '))).slice(0, 200), clean_(String(d.note || '')).slice(0, 500));
+  return { interviews: interviewsFor_(a.Line_ID), board: board };
+}
+/** The hours a recruiter has to add an interview that has already been held; a TA Lead can add any date. Setting HISTORIC_ENTRY_HOURS, default 72. */
+function historicHours_() { return Number(settings_().HISTORIC_ENTRY_HOURS) || 72; }
+/** Records a further round's result on the interview and the card (Selected leaves the card; Rejected and Hold change its status). Returns the new board when the status changed. */
+function applyRoundResult_(u, i, app, result, by, note) {
+  const label = String(i.Round_Label || 'Further round');
+  update_(T.INT, i.Interview_ID, { Status: 'Held', Result: result, Result_On: new Date(), Result_By: by, Result_Note: note }, u);
+  const stage = String(app.Stage), what = label + ' \u00b7 ' + result + (note ? ' \u00b7 ' + note : '');
+  if (result === 'Rejected') update_(T.APP, app.App_ID, { Status: 'Rejected', Status_Reason: 'Not selected in ' + label, Risk: '' }, u);
+  else if (result === 'Hold') update_(T.APP, app.App_ID, { Status: 'On hold', Status_Reason: 'On hold after ' + label, Risk: '' }, u);
+  appendHistory_(app, stage, stage, result === 'Selected' ? 'Further round: Selected' : result === 'Rejected' ? 'Rejected' : 'On hold', what, u);
+  return result !== 'Selected' ? boardAfterWrite_(i.Line_ID) : null;
 }
 
 /**
@@ -935,15 +965,9 @@ function apiRecordRoundResult(id, d) {
   if (!app) throw new Error('Application not found.');
   if (String(app.Status) !== 'Active') throw new Error('This card is ' + String(app.Status).toLowerCase() + '.');
   if (result !== 'Selected') requireCardAct_(u, app);
-  const note = clean_(String(d.note || '')).slice(0, 500), by = clean_(String(d.by || i.Panel || '')).slice(0, 200), label = String(i.Round_Label || 'Further round');
+  const note = clean_(String(d.note || '')).slice(0, 500), by = clean_(String(d.by || i.Panel || '')).slice(0, 200);
   return withLock_(function () {
-    update_(T.INT, id, { Status: 'Held', Result: result, Result_On: new Date(), Result_By: by, Result_Note: note }, u);
-    const stage = String(app.Stage), what = label + ' \u00b7 ' + result + (note ? ' \u00b7 ' + note : '');
-    let board = null;
-    if (result === 'Rejected') update_(T.APP, app.App_ID, { Status: 'Rejected', Status_Reason: 'Not selected in ' + label, Risk: '' }, u);
-    else if (result === 'Hold') update_(T.APP, app.App_ID, { Status: 'On hold', Status_Reason: 'On hold after ' + label, Risk: '' }, u);
-    appendHistory_(app, stage, stage, result === 'Selected' ? 'Further round: Selected' : result === 'Rejected' ? 'Rejected' : 'On hold', what, u);
-    if (result !== 'Selected') board = boardAfterWrite_(i.Line_ID);
+    const board = applyRoundResult_(u, i, app, result, by, note);
     return { interviews: interviewsFor_(i.Line_ID), board: board };
   });
 }
