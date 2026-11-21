@@ -5303,6 +5303,19 @@ function dayStatusDialog(g, ctx, after) {
   if ($('#dsClear', d)) $('#dsClear', d).onclick = e => send('', '', e.target);
   if (!d.open) d.showModal();
 }
+/* v226: the interviews of the day (Technical, HR / final and further rounds), with who entered a late one. */
+function dayInterviewsHtml(rows, withRec) {
+  rows = (rows || []).slice().sort((a, b) => a.start - b.start);
+  if (!rows.length) return '';
+  const n = k => rows.filter(x => x.state === k).length;
+  const head = `${rows.length} interview${rows.length === 1 ? '' : 's'}: ${n('Held')} held, ${n('Booked') + n('Panel unavailable')} booked${n('Result due') ? `, <b class="miss">${n('Result due')} result due</b>` : ''}${rows.some(x => x.historic) ? `, ${rows.filter(x => x.historic).length} entered after they were held` : ''}`;
+  const st = x => x.state === 'Result due' ? '<span class="badge warn-b">Result due</span>' : x.state === 'Panel unavailable' ? '<span class="badge bad-b">Panel unavailable</span>'
+    : x.state === 'Booked' ? '<span class="badge">Booked</span>' : `<span class="badge ok-b">Held</span>${x.result ? ' <b>' + esc(x.result) + '</b>' : ''}`;
+  return `<p class="hint">${head}</p><div class="table-wrap"><table><thead><tr><th>Time</th>${withRec ? '<th>Recruiter</th>' : ''}<th>Candidate</th><th>Position</th><th>Round</th><th>Panel</th><th>Status</th></tr></thead><tbody>
+    ${rows.map(x => `<tr style="cursor:default"><td class="nw">${esc(x.startText)}${x.startDay && x.tags.includes('Entered late') && !x.tags.includes('On the day') ? `<span class="sub">held ${esc(fmtDate(x.startDay))}</span>` : ''}</td>${withRec ? `<td>${esc(x.recruiter || '')}</td>` : ''}<td>${esc(x.name)}</td><td>${esc(x.position)}<span class="sub">${esc(x.mrf)}</span></td>
+      <td>${esc(x.round)}<span class="sub">${esc(x.mode)}</span></td><td>${esc(x.panel)}</td><td>${st(x)}${x.resultBy ? `<span class="sub">by ${esc(x.resultBy)}</span>` : ''}${x.note ? `<span class="sub">${esc(x.note)}</span>` : ''}${x.historic ? `<span class="sub">Entered after it was held, by ${esc(x.enteredBy)} on ${esc(fmtDate(x.enteredOn))}</span>` : ''}${x.tags.includes('Result recorded') ? '<span class="sub">Result recorded this day</span>' : ''}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 function dayWorkHtml(r) {
   const items = r.work.map(w => `<li><b>${w.count}</b> ${esc(w.label.toLowerCase())}</li>`);
   const mv = Object.entries(r.moves || {});
@@ -5339,6 +5352,7 @@ async function viewMyDay(v) {
       </section>
     </div>
     <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
+    ${(r.interviews || []).length ? `<section class="panel" style="margin-top:20px" id="mdInt"><h2>Interviews \u00b7 ${fmtDate(f.date)}</h2>${dayInterviewsHtml(r.interviews, false)}</section>` : ''}
     <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
@@ -5485,6 +5499,7 @@ async function viewDailyReview(v) {
         <button class="btn" id="drCv" title="CV received: what was typed in the Daily log against the candidates added to positions">CV received: typed vs pipeline</button></div></div>
     ${data.missedTotal ? `<div class="todo-strip miss-strip"><b>${data.missedTotal} critical task${data.missedTotal === 1 ? '' : 's'} missed</b> on ${fmtDate(f.date)}. See each recruiter below.</div>` : ''}
     <section class="panel" id="rvFunnel"><h2>Team funnel \u00b7 ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, data.team, data.people)}${scorecardNote(data)}</section>
+    ${(() => { const all = [].concat(...data.recruiters.map(r => (r.interviews || []).map(x => Object.assign({ recruiter: r.recruiter }, x)))); return all.length ? `<section class="panel" id="rvInt"><h2>Interviews \u00b7 ${fmtDate(f.date)}</h2>${dayInterviewsHtml(all, true)}</section>` : ''; })()}
     ${list.map(r => {
       const done = r.tasks.filter(t => t.d).length;
       return `<article class="panel rcard ${r.active ? '' : 'idle'}">
@@ -5496,7 +5511,7 @@ async function viewDailyReview(v) {
         <details class="app-fold rdet" data-rec="${esc(r.recruiter)}" style="margin-top:12px"${f.rec || (f.open || {})[r.recruiter] ? ' open' : ''}><summary>Details <span class="sub">${r.tasks.length ? 'tasks ' + done + ' of ' + r.tasks.length + ' \u00b7 ' : ''}recorded work \u00b7 funnel \u00b7 BGV pending \u00b7 CVs by position</span></summary><div class="app-fold-body">
         <div class="two">
           <div><h3>Tasks</h3>${r.tasks.length ? `<ul class="tasks ro">${r.tasks.map(t => `<li class="${t.d ? 'done' : ''}"><span class="tick">${t.d ? '\u2713' : '\u25cb'}</span> ${esc(t.t)}</li>`).join('')}</ul>` : '<p class="hint">No tasks listed.</p>'}</div>
-          <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
+          <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}${(r.interviews || []).length ? '<h3>Interviews</h3>' + dayInterviewsHtml(r.interviews, false) : ''}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
         <h3>BGV pending <span class="sub">(as of today)</span></h3><div data-bgvp="${esc(r.recruiter)}"><p class="hint">Loading\u2026</p></div>
         <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages })}</div>

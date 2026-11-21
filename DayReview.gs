@@ -99,6 +99,39 @@ function recruiterByEmail_() {
   return map;
 }
 
+/**
+ * v226: the interviews of a day, per recruiter: held or booked that day, entered after they were held (shown on the day they were keyed in as well), and results
+ * recorded that day for a round held earlier. Technical, HR / final and further rounds. Read only; no figure of the review uses it.
+ */
+function dayInterviews_(date, get, lineById) {
+  const ints = readTable_(T.INT.name).rows;
+  if (!ints.length) return;
+  const apps = {}; readTable_(T.APP.name).rows.forEach(function (a) { apps[a.App_ID] = a; });
+  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
+  const byEmail = recruiterByEmail_(), now = Date.now();
+  ints.forEach(function (i) {
+    const st = String(i.Status || '');
+    if (['Scheduled', 'Panel unavailable', 'Held'].indexOf(st) < 0) return;
+    const a = apps[i.App_ID], l = lineById[i.Line_ID]; if (!a || !l) return;
+    const startDay = ymd_(i.Start), hist = String(i.Historic) === 'Yes', further = String(i.Round) === 'Further';
+    const tags = [];
+    if (startDay === date) tags.push('On the day');
+    if (hist && ymd_(i.Created_At) === date && startDay && startDay < date) tags.push('Entered late');
+    if (!hist && further && String(i.Result || '') && ymd_(i.Result_On) === date && startDay && startDay < date) tags.push('Result recorded');
+    if (!tags.length) return;
+    const c = cands[a.Candidate_ID] || {}, pre = String(i.Round) === 'HR' ? 'HR' : 'Tech';
+    const result = further ? String(i.Result || '') : (ymd_(c[pre + '_Interview_Date']) === startDay ? String(c[pre + '_Result'] || '') : '');
+    const endMs = ms_(i.Start) + (Number(i.Duration_Min) || 60) * 60000;
+    const state = (st === 'Held' || result) ? 'Held' : endMs < now ? 'Result due' : st === 'Panel unavailable' ? 'Panel unavailable' : 'Booked';
+    const r = get(cardCredit_(l, a) || i.Recruiter || l.Recruiter); if (!r) return;
+    r.interviews.push({ id: String(i.Interview_ID), line: String(i.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''),
+      name: String(c.Name || ''), round: further ? String(i.Round_Label || 'Further round') : String(i.Round) === 'HR' ? 'HR / final' : 'Technical', further: further,
+      start: ms_(i.Start), startText: fmt_(i.Start, TZ, 'd MMM, HH:mm'), startDay: startDay, mode: String(i.Mode || ''), panel: String(i.Panel || ''), state: state, result: result,
+      resultBy: String(i.Result_By || ''), note: String(i.Result_Note || ''), historic: hist, enteredBy: hist ? (byEmail[String(i.Created_By).toLowerCase()] || String(i.Created_By)) : '',
+      enteredOn: hist ? ymd_(i.Created_At) : '', tags: tags });
+  });
+}
+
 function dayData_(date, onlyRecruiter) {
   const byEmail = recruiterByEmail_();
   const lines = readTable_(T.MRF.name).rows;
@@ -109,7 +142,7 @@ function dayData_(date, onlyRecruiter) {
   const blank = function (name) {
     const f = {}; stages.forEach(function (k) { f[k] = 0; });
     return { recruiter: name, overview: '', tasks: [], summaryId: '', updatedAt: '', funnel: f, backouts: 0,
-      byPosition: {}, work: {}, candidates: [], offers: [], joined: [], people: {} };
+      byPosition: {}, work: {}, candidates: [], offers: [], joined: [], people: {}, interviews: [] };
   };
   const get = function (name) {
     name = String(name || 'Unassigned').trim() || 'Unassigned';
@@ -217,6 +250,7 @@ function dayData_(date, onlyRecruiter) {
     const r = get(l.Recruiter); if (!r) return;
     r.byPosition[l.Line_ID] = r.byPosition[l.Line_ID] || { line: l.Line_ID, mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''), remarks: [], noActivity: true };
   });
+  dayInterviews_(date, get, lineById);
   const dsList = dayStatusList_();
   const dsLines = []; Object.keys(recs).forEach(function (k) { Object.keys(recs[k].byPosition).forEach(function (id) { if (lineById[id]) dsLines.push(lineById[id]); }); });
   const dsMap = dayStatusMap_(dsLines, date);
@@ -234,7 +268,7 @@ function dayData_(date, onlyRecruiter) {
       .sort(function (a, b) { return ((a.noActivity ? 1 : 0) - (b.noActivity ? 1 : 0)) || (stages.reduce(function (n, k) { return n + (b[k] || 0); }, 0) - stages.reduce(function (n, k) { return n + (a[k] || 0); }, 0)) || String(a.position).localeCompare(String(b.position)); });
     r.dayStatusList = dsList;
     r.work = Object.keys(r.work).map(function (w) { return { label: w, count: r.work[w] }; }).sort(function (a, b) { return b.count - a.count; });
-    r.active = stages.some(function (s) { return r.funnel[s] > 0; }) || r.work.length > 0 || !!r.overview || r.tasks.length > 0;
+    r.active = stages.some(function (s) { return r.funnel[s] > 0; }) || r.work.length > 0 || !!r.overview || r.tasks.length > 0 || (r.interviews || []).length > 0;
     return r;
   }).filter(function (r) { return r.recruiter !== 'Unassigned' || r.active; })
     .sort(function (a, b) { return (b.active - a.active) || a.recruiter.localeCompare(b.recruiter); });
@@ -274,7 +308,8 @@ function apiDaySummaryRun_(date) {
   const past = date < ymd_(new Date());
   let full = past ? daySnapGet_(date) : null;
   if (full && (full.recruiters || []).some(function (r) { return !r.dayStatusList; })) full = null;
-  if (full && (full.recruiters || []).some(function (r) { return (r.byPosition || []).some(function (g) { return g.approvedOn === undefined; }); })) full = null;   // v221: a day saved before the three dates were added is worked out again
+  if (full && (full.recruiters || []).some(function (r) { return (r.byPosition || []).some(function (g) { return g.approvedOn === undefined; }); })) full = null;
+  if (full && (full.recruiters || []).some(function (r) { return r.interviews === undefined; })) full = null;   // v226: a day saved before the interviews were added is worked out again   // v221: a day saved before the three dates were added is worked out again
   if (!full) { full = dayData_(date, ''); if (past) daySnapPut_(date, full); }
   return isLead_(u) ? full : dayForRecruiter_(full, u.recruiter);
 }
