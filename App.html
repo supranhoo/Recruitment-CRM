@@ -331,6 +331,7 @@ function toast(msg, err, opts) {
 /** After a failed save or action: the button is usable again, and the message says whether anything was saved and what to do. */
 function failed(e, btn, label) {
   if (btn) { busy(btn, false, label); }
+  checkBuild(60000);   // v225: a failed save on an old page is the moment to find out the page is out of date
   const msg = String(e && e.message ? e.message : e || 'Something went wrong').replace(/^Error:\s*/, '');
   const unsure = /\b(timed? ?out|time limit|exceeded|network|connection|unavailable|failed to fetch|internal error|server error|server is|script)\b/i.test(msg) && !/Someone else is saving/i.test(msg);
   toast(msg, true, unsure
@@ -340,6 +341,29 @@ function failed(e, btn, label) {
 function busy(btn, on, label) { if (!btn) return; btn.disabled = on; if (label) btn.textContent = label; }
 
 try { if (localStorage.getItem('bfcl.rail') === 'mini' && $('#boot')) $('#boot').classList.add('rail-mini'); } catch (e) { }
+/* v225: tell the person when this page is older than the server. Shown once. Nothing reloads by itself: that would lose what is being typed. */
+function showStaleBar(serverBuild) {
+  if (!serverBuild || !window.PAGE_BUILD || String(serverBuild) === String(window.PAGE_BUILD) || document.getElementById('staleBar')) return false;
+  const bar = document.createElement('div'); bar.id = 'staleBar'; bar.className = 'note warn-note'; bar.setAttribute('role', 'alert');
+  bar.style.cssText = 'margin:0;border-radius:0;text-align:center;position:sticky;top:0;z-index:50';
+  bar.innerHTML = 'A newer version of the CRM is available (this page is version ' + esc(window.PAGE_BUILD) + ', the server is version ' + esc(serverBuild) + '). Finish what you are typing, then close this tab and open the app link again, or press Ctrl + Shift + R.';
+  document.body.insertBefore(bar, document.body.firstChild);
+  return true;
+}
+let lastBuildCheck = Date.now();
+/** Asks the server which version it is, at most once every `minGapMs` (default 5 minutes). Errors are ignored (offline, session expired). */
+async function checkBuild(minGapMs) {
+  if (document.getElementById('staleBar')) return;
+  if (Date.now() - lastBuildCheck < (minGapMs == null ? 300000 : minGapMs)) return;
+  lastBuildCheck = Date.now();
+  try { const r = await api('apiBuildCheck'); if (r) showStaleBar(r.build); } catch (e) { }
+}
+function startBuildWatch() {
+  if (window.__buildWatch) return; window.__buildWatch = true;
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkBuild(); });
+  window.addEventListener('focus', () => checkBuild());
+  setInterval(() => { if (document.visibilityState === 'visible') checkBuild(1500000); }, 1800000);
+}
 const bootStart = () => {
   if ($('#bootMain')) late('#bootMain').innerHTML = skFor('overview');
   const first = window.BOOT && window.BOOT.user ? Promise.resolve(window.BOOT) : api('apiBootstrap');
@@ -348,11 +372,8 @@ const bootStart = () => {
     S.boot = b;
     buildPanelIndex();
     buildRail(b.user);
-    if (b.build && window.PAGE_BUILD && String(b.build) !== String(window.PAGE_BUILD)) {   // this page came from another release than the server it talks to
-      const bar = document.createElement('div'); bar.className = 'note warn-note'; bar.style.cssText = 'margin:0;border-radius:0;text-align:center';
-      bar.innerHTML = 'A newer version of the CRM is available (this page is version ' + esc(window.PAGE_BUILD) + ', the server is version ' + esc(b.build) + '). Close this tab and open the app link again, or press Ctrl + Shift + R.';
-      document.body.insertBefore(bar, document.body.firstChild);
-    }
+    showStaleBar(b.build);   // this page may have come from another release than the server it talks to
+    startBuildWatch();
     $('#boot').hidden = true; $('#shell').hidden = false;
     google.script.history.setChangeHandler(e => go((e.state && e.state.view) || 'overview', false));
     google.script.url.getLocation(loc => go((loc.hash || '').replace('#','') || 'overview', false));
