@@ -124,6 +124,10 @@ function dayInterviews_(date, get, lineById) {
     const endMs = ms_(i.Start) + (Number(i.Duration_Min) || 60) * 60000;
     const state = (st === 'Held' || result) ? 'Held' : endMs < now ? 'Result due' : st === 'Panel unavailable' ? 'Panel unavailable' : 'Booked';
     const r = get(cardCredit_(l, a) || i.Recruiter || l.Recruiter); if (!r) return;
+    if (further) {   // v227: the position has a row for the day, and it counts as having activity, so its Technical detail can be opened
+      const g = r.byPosition[i.Line_ID] = r.byPosition[i.Line_ID] || { line: String(i.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''), remarks: [] };
+      g.noActivity = false; g.rounds = (g.rounds || 0) + 1;
+    }
     r.interviews.push({ id: String(i.Interview_ID), line: String(i.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''),
       name: String(c.Name || ''), round: further ? String(i.Round_Label || 'Further round') : String(i.Round) === 'HR' ? 'HR / final' : 'Technical', further: further,
       start: ms_(i.Start), startText: fmt_(i.Start, TZ, 'd MMM, HH:mm'), startDay: startDay, mode: String(i.Mode || ''), panel: String(i.Panel || ''), state: state, result: result,
@@ -296,7 +300,7 @@ function dayData_(date, onlyRecruiter) {
   });
   const team = {}; stages.forEach(function (k) { team[k] = out.reduce(function (s, r) { return s + r.funnel[k]; }, 0); });
   const people = {}; out.forEach(function (r) { Object.keys(r.people || {}).forEach(function (m) { people[m] = (people[m] || []).concat(r.people[m].map(function (p) { return Object.assign({ recruiter: r.recruiter }, p); })); }); });
-  return { date: date, stages: stages, recruiters: out, team: team, people: people, derived: derived, cutover: cutover_(), funnelV2: funnelV2_(),
+  return { rounds227: true, date: date, stages: stages, recruiters: out, team: team, people: people, derived: derived, cutover: cutover_(), funnelV2: funnelV2_(),
     missedTotal: out.reduce(function (s, r) { return s + r.todo.missed.length; }, 0) };
 }
 
@@ -309,7 +313,8 @@ function apiDaySummaryRun_(date) {
   let full = past ? daySnapGet_(date) : null;
   if (full && (full.recruiters || []).some(function (r) { return !r.dayStatusList; })) full = null;
   if (full && (full.recruiters || []).some(function (r) { return (r.byPosition || []).some(function (g) { return g.approvedOn === undefined; }); })) full = null;
-  if (full && (full.recruiters || []).some(function (r) { return r.interviews === undefined; })) full = null;   // v226: a day saved before the interviews were added is worked out again   // v221: a day saved before the three dates were added is worked out again
+  if (full && (full.recruiters || []).some(function (r) { return r.interviews === undefined; })) full = null;
+  if (full && full.rounds227 === undefined) full = null;   // v227: a day saved before further rounds were added to the position rows is worked out again   // v226: a day saved before the interviews were added is worked out again   // v221: a day saved before the three dates were added is worked out again
   if (!full) { full = dayData_(date, ''); if (past) daySnapPut_(date, full); }
   return isLead_(u) ? full : dayForRecruiter_(full, u.recruiter);
 }

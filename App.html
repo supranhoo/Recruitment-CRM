@@ -5228,23 +5228,41 @@ const STAGE_SHORT = { Sourced: 'CVs', Screened: 'Screened', Shared: 'Shared', Co
 function stageShort(k) { return STAGE_SHORT[k] || dayLabel(k); }
 /** The Result cell of a candidate in a funnel list: the outcome, and the remarks typed when the documents were verified. */
 function peopleResult(p) { return esc(p.outcome || '') + (p.remark ? `<span class="sub">${esc(p.remark)}</span>` : ''); }
-function dayFunnelHtml(stages, f, people) {
+/* v227: further (second technical) rounds are shown beside the Technical number, never added to it: the funnel figures stay the stage moves. */
+const furtherRows = rows => (rows || []).filter(x => x.further);
+function furtherListHtml(rows, withRec) {
+  if (!rows.length) return '';
+  const res = x => x.state === 'Held' ? `<span class="badge ok-b">Held</span> <b>${esc(x.result || '')}</b>` : x.state === 'Result due' ? '<span class="badge warn-b">Result due</span>' : x.state === 'Panel unavailable' ? '<span class="badge bad-b">Panel unavailable</span>' : '<span class="badge">Booked</span>';
+  return `<h3 style="margin:16px 0 6px;font-size:16px">Further technical rounds \u00b7 ${rows.length}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th>${withRec ? '<th>Recruiter</th>' : ''}<th>Round</th><th>Result</th><th>Time</th></tr></thead><tbody>
+    ${rows.slice().sort((a, b) => a.start - b.start).map(x => `<tr style="cursor:default"><td>${esc(x.name)}</td><td>${esc(x.position)}<span class="sub">${esc(x.mrf)}</span></td>${withRec ? `<td>${esc(x.recruiter || '')}</td>` : ''}<td>${esc(x.round)}<span class="sub">${esc(x.panel)}</span></td>
+      <td>${res(x)}${x.note ? `<span class="sub">${esc(x.note)}</span>` : ''}${x.historic ? `<span class="sub">Entered after it was held, by ${esc(x.enteredBy)} on ${esc(fmtDate(x.enteredOn))}</span>` : ''}</td><td class="nw">${esc(x.startText)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+/** The detail dialog of a funnel number: the candidates who moved to the stage, and under Technical the further rounds of the day. */
+function stageDetailDlg(m, list, rounds, withRec) {
+  const fr = m === 'Technical' ? rounds : [];
+  return cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))}${list.length || !fr.length ? ' \u00b7 ' + list.length : ''}</h2>
+    ${list.length || !fr.length ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th>${withRec ? '<th>Recruiter</th>' : ''}<th>Result</th><th>Time</th></tr></thead><tbody>
+    ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td>${withRec ? `<td>${esc(p.recruiter || '')}</td>` : ''}<td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="hint">No candidate moved to Technical this day.</p>'}
+    ${furtherListHtml(fr, withRec)}
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+}
+function dayFunnelHtml(stages, f, people, rounds) {
   people = people || {};
+  const fr = furtherRows(rounds).length;
   const max = Math.max(1, ...stages.map(s => f[s] || 0));
-  return `<div class="dfun">${stages.map(s => `<div class="dfun-step${(people[s] || []).length ? ' has-people' : ''}"${(people[s] || []).length ? ` role="button" tabindex="0" data-m="${s}" title="See the candidates"` : ''}><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${esc(dayLabel(s))}</span></div>`).join('')}</div>`;
+  return `<div class="dfun">${stages.map(s => { const more = s === 'Technical' ? fr : 0, has = (people[s] || []).length || more; return `<div class="dfun-step${has ? ' has-people' : ''}"${has ? ` role="button" tabindex="0" data-m="${s}" title="See the candidates${more ? ' and the further rounds' : ''}"` : ''}><div class="dfun-bar"><span style="height:${Math.round(100 * (f[s] || 0) / max)}%"></span></div><b>${f[s] || 0}</b><span>${esc(dayLabel(s))}</span>${more ? `<span class="dfun-more">+${more} further</span>` : ''}</div>`; }).join('')}</div>`;
 }
 function scorecardNote(data) {
   return data && data.derived ? `<p class="hint">From ${fmtDate(data.cutover)}, each column is a stage of the Pipeline, counted from candidate moves, with the same names as the Pipeline board. ${data.funnelV2 && data.date < data.funnelV2 ? `CV received is typed until ${fmtDate(data.funnelV2)}, then counted too. ` : ''}A candidate who passes several stages counts once in each. Click a number to see the candidates.</p>` : '';
 }
-function bindFunnelPeople(root, people, withRecruiter) {
+function bindFunnelPeople(root, people, withRecruiter, rounds) {
   people = people || {};
   $$('.dfun-step.has-people', root).forEach(el => {
     const open = () => {
       const m = el.dataset.m, list = people[m] || [];
-      const d = cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
-        <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th>${withRecruiter ? '<th>Recruiter</th>' : ''}<th>Result</th><th>Time</th></tr></thead><tbody>
-        ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td>${withRecruiter ? `<td>${esc(p.recruiter || '')}</td>` : ''}<td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}
-        </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+      stageDetailDlg(m, list, furtherRows(rounds), withRecruiter);
     };
     el.onclick = open; el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
   });
@@ -5274,7 +5292,7 @@ function dayPositionsHtml(rows, ctx) {
   const pplOf = (g, m) => ((ctx.people || {})[m] || []).filter(p => p.line === g.line);
   return toggle + `<div class="table-wrap"><table class="stage-table"><thead><tr><th class="pos">Position / MRF</th><th>Day\u2019s status</th>${cols.map(c => `<th class="num stg" title="${esc(c[1])}" aria-label="${esc(c[1])}">${esc(stageShort(c[0]))}</th>`).join('')}<th>Remarks</th></tr></thead><tbody>
     ${rows.map(g => `<tr style="cursor:default"${g.noActivity ? ' class="ds-noact"' : ''}><td class="pos">${esc(g.position || g.line)}<span class="sub">${esc(g.mrf)} \u00b7 ${esc(g.grade)}</span><span class="sub">${esc(g.dept)}</span>${posDates(g)}</td>
-      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => `<td class="num stg">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}</td>`).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
+      <td class="ds-cell">${can && g.day && ctx.date ? `<button class="ds-btn" data-ds="${esc(g.line)}" aria-label="Change the day\u2019s status of ${esc(g.position)}">${dsChip(g.day)}</button>` : dsChip(g.day)}</td>${cols.map(c => { const fr = c[0] === 'Technical' ? furtherRows(ctx.interviews).filter(x => x.line === g.line) : []; return `<td class="num stg">${g[c[0]] ? (pplOf(g, c[0]).length ? `<button type="button" class="pipe-n" data-pp="${esc(g.line)}|${c[0]}" title="Counted from the Pipeline. Click to see the candidates.">${g[c[0]]}</button>` : g[c[0]]) : ''}${fr.length ? `<button type="button" class="pipe-more" data-pp="${esc(g.line)}|Technical" title="${esc(fr.map(x => x.round + ': ' + (x.state === 'Held' ? 'Held ' + (x.result || '') : x.state)).join('; '))}">+${fr.length} further</button>` : ''}</td>`; }).join('')}<td class="remarks">${g.remarks.length ? esc(g.remarks.join('; ')) : '<span class="att-off">\u2014</span>'}${(g.feedback || []).length ? `<span class="sub">Dept feedback: ${esc(g.feedback.join('; '))}</span>` : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function bindDayPositions(host, rows, ctx, after) {
@@ -5282,10 +5300,7 @@ function bindDayPositions(host, rows, ctx, after) {
   const t = host.querySelector('[data-dsonly]'); if (t) t.onchange = () => { S.dsOnlyActive = t.checked; after(); };
   $$('[data-pp]', host).forEach(b => b.onclick = () => {
     const [line, m] = b.dataset.pp.split('|'), list = ((ctx.people || {})[m] || []).filter(p => p.line === line);
-    cpDlg(`<h2 id="cpTitle">${esc(dayLabel(m))} \u00b7 ${list.length}</h2>
-      <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Position</th><th>Result</th><th>Time</th></tr></thead><tbody>
-      ${list.map(p => `<tr style="cursor:default"><td>${esc(p.name)}</td><td>${esc(p.position)}<span class="sub">${esc(p.mrf)}</span></td><td>${peopleResult(p)}</td><td>${esc(p.time || '')}</td></tr>`).join('')}</tbody></table></div>
-      <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+    stageDetailDlg(m, list, furtherRows(ctx.interviews).filter(x => x.line === line), false);
   });
   $$('[data-ds]', host).forEach(b => b.onclick = () => { const g = (rows || []).find(x => x.line === b.dataset.ds); if (g) dayStatusDialog(g, ctx, after); });
 }
@@ -5338,7 +5353,7 @@ async function viewMyDay(v) {
       <div class="field"><label for="mdDate">Day</label><input id="mdDate" type="date" value="${esc(f.date)}" max="${today()}"></div></div>
     ${f.date === today() ? `<section class="panel todo" id="mdTodo">${skRows(3, 2)}</section>` : ''}
     <section class="panel" id="mdBgv" hidden><h2>BGV pending</h2><div id="mdBgvBody"></div></section>
-    <section class="panel" id="mdFunnel"><h2>Funnel for ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, r.funnel, r.people)}${scorecardNote(data)}</section>
+    <section class="panel" id="mdFunnel"><h2>Funnel for ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, r.funnel, r.people, r.interviews)}${scorecardNote(data)}</section>
     <div class="two" style="margin-top:20px">
       <section class="panel"><h2>Overview of the day</h2>
         <textarea id="mdNote" class="day-note" placeholder="What did you get done? What is blocked, and what is next?" ${editable ? '' : 'readonly'}>${esc(r.overview)}</textarea>
@@ -5353,7 +5368,7 @@ async function viewMyDay(v) {
     </div>
     <section class="panel" style="margin-top:20px" id="mdMonth"><h2>My missed to-dos this month</h2><div id="mdMonthBody"><p class="hint">Loading\u2026</p></div></section>
     ${(r.interviews || []).length ? `<section class="panel" style="margin-top:20px" id="mdInt"><h2>Interviews \u00b7 ${fmtDate(f.date)}</h2>${dayInterviewsHtml(r.interviews, false)}</section>` : ''}
-    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
+    <section class="panel" style="margin-top:20px"><h2>CVs and interviews by position</h2><div id="mdPos">${dayPositionsHtml(r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages, interviews: r.interviews })}</div>
       <h3 style="margin:18px 0 8px;font-size:16px">Your entries for this day</h3><div id="mdEntries">${skRows(2, 6)}</div>
       ${editable ? `<h3 style="margin:18px 0 8px;font-size:16px">Log activity</h3><div id="mdLog"><p class="hint">Loading positions\u2026</p></div>` : ''}
     </section>`;
@@ -5362,7 +5377,7 @@ async function viewMyDay(v) {
     const el = $('#mdMonthBody'); if (!el) return; const x = r.rows[0], P = mmLabel(r.prev);
     el.innerHTML = x ? `<p><b>${x.missed}</b> missed in ${esc(mmLabel(r.month))} so far (${x.open} still open) \u00b7 ${mmDelta(x.change)} compared with ${esc(P)} (${x.prev})</p>${mmDetail(r.items[x.recruiter] || [])}` : `<p class="hint">Nothing missed in ${esc(mmLabel(r.month))} so far.</p>`;
   }).catch(() => { const el = $('#mdMonthBody'); if (el) el.innerHTML = ''; });
-  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('myday', false));
+  bindDayPositions($('#mdPos'), r.byPosition, { rec: me, date: editable ? f.date : '', list: r.dayStatusList, people: r.people, stages: data.stages, interviews: r.interviews }, () => go('myday', false));
   $$('[data-cand]', v).forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
   let timer, saving = Promise.resolve();
   const state = t => { const el = $('#mdState'); if (el) el.textContent = t; };
@@ -5383,7 +5398,7 @@ async function viewMyDay(v) {
     $$('#mdTasks [data-del]').forEach(b => b.onclick = () => { tasks.splice(+b.dataset.del, 1); drawTasks(); save(); });
   };
   drawTasks();
-  bindFunnelPeople($('#mdFunnel'), r.people, false);
+  bindFunnelPeople($('#mdFunnel'), r.people, false, r.interviews);
   bgvPendLoad([{ el: $('#mdBgvBody'), rec: me, empty: '' }]).then(() => { const sec = $('#mdBgv'); if (sec) sec.hidden = !($('#mdBgvBody') && $('#mdBgvBody').children.length); });
   if ($('#mdTodo')) api('apiMyTasks').then(res => { const el = $('#mdTodo'); if (el) renderTodo(el, res); }).catch(e => { const el = $('#mdTodo'); if (el) el.innerHTML = `<p class="hint">${esc(e)}</p>`; });
   const loadEntries = () => fresh('apiListFunnel', { from: f.date, to: f.date, mine: true }).then(rows => {
@@ -5489,6 +5504,7 @@ async function viewDailyReview(v) {
   const data = await viewData(v, 'day:' + f.date, () => api('apiDaySummary', f.date), () => viewDailyReview(v), 'Daily review: figures shown');
   const list = data.recruiters.filter(r => !f.rec || r.recruiter === f.rec);
   const chip = (n, l) => `<span class="rchip"><b>${n}</b> ${l}</span>`;
+  const teamRounds = [].concat(...data.recruiters.map(r => (r.interviews || []).map(x => Object.assign({ recruiter: r.recruiter }, x))));
   v.innerHTML = `
     <div class="page-head"><div><h1>Daily review</h1><p>What each recruiter did on the day: their own overview and tasks, CVs reviewed per position, and the work recorded in the app.</p></div>
       <div class="filters" style="margin:0">
@@ -5498,7 +5514,7 @@ async function viewDailyReview(v) {
         <button class="btn" id="drPrev" aria-label="Previous day">\u2039</button><button class="btn" id="drNext" aria-label="Next day" ${f.date >= today() ? 'disabled' : ''}>\u203a</button>
         <button class="btn" id="drCv" title="CV received: what was typed in the Daily log against the candidates added to positions">CV received: typed vs pipeline</button></div></div>
     ${data.missedTotal ? `<div class="todo-strip miss-strip"><b>${data.missedTotal} critical task${data.missedTotal === 1 ? '' : 's'} missed</b> on ${fmtDate(f.date)}. See each recruiter below.</div>` : ''}
-    <section class="panel" id="rvFunnel"><h2>Team funnel \u00b7 ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, data.team, data.people)}${scorecardNote(data)}</section>
+    <section class="panel" id="rvFunnel"><h2>Team funnel \u00b7 ${fmtDate(f.date)}</h2>${dayFunnelHtml(data.stages, data.team, data.people, teamRounds)}${scorecardNote(data)}</section>
     ${(() => { const all = [].concat(...data.recruiters.map(r => (r.interviews || []).map(x => Object.assign({ recruiter: r.recruiter }, x)))); return all.length ? `<section class="panel" id="rvInt"><h2>Interviews \u00b7 ${fmtDate(f.date)}</h2>${dayInterviewsHtml(all, true)}</section>` : ''; })()}
     ${list.map(r => {
       const done = r.tasks.filter(t => t.d).length;
@@ -5514,19 +5530,19 @@ async function viewDailyReview(v) {
           <div><h3>Recorded in the app</h3>${dayWorkHtml(r)}${(r.interviews || []).length ? '<h3>Interviews</h3>' + dayInterviewsHtml(r.interviews, false) : ''}<h3>Funnel</h3>${dayFunnelBars(data.stages, r.funnel)}</div>
         </div>
         <h3>BGV pending <span class="sub">(as of today)</span></h3><div data-bgvp="${esc(r.recruiter)}"><p class="hint">Loading\u2026</p></div>
-        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages })}</div>
+        <h3>CVs by position</h3><div data-dsrec="${esc(r.recruiter)}">${dayPositionsHtml(r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages, interviews: r.interviews })}</div>
         </div></details>
       </article>`;
     }).join('') || '<div class="empty">No recruiters to show.</div>'}`;
   const shift = n => { const d = new Date(f.date + 'T12:00:00'); d.setDate(d.getDate() + n); f.date = d.toISOString().slice(0, 10); go('review', false); };
-  bindFunnelPeople($('#rvFunnel'), data.people, true);
+  bindFunnelPeople($('#rvFunnel'), data.people, true, teamRounds);
   $$('details.rdet', v).forEach(d => d.addEventListener('toggle', () => { (f.open = f.open || {})[d.dataset.rec] = d.open; }));
   $('#drMon').onclick = () => { f.mode = 'month'; go('review', false); };
   $('#drCv').onclick = () => cvCompareDialog();
   $('#drDate').onchange = e => { f.date = e.target.value || daysAgo(1); go('review', false); };
   $('#drRec').onchange = e => { f.rec = e.target.value; S.keepData = true; go('review', false); };   // the day holds every recruiter: no server call
   $('#drPrev').onclick = () => shift(-1);
-  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages }, () => go('review', false)));
+  (data.recruiters || []).forEach(r => bindDayPositions(document.querySelector(`[data-dsrec="${CSS.escape(r.recruiter)}"]`), r.byPosition, { rec: r.recruiter, date: f.date, list: r.dayStatusList, people: r.people, stages: data.stages, interviews: r.interviews }, () => go('review', false)));
   $('#drNext').onclick = () => shift(1);
   bgvPendLoad(list.map(r => ({ el: document.querySelector(`[data-bgvp="${CSS.escape(r.recruiter)}"]`), rec: r.recruiter, empty: 'No BGV case is pending.' })));
 }
