@@ -200,7 +200,7 @@ function apiKpiSetup() {
       text: kind === 'CAPTURE' ? 'scored from ' + (rules && rules.from || f) : rules ? kpiRulesText_(kpi, rules) : '', from: f, reason: String(r.Reason || '') });
   });
   hist.sort(function (a, b) { return b.ms - a.ms; });
-  return { canEdit: can_(u, 'kpi_edit'), now: now, minFrom: KPI_MIN_FROM_, grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, recruiters: kpiRecruiterNames_(), levels: KPI_LEVEL_CHOICES_,
+  return { canEdit: can_(u, 'kpi_edit'), splitFrom: splitFrom_(), now: now, minFrom: KPI_MIN_FROM_, grace: Number(settings_().NOTICE_GRACE_DAYS) || 30, recruiters: kpiRecruiterNames_(), levels: KPI_LEVEL_CHOICES_,
     tat: tatOut, scoring: scoreOut, captureFrom: kpiCaptureFromNow_(), history: hist.slice(0, 200), base: kpiBase_() };
 }
 

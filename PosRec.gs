@@ -170,3 +170,61 @@ function cardCredit_(l, app) {
   if (!owner || owner.toLowerCase() === lead.toLowerCase()) return l.Recruiter;
   return posCreditIdx_().by[String(l.Line_ID)].known[owner.toLowerCase()] ? owner : l.Recruiter;
 }
+
+
+/* ---------------- The split-credit switch (v220) ---------------- */
+/**
+ * Setting SPLIT_CREDIT_FROM turns on the per-person credit of v164 for positions with a recruiter tagged on or after the date. It used to be a row in the
+ * Settings sheet, edited by hand. These two calls let the Head of HR or the Admin see what a date would change before it is set, and set it from the app,
+ * which also rebuilds the scorecard, the dashboard and the day snapshots (setSetting_).
+ */
+function withSplitDate_(date, fn) {
+  const orig = settings_;
+  settings_ = function () { const s = Object.assign({}, orig()); s.SPLIT_CREDIT_FROM = date; return s; };
+  _tables.__posrec = null;
+  try { return fn(); } finally { settings_ = orig; _tables.__posrec = null; }
+}
+function splitDateOf_(d) {
+  const t = String(d == null ? '' : d).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || isNaN(parseYmd_(t))) throw new Error('Pick the date the split credit starts from.');
+  if (t < '2025-04-01') throw new Error('The date cannot be before 1 April 2025, when the scorecard starts.');
+  return t;
+}
+function kpiSig_(c) { return c ? [c.num, c.den, c.worked, c.missed, c.pct, c.score].join('|') : ''; }
+function apiSplitCreditPreview(date) {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'kpi_edit')) throw new Error('Only the Head of HR or the Admin can change the split credit.');
+  const d = splitDateOf_(date), lines = {};
+  readTable_(T.MRF.name).rows.forEach(function (l) { lines[String(l.Line_ID)] = l; });
+  const positions = posRecRows_().filter(function (r) { return String(r.Role) === 'Tagged' && String(r.Status) === 'Active' && lines[String(r.Line_ID)]; }).map(function (r) {
+    const l = lines[String(r.Line_ID)], from = ymd_(r.Assigned_On);
+    return { line: String(l.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), status: positionStatus_(l), lead: String(l.Recruiter || ''), tagged: String(r.Recruiter || ''), from: from, split: !!from && from >= d };
+  }).sort(function (a, b) { return a.mrf.localeCompare(b.mrf); });
+  const nowM = ymd_(new Date()).slice(0, 7), fy = Number(nowM.slice(5)) >= 4 ? Number(nowM.slice(0, 4)) : Number(nowM.slice(0, 4)) - 1;
+  const before = computeKpis_(fy).data, after = withSplitDate_(d, function () { return computeKpis_(fy).data; });
+  const changed = [], who = {};
+  Object.keys(after).forEach(function (rec) {
+    Object.keys(after[rec]).forEach(function (kpi) {
+      Object.keys(after[rec][kpi]).forEach(function (m) {
+        const a = after[rec][kpi][m], b = before[rec] && before[rec][kpi] && before[rec][kpi][m];
+        if (kpiSig_(a) !== kpiSig_(b)) { changed.push(rec + '|' + kpi + '|' + m); if (rec !== 'TEAM_TOTAL') who[rec] = (who[rec] || 0) + 1; }
+      });
+    });
+  });
+  return { current: splitFrom_(), date: d, positions: positions, splitCount: positions.filter(function (p) { return p.split; }).length,
+    kpi: { fy: fy, changed: changed.length, recruiters: Object.keys(who).sort().map(function (n) { return { name: n, cells: who[n] }; }) } };
+}
+/** Sets (a date) or clears ('') the split credit. Head of HR or Admin; one audit line. */
+function apiSetSplitCredit(date) {
+  const u = currentUser_(); ensureSchema_();
+  if (!can_(u, 'kpi_edit')) throw new Error('Only the Head of HR or the Admin can change the split credit.');
+  const off = String(date == null ? '' : date).trim() === '', d = off ? '' : splitDateOf_(date);
+  return withLock_(function () {
+    const was = splitFrom_();
+    if (was === d) return { from: was };
+    setSetting_('SPLIT_CREDIT_FROM', d, 'Date (yyyy-mm-dd). From this date a position with a tagged recruiter credits card events to the card\u2019s recruiter and position measures to each tagged recruiter. Empty = off. Set in the app (KPI targets).');
+    audit_(u, 'Settings', 'SPLIT_CREDIT_FROM', 'Update', 'Value', was || '(off)', d || '(off)');
+    _tables.__posrec = null;
+    return { from: splitFrom_() };
+  });
+}
