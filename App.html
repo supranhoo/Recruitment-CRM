@@ -8702,7 +8702,7 @@ async function viewPipeline(v) {
     if (!round && !mine.length && !furtherOk(a, can)) return '';
     const panelDefault = String(P.line[round === 'HR' ? 'Final_Panel' : 'Tech_Panel'] || '');
     return `<section class="app-sec" id="apIvSec"><h3>Interviews</h3>
-      ${mine.length ? `<ul class="ints">${mine.map(x => `<li class="int st-${esc(String(x.Status).split(' ').join('-'))}"><div><b>${esc(ivLabel(x.Round, x))} \u00b7 ${esc(x.startText)}</b>
+      ${mine.length ? `<ul class="ints">${mine.map(x => `<li class="int st-${esc(String(x.Status).split(' ').join('-'))}" data-iid="${esc(x.Interview_ID)}"><div><b>${esc(ivLabel(x.Round, x))} \u00b7 ${esc(x.startText)}</b>
         <span class="sub">${esc(x.Mode)}${x.Location ? ' \u00b7 ' + esc(x.Location) : ''} \u00b7 panel: ${esc(x.Panel)} \u00b7 <b>${esc(x.Status)}</b>${x.Attendance_Confirmed === 'Yes' ? ' \u00b7 attendance confirmed' : ''}${x.Unavailable ? ' \u00b7 unavailable: ' + esc(x.Unavailable) : ''}${x.Result ? ` \u00b7 result: <b>${esc(x.Result)}</b>${x.Result_By ? ' by ' + esc(x.Result_By) : ''}${x.Result_Note ? ' \u00b7 ' + esc(x.Result_Note) : ''}` : ''}</span></div>
         ${x.Round === 'Further' && !x.Result && ['Scheduled', 'Panel unavailable'].includes(x.Status) && can ? `<div class="btn-row"><button class="btn sm" data-iv="result" data-id="${esc(x.Interview_ID)}">Record result</button></div>
           <div class="iv-result" data-for="${esc(x.Interview_ID)}" hidden><div class="field"><label>Result</label><select class="ivr-res" aria-label="Result"><option value="Selected">Selected</option><option value="Rejected">Rejected</option><option value="Hold">Hold</option></select></div>
@@ -8876,6 +8876,33 @@ async function viewPipeline(v) {
     });
     if (f.cardTab !== 'work') load(f.cardTab);   // the dialog was redrawn while a tab was open: show it again
   };
+  /* v222: further interview rounds on the stage track, after Technical and before HR. They are markers, not stages: they never move the card.
+     One marker per round (cancelled ones are left out) and, where a round can be added, a "+ Further round" button that opens the form in the Interviews section. */
+  const trackFurther = (a, can) => {
+    if (fastRoute()) return '';
+    const rounds = (P.interviews || []).filter(x => x.App_ID === a.App_ID && x.Round === 'Further' && x.Status !== 'Cancelled');
+    const day = x => x.startIso ? fmtDate(x.startIso.slice(0, 10)) : '';
+    const li = rounds.map(x => {
+      const open = ['Scheduled', 'Panel unavailable'].includes(x.Status), res = String(x.Result || '');
+      const st = res ? res : x.Status === 'Panel unavailable' ? 'Panel unavailable' : 'Scheduled ' + day(x);
+      const cls = res === 'Selected' ? 'done' : res ? 'stop' : 'open';
+      const tip = `${x.Round_Label || 'Further round'} \u00b7 ${x.startText || ''}${x.Panel ? ' \u00b7 panel: ' + x.Panel : ''}${res ? ' \u00b7 result: ' + res + (x.Result_Note ? ' (' + x.Result_Note + ')' : '') : open ? ' \u00b7 no result yet' : ''}`;
+      return `<li class="trk-further ${cls}"><button type="button" class="trk-btn" data-fvgo="${esc(x.Interview_ID)}" title="${esc(tip)}"><span>${esc(x.Round_Label || 'Further round')}</span><small>${esc(st)}</small></button></li>`;
+    }).join('');
+    const add = furtherOk(a, can) ? '<li class="trk-add"><button type="button" class="trk-btn" data-fvadd title="Add another interview round after Technical. Optional: it does not change the stage."><span>+ Further round</span><small>optional</small></button></li>' : '';
+    return li + add;
+  };
+  /* Open the Interviews section, and either the add form or one round, from the track. */
+  const goFurther = (d, id) => {
+    const sec = $('#apIvSec', d); if (!sec) return;
+    const fold = sec.closest('details'); if (fold) fold.open = true;
+    let target = sec;
+    if (id) { const li = $$('li.int', sec).find(x => x.dataset.iid === id); if (li) target = li; }
+    else { const det = $('details.rc-keep', sec); if (det) { det.open = true; target = det; } }
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const fld = id ? $('[data-iv=result]', target) : $('#f_fv_label', sec);
+    if (fld && fld.focus) fld.focus({ preventScroll: true });
+  };
   const openApp = (a, hr) => {
     const i = P_STAGES.indexOf(a.Stage);
     let next = fastRoute() ? (P.fastStages.find(x => P_STAGES.indexOf(x) > i) || '') : P_STAGES[i + 1];
@@ -8892,7 +8919,7 @@ async function viewPipeline(v) {
     const tabName = t => (fastRoute() && t.st && FAST_NAMES[t.st]) || t.l;
     const d = dlg(`<div class="app-head"><div><h2 id="pdTitle">${esc(a.cand.name)}</h2><p class="sub">${esc(P.line.Position)} \u00b7 ${esc(P.line.MRF_No)} \u00b7 ${esc(a.cand.mobile)} ${a.Actual_DOJ && ['Joined', 'Onboarded'].includes(a.Stage) ? '\u00b7 <b>Joined on ' + esc(fmtDate(a.Actual_DOJ)) + '</b> ' : ''}${a.Status !== 'Active' ? `\u00b7 <b class="miss">${esc(a.Status)}</b>: ${esc(a.Status_Reason)}` : ''}</p></div>
         <button class="btn" id="apProfile">Candidate profile</button></div>
-      <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); const skipped = s === 'HR' && !fastRoute() && k < i && !reached[s]; const inner = `<span>${PN(s)}</span><small>${esc(reached[s] || (skipped ? 'not held' : ''))}</small>`; const tk = lead && CARD_TAB_OF[s] && cardTabs.some(t => t.k === CARD_TAB_OF[s]) ? CARD_TAB_OF[s] : ''; return `<li class="${skipped ? 'done skip' : k < i ? 'done' : k === i ? 'now' : ''}${tk && tk === curTab ? ' sel' : ''}">${tk ? `<button type="button" class="trk-btn" data-tab="${tk}" title="See where this step was updated">${inner}</button>` : inner}</li>`; }).join('')}</ol>
+      <ol class="track">${stagesOf().filter(s => !fastRoute() || P.fastStages.includes(s) || s === a.Stage).map(s => { const k = P_STAGES.indexOf(s); const skipped = s === 'HR' && !fastRoute() && k < i && !reached[s]; const inner = `<span>${PN(s)}</span><small>${esc(reached[s] || (skipped ? 'not held' : ''))}</small>`; const tk = lead && CARD_TAB_OF[s] && cardTabs.some(t => t.k === CARD_TAB_OF[s]) ? CARD_TAB_OF[s] : ''; return `<li class="${skipped ? 'done skip' : k < i ? 'done' : k === i ? 'now' : ''}${tk && tk === curTab ? ' sel' : ''}">${tk ? `<button type="button" class="trk-btn" data-tab="${tk}" title="See where this step was updated">${inner}</button>` : inner}</li>` + (s === 'Technical' ? trackFurther(a, canWork && active) : ''); }).join('')}</ol>
       <div class="app-now" role="group" aria-label="Where this candidate is now"><span class="app-now-stage">${esc(PN(a.Stage))}</span><span>${a.sinceMs ? Math.max(0, Math.floor((P.now - a.sinceMs) / 86400000)) : 0} days in this stage</span>${active && next ? `<span>Next step: <b>${esc(PN(next))}</b></span>` : active ? '<span>Final stage</span>' : `<span class="miss">${esc(a.Status)}</span>`}${a.Risk && active ? `<span class="risk r-${esc(a.Risk)}">${esc(a.Risk)}</span>` : ''}</div>
       ${lead ? `<div class="tabs card-tabs" role="tablist" aria-label="Where this candidate was updated">${[{ k: 'work', l: 'Work' }].concat(cardTabs).map(t => `<button type="button" role="tab" data-tab="${t.k}" aria-selected="${t.k === curTab}" tabindex="${t.k === curTab ? 0 : -1}" aria-controls="${t.k === 'work' ? 'apTabWork' : 'apTabDetail'}">${esc(t.k === 'work' ? 'Work' : tabName(t))}</button>`).join('')}</div>` : ''}
       ${lead ? `<div id="apTabWork" role="tabpanel"${curTab === 'work' ? '' : ' hidden'}>` : ''}
@@ -8941,6 +8968,8 @@ async function viewPipeline(v) {
       <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`, 'app-dlg');
     initMulti(d);
     bindInterviewSec(d, a);
+    $$('[data-fvgo]', d).forEach(b => b.onclick = () => goFurther(d, b.dataset.fvgo));
+    $$('[data-fvadd]', d).forEach(b => b.onclick = () => goFurther(d, ''));
     if (lead) bindCardTabs(d, a, cardTabs, tabName);
     if ($('#apMvGo', d)) $('#apMvGo', d).onclick = async () => {
       const to = $('#apMvTo', d).value, why = $('#apMvWhy', d).value, b = $('#apMvGo', d);
