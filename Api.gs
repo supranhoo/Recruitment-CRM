@@ -3,6 +3,9 @@
  * Every one resolves the user first, so nothing is reachable without a Users-sheet entry.
  */
 
+/** v225: the server's version, so a page left open across a release can tell it is out of date. Signed-in users only; reads no data. */
+function apiBuildCheck() { currentUser_(); return { build: BUILD_ID }; }
+
 function apiBootstrap() { return timed_('apiBootstrap', apiBootstrapRun_, arguments); }
 function apiBootstrapRun_() {
   const u = currentUser_();
