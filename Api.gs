@@ -34,6 +34,8 @@ function listLine_(l, ctx, u) {
   o._canEdit = canEditLine_(u, l);
   ctx.pr = ctx.pr || posRecMap_();
   o.Tagged = ctx.pr[String(l.Line_ID)] || [];
+  o.Split = lineSplit_(l);   // v219: on a split position (v164) each credited tagged recruiter logs their own Daily log row, from the day they were tagged
+  o.Credited = posTaggedCredits_(l).map(function (c) { return { name: c.name, from: c.from }; });
   const me = String(u.recruiter || '').trim().toLowerCase();
   o._tagged = !!me && o.Tagged.some(function (n) { return String(n).trim().toLowerCase() === me; });
   o.Route = routeOf_(l);
@@ -376,6 +378,8 @@ function apiSaveFunnelRun_(data) {
     const names = [String(line.Recruiter || '').trim()].concat(posTaggedCredits_(line).map(function (c) { return c.name; })).filter(String);
     const want = String(isLead_(u) && data.Recruiter ? data.Recruiter : u.recruiter).trim().toLowerCase();
     entryWho = names.filter(function (n) { return n.toLowerCase() === want; })[0] || names[0] || u.recruiter;
+    const cr = posTaggedCredits_(line).filter(function (c) { return c.name.toLowerCase() === entryWho.toLowerCase(); })[0];
+    if (cr && cr.from && entryDay < cr.from) throw new Error(entryWho + ' was tagged on this position on ' + cr.from + ', so entries for them start from that day.');   // v219
   }
   return withLock_(function () {
   let rec;

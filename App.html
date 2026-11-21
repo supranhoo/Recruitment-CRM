@@ -1904,9 +1904,15 @@ async function renderLineFunnel(p) {
 const DL_ALL = '*', DL_NONE = '-';
 function dlLines() { return S.positions.filter(p => ACTIVE.concat(['On Hold']).includes(p.Position_Status)); }
 function dlRecOf(p) { return String(p.Recruiter || '').trim() || DL_NONE; }
+/** v219: who logs a position's day: its lead, and on a split position (v164) each credited tagged recruiter from the day they were tagged. */
+function dlWhos(p, day) {
+  const out = [dlRecOf(p)];
+  if (p.Split) (p.Credited || []).forEach(c => { if ((!day || String(c.from) <= day) && !out.includes(c.name)) out.push(c.name); });
+  return out;
+}
 /** The recruiters who have active positions, me first. */
 function dlRecruiters() {
-  const me = S.boot.user.recruiter, set = {}; dlLines().forEach(p => { set[dlRecOf(p)] = (set[dlRecOf(p)] || 0) + 1; });
+  const me = S.boot.user.recruiter, set = {}; dlLines().forEach(p => { dlWhos(p, today()).forEach(w => { set[w] = (set[w] || 0) + 1; }); });
   const names = Object.keys(set).filter(x => x !== me && x !== DL_NONE).sort((a, b) => a.localeCompare(b));
   return { me, counts: set, names, none: set[DL_NONE] || 0, total: dlLines().length };
 }
@@ -1926,7 +1932,7 @@ function activeLineOptions(selected, rec) {
   const byMrf = (a, b) => String(a.MRF_No).localeCompare(String(b.MRF_No));
   let ls = dlLines();
   const sel = selected && S.positions.find(p => p.Line_ID === selected);
-  if (rec && rec !== DL_ALL) ls = ls.filter(p => dlRecOf(p) === rec);
+  if (rec && rec !== DL_ALL) ls = ls.filter(p => dlWhos(p).includes(rec));
   if (sel && !ls.includes(sel)) ls = ls.concat([sel]);
   if (rec === DL_ALL) {
     const groups = {}; ls.forEach(p => { (groups[dlRecOf(p)] = groups[dlRecOf(p)] || []).push(p); });
@@ -2036,7 +2042,10 @@ async function dailyGrid(box, onRec, fixed) {
   const draw = async () => {
     const rec = fixed ? fixed.rec : (S.dlRec = dlDefaultRec()), pk = pipedKeys(st.date), piped = pk.length > 0, day = st.date;
     const cols = METRICS.filter(([k]) => !pk.includes(k));
-    const lines = dlLines().filter(p => rec === DL_ALL || dlRecOf(p) === rec).sort((a, b) => dlRecOf(a).localeCompare(dlRecOf(b)) || String(a.MRF_No).localeCompare(String(b.MRF_No)));
+    /* v219: a row is a position and a person; a split position has one row per credited recruiter, each with their own numbers. */
+    const lines = dlLines().flatMap(p => dlWhos(p, day).filter(w => rec === DL_ALL || w === rec).map(w => Object.assign({}, p, { _who: w })))
+      .sort((a, b) => a._who.localeCompare(b._who) || String(a.MRF_No).localeCompare(String(b.MRF_No)));
+    const rk = (id, who) => { const q = lineById(id); return q && q.Split ? id + '|' + String(who || '').trim().toLowerCase() : id; };
     box.innerHTML = `${fixed ? '' : `<h2>Log activity</h2><div class="grid" style="margin-bottom:8px">
         <div class="field"><label for="dl_rec">Recruiter</label><select id="dl_rec">${dlRecOptions(rec)}</select></div>
         <div class="field"><label for="dl_date">Date</label><input id="dl_date" type="date" value="${esc(day)}" max="${today()}"></div></div>`}
@@ -2049,16 +2058,17 @@ async function dailyGrid(box, onRec, fixed) {
     try { rows = await fresh('apiListFunnel', { recruiter: '', from: day, to: day }); } catch (e) { toast(e, true); }
     if (st.date !== day) return;
     const byLine = {}, pipe = {};
-    rows.forEach(r => { if (r.Entry_ID && !r.derived && !byLine[r.Line_ID]) byLine[r.Line_ID] = r; if (piped) pk.forEach(k => { if (Number(r[k])) { pipe[r.Line_ID] = pipe[r.Line_ID] || {}; pipe[r.Line_ID][k] = (pipe[r.Line_ID][k] || 0) + Number(r[k]); } }); });
-    const note = id => { const p = pipe[id]; return p ? `<span class="sub">Pipeline today: ${pk.filter(k => p[k]).map(k => `${(METRICS.find(m => m[0] === k) || [])[2]} ${p[k]}`).join(' · ')}</span>` : ''; };
+    rows.forEach(r => { const key = rk(r.Line_ID, r.Recruiter); if (r.Entry_ID && !r.derived && !byLine[key]) byLine[key] = r; if (piped) pk.forEach(k => { if (Number(r[k])) { pipe[key] = pipe[key] || {}; pipe[key][k] = (pipe[key][k] || 0) + Number(r[k]); } }); });
+    const note = q => { const p = pipe[rk(q.Line_ID, q._who)]; return p ? `<span class="sub">Pipeline today: ${pk.filter(k => p[k]).map(k => `${(METRICS.find(m => m[0] === k) || [])[2]} ${p[k]}`).join(' · ')}</span>` : ''; };
     const body = $('#dgBody', box);
     if (!lines.length) { body.innerHTML = '<div class="empty">No active positions for this recruiter.</div>'; return; }
     let lastRec = null;
     body.innerHTML = `${piped ? `<p class="hint" style="margin:0 0 8px">${cols.length ? 'Type CVs sourced and reviewed. HR 1st round, shared, shortlisted, interviews and selected are counted from the Pipeline.' : 'Every count is taken from the candidates moved in the Pipeline. Type only remarks and the department feedback.'} Rows you change are saved with <b>Save</b> or <b>Save all changes</b>. An entry can be changed until midnight.</p>` : ''}
       <div class="table-wrap"><table class="dgrid"><thead><tr><th>Position</th>${cols.map(([, l, sh]) => `<th class="num" title="${esc(l)}">${esc(sh)}</th>`).join('')}<th>Feedback from dept</th><th>Remarks</th><th><span class="sr-only">Save</span></th></tr></thead><tbody>
-      ${lines.map(p => { const e = byLine[p.Line_ID], lock = e && !e.canEdit, ro = lock ? ' disabled' : '';
-        const grp = rec === DL_ALL && dlRecOf(p) !== lastRec ? `<tr class="dg-grp"><td colspan="${cols.length + 4}"><b>${esc(dlRecOf(p) === DL_NONE ? 'Not assigned' : dlRecOf(p))}</b></td></tr>` : ''; lastRec = dlRecOf(p);
-        return grp + `<tr data-line="${esc(p.Line_ID)}" data-entry="${esc(e ? e.Entry_ID : '')}"><td>${esc(p.Position)}<span class="sub">${esc(p.MRF_No || '')} · ${esc(p.Dept || '')}</span>${note(p.Line_ID)}</td>
+      ${lines.map(p => { const e = byLine[rk(p.Line_ID, p._who)], lock = e && !e.canEdit, ro = lock ? ' disabled' : '';
+        const grp = rec === DL_ALL && p._who !== lastRec ? `<tr class="dg-grp"><td colspan="${cols.length + 4}"><b>${esc(p._who === DL_NONE ? 'Not assigned' : p._who)}</b></td></tr>` : ''; lastRec = p._who;
+        const others = p.Split ? dlWhos(p, day).filter(w => w !== p._who && w !== DL_NONE) : [];
+        return grp + `<tr data-line="${esc(p.Line_ID)}" data-entry="${esc(e ? e.Entry_ID : '')}"${p.Split ? ` data-split="1" data-who="${esc(p._who)}"` : ''}><td>${esc(p.Position)}<span class="sub">${esc(p.MRF_No || '')} · ${esc(p.Dept || '')}${others.length ? ' · shared with ' + esc(others.join(', ')) : ''}</span>${note(p)}</td>
           ${cols.map(([k, l]) => `<td class="num"><input type="number" min="0" step="1" data-k="${k}" aria-label="${esc(l)} for ${esc(p.Position)}" value="${esc(e && Number(e[k]) ? e[k] : '')}" placeholder="0"${ro}></td>`).join('')}
           <td><select data-k="FB_From_Dept" aria-label="Feedback from dept"${ro}>${opts(['Yes', 'No', 'Pending'], e ? e.FB_From_Dept : '')}</select></td>
           <td><input data-k="Remarks" value="${esc(e ? e.Remarks || '' : '')}" placeholder="Remarks"${ro}></td>
@@ -2066,7 +2076,7 @@ async function dailyGrid(box, onRec, fixed) {
       </tbody></table></div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:12px"><span class="hint" id="dgCount"></span><button class="btn primary" id="dgAll" disabled>Save all changes</button></div>`;
     const sync = () => { const n = dirty(), b = $('#dgAll', box); if (b) { b.disabled = !n; $('#dgCount', box).textContent = n ? n + (n === 1 ? ' row' : ' rows') + ' changed' : ''; } };
-    const payload = tr => { const d = { Line_ID: tr.dataset.line, Entry_Date: day, Entry_ID: tr.dataset.entry }; $$('[data-k]', tr).forEach(i => { d[i.dataset.k] = i.value; }); pk.forEach(k => { d[k] = 0; }); return d; };
+    const payload = tr => { const d = { Line_ID: tr.dataset.line, Entry_Date: day, Entry_ID: tr.dataset.entry }; if (tr.dataset.split) d.Recruiter = tr.dataset.who; $$('[data-k]', tr).forEach(i => { d[i.dataset.k] = i.value; }); pk.forEach(k => { d[k] = 0; }); return d; };
     $$('tr[data-line]', body).forEach(tr => {
       const mark = () => { tr.classList.add('dg-dirty'); const b = $('.dg-save', tr); if (b) b.disabled = false; sync(); };
       $$('[data-k]', tr).forEach(i => { i.addEventListener('input', mark); i.addEventListener('change', mark); });
