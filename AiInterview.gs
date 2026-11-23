@@ -80,7 +80,7 @@ function aiQuestionsRun_(appId, p) {
     src = aiSource_(recLines.concat(openPoints.map(function (x) { return 'Open point ' + x; })), cv, Array.isArray(p.pageOffsets) ? p.pageOffsets.map(Number).filter(function (n) { return isFinite(n) && n >= 0 && n < cv.length; }).slice(0, 200) : []);
     userMsg = 'Write up to 6 candidate-specific questions for the ' + label + ', on the open points and this candidate\'s own experience. Do not repeat the core questions.\nRequirements:\n' + JSON.stringify(list) + '\nCore questions already approved:\n' + JSON.stringify(coreQs) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>';
   }
-  const model = cfg.models.questions || AI_DEFAULT_MODEL_, srcVer = model + '|' + AI_QUESTIONS_PROMPT_VERSION_ + '|' + kind + '|' + round + '|sq' + rq.sqVersion + '|jd' + rq.jdVersion;
+  const model = cfg.models.questions || AI_DEFAULT_MODEL_, srcVer = model + '|' + aiPv_('questions', AI_QUESTIONS_PROMPT_VERSION_) + '|' + kind + '|' + round + '|sq' + rq.sqVersion + '|jd' + rq.jdVersion;
   const hash = aiHashHex_(userMsg);
   let draft = null, built = null, reused = false;
   if (p.force !== true) {
@@ -88,10 +88,10 @@ function aiQuestionsRun_(appId, p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'questions', system: AI_QUESTIONS_SYSTEM_, user: userMsg, schema: aiQuestionsSchema_(), maxTokens: 3500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
+    const r = aiRun_(u, { feature: 'questions', system: aiSystem_('questions', AI_QUESTIONS_SYSTEM_), user: userMsg, schema: aiQuestionsSchema_(), maxTokens: 3500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiQuestionsBuild_(r.data, rq, src, kind, kind === 'core' ? 8 : 6);
     built.kind = kind; built.round = round; built.roundLabel = label; built.meta = { sqVersion: rq.sqVersion, jdVersion: rq.jdVersion, fp: kind === 'candidate' ? aiSummaryFp_(cand) : '', model: r.model };
-    const job = aiGenericJob_(u, 'questions', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, AI_QUESTIONS_PROMPT_VERSION_, r);
+    const job = aiGenericJob_(u, 'questions', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, aiPv_('questions', AI_QUESTIONS_PROMPT_VERSION_), r);
     draft = insert_(AI_DRAFTS_, { Job_ID: job, Feature: 'questions', Candidate_ID: kind === 'core' ? '' : String(cand.Candidate_ID), App_ID: kind === 'core' ? '' : String(app.App_ID), Line_ID: String(app.Line_ID), Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify(built), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }
   return Object.assign({ draftId: String(draft.Draft_ID), reused: reused, generatedOn: draft.Created_At instanceof Date ? ymd_(draft.Created_At) : ymd_(new Date()), position: String(line.Position || '') }, built);
@@ -161,17 +161,17 @@ function aiFeedbackRun_(appId, p) {
   const remarks = String(cand.Interview_Remarks || '').trim();
   if (!round || (!round.note && !remarks)) throw new Error('No interviewer notes to summarise for this round. Enter the notes with the interview result first.');
   const src = { text: aiFeedbackText_(cand, round), recLen: 0, offsets: [] };   // every quote is "the notes"
-  const model = cfg.models.feedback || AI_DEFAULT_MODEL_, srcVer = model + '|' + AI_FEEDBACK_PROMPT_VERSION_ + '|' + round.key, hash = aiHashHex_(src.text);
+  const model = cfg.models.feedback || AI_DEFAULT_MODEL_, srcVer = model + '|' + aiPv_('feedback', AI_FEEDBACK_PROMPT_VERSION_) + '|' + round.key, hash = aiHashHex_(src.text);
   let draft = null, built = null, reused = false;
   if (p.force !== true) {
     draft = readTable_(AI_DRAFTS_.name, true).rows.filter(function (r) { return r.Feature === 'feedback' && r.Input_Hash === hash && r.Source_Version === srcVer && r.Status !== 'Discarded' && String(r.Created_By) === u.email; }).pop() || null;
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'feedback', system: AI_FEEDBACK_SYSTEM_, user: 'Summarise the notes.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiFeedbackSchema_(), maxTokens: 2500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
+    const r = aiRun_(u, { feature: 'feedback', system: aiSystem_('feedback', AI_FEEDBACK_SYSTEM_), user: 'Summarise the notes.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiFeedbackSchema_(), maxTokens: 2500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiFeedbackBuild_(r.data, src, round);
     built.meta = { round: round.key, nhash: hash.slice(0, 16), model: r.model };
-    const job = aiGenericJob_(u, 'feedback', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, AI_FEEDBACK_PROMPT_VERSION_, r);
+    const job = aiGenericJob_(u, 'feedback', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, aiPv_('feedback', AI_FEEDBACK_PROMPT_VERSION_), r);
     draft = insert_(AI_DRAFTS_, { Job_ID: job, Feature: 'feedback', Candidate_ID: String(cand.Candidate_ID), App_ID: String(app.App_ID), Line_ID: String(app.Line_ID), Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify(built), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }
   return Object.assign({ draftId: String(draft.Draft_ID), reused: reused, generatedOn: draft.Created_At instanceof Date ? ymd_(draft.Created_At) : ymd_(new Date()), position: String(line.Position || '') }, built);

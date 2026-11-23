@@ -49,7 +49,7 @@ const AI_DRAFTS_ = { name: 'AI_Drafts', id: 'Draft_ID', prefix: 'AID-', width: 6
 /** Creates the AI sheets and seeds the price list. Cheap to call every time (once per release per 6 hours). */
 function aiSchema_() {
   schemaOnce_('ai', function () {
-    [AI_USAGE_, AI_CREDLOG_, AI_PRICING_, AI_JOBS_, AI_DRAFTS_].forEach(function (d) { addSheet_(d.name, d.cols); addColumns_(d.name, d.cols); });
+    [AI_USAGE_, AI_CREDLOG_, AI_PRICING_, AI_JOBS_, AI_DRAFTS_, AI_PROMPTS_].forEach(function (d) { addSheet_(d.name, d.cols); addColumns_(d.name, d.cols); });
     if (!readTable_(AI_PRICING_.name, true).rows.length) {
       const sys = { email: 'system' };
       AI_PRICE_SEED_.forEach(function (p) { insert_(AI_PRICING_, { Model: p[0], From_Date: AI_PRICE_SEED_DATE_, In_per_M_USD: p[1], Out_per_M_USD: p[2], Note: 'Seeded from the Anthropic model list; the Admin confirms current rates.' }, sys); });
