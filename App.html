@@ -7446,13 +7446,13 @@ function serverPerfHtml(p) {
   if (!p) return '<p class="hint">Not available.</p>';
   const when = iso => { try { return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(iso); } };
   const by = {};
-  (p.slow || []).forEach(x => { const o = by[x.fn] = by[x.fn] || { fn: x.fn, n: 0, max: 0, sum: 0, last: x.at }; o.n++; o.sum += x.ms; o.max = Math.max(o.max, x.ms); });
+  (p.slow || []).forEach(x => { const o = by[x.fn] = by[x.fn] || { fn: x.fn, n: 0, max: 0, sum: 0, last: x.at }; o.n++; o.sum += x.ms; if (x.ms >= o.max) o.steps = x.steps || []; o.max = Math.max(o.max, x.ms); });
   const rows = Object.values(by).sort((a, b) => b.max - a.max);
   const jobRows = [];
   Object.keys(p.jobs || {}).forEach(j => Object.keys(p.jobs[j] || {}).forEach(st => { const v = p.jobs[j][st] || []; if (v.length) jobRows.push({ job: j, step: st, last: v[0], max: Math.max(...v), n: v.length }); }));
   jobRows.sort((a, b) => b.max - a.max);
   return `<p style="color:var(--ink-2);max-width:75ch">Calls that took ${p.slowMs} ms or more in the last 6 hours, from everyone’s use, and how long each step of the scheduled jobs took recently. Saves that could not get the shared lock today: <b>${p.lockTimeoutsToday}</b>.</p>
-    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Call</th><th class="num">Times slow</th><th class="num">Average ms</th><th class="num">Slowest ms</th><th>Last</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.fn)}</td><td class="num">${r.n}</td><td class="num">${Math.round(r.sum / r.n)}</td><td class="num">${r.max}</td><td>${esc(when(r.last))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No slow calls in the last 6 hours.</p>'}
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Call</th><th class="num">Times slow</th><th class="num">Average ms</th><th class="num">Slowest ms</th><th>Last</th><th>Biggest steps of the slowest call</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.fn)}</td><td class="num">${r.n}</td><td class="num">${Math.round(r.sum / r.n)}</td><td class="num">${r.max}</td><td>${esc(when(r.last))}</td><td>${(r.steps || []).length ? (r.steps || []).map(s => `${esc(s.w)} ${s.ms} ms${s.x ? ' (' + esc(s.x) + ')' : ''}`).join('; ') : '\u2014'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No slow calls in the last 6 hours.</p>'}
     ${jobRows.length ? `<h3 style="margin-top:14px">Scheduled job steps</h3><div class="table-wrap"><table><thead><tr><th>Job</th><th>Step</th><th class="num">Last ms</th><th class="num">Slowest of the last ${Math.max(...jobRows.map(r => r.n))}</th></tr></thead><tbody>${jobRows.map(r => `<tr style="cursor:default"><td>${esc(r.job)}</td><td>${esc(r.step)}</td><td class="num">${r.last}</td><td class="num">${r.max}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
 }
 async function renderRoutesAdmin(el) {

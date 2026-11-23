@@ -692,6 +692,24 @@ function apiTasksForLineRun_(lineId) {
   return allTasks_().filter(function (t) { return t.line === lineId && !t.hidden; }).sort(sortTasks_).map(taskClient_);
 }
 
+/**
+ * v228: how many critical to-dos were missed yesterday (the Overview strip). Yesterday is fixed, so the number changes only when the to-do state, notes, positions,
+ * settings or users change; it is cached under those tables' version stamps (the same ones the to-do list uses) instead of being worked out on every Overview load.
+ */
+function missedYesterdayCount_(y, recruiter) {
+  let key = '';
+  try {
+    const sj = tableStamps_(['Tasks', 'Task_Actions', 'MRF', 'Settings', 'Users']).join('|');
+    let h = 0; for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
+    key = 'missedy_' + y + '_' + String(recruiter || '*').toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + h.toString(36) + '_' + sj.length;
+    const hit = CacheService.getScriptCache().get(key);
+    if (hit !== null && hit !== undefined && /^\d+$/.test(hit)) return Number(hit);
+  } catch (e) { key = ''; }
+  const n = missedTasks_(y, recruiter).length;
+  if (key) { try { CacheService.getScriptCache().put(key, String(n), 3600); } catch (e) { } }
+  return n;
+}
+
 /** Counts for the Overview: the user's own, or the team's for the head and admin. */
 function apiTaskSummary() { return timed_('apiTaskSummary', apiTaskSummaryRun_, arguments); }
 function apiTaskSummaryRun_() {
@@ -699,7 +717,7 @@ function apiTaskSummaryRun_() {
   const lead = isLead_(u);
   const all = allTasks_().filter(function (t) { return !t.hidden && (lead || String(t.recruiter).toLowerCase() === u.recruiter.toLowerCase()); });
   const y = ymd_(new Date(Date.now() - 86400000));
-  const missed = missedTasks_(y, lead ? '' : u.recruiter).length;
+  const missed = missedYesterdayCount_(y, lead ? '' : u.recruiter);
   const exemptPending = can_(u, 'tat_exempt') && ss_().getSheetByName(T.TEX.name) ? readTable_(T.TEX.name).rows.filter(function (x) { return String(x.Status) === 'Pending'; }).length : 0;
   const bg = (function () { try { return bgvSummary_(u); } catch (e) { return { decide: 0, late: 0 }; } })();
   return { team: lead, critical: all.filter(function (t) { return t.level === 'critical'; }).length, due: all.filter(function (t) { return t.level === 'due'; }).length, missedYesterday: missed, exemptPending: exemptPending, bgvDecide: bg.decide, bgvLate: bg.late };
