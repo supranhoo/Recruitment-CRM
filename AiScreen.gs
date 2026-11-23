@@ -110,18 +110,18 @@ function aiSummaryRun_(p) {
   const cv = aiCvPrecheck_(cfg, p, true, cand.Name);
   const rec = aiRecordLines_(cand).concat(aiProfileLines_(candId));
   const src = aiSource_(rec, cv, Array.isArray(p.pageOffsets) ? p.pageOffsets.map(Number).filter(function (n) { return isFinite(n) && n >= 0 && n < cv.length; }).slice(0, 200) : []);
-  const model = cfg.models.summary || AI_DEFAULT_MODEL_, hash = aiHashHex_(src.text), srcVer = model + '|' + AI_SUMMARY_PROMPT_VERSION_;
+  const model = cfg.models.summary || AI_DEFAULT_MODEL_, hash = aiHashHex_(src.text), srcVer = model + '|' + aiPv_('summary', AI_SUMMARY_PROMPT_VERSION_);
   let draft = null, reused = false, built = null;
   if (p.force !== true) {
     draft = readTable_(AI_DRAFTS_.name, true).rows.filter(function (r) { return r.Feature === 'summary' && r.Input_Hash === hash && r.Source_Version === srcVer && r.Status !== 'Discarded' && String(r.Created_By) === u.email; }).pop() || null;
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; built = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'summary', system: AI_SUMMARY_SYSTEM_, user: 'Write the summary.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiSummarySchema_(), maxTokens: 3000, candId: candId, lineId: aiTag_(p.lineId, 30), batchId: aiTag_(p.batchId, 40) });
+    const r = aiRun_(u, { feature: 'summary', system: aiSystem_('summary', AI_SUMMARY_SYSTEM_), user: 'Write the summary.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiSummarySchema_(), maxTokens: 3000, candId: candId, lineId: aiTag_(p.lineId, 30), batchId: aiTag_(p.batchId, 40) });
     built = aiSummaryBuild_(r.data, src, cand);
     built.meta = { fp: aiSummaryFp_(cand), cvName: String(p.fileName || '').slice(0, 120), cvFile: String(cvFileId_(cand.CV_File_URL) || ''), model: r.model };
     if (JSON.stringify(built).length > 45000) throw new Error('The summary is too large to keep. Try again.');
-    const job = aiGenericJob_(u, 'summary', 'Ready', candId, '', p, hash, model, AI_SUMMARY_PROMPT_VERSION_, r);
+    const job = aiGenericJob_(u, 'summary', 'Ready', candId, '', p, hash, model, aiPv_('summary', AI_SUMMARY_PROMPT_VERSION_), r);
     draft = insert_(AI_DRAFTS_, { Job_ID: job, Feature: 'summary', Candidate_ID: candId, Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify(built), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }
   return { draftId: String(draft.Draft_ID), reused: reused, model: built.meta.model || model, generatedOn: draft.Created_At instanceof Date ? ymd_(draft.Created_At) : ymd_(new Date()), fileName: String(built.meta.cvName || ''),
@@ -247,7 +247,7 @@ function aiScreenRun_(appId, p) {
     return r;
   });
   const ask = rows.filter(function (r) { return r.ask; });
-  const model = cfg.models.screening || AI_DEFAULT_MODEL_, hash = aiHashHex_(JSON.stringify({ i: items.map(function (i) { return [i.id, i.q]; }), a: Object.keys(have).sort(), s: src.text })), srcVer = model + '|' + AI_SCREEN_PROMPT_VERSION_ + '|' + IT.version;
+  const model = cfg.models.screening || AI_DEFAULT_MODEL_, hash = aiHashHex_(JSON.stringify({ i: items.map(function (i) { return [i.id, i.q]; }), a: Object.keys(have).sort(), s: src.text })), srcVer = model + '|' + aiPv_('screening', AI_SCREEN_PROMPT_VERSION_) + '|' + IT.version;
   let draft = null, reused = false;
   if (p.force !== true) {
     draft = readTable_(AI_DRAFTS_.name, true).rows.filter(function (r) { return r.Feature === 'screening' && r.Input_Hash === hash && r.Source_Version === srcVer && r.Status !== 'Discarded' && String(r.Created_By) === u.email; }).pop() || null;
@@ -256,9 +256,9 @@ function aiScreenRun_(appId, p) {
   if (!draft) {
     if (ask.length) {
       const list = ask.map(function (r) { const it = items.filter(function (x) { return String(x.id) === r.id; })[0]; return { id: r.id, question: r.field, needed: String(it.need || ''), type: it.type || 'text' }; });
-      const res = aiRun_(u, { feature: 'screening', system: AI_SCREEN_SYSTEM_, user: 'Questions:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiScreenSchema_(), maxTokens: 3000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
+      const res = aiRun_(u, { feature: 'screening', system: aiSystem_('screening', AI_SCREEN_SYSTEM_), user: 'Questions:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiScreenSchema_(), maxTokens: 3000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
       aiScreenApply_(rows, res.data, src);
-      draft = { job: aiGenericJob_(u, 'screening', 'Ready', String(cand.Candidate_ID), String(appId), p, hash, model, AI_SCREEN_PROMPT_VERSION_, res) };
+      draft = { job: aiGenericJob_(u, 'screening', 'Ready', String(cand.Candidate_ID), String(appId), p, hash, model, aiPv_('screening', AI_SCREEN_PROMPT_VERSION_), res) };
     } else draft = { job: '' };
     draft = insert_(AI_DRAFTS_, { Job_ID: draft.job, Feature: 'screening', Candidate_ID: String(cand.Candidate_ID), App_ID: String(appId), Line_ID: String(app.Line_ID), Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify({ rows: rows.map(aiScreenRowOut_) }), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }

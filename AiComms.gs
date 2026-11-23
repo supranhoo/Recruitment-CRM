@@ -105,7 +105,7 @@ function aiCommRun_(appId, p) {
     fx.missing_list = missing.map(function (m) { return '- ' + m; }).join('\n');
   }
   const names = def.fields.filter(function (f) { return AI_COMM_FIELDS_[f]; });
-  const model = cfg.models.comms || AI_DEFAULT_MODEL_, srcVer = model + '|' + AI_COMMS_PROMPT_VERSION_ + '|' + type;
+  const model = cfg.models.comms || AI_DEFAULT_MODEL_, srcVer = model + '|' + aiPv_('comms', AI_COMMS_PROMPT_VERSION_) + '|' + type;
   const userMsg = 'Purpose: ' + def.brief + '\nPlaceholders you may use:\n' + names.map(function (n) { return '{{' + n + '}} = ' + AI_COMM_FIELDS_[n]; }).join('\n');
   const hash = aiHashHex_(userMsg + JSON.stringify(fx) + String(app.App_ID));
   let draft = null, built = null, reused = false;
@@ -114,7 +114,7 @@ function aiCommRun_(appId, p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'comms', system: AI_COMM_SYSTEM_, user: userMsg, schema: aiCommSchema_(), maxTokens: 1200, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
+    const r = aiRun_(u, { feature: 'comms', system: aiSystem_('comms', AI_COMM_SYSTEM_), user: userMsg, schema: aiCommSchema_(), maxTokens: 1200, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     const rawS = String((r.data || {}).subject || ''), rawB = String((r.data || {}).body || '');
     const allowed = Object.keys(fx).map(function (k) { return String(fx[k]); }).filter(String);
     const unresolved = [], strip = function (s) { return s.replace(/\{\{\s*[a-z_]+\s*\}\}/gi, ' '); };
@@ -122,7 +122,7 @@ function aiCommRun_(appId, p) {
     ((rawS + '\n' + rawB).match(/https?:\/\/\S+/gi) || []).forEach(function (l) { rawIssues.flagged.push({ kind: 'link', text: l }); });
     const subject = aiCommFill_(rawS, fx, unresolved).replace(/\s+/g, ' ').trim().slice(0, 200), body = aiCommFill_(rawB, fx, unresolved).replace(/\r/g, '').trim().slice(0, 3000);
     built = { type: type, typeLabel: def.label, subject: subject, body: body, allowed: allowed, writtenByAi: rawIssues.flagged.map(function (f) { return { kind: f.kind, text: f.text }; }), meta: { model: r.model, interviewId: iv ? String(iv.Interview_ID) : '' } };
-    const job = aiGenericJob_(u, 'comms', 'Ready', String(cand.Candidate_ID), String(app.App_ID), {}, hash, model, AI_COMMS_PROMPT_VERSION_, r);
+    const job = aiGenericJob_(u, 'comms', 'Ready', String(cand.Candidate_ID), String(app.App_ID), {}, hash, model, aiPv_('comms', AI_COMMS_PROMPT_VERSION_), r);
     draft = insert_(AI_DRAFTS_, { Job_ID: job, Feature: 'comms', Candidate_ID: String(cand.Candidate_ID), App_ID: String(app.App_ID), Line_ID: String(app.Line_ID), Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify(built), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }
   const issues = aiCommIssues_(built.subject + '\n' + built.body, built.allowed.concat([])), extra = (built.writtenByAi || []).filter(function (x) { return !issues.flagged.some(function (f) { return f.text.toLowerCase() === String(x.text).toLowerCase(); }); });

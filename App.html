@@ -7446,6 +7446,48 @@ async function aiPricesRender(host) {
     catch (x) { failed(x, e.target, 'Add price'); }
   };
 }
+/* ---- v241: prompt templates. The safety core is shown but cannot be edited; the Admin writes a short house style per feature, tests it on a made-up sample and switches it on. ---- */
+async function aiPromptsRender(host) {
+  if (!host) return;
+  let R; try { R = await api('apiAiPrompts'); } catch (e) { host.innerHTML = `<section class="panel"><h2>Prompt templates</h2><div class="empty">${esc(e)}</div></section>`; return; }
+  if (!host.isConnected) return;
+  const T = S.aiPrTest = S.aiPrTest || {};
+  host.innerHTML = `<section class="panel"><h2>Prompt templates</h2>
+    <p class="hint" style="margin-top:0">Each AI action follows <b>fixed rules</b> that are part of the program and cannot be changed here: no invented facts, an exact quote for every statement, candidate text treated as data, no protected characteristics, no ratings or decisions, drafts only. You can add a short <b>house style</b> (tone, wording, terminology, length) that is added after those rules. The checks that run on every answer in code are not affected by it. A house style is switched on only after it passed a test on a made-up sample; the test makes one small AI request. ${esc(R.fixed.join(' '))}</p>
+    ${R.features.map(f => {
+      const cur = f.draft || f.active, shown = cur ? cur.text : '', t = T[f.id];
+      return `<details class="ai-pr" data-f="${esc(f.id)}"><summary><b>${esc(f.label)}</b> <span class="badge ${f.active ? 'ok' : ''}">${f.active ? 'House style v' + f.active.version + ' on' : 'Fixed rules only'}</span>${f.draft ? ' <span class="badge">Draft v' + f.draft.version + (f.draft.test ? ', test ' + esc(f.draft.test.toLowerCase()) : ', not tested') + '</span>' : ''}</summary>
+        <details><summary class="hint">The fixed rules (read only)</summary><pre class="ai-core">${esc(f.core)}</pre></details>
+        <div class="field wide"><label for="apt_${esc(f.id)}">House style <span class="opt">(at most ${R.max} characters)</span></label><textarea id="apt_${esc(f.id)}" rows="5" maxlength="${R.max}" data-ta>${esc(shown)}</textarea><span class="hint" data-count>${shown.length} / ${R.max}</span></div>
+        <div class="field wide"><label for="apn_${esc(f.id)}">Note <span class="opt">(optional)</span></label><input id="apn_${esc(f.id)}" maxlength="200" data-note></div>
+        <div class="drawer-actions" style="position:static;justify-content:flex-start;gap:8px;flex-wrap:wrap"><button class="btn primary" data-save>Save as a new draft</button><button class="btn" data-test ${f.draft ? '' : 'disabled'}>Test the draft on the sample</button><button class="btn" data-on ${f.draft && f.draft.test === 'Passed' ? '' : 'disabled'}>Switch the draft on</button>${f.active ? '<button class="btn danger" data-off>Switch the house style off</button>' : ''}</div>
+        ${t ? `<div class="note ${t.ok ? 'ok-note' : 'warn-note'}"><b>Test of v${esc(t.version)}: ${t.ok ? 'passed' : 'failed'}</b> (${esc(t.model)}, about $${Number(t.cost).toFixed(4)})<ul>${t.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul><pre class="ai-core">${esc(t.preview)}</pre>${t.ok ? '' : '<p class="hint">The answer did not pass the checks, so this version cannot be switched on. Change the wording and save a new draft.</p>'}</div>` : ''}
+        ${f.versions.length ? `<div class="table-wrap"><table class="ai-tbl"><thead><tr><th>Version</th><th>Status</th><th>Test</th><th>Saved</th><th></th></tr></thead><tbody>${f.versions.map(v => `<tr style="cursor:default" data-v="${esc(v.id)}"><td data-label="Version">v${v.version}${v.note ? `<div class="sub">${esc(v.note)}</div>` : ''}</td><td data-label="Status">${esc(v.status)}</td><td data-label="Test">${esc(v.test || 'not tested')}</td><td data-label="Saved">${esc(v.createdOn)} <span class="sub">${esc(String(v.createdBy).split('@')[0])}</span></td>
+          <td class="nw">${v.status !== 'Active' ? '<button class="btn sm" data-load>Load into the editor</button>' : ''}${v.status !== 'Active' && v.test === 'Passed' ? ' <button class="btn sm" data-use>' + (v.status === 'Retired' ? 'Roll back to this' : 'Switch on') + '</button>' : ''}${v.status !== 'Active' ? ' <button class="btn sm" data-vtest>Test</button>' : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">No versions yet.</p>'}</details>`;
+    }).join('')}</section>`;
+  const open = S.aiPrOpen = S.aiPrOpen || {};
+  $$('details.ai-pr', host).forEach(d => { if (open[d.dataset.f]) d.open = true; d.addEventListener('toggle', () => { open[d.dataset.f] = d.open; }); });
+  const redo = () => aiPromptsRender(host);
+  $$('details.ai-pr', host).forEach(d => {
+    const fid = d.dataset.f, f = R.features.find(x => x.id === fid), ta = $('[data-ta]', d);
+    ta.oninput = () => { $('[data-count]', d).textContent = ta.value.length + ' / ' + R.max; };
+    const test = async (btn, id) => { btn.dataset.label = btn.textContent; busy(btn, true, 'Testing…'); try { T[fid] = await api('apiAiPromptTest', id); toast(T[fid].ok ? 'The test passed.' : 'The test did not pass.', !T[fid].ok); redo(); } catch (e) { failed(e, btn, btn.dataset.label); } };
+    const turnOn = async (id, label) => {
+      if (!await askConfirm(label + ' for “' + f.label + '”? New drafts of this action will follow it from now on. Drafts already made are not changed. The fixed rules and the checks stay as they are.')) return;
+      try { await api('apiAiPromptActivate', { feature: fid, id }); delete T[fid]; toast(id ? 'House style switched on.' : 'House style switched off.'); redo(); } catch (e) { toast(e, true); }
+    };
+    $('[data-save]', d).onclick = e => { const b = e.target; busy(b, true, 'Saving…'); api('apiAiPromptSave', { feature: fid, text: ta.value, note: $('[data-note]', d).value }).then(() => { delete T[fid]; toast('Draft saved. Test it on the sample next.'); redo(); }).catch(x => failed(x, b, 'Save as a new draft')); };
+    $('[data-test]', d).onclick = e => { if (ta.value.trim() !== (f.draft ? f.draft.text : '')) return toast('Save the changes as a new draft first, then test that draft.', true); test(e.target, f.draft.id); };
+    $('[data-on]', d).onclick = () => turnOn(f.draft.id, 'Switch v' + f.draft.version + ' on');
+    if ($('[data-off]', d)) $('[data-off]', d).onclick = () => turnOn('', 'Switch the house style off');
+    $$('tr[data-v]', d).forEach(tr => {
+      const v = f.versions.find(x => x.id === tr.dataset.v);
+      if ($('[data-load]', tr)) $('[data-load]', tr).onclick = () => { ta.value = v.text; ta.oninput(); ta.focus(); toast('Loaded v' + v.version + ' into the editor. Save it as a new draft to use it again.'); };
+      if ($('[data-use]', tr)) $('[data-use]', tr).onclick = () => turnOn(v.id, (v.status === 'Retired' ? 'Roll back to v' : 'Switch on v') + v.version);
+      if ($('[data-vtest]', tr)) $('[data-vtest]', tr).onclick = e => test(e.target, v.id);
+    });
+  });
+}
 async function renderAiAdmin(el) {
   const canC = can('ai_credentials'), canS = can('ai_settings'), canU = can('ai_usage');
   const get = (ok, fn) => ok ? api(fn).catch(e => ({ _err: String(e) })) : Promise.resolve(null);
@@ -7480,9 +7522,11 @@ async function renderAiAdmin(el) {
     <div class="drawer-actions" style="position:static;justify-content:flex-start"><button class="btn primary" id="aiSave">Save settings</button></div></section>`;
   if (canU) html += '<div id="aiUsageHost"></div>';
   if (canU || canS) html += '<div id="aiPriceHost"></div>';
+  if (can('ai_prompts')) html += '<div id="aiPromptHost"></div>';
   el.innerHTML = html;
   if (canU) aiUsageRender($('#aiUsageHost', el));
   if (canU || canS) aiPricesRender($('#aiPriceHost', el));
+  if (can('ai_prompts')) aiPromptsRender($('#aiPromptHost', el));
   const form = $('#aiKeyForm', el), inp = $('#aiKeyIn', el);
   const closeForm = () => { if (inp) { inp.value = ''; inp.type = 'password'; } if ($('#aiKeyShow', el)) $('#aiKeyShow', el).checked = false; if (form) form.hidden = true; };
   if ($('#aiKeyOpen', el)) $('#aiKeyOpen', el).onclick = () => { form.hidden = false; inp.focus(); };

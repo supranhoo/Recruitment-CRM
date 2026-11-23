@@ -82,7 +82,7 @@ function aiCompareRun_(appId, p) {
   const recLines = aiRecordLines_(cand).concat(aiProfileLines_(String(cand.Candidate_ID))), scrLines = aiScreenAnswerLines_(app);
   const src = aiSource_(recLines.concat(scrLines), cv, Array.isArray(p.pageOffsets) ? p.pageOffsets.map(Number).filter(function (n) { return isFinite(n) && n >= 0 && n < cv.length; }).slice(0, 200) : []);
   src.scrStart = scrLines.length ? 'CANDIDATE RECORD (entered by the recruiting team)\n'.length + recLines.join('\n').length + 1 : null;
-  const model = cfg.models.compare || AI_DEFAULT_MODEL_, srcVer = model + '|' + AI_COMPARE_PROMPT_VERSION_ + '|sq' + rq.sqVersion + '|jd' + rq.jdVersion;
+  const model = cfg.models.compare || AI_DEFAULT_MODEL_, srcVer = model + '|' + aiPv_('compare', AI_COMPARE_PROMPT_VERSION_) + '|sq' + rq.sqVersion + '|jd' + rq.jdVersion;
   const hash = aiHashHex_(JSON.stringify(rq.reqs.map(function (r) { return [r.id, r.text]; })) + src.text);
   let draft = null, built = null, reused = false;
   if (p.force !== true) {
@@ -91,11 +91,11 @@ function aiCompareRun_(appId, p) {
   }
   if (!draft) {
     const list = rq.reqs.map(function (r) { return { id: r.id, tier: r.tier, requirement: r.text }; });
-    const r = aiRun_(u, { feature: 'compare', system: AI_COMPARE_SYSTEM_, user: 'Requirements:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiCompareSchema_(), maxTokens: 5000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
+    const r = aiRun_(u, { feature: 'compare', system: aiSystem_('compare', AI_COMPARE_SYSTEM_), user: 'Requirements:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiCompareSchema_(), maxTokens: 5000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiCompareBuild_(r.data, rq, src);
     built.meta = { fp: aiCompareFp_(app, cand, rq), sqVersion: rq.sqVersion, jdVersion: rq.jdVersion, cvName: String(p.fileName || '').slice(0, 120), usedCv: hasText, model: r.model };
     if (JSON.stringify(built).length > 45000) throw new Error('The comparison is too large to keep. Try again.');
-    const job = aiGenericJob_(u, 'compare', 'Ready', String(cand.Candidate_ID), String(appId), p, hash, model, AI_COMPARE_PROMPT_VERSION_, r);
+    const job = aiGenericJob_(u, 'compare', 'Ready', String(cand.Candidate_ID), String(appId), p, hash, model, aiPv_('compare', AI_COMPARE_PROMPT_VERSION_), r);
     draft = insert_(AI_DRAFTS_, { Job_ID: job, Feature: 'compare', Candidate_ID: String(cand.Candidate_ID), App_ID: String(appId), Line_ID: String(app.Line_ID), Source_Version: srcVer, Input_Hash: hash, Content_JSON: JSON.stringify(built), Edited_JSON: '', Status: 'Draft', Superseded: '', Created_At: new Date() }, u);
   }
   return Object.assign({ draftId: String(draft.Draft_ID), reused: reused, generatedOn: draft.Created_At instanceof Date ? ymd_(draft.Created_At) : ymd_(new Date()), position: String(line.Position || '') }, built);
