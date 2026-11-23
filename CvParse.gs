@@ -223,12 +223,9 @@ function cvFunction_(s) {
   return '';
 }
 
-/** Parse CV text sent by the browser and check for duplicates (active and archived) before anything is saved. */
-function apiParseCv(text, fileName, opts) {
-  currentUser_(); ensureSchema_();
-  const p = parseCvText_(text, opts || {});
+/** Candidates, active and archived, with the same normalised mobile or the same e-mail (the CRM's duplicate rule). Used by the CV parser and by AI extraction. */
+function candDuplicates_(mob, mail) {
   const dups = [];
-  const mob = p.fields.Mobile, mail = p.fields.Email;
   if (mob || mail) {
     readTable_(T.CAND.name).rows.forEach(function (r) {
       if ((mob && normPhone_(r.Mobile) === mob) || (mail && String(r.Email).toLowerCase() === mail)) dups.push({ id: r.Candidate_ID, name: String(r.Name), position: String(r.Position || ''), hr: String(r.HR_Result || '') });
@@ -237,7 +234,14 @@ function apiParseCv(text, fileName, opts) {
       if ((mob && a.mobile === mob) || (mail && a.email === mail)) dups.push({ id: a.id, name: a.name, position: a.position, hr: a.hr, archived: true, last: a.last });
     });
   }
-  p.duplicates = dups;
+  return dups;
+}
+
+/** Parse CV text sent by the browser and check for duplicates (active and archived) before anything is saved. */
+function apiParseCv(text, fileName, opts) {
+  currentUser_(); ensureSchema_();
+  const p = parseCvText_(text, opts || {});
+  p.duplicates = candDuplicates_(p.fields.Mobile, p.fields.Email);
   try { p.profile = cvExtractProfile_(String(text || ''), p.fields, { ocr: !!(opts && opts.ocr) }); } catch (e) { console.error('CV profile: ' + e); p.profile = null; }
   p.fileName = String(fileName || '');
   return p;
