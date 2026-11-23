@@ -2810,6 +2810,59 @@ function aiFeedbackDialog(res, ctx) {
   };
   $('#aiFbAccept', d).focus();
 }
+/* ---- v238: AI message drafts. The AI writes the wording; the facts are filled in by code from the record. Nothing is sent from here: Copy, Outlook and .eml are
+   the same hand-offs the CRM already uses, and they stay disabled while a placeholder is unresolved or a figure, date, salary or promise is not a verified fact. ---- */
+function aiCommSection(el, a, canGen) {
+  if (!el) return;
+  const stage = String(a.Stage), offerPlus = ['Offer', 'Prejoin', 'Joined', 'Onboarded'].includes(stage);
+  const items = [['invite', 'Interview invitation', 'Uses the booked interview’s date, time and place.', a.Status === 'Active'], ['followup', 'Interview follow-up', 'Thanks the candidate after an interview; no outcome.', true],
+    ['missing', 'Request for missing information', 'Asks only for the details missing from the record.', a.Status === 'Active'],
+    ['rejection', 'Rejection message', 'Only after the rejection has been recorded on this card.', a.Status === 'Rejected'], ['selection', 'Selection message', 'Only after the candidate has been moved to Offer on this card.', a.Status === 'Active' && offerPlus]];
+  el.innerHTML = `<p class="hint" style="margin-top:0">The AI writes the wording; names, dates, places and contacts are filled in from the record, not by the AI. <b>Nothing is sent from here</b>: you copy it or open it in your own mail. If anything is not a verified fact it is marked and the buttons stay off until you fix it.</p>
+    ${canGen ? `<div class="ai-comm-btns">${items.filter(x => x[3]).map(x => `<div><button class="btn sm" data-ct="${x[0]}">${esc(x[1])}</button><span class="hint"> ${esc(x[2])}</span></div>`).join('')}</div>` : '<p class="hint">You can draft messages for positions you work on.</p>'}`;
+  $$('[data-ct]', el).forEach(b => b.onclick = e => aiCommStart(e.target, a, b.dataset.ct, false));
+}
+async function aiCommStart(btn, a, type, force) {
+  const label = btn.textContent; busy(btn, true, 'Asking the AI…');
+  try {
+    const res = await api('apiAiDraftComm', a.App_ID, { type, force: !!force });
+    busy(btn, false, label);
+    aiCommDialog(res, { a, again: () => aiCommStart(btn, a, type, true) });
+  } catch (e) { failed(e, btn, label); }
+}
+function aiCommDialog(res, ctx) {
+  const d = cpDlg(''); let used = false, timer = null, state = { ok: res.ok, unresolved: res.unresolved, flagged: res.flagged };
+  d.innerHTML = `<h2 id="cpTitle">${esc(res.typeLabel)} <span class="badge">AI-generated draft</span></h2>
+    <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))} (${esc(res.model)}). Names, dates, places and contacts come from the record. The candidate’s name and contact details were not sent to the AI provider. <b>Nothing is sent from here.</b></p>
+    ${res.reused ? '<div class="note">This exact message was already drafted, so the saved draft is shown and no new AI request was made. Use “Regenerate” to ask the AI again.</div>' : ''}
+    <div class="field"><label for="aiCmTo">To (from the record)</label><input id="aiCmTo" value="${esc(res.to)}" readonly></div>
+    <div class="field"><label for="aiCmSubj">Subject</label><input id="aiCmSubj" value="${esc(res.subject)}" maxlength="200"></div>
+    <div class="field wide"><label for="aiCmBody">Message</label><textarea id="aiCmBody" rows="12" maxlength="3000">${esc(res.body)}</textarea></div>
+    <div id="aiCmStatus" aria-live="polite"></div>
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px;flex-wrap:wrap"><button class="btn" id="aiCmAgain">Regenerate</button><button class="btn" id="aiCmDiscard">Discard draft</button>
+      <button class="btn" id="aiCmCopy">Copy message</button><button class="btn" id="aiCmOut">Open in Outlook (web)</button><button class="btn" id="aiCmEml">Save as .eml draft</button></div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  const acts = () => $$('#aiCmCopy, #aiCmOut, #aiCmEml', d), subj = () => $('#aiCmSubj', d).value.trim(), body = () => $('#aiCmBody', d).value.trim();
+  const paint = () => {
+    const bad = !state.ok;
+    $('#aiCmStatus', d).innerHTML = bad ? `<div class="note warn-note"><b>Fix these before using the message:</b><ul>${state.unresolved.map(u => `<li>Still to confirm: ${esc(u)}</li>`).join('')}${state.flagged.map(f => `<li>${f.kind === 'commitment' ? 'A promise or commitment' : f.kind === 'link' ? 'A link the AI wrote' : 'A figure, date or salary term that is not in the record'}: “${esc(f.text)}”</li>`).join('')}</ul></div>` : '<div class="note">Every fact in this message comes from the record, and nothing is left to confirm.</div>';
+    acts().forEach(b => { b.disabled = bad; b.title = bad ? 'Resolve the items above first' : ''; });
+  };
+  const recheck = () => {
+    acts().forEach(b => { b.disabled = true; });
+    clearTimeout(timer);
+    timer = setTimeout(async () => { try { state = await api('apiAiCommCheck', res.draftId, subj(), body()); } catch (x) { state = { ok: false, unresolved: [], flagged: [{ kind: 'figure', text: 'the check could not run: ' + String(x && x.message || x) }] }; } paint(); }, 350);
+  };
+  paint();
+  $('#aiCmSubj', d).oninput = $('#aiCmBody', d).oninput = recheck;
+  const mark = what => { if (used) return; used = true; api('apiAiDraftMark', res.draftId, 'Accepted', [what]).catch(() => { }); };
+  $('#aiCmCopy', d).onclick = () => { if (!state.ok) return; copyText(subj() + '\n\n' + body()); mark('copy'); };
+  $('#aiCmOut', d).onclick = () => { if (!state.ok) return; window.open(MS_BASE + 'outlook.office.com/mail/deeplink/compose?to=' + encodeURIComponent(res.to) + '&subject=' + encodeURIComponent(subj()) + '&body=' + encodeURIComponent(body()), '_blank', 'noopener'); mark('outlook'); };
+  $('#aiCmEml', d).onclick = () => { if (!state.ok) return; saveBlob(new Blob([buildEml(res.to, subj(), body(), [])], { type: 'message/rfc822' }), fileSafe('Message - ' + res.typeLabel) + '.eml'); toast('Draft saved. Open the file with Outlook, check it, and send it yourself.'); mark('eml'); };
+  $('#aiCmAgain', d).onclick = () => { d.close(); ctx.again(); };
+  $('#aiCmDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was sent.'); };
+  $('#aiCmBody', d).focus();
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -9467,6 +9520,7 @@ async function viewPipeline(v) {
           ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? appFold('Voice screening', '<div id="apVoice"></div>', foldOpen('voice', a.Stage)) : ''}
           ${can('ai_review') && (a.Status === 'Active' || aiFeatureOn('compare')) ? appFold('AI comparison', '<div id="apAiCmp"></div>', false) : ''}
           ${can('ai_review') && (aiFeatureOn('questions') || aiFeatureOn('feedback')) ? appFold('AI interview support', '<div id="apAiInt"></div>', false) : ''}
+          ${can('ai_review') && aiFeatureOn('comms') ? appFold('AI message drafts', '<div id="apAiComm"></div>', false) : ''}
           ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? appFold('Joining check-in', '<div id="apCheckin"></div>', foldOpen('checkin', a.Stage)) : ''}
           ${appFold('Background verification', '<div id="apBgv"></div>', foldOpen('bgv', a.Stage))}
           ${can('ctc_use') ? appFold('CTC calculator', '<div id="apCtc"></div>', foldOpen('ctc', a.Stage)) : ''}
@@ -9530,6 +9584,7 @@ async function viewPipeline(v) {
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
     if ($('#apAiCmp', d)) aiCompareSection($('#apAiCmp', d), a, canWork && a.Status === 'Active');
     if ($('#apAiInt', d)) aiInterviewSection($('#apAiInt', d), a, canWork);
+    if ($('#apAiComm', d)) aiCommSection($('#apAiComm', d), a, canWork);
     if ($('#apCheckin', d)) checkinCardSection($('#apCheckin', d), a);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
