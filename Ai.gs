@@ -14,7 +14,7 @@ const AI_API_URL_ = 'https://api.anthropic.com/v1/messages';
 const AI_API_VERSION_ = '2026-10-21';
 /** Features, in the order shown. built = the screen exists in this release; the rest are listed so the Admin sees what is coming but cannot switch them on yet. */
 const AI_FEATURES_ = [
-  { id: 'extract', label: 'CV extraction', built: false },
+  { id: 'extract', label: 'CV extraction', built: true },
   { id: 'summary', label: 'Candidate summary', built: false },
   { id: 'compare', label: 'Vacancy comparison', built: false },
   { id: 'screening', label: 'Screening sheet preparation', built: false },
@@ -72,7 +72,7 @@ function aiCfg_() {
     models[f.id] = AI_MODELS_.some(function (x) { return x.id === m; }) ? m : AI_DEFAULT_MODEL_;
   });
   return { enabled: yes('AI_ENABLED', 'No'), emergency: yes('AI_EMERGENCY_STOP', 'No'), features: features, models: models,
-    maxFileMb: aiNum_(s.AI_MAX_FILE_MB, 5, 1, 10), maxPages: aiNum_(s.AI_MAX_PAGES, 15, 1, 60), maxOutTokens: Math.floor(aiNum_(s.AI_MAX_OUT_TOKENS, 3000, 256, 16000)),
+    maxFileMb: aiNum_(s.AI_MAX_FILE_MB, 5, 1, 10), maxPages: aiNum_(s.AI_MAX_PAGES, 15, 1, 60), maxOutTokens: Math.floor(aiNum_(s.AI_MAX_OUT_TOKENS, 6000, 256, 16000)),
     batchLimit: Math.floor(aiNum_(s.AI_BATCH_LIMIT, 20, 1, 100)), maxConcurrent: Math.floor(aiNum_(s.AI_MAX_CONCURRENT, 2, 1, 5)),
     budgetUsd: aiNum_(s.AI_MONTHLY_BUDGET_USD, 20, 0, 100000), warnPct: Math.floor(aiNum_(s.AI_WARN_PCT, 80, 1, 100)) };
 }
@@ -244,7 +244,7 @@ function aiRun_(u, o) {
   catch (e) { r = { ok: false, cls: 'network', tin: 0, tout: 0, ms: 0 }; }
   const cost = aiSettle_(u, id, model, r.ok ? 'Done' : 'Failed', r.cls, r.tin, r.tout, r.ms);
   if (!r.ok) throw new Error(aiMessage_(r.cls));
-  return { data: r.data, text: r.text, cost: cost, model: model, usageId: id };
+  return { data: r.data, text: r.text, cost: cost, model: model, usageId: id, tin: r.tin, tout: r.tout, ms: r.ms };
 }
 
 /* ------------------------------------------------------------------ connection (key) ----------------------------- */

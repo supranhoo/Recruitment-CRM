@@ -1022,7 +1022,7 @@ function docxXmlText(x) {
 }
 async function extractCvText(file, report) {
   const name = String(file.name || '').toLowerCase(), buf = await file.arrayBuffer();
-  file._ocr = false;
+  file._ocr = false; file._pageOffsets = []; file._numPages = null; file._pagesRead = null;
   if (/\.(jpe?g|png)$/.test(name) || /^image[/](jpeg|png)$/.test(file.type)) { file._ocr = true; return await ocrImages([file], report); }
   if (/\.pdf$/.test(name) || file.type === 'application/pdf') {
     await loadScript(CV_LIBS.pdf);
@@ -1031,9 +1031,14 @@ async function extractCvText(file, report) {
       window._pdfWorkerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
     }
     pdfjsLib.GlobalWorkerOptions.workerSrc = window._pdfWorkerUrl;
-    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    let doc;
+    try { doc = await pdfjsLib.getDocument({ data: buf }).promise; }
+    catch (e) { if (e && (e.name === 'PasswordException' || /password/i.test(String(e.message || '')))) throw new Error('This PDF is password-protected, so it cannot be read. Remove the password or save an unprotected copy, then try again.'); throw e; }
     let out = '';
-    for (let i = 1; i <= Math.min(doc.numPages, 6); i++) {
+    const nRead = Math.min(doc.numPages, aiFeatureOn('extract') ? Math.max(6, (S.boot.ai && S.boot.ai.maxPages) || 15) : 6);
+    file._numPages = doc.numPages; file._pagesRead = nRead;
+    for (let i = 1; i <= nRead; i++) {
+      file._pageOffsets.push(out.length);
       const page = await doc.getPage(i), tc = await page.getTextContent();
       let lastY = null, lastEnd = null;
       tc.items.forEach(it => {
@@ -1059,7 +1064,7 @@ async function extractCvText(file, report) {
         }
         pages.push({ passes });
       }
-      file._ocr = true;
+      file._ocr = true; file._pageOffsets = [];
       out = (await ocrImages(pages, report)) + '\n' + out;
     }
     return out;
@@ -2467,6 +2472,92 @@ function archivedCandidateDrawer(c) {
     catch (e) { failed(e, btn, 'Restore to active'); }
   };
 }
+/* ---- v233: AI CV extraction. The AI only DRAFTS: the table shows what it found next to what is saved, with the quote from the CV. Apply selected fills the open form;
+   nothing is saved until the recruiter presses the normal Save (so every existing check and the duplicate rule still run). ---- */
+function aiFeatureOn(f) { return !!(S.boot && S.boot.ai && S.boot.ai.features && S.boot.ai.features[f]); }
+function cvFileFromB64(r) { const bin = atob(r.b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new File([bytes], r.name, { type: r.mime }); }
+async function startAiExtract(btn, body, ctx, force) {
+  const label = btn.textContent;
+  busy(btn, true, 'Reading the CV…');
+  try {
+    const src = await ctx.source(), file = src.file || {}, maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5;
+    if (file.size > maxMb * 1024 * 1024) throw new Error('This CV is larger than the ' + maxMb + ' MB limit for AI extraction. Compress it, or enter the details by hand.');
+    busy(btn, true, 'Asking the AI…');
+    const res = await api('apiAiExtractCv', { text: String(src.text || ''), fileName: file.name || '', fileSize: file.size || 0, pages: file._numPages || null, pageOffsets: file._pageOffsets || [], ocr: !!file._ocr, candId: ctx.candId || '', force: !!force });
+    busy(btn, false, label);
+    res.pagesNote = file._numPages && file._pagesRead && file._numPages > file._pagesRead ? `Only the first ${file._pagesRead} of ${file._numPages} pages were read.` : '';
+    aiExtractDialog(res, Object.assign({}, ctx, { body, again: () => startAiExtract(btn, body, ctx, true) }));
+  } catch (e) { failed(e, btn, label); }
+}
+function aiExtractDialog(res, ctx) {
+  const form = $('#candForm', ctx.body), cur = k => { const el = $('#f_' + k, form); return el ? String(el.value || '').trim() : ''; };
+  const opened = {}; res.rows.forEach(r => { opened[r.key] = cur(r.key); });
+  const same = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase() || (a !== '' && b !== '' && !isNaN(Number(a)) && !isNaN(Number(b)) && Number(a) === Number(b));
+  const P = res.profile || {}, nJobs = (P.employment || []).length, allFound = nJobs > 0 && P.employment.every(j => j.conf === 'found');
+  const tl = (nJobs || (P.education || []).length || (P.skills || []).length) ? { jobs: nJobs, edu: (P.education || []).length, skills: (P.skills || []).length, certs: (P.certifications || []).length, ach: (P.achievements || []).length } : null;
+  const state = {}; res.rows.forEach(r => { const ex = opened[r.key]; state[r.key] = { checked: !ex && r.status === 'verified', conflict: !!ex && !same(ex, r.value), same: !!ex && same(ex, r.value), changed: false }; });
+  let tlOn = !!(tl && ctx.isNew && allFound);
+  const d = cpDlg('');
+  const draw = () => {
+    d.innerHTML = `<h2 id="cpTitle">AI-extracted CV details <span class="badge">AI-generated draft</span></h2>
+      <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))} from ${esc(res.fileName || 'the CV')} (${esc(res.model)}). The AI only reads what the CV says. Tick the fields you want and press Apply: they are put into the form, and nothing is saved until you press Save. The original CV is not changed. Selected CV text is processed by an external AI provider.</p>
+      ${res.reused ? '<div class="note">This exact CV was already read, so the saved draft is shown and no new AI request was made. Use “Run again” to ask the AI again.</div>' : ''}
+      ${res.pagesNote ? `<div class="note warn-note">${esc(res.pagesNote)}</div>` : ''}${res.truncated ? '<div class="note warn-note">The CV text was very long, so only the first part was read.</div>' : ''}
+      <div id="aiDup">${res.duplicates && res.duplicates.length ? dupNoteHtml(res.duplicates) : ''}</div>
+      ${res.rows.length || tl ? `<div class="table-wrap"><table class="ai-tbl"><thead><tr><th>Field</th><th>Saved now</th><th>Found in the CV</th><th>Where in the CV</th><th>Apply</th></tr></thead><tbody>
+      ${res.rows.map(r => { const s = state[r.key]; return `<tr style="cursor:default" data-k="${esc(r.key)}"><td>${esc(r.label)}</td><td data-label="Saved now">${opened[r.key] ? esc(opened[r.key]) : '<span class="sub">—</span>'}</td>
+        <td data-label="Found in the CV"><b>${esc(r.value)}</b>${r.status !== 'verified' ? '<span class="pbadge check">Not found in the CV: check</span>' : ''}${s.conflict ? '<span class="pbadge check">Differs from saved</span>' : ''}${s.changed ? '<span class="pbadge check">Changed while open</span>' : ''}${s.same ? '<span class="pbadge found">Same as saved</span>' : ''}</td>
+        <td class="ai-ev" data-label="Where in the CV">${r.evidence ? `“${esc(r.evidence)}”` : ''}${r.page ? ` <span class="sub">page ${r.page}</span>` : ''}</td>
+        <td data-label="Apply"><input type="checkbox" data-k="${esc(r.key)}" ${s.checked ? 'checked' : ''} ${s.same ? 'disabled' : ''} aria-label="Apply ${esc(r.label)}"></td></tr>`; }).join('')}
+      ${tl ? `<tr style="cursor:default"><td>Career timeline</td><td data-label="Saved now"><span class="sub">${ctx.isNew ? '—' : 'a saved profile is replaced only after you confirm'}</span></td><td data-label="Found in the CV"><b>${tl.jobs} job${tl.jobs === 1 ? '' : 's'}, ${tl.edu} qualification${tl.edu === 1 ? '' : 's'}, ${tl.skills} skill${tl.skills === 1 ? '' : 's'}</b>${allFound ? '' : '<span class="pbadge check">Some jobs not matched to the CV: check</span>'}</td>
+        <td class="ai-ev" data-label="Where in the CV"><span class="sub">Saved to the CV profile as “not yet reviewed”. Experience is counted from the dates, with overlapping jobs counted once.</span></td><td data-label="Apply"><input type="checkbox" id="aiTl" ${tlOn ? 'checked' : ''} aria-label="Apply career timeline"></td></tr>` : ''}
+      </tbody></table></div>` : '<div class="empty">The AI found no usable details in this CV.</div>'}
+      ${res.risks && res.risks.length ? `<h3>To confirm with the candidate</h3><ul class="hint">${res.risks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${res.notes && res.notes.length ? `<ul class="hint">${res.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      <p class="hint">Nothing here is a hiring decision. Missing information stays missing: fields the CV does not state are left empty.</p>
+      <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px"><button class="btn" id="aiAgain">Run again</button><button class="btn" id="aiDiscard">Discard draft</button><button class="btn primary" id="aiApply">Apply selected</button></div>`;
+    d.setAttribute('aria-labelledby', 'cpTitle');
+    $$('input[type=checkbox][data-k]', d).forEach(c => c.onchange = () => { state[c.dataset.k].checked = c.checked; });
+    if ($('#aiTl', d)) $('#aiTl', d).onchange = e => { tlOn = e.target.checked; };
+    bindDupNote($('#aiDup', d));
+    $('#aiAgain', d).onclick = () => { d.close(); ctx.again(); };
+    $('#aiDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+    $('#aiApply', d).onclick = apply;
+    const first = $('#aiApply', d); if (first) first.focus();
+  };
+  const apply = async e => {
+    const btn = e.target;
+    const moved = res.rows.filter(r => state[r.key].checked && cur(r.key) !== opened[r.key]);
+    if (moved.length) { moved.forEach(r => { opened[r.key] = cur(r.key); state[r.key] = { checked: false, conflict: !same(cur(r.key), r.value), same: same(cur(r.key), r.value) && cur(r.key) !== '', changed: true }; }); draw(); toast('Some fields changed in the form while this window was open. Review them again.', true); return; }
+    const picked = res.rows.filter(r => state[r.key].checked);
+    if (!picked.length && !tlOn) { toast('Tick at least one field to apply.', true); return; }
+    busy(btn, true, 'Applying…');
+    try {
+      picked.forEach(r => {
+        const el = $('#f_' + r.key, form); if (!el) return;
+        el.value = r.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+        const lab = $(`label[for="f_${r.key}"]`, form);
+        if (lab && !$('.pbadge', lab)) lab.insertAdjacentHTML('beforeend', ' <span class="pbadge check">from AI, check</span>');
+      });
+      openFoldsWithValues(form);
+      const applied = picked.map(r => r.key);
+      if (tlOn && tl) {
+        if (ctx.isNew) { ctx.setProfile(res.profile); applied.push('Career timeline'); }
+        else {
+          try { await api('apiAiApplyProfile', res.draftId, ctx.candId, false); applied.push('Career timeline'); }
+          catch (x) {
+            if (/^REVIEWED:/.test(String(x && x.message || x)) && await askConfirm(String(x.message || x).replace(/^REVIEWED:\s*/, '') + ' Replace it with the AI draft? The replaced profile cannot be recovered.', { danger: true, ok: 'Replace profile' })) { await api('apiAiApplyProfile', res.draftId, ctx.candId, true); applied.push('Career timeline'); }
+          }
+          if (applied.includes('Career timeline') && ctx.refreshProfile) ctx.refreshProfile();
+        }
+      }
+      await api('apiAiDraftMark', res.draftId, 'Accepted', applied);
+      d.close();
+      toast(`${picked.length} field${picked.length === 1 ? '' : 's'} put into the form${applied.includes('Career timeline') ? ' and the career timeline applied' : ''}. Check them, then press ${ctx.isNew ? 'Add candidate' : 'Save changes'}.`);
+    } catch (x) { failed(x, btn, 'Apply selected'); }
+  };
+  draw();
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -2475,14 +2566,14 @@ function candidateDrawer(c, preset, parsedIn) {
   const body = openDrawer(isNew ? 'Add candidate' : data.Name, `
     ${data.Possible_Duplicate_Of ? `<div class="note">Imported as a possible duplicate of ${esc(data.Possible_Duplicate_Of)} (same mobile or email).</div>` : ''}
     ${isNew ? `<div class="cvfill"><label for="cvFill"><b>Fill from a CV</b></label> <input type="file" id="cvFill" accept=".pdf,.docx,.doc,.jpg,.jpeg,.png">
-      <span class="hint">Reads PDF and Word CVs, and scanned CVs or photos (OCR), in your browser; fills the empty fields, marks what to check, and looks for duplicates. The same file is attached as the CV.</span><div id="cvFillMsg" class="hint"></div></div>` : ''}
+      <span class="hint">Reads PDF and Word CVs, and scanned CVs or photos (OCR), in your browser; fills the empty fields, marks what to check, and looks for duplicates. The same file is attached as the CV.</span>${aiFeatureOn('extract') ? ' <button type="button" class="btn" id="aiExtractNew" hidden>Extract with AI</button>' : ''}<div id="cvFillMsg" class="hint"></div></div>` : ''}
     <div id="dupNote"></div>
     ${isNew || !data._dnc ? '' : '<div id="candDnc">' + dncBanner(data._dnc) + '</div>'}
     ${isNew ? '' : '<div id="candHistory"></div>'}
     <div id="candForm">${wrapForm(form(candidateFields(data), data, false))}</div>
     <fieldset><legend>CV</legend>
       <div id="cvBox">${data.CV_File_URL
-        ? `<div class="cv-current"><span>CV on file</span><button class="btn" id="cvView">View CV</button></div>`
+        ? `<div class="cv-current"><span>CV on file</span><button class="btn" id="cvView">View CV</button>${aiFeatureOn('extract') ? ' <button class="btn" id="aiExtractOld">Extract CV details (AI)</button>' : ''}</div>`
         : '<p class="hint" style="color:var(--muted);margin:0 0 8px">No CV uploaded yet.</p>'}</div>
       <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
         <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
@@ -2497,8 +2588,11 @@ function candidateDrawer(c, preset, parsedIn) {
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
   initMulti(body); initFolds($('#candForm', body));
+  let aiProfile = null;
+  const aiCtx = { isNew, candId: isNew ? '' : data.Candidate_ID, setProfile: p => { aiProfile = p; }, refreshProfile: () => { if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data); } };
   const showParsed = res => {
     parsed = res;
+    if ($('#aiExtractNew', body)) $('#aiExtractNew', body).hidden = !(res.text && res.text.trim());
     const n = applyParsed($('#candForm', body), res); openFoldsWithValues($('#candForm', body));
     $('#cvFillMsg', body).textContent = res.scanned ? 'No text could be read from this file, even with OCR (the scan may be too faint or blurred). Please type the details; the file is still attached as the CV.'
       : `${n} field${n === 1 ? '' : 's'} filled from ${res.fileName}${res.skipped ? ` (${res.skipped} already had a value and ${res.skipped === 1 ? 'was' : 'were'} left unchanged)` : ''}${res.ocr ? ' by reading the scanned image (OCR). OCR can misread letters and digits, so please check every field' : '. Fields marked \u201ccheck\u201d were guessed; please confirm them'}. The file will be attached as the CV.`;
@@ -2510,6 +2604,8 @@ function candidateDrawer(c, preset, parsedIn) {
     $('#cvFillMsg', body).textContent = 'Reading the CV\u2026';
     try { showParsed(await parseCvFile(f, m => { if ($('#cvFillMsg', body)) $('#cvFillMsg', body).textContent = m; })); } catch (err) { parsed = null; $('#cvFillMsg', body).textContent = String(err.message || err); }
   };
+  if ($('#aiExtractNew', body)) $('#aiExtractNew', body).onclick = e => startAiExtract(e.target, body, Object.assign({}, aiCtx, { source: async () => ({ text: parsed.text, file: parsed.file }) }));
+  if ($('#aiExtractOld', body)) $('#aiExtractOld', body).onclick = e => startAiExtract(e.target, body, Object.assign({}, aiCtx, { source: async () => { const f = cvFileFromB64(await api('apiGetCv', data.Candidate_ID)); return { text: await extractCvText(f, () => { }), file: f }; } }));
   if (parsed) showParsed(parsed);
   $('#f_Line_ID', body).addEventListener('change', e => {
     const tp = $('.ms[data-k="Tech_Interview_By"]', body), fp = $('.ms[data-k="HR_Interview_By"]', body);
@@ -2527,6 +2623,7 @@ function candidateDrawer(c, preset, parsedIn) {
     const attFiles = $$('.att-input', $('#candForm')).some(x => x.files[0]);
     const d = Object.assign({ Candidate_ID: isNew ? '' : data.Candidate_ID }, readForm($('#candForm')));
     if (parsed && isNew) { d._parsed = parsed.fields; d._parseFile = parsed.fileName; d._parseChars = parsed.chars; if (parsed.profile) d._profile = parsed.profile; }
+    if (isNew && aiProfile) { d._profile = aiProfile; d._parseFile = d._parseFile || 'AI draft'; }
     const dm = S.boot.depts.find(x => x.dept === d.Dept); if (dm) { d.Business_Unit = dm.bu; d.Division = dm.division; }
     if (!validateForm($('#candForm'))) return;
     const btn = $('#cSave'); busy(btn, true, 'Saving…');
