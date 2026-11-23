@@ -175,7 +175,7 @@ function aiExtractRun_(p) {
   if (!draft) {
     const user = 'Extract the facts from this CV.\n<cv_text>\n' + text.replace(/<\/cv_text>/gi, '<\\/cv_text>') + '\n</cv_text>';
     let r;
-    try { r = aiRun_(u, { feature: 'extract', system: AI_EXTRACT_SYSTEM_, user: user, schema: aiExtractSchema_(), maxTokens: 6000, candId: candId }); }
+    try { r = aiRun_(u, { feature: 'extract', system: AI_EXTRACT_SYSTEM_, user: user, schema: aiExtractSchema_(), maxTokens: 6000, candId: candId, batchId: aiTag_(p.batchId, 40) }); }
     catch (e) { aiJob_(u, 'Failed', candId, p, hash, model, null); throw e; }
     built = aiExtractBuild_(r.data, text, offsets, { ocr: p.ocr === true });
     if (JSON.stringify(built).length > 45000) throw new Error('The extracted result is too large to keep. Try a shorter CV.');
