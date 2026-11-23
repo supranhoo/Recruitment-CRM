@@ -2719,6 +2719,97 @@ function aiCompareDialog(res, ctx) {
     $('#aiCmpAccept', d).focus();
   } else { const c = $('[data-close]', d); if (c) c.focus(); }
 }
+/* ---- v237: AI interview support. Questions: a core set per position and round (the same for every candidate once approved) and candidate-specific ones.
+   Feedback: a summary of the interviewer's OWN notes; no rating is generated, the entered result and the original notes are untouched. ---- */
+async function aiInterviewSection(el, a, canGen) {
+  if (!el) return;
+  let R; try { R = await api('apiAiInterviewFor', a.App_ID); } catch (e) { el.innerHTML = ''; return; }
+  if (!el.isConnected) return;
+  const qOn = aiFeatureOn('questions') && canGen, fOn = aiFeatureOn('feedback') && canGen;
+  const setHtml = s => `<div class="ai-qset"><div class="dp-h"><b>${s.kind === 'core' ? 'Core questions' : 'Questions for this candidate'} · ${esc(s.roundLabel || s.round)}</b><button class="btn sm" data-copy="${esc(s.draftId)}">Copy</button></div>
+    <p class="hint">AI-generated draft, edited and accepted by ${esc(s.acceptedBy)} on ${esc(fmtDate(s.acceptedOn))}${s.kind === 'core' ? ' · the same set for every candidate on this position' : ''}${s.outdated ? ` <span class="pbadge check">Outdated: ${s.kind === 'core' ? 'the requirements have changed' : 'the CV or record has changed'}</span>` : ''}</p>
+    <ol>${s.questions.map(q => `<li>${esc(q.q)}${q.verifies ? ` <span class="sub">verifies: ${esc(q.verifies)}</span>` : ''}</li>`).join('')}</ol></div>`;
+  el.innerHTML = `<p class="hint" style="margin-top:0">The AI drafts; the panel decides. Nothing here rates the candidate or changes the interview result.</p>
+    <h4>Interview questions</h4>
+    ${qOn ? `<div class="field"><label for="aiQRound">Interview round</label><select id="aiQRound">${R.questionRounds.map(r => `<option value="${esc(r.key)}">${esc(r.label)}</option>`).join('')}</select></div>
+      <div class="btn-row"><button class="btn sm" id="aiQCore">Prepare core questions</button><button class="btn sm" id="aiQCand">Prepare questions for this candidate</button></div>
+      <p class="hint">Core questions come from the approved requirements and, once accepted, are the same for every candidate on this position.</p>` : ''}
+    ${R.questions.length ? R.questions.map(setHtml).join('') : '<p class="hint">No accepted questions yet.</p>'}
+    <h4>Interview feedback</h4>
+    ${R.rounds.length ? R.rounds.map(r => { const fb = R.feedback.find(x => x.round === r.key); return `<div class="ai-fb"><div class="dp-h"><b>${esc(r.label)}</b><span class="sub">${r.result ? 'Result entered: ' + esc(r.result) : 'No result entered'}${r.on ? ' · ' + esc(fmtDate(r.on)) : ''}</span>
+      ${fOn && r.hasNote ? `<button class="btn sm" data-sum="${esc(r.key)}">${fb ? 'Summarise again' : 'Summarise notes'}</button>` : ''}</div>
+      ${!r.hasNote ? '<p class="hint">No interviewer notes were entered for this round.</p>' : ''}
+      ${fb ? `<p class="ai-sum-text">${esc(fb.text)}</p><p class="hint">AI summary of the interviewer’s notes, accepted by ${esc(fb.acceptedBy)} on ${esc(fmtDate(fb.acceptedOn))}. The interviewer remains responsible for the assessment.${fb.outdated ? ' <span class="pbadge check">Outdated: the notes have changed since</span>' : ''}</p>` : ''}</div>`; }).join('') : '<p class="hint">No interview result or notes have been entered yet.</p>'}`;
+  const refresh = () => aiInterviewSection(el, a, canGen);
+  $$('[data-copy]', el).forEach(b => b.onclick = () => { const s = R.questions.find(x => x.draftId === b.dataset.copy); if (s) copyText(s.questions.map((q, i) => (i + 1) + '. ' + q.q).join('\n')); });
+  const askQ = (btn, kind, force) => aiQuestionsStart(btn, a, el, kind, $('#aiQRound', el).value, force, refresh);
+  if ($('#aiQCore', el)) $('#aiQCore', el).onclick = e => askQ(e.target, 'core', false);
+  if ($('#aiQCand', el)) $('#aiQCand', el).onclick = e => askQ(e.target, 'candidate', false);
+  $$('[data-sum]', el).forEach(b => b.onclick = e => aiFeedbackStart(e.target, a, b.dataset.sum, false, refresh));
+}
+async function aiQuestionsStart(btn, a, el, kind, round, force, refresh) {
+  const label = btn.textContent;
+  busy(btn, true, kind === 'core' ? 'Asking the AI…' : 'Reading the CV…');
+  try {
+    let src = { text: '', file: {} };
+    if (kind === 'candidate') { try { src = await aiCvFromCandidate(a.Candidate_ID); } catch (e) { if (!/No CV has been uploaded/.test(String(e && e.message || e))) throw e; } }
+    const maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5;
+    if (src.file.size > maxMb * 1024 * 1024) throw new Error('This CV is larger than the ' + maxMb + ' MB limit for AI actions. Compress it, or write the questions by hand.');
+    busy(btn, true, 'Asking the AI…');
+    const res = await api('apiAiQuestions', a.App_ID, { round, kind, text: src.text, fileName: src.file.name || '', fileSize: src.file.size || 0, pageOffsets: src.file._pageOffsets || [], force: !!force });
+    busy(btn, false, label);
+    aiQuestionsDialog(res, { a, refresh, again: () => aiQuestionsStart(btn, a, el, kind, round, true, refresh) });
+  } catch (e) { failed(e, btn, label); }
+}
+function aiQuestionsDialog(res, ctx) {
+  const d = cpDlg('');
+  d.innerHTML = `<h2 id="cpTitle">${res.kind === 'core' ? 'Core questions' : 'Questions for this candidate'}: ${esc(res.roundLabel)} <span class="badge">AI-generated draft</span></h2>
+    <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))} (${esc(res.meta ? res.meta.model : '')}) for ${esc(res.position)}. Untick a question to leave it out and edit the wording as you like. ${res.kind === 'core' ? 'Once accepted, this set is used for every candidate on this position, so the panel asks the same fundamentals of everyone.' : 'These build on this candidate’s own experience and the open points; they are asked in addition to the core questions.'} Selected CV text, without the name or contact details, was processed by an external AI provider.</p>
+    ${res.reused ? '<div class="note">These inputs were already used, so the saved draft is shown and no new AI request was made. Use “Regenerate” to ask the AI again.</div>' : ''}
+    ${res.dropped ? `<div class="note warn-note">${res.dropped} question${res.dropped === 1 ? '' : 's'} the AI wrote ${res.dropped === 1 ? 'was' : 'were'} left out (they touched a protected characteristic or salary, or asked for a rating).</div>` : ''}
+    ${res.questions.length ? `<ol class="ai-qlist">${res.questions.map((q, i) => `<li data-i="${i}"><label class="chk"><input type="checkbox" data-sel="${i}" checked aria-label="Use question ${i + 1}"> Use</label>
+      <textarea rows="2" data-q="${i}" aria-label="Question ${i + 1}">${esc(q.q)}</textarea>
+      <div class="hint">${q.verifies ? 'Verifies: ' + esc(q.verifies) : ''}${q.reqText ? ` · requirement: ${esc(q.reqText)}` : ''}${q.basis ? ` · based on “${esc(q.basis)}” <span class="sub">${esc(aiWhereText(q.where, q.page))}</span>` : ''}</div></li>`).join('')}</ol>` : '<div class="empty">The AI wrote no usable questions.</div>'}
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px"><button class="btn" id="aiQAgain">Regenerate</button><button class="btn" id="aiQDiscard">Discard draft</button><button class="btn primary" id="aiQAccept" ${res.questions.length ? '' : 'disabled'}>Accept selected</button></div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $('#aiQAgain', d).onclick = () => { d.close(); ctx.again(); };
+  $('#aiQDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+  $('#aiQAccept', d).onclick = async e => {
+    const sel = res.questions.map((q, i) => ({ q: ($(`[data-q="${i}"]`, d).value || '').trim(), verifies: q.verifies, req: q.req, on: $(`[data-sel="${i}"]`, d).checked })).filter(x => x.on && x.q);
+    if (!sel.length) { toast('Select at least one question, or discard the draft.', true); return; }
+    busy(e.target, true, 'Saving…');
+    try { await api('apiAiQuestionsAccept', res.draftId, sel.map(x => ({ q: x.q, verifies: x.verifies, req: x.req }))); d.close(); toast('Questions accepted. Earlier sets are kept.'); ctx.refresh(); } catch (x) { failed(x, e.target, 'Accept selected'); }
+  };
+  const f = $('#aiQAccept', d); if (f && !f.disabled) f.focus();
+}
+async function aiFeedbackStart(btn, a, round, force, refresh) {
+  const label = btn.textContent; busy(btn, true, 'Asking the AI…');
+  try {
+    const res = await api('apiAiFeedback', a.App_ID, { round, force: !!force });
+    busy(btn, false, label);
+    aiFeedbackDialog(res, { a, refresh, again: () => aiFeedbackStart(btn, a, round, true, refresh) });
+  } catch (e) { failed(e, btn, label); }
+}
+function aiFeedbackDialog(res, ctx) {
+  const d = cpDlg('');
+  const sec = (title, xs) => xs.length ? `<h4>${esc(title)}</h4><ul class="hint">${xs.map(x => `<li>${esc(x.text)} <span class="ai-ev">“${esc(x.evidence)}”</span></li>`).join('')}</ul>` : '';
+  d.innerHTML = `<h2 id="cpTitle">AI summary of the interviewer’s notes: ${esc(res.roundLabel)} <span class="badge">AI-generated draft</span></h2>
+    <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))}. This summarises only what the interviewer wrote; it adds nothing, gives no rating and makes no decision. <b>Result entered by the recruiter: ${esc(res.result || 'not entered')}</b> (unchanged). The original notes are not changed. The interviewer remains responsible for the assessment. The notes, without the candidate’s name or contact details, were processed by an external AI provider.</p>
+    ${res.reused ? '<div class="note">These notes were already summarised, so the saved draft is shown and no new AI request was made. Use “Regenerate” to ask the AI again.</div>' : ''}
+    ${res.dropped ? `<div class="note warn-note">${res.dropped} statement${res.dropped === 1 ? '' : 's'} the AI wrote could not be matched to the notes, or rated or recommended something, and ${res.dropped === 1 ? 'was' : 'were'} left out.</div>` : ''}
+    <div class="field wide"><label for="aiFbText">Summary (edit as needed)</label><textarea id="aiFbText" rows="8" maxlength="3000">${esc(res.text)}</textarea></div>
+    <details><summary><b>What each statement is based on</b></summary>${sec('Demonstrated strengths', res.strengths)}${sec('Concerns', res.concerns)}${sec('Missing evidence', res.missing)}${sec('Follow-up actions', res.followups)}</details>
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px"><button class="btn" id="aiFbAgain">Regenerate</button><button class="btn" id="aiFbDiscard">Discard draft</button><button class="btn primary" id="aiFbAccept">Accept summary</button></div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $('#aiFbAgain', d).onclick = () => { d.close(); ctx.again(); };
+  $('#aiFbDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+  $('#aiFbAccept', d).onclick = async e => {
+    const text = $('#aiFbText', d).value.trim(); if (!text) { toast('The summary is empty. Write something, or discard the draft.', true); return; }
+    busy(e.target, true, 'Saving…');
+    try { await api('apiAiFeedbackAccept', res.draftId, text); d.close(); toast('Summary accepted. The original notes are unchanged.'); ctx.refresh(); } catch (x) { failed(x, e.target, 'Accept summary'); }
+  };
+  $('#aiFbAccept', d).focus();
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -9375,6 +9466,7 @@ async function viewPipeline(v) {
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
           ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? appFold('Voice screening', '<div id="apVoice"></div>', foldOpen('voice', a.Stage)) : ''}
           ${can('ai_review') && (a.Status === 'Active' || aiFeatureOn('compare')) ? appFold('AI comparison', '<div id="apAiCmp"></div>', false) : ''}
+          ${can('ai_review') && (aiFeatureOn('questions') || aiFeatureOn('feedback')) ? appFold('AI interview support', '<div id="apAiInt"></div>', false) : ''}
           ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? appFold('Joining check-in', '<div id="apCheckin"></div>', foldOpen('checkin', a.Stage)) : ''}
           ${appFold('Background verification', '<div id="apBgv"></div>', foldOpen('bgv', a.Stage))}
           ${can('ctc_use') ? appFold('CTC calculator', '<div id="apCtc"></div>', foldOpen('ctc', a.Stage)) : ''}
@@ -9437,6 +9529,7 @@ async function viewPipeline(v) {
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
     if ($('#apAiCmp', d)) aiCompareSection($('#apAiCmp', d), a, canWork && a.Status === 'Active');
+    if ($('#apAiInt', d)) aiInterviewSection($('#apAiInt', d), a, canWork);
     if ($('#apCheckin', d)) checkinCardSection($('#apCheckin', d), a);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
