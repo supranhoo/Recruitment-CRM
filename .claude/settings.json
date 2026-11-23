@@ -1,10 +1,14 @@
 {
+  "enabledPlugins": {
+    "egm@egm": true,
+    "unslop@heydamir": true
+  },
   "extraKnownMarketplaces": {
     "egm": {
-      "source": { "source": "github", "repo": "google/elephant-goldfish-model" }
+      "source": {
+        "source": "github",
+        "repo": "google/elephant-goldfish-model"
+      }
     }
-  },
-  "enabledPlugins": {
-    "egm@egm": true
   }
 }
