@@ -17,7 +17,7 @@ const AI_FEATURES_ = [
   { id: 'extract', label: 'CV extraction', built: true },
   { id: 'summary', label: 'Candidate summary', built: true },
   { id: 'compare', label: 'Vacancy comparison', built: false },
-  { id: 'screening', label: 'Screening sheet preparation', built: false },
+  { id: 'screening', label: 'Screening sheet preparation', built: true },
   { id: 'questions', label: 'Interview question generation', built: false },
   { id: 'feedback', label: 'Interview feedback summary', built: false },
   { id: 'comms', label: 'Communication drafting', built: false }
