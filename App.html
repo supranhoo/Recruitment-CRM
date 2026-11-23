@@ -2558,6 +2558,57 @@ function aiExtractDialog(res, ctx) {
   };
   draw();
 }
+/* ---- v234: AI candidate summary. A draft from the CV and the record, every statement with its quote; the recruiter edits it and accepts it. Earlier accepted summaries are kept. ---- */
+async function aiCvFromCandidate(candId) { const f = cvFileFromB64(await api('apiGetCv', candId)); return { text: await extractCvText(f, () => { }), file: f }; }
+async function aiSummarySection(el, c) {
+  if (!el) return;
+  let R; try { R = await api('apiAiSummaryFor', c.Candidate_ID); } catch (e) { el.innerHTML = ''; return; }
+  if (!el.isConnected) return;
+  const cur = R.current, can_gen = aiFeatureOn('summary') && !!c.CV_File_URL;
+  if (!cur && !can_gen) { el.innerHTML = ''; return; }
+  el.innerHTML = `<section class="app-sec"><div class="dp-h"><h3 style="margin:0">AI summary</h3>${can_gen ? `<button class="btn sm" id="aiSumGen">${cur ? 'Generate a new summary' : 'Generate summary'}</button>` : ''}</div>
+    ${cur ? `<p class="ai-sum-text">${esc(cur.text)}</p><p class="hint">AI-generated draft, edited and accepted by ${esc(cur.acceptedBy)} on ${esc(fmtDate(cur.acceptedOn))}${cur.cvName ? ' · from ' + esc(cur.cvName) : ''}${cur.outdated ? ' <span class="pbadge check">Outdated: the CV or the record has changed since</span>' : ''}</p>`
+      : '<p class="hint">No accepted summary yet. The AI reads the CV and the record and drafts a short summary with the CV line behind each statement; you edit it and accept it. Nothing is saved to the candidate until you accept.</p>'}
+    ${R.history.length ? `<details><summary class="hint">Earlier summaries (${R.history.length})</summary>${R.history.map(h => `<div class="ai-sum-old"><p class="ai-sum-text">${esc(h.text)}</p><p class="hint">Accepted by ${esc(h.acceptedBy)} on ${esc(fmtDate(h.acceptedOn))}${h.cvName ? ' · from ' + esc(h.cvName) : ''}</p></div>`).join('')}</details>` : ''}</section>`;
+  if ($('#aiSumGen', el)) $('#aiSumGen', el).onclick = e => startAiSummary(e.target, c, el, false);
+}
+async function startAiSummary(btn, c, el, force) {
+  const label = btn.textContent;
+  busy(btn, true, 'Reading the CV…');
+  try {
+    const src = await aiCvFromCandidate(c.Candidate_ID), file = src.file, maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5;
+    if (file.size > maxMb * 1024 * 1024) throw new Error('This CV is larger than the ' + maxMb + ' MB limit for AI actions. Compress it, or write the summary by hand.');
+    busy(btn, true, 'Asking the AI…');
+    const res = await api('apiAiSummaryGenerate', { candId: c.Candidate_ID, text: src.text, fileName: file.name, fileSize: file.size, pageOffsets: file._pageOffsets || [], force: !!force });
+    busy(btn, false, label);
+    aiSummaryDialog(res, { c, el, again: () => startAiSummary(btn, c, el, true) });
+  } catch (e) { failed(e, btn, label); }
+}
+function aiSummaryDialog(res, ctx) {
+  const d = cpDlg('');
+  const bySec = AI_SUM_SECTIONS.map(([k, l]) => [l, res.facts.filter(f => f.section === k)]).filter(x => x[1].length);
+  d.innerHTML = `<h2 id="cpTitle">AI summary of ${esc(ctx.c.Name)} <span class="badge">AI-generated draft</span></h2>
+    <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))}${res.fileName ? ' from ' + esc(res.fileName) : ''} (${esc(res.model)}). Edit the text below, then accept it. Nothing is saved to the candidate until you accept. Selected CV text, without the name or contact details, was processed by an external AI provider.</p>
+    ${res.reused ? '<div class="note">This exact CV and record were already summarised, so the saved draft is shown and no new AI request was made. Use “Regenerate” to ask the AI again.</div>' : ''}
+    ${res.dropped ? `<div class="note warn-note">${res.dropped} statement${res.dropped === 1 ? '' : 's'} the AI wrote could not be matched to the CV or the record and ${res.dropped === 1 ? 'was' : 'were'} left out.</div>` : ''}
+    <div class="field wide"><label for="aiSumText">Summary (edit as needed)</label><textarea id="aiSumText" rows="10" maxlength="4000">${esc(res.text)}</textarea></div>
+    ${bySec.length ? `<details><summary><b>What each statement is based on</b></summary>${bySec.map(([l, fs]) => `<h4>${esc(l)}</h4><ul class="hint">${fs.map(f => `<li>${esc(f.text)} <span class="ai-ev">“${esc(f.evidence)}” ${f.where === 'record' ? '<span class="sub">candidate record</span>' : f.page ? `<span class="sub">CV page ${f.page}</span>` : ''}</span></li>`).join('')}</ul>`).join('')}</details>` : '<div class="empty">The AI found nothing it could support from the CV.</div>'}
+    ${res.missing.length ? `<h4>To confirm (from the record)</h4><ul class="hint">${res.missing.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${res.clarify.length ? `<h4>Questions the AI suggests asking</h4><ul class="hint">${res.clarify.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${res.interpretation ? `<div class="ai-interp"><b>AI interpretation, not a fact:</b> ${esc(res.interpretation)}</div>` : ''}
+    <p class="hint">This is not an assessment of suitability. Missing information stays missing.</p>
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px"><button class="btn" id="aiSumAgain">Regenerate</button><button class="btn" id="aiSumDiscard">Discard draft</button><button class="btn primary" id="aiSumAccept">Accept summary</button></div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $('#aiSumAgain', d).onclick = () => { d.close(); ctx.again(); };
+  $('#aiSumDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+  $('#aiSumAccept', d).onclick = async e => {
+    const text = $('#aiSumText', d).value.trim(); if (!text) { toast('The summary is empty. Write something, or discard the draft.', true); return; }
+    busy(e.target, true, 'Saving…');
+    try { await api('apiAiSummaryAccept', res.draftId, text); d.close(); toast('Summary accepted. Earlier summaries are kept.'); aiSummarySection(ctx.el, ctx.c); } catch (x) { failed(x, e.target, 'Accept summary'); }
+  };
+  $('#aiSumAccept', d).focus();
+}
+const AI_SUM_SECTIONS = [['current_role', 'Current or most recent role'], ['experience', 'Relevant experience'], ['skills', 'Core skills'], ['industry', 'Industry or product exposure'], ['qualifications', 'Qualifications'], ['achievements', 'Stated achievements']];
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -2578,13 +2629,14 @@ function candidateDrawer(c, preset, parsedIn) {
       <div class="field"><label for="cvFile">${data.CV_File_URL ? 'Replace CV' : 'Attach CV'} (PDF, Word, JPG or PNG, up to 10 MB)</label>
         <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"><span class="hint">Uploaded when you click ${isNew ? 'Add candidate' : 'Save changes'}.</span></div>
     </fieldset>
-    ${isNew ? '' : '<div id="candProfile"></div><div id="candBgv"></div>'}
+    ${isNew ? '' : '<div id="candProfile"></div>' + (can('ai_review') ? '<div id="candAiSum"></div>' : '') + '<div id="candBgv"></div>'}
     ${isNew || !can('ctc_use') ? '' : '<div id="candCtc"></div>'}
     <div class="drawer-actions"><button class="btn" id="cCancel">Cancel</button><button class="btn primary" id="cSave">${isNew ? 'Add candidate' : 'Save changes'}</button></div>`);
   $('#cCancel').onclick = closeDrawerSafe;
   if ($('#candDnc', body)) dncUndo($('#candDnc', body), { cand: data.Candidate_ID }, async () => { closeDrawer(); openCandidate(data.Candidate_ID); });
   if ($('#candHistory', body)) candHistorySection($('#candHistory', body), data.Candidate_ID);
   if ($('#candProfile', body)) cvProfileSection($('#candProfile', body), data);
+  if ($('#candAiSum', body)) aiSummarySection($('#candAiSum', body), data);
   if ($('#candBgv', body)) bgvChips($('#candBgv', body), { kind: 'candidate', id: data.Candidate_ID });
   if ($('#candCtc', body)) ctcLinkSection($('#candCtc', body), { kind: 'candidate', id: data.Candidate_ID, candId: data.Candidate_ID, lineId: data.Line_ID || '' });
   initMulti(body); initFolds($('#candForm', body));
@@ -2605,7 +2657,7 @@ function candidateDrawer(c, preset, parsedIn) {
     try { showParsed(await parseCvFile(f, m => { if ($('#cvFillMsg', body)) $('#cvFillMsg', body).textContent = m; })); } catch (err) { parsed = null; $('#cvFillMsg', body).textContent = String(err.message || err); }
   };
   if ($('#aiExtractNew', body)) $('#aiExtractNew', body).onclick = e => startAiExtract(e.target, body, Object.assign({}, aiCtx, { source: async () => ({ text: parsed.text, file: parsed.file }) }));
-  if ($('#aiExtractOld', body)) $('#aiExtractOld', body).onclick = e => startAiExtract(e.target, body, Object.assign({}, aiCtx, { source: async () => { const f = cvFileFromB64(await api('apiGetCv', data.Candidate_ID)); return { text: await extractCvText(f, () => { }), file: f }; } }));
+  if ($('#aiExtractOld', body)) $('#aiExtractOld', body).onclick = e => startAiExtract(e.target, body, Object.assign({}, aiCtx, { source: () => aiCvFromCandidate(data.Candidate_ID) }));
   if (parsed) showParsed(parsed);
   $('#f_Line_ID', body).addEventListener('change', e => {
     const tp = $('.ms[data-k="Tech_Interview_By"]', body), fp = $('.ms[data-k="HR_Interview_By"]', body);
