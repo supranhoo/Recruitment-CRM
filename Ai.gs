@@ -20,7 +20,7 @@ const AI_FEATURES_ = [
   { id: 'screening', label: 'Screening sheet preparation', built: true },
   { id: 'questions', label: 'Interview question generation', built: true },
   { id: 'feedback', label: 'Interview feedback summary', built: true },
-  { id: 'comms', label: 'Communication drafting', built: false }
+  { id: 'comms', label: 'Communication drafting', built: true }
 ];
 /** Models the Admin may choose (verified against the Anthropic model list when this release was built). */
 const AI_MODELS_ = [
