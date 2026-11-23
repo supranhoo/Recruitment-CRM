@@ -2609,6 +2609,57 @@ function aiSummaryDialog(res, ctx) {
   $('#aiSumAccept', d).focus();
 }
 const AI_SUM_SECTIONS = [['current_role', 'Current or most recent role'], ['experience', 'Relevant experience'], ['skills', 'Core skills'], ['industry', 'Industry or product exposure'], ['qualifications', 'Qualifications'], ['achievements', 'Stated achievements']];
+/* ---- v235: AI screening sheet. The visible table is Field | Answer in the template's own order. Answers come only from what the CV and the record state; anything else stays "To confirm".
+   Apply writes into the open screening's boxes (the recruiter then saves, rates and completes as always); the AI never rates. ---- */
+async function startAiScreening(btn, ctx, force) {
+  const label = btn.textContent;
+  busy(btn, true, ctx.hasCv ? 'Reading the CV…' : 'Asking the AI…');
+  try {
+    const src = ctx.hasCv ? await aiCvFromCandidate(ctx.candId) : { text: '', file: {} }, file = src.file, maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5;
+    if (file.size > maxMb * 1024 * 1024) throw new Error('This CV is larger than the ' + maxMb + ' MB limit for AI actions. Compress it, or fill the sheet by hand.');
+    busy(btn, true, 'Asking the AI…');
+    const res = await api('apiAiScreeningSheet', ctx.appId, { answered: ctx.answered(), text: src.text, fileName: file.name || '', fileSize: file.size || 0, pageOffsets: file._pageOffsets || [], force: !!force });
+    busy(btn, false, label);
+    aiScreeningDialog(res, Object.assign({}, ctx, { again: () => startAiScreening(btn, ctx, true) }));
+  } catch (e) { failed(e, btn, label); }
+}
+function aiScreeningDialog(res, ctx) {
+  const d = cpDlg(''), root = ctx.root, inputOf = id => root.querySelector(`[data-a="${id}"]`);
+  const opened = {}; res.rows.forEach(r => { const el = inputOf(r.id); opened[r.id] = el ? String(el.value || '').trim() : ''; });
+  const nFilled = res.rows.filter(r => r.status === 'filled').length;
+  const where = r => r.where === 'record' ? 'Candidate record' : r.where === 'cv' ? 'CV' + (r.page ? ', page ' + r.page : '') : '';
+  d.innerHTML = `<h2 id="cpTitle">AI-prepared screening sheet <span class="badge">AI-generated draft</span></h2>
+    <p class="hint" style="margin-top:0">Generated ${esc(fmtDate(res.generatedOn))} (${esc(res.model)}) for ${esc(ctx.name)}, questions v${esc(res.sqVersion)}${res.usedCv ? '' : ', from the record only (no CV text)'}. The questions and their order are the position’s own. Only answers the CV or the record state are filled; everything else says <b>To confirm</b>. Edit an answer here, or clear it to leave that question for you. Nothing is rated, saved or completed by this: it fills the boxes in the screening, and you review, rate and save as usual. Selected CV text, without the name or contact details, was processed by an external AI provider.</p>
+    ${res.reused ? '<div class="note">This exact CV, record and question set were already read, so the saved draft is shown and no new AI request was made. Use “Run again” to ask the AI again.</div>' : ''}
+    <div class="table-wrap"><table class="ai-scr"><thead><tr><th>Field</th><th>Answer</th></tr></thead><tbody>
+    ${res.rows.map(r => `<tr style="cursor:default" data-id="${esc(r.id)}"><td><span class="scr-id">${esc(r.id)}</span> ${esc(r.field)}</td><td>
+      ${r.status === 'filled' ? `<textarea rows="${Math.min(5, Math.max(1, Math.ceil(String(r.answer).length / 32)))}" data-ans="${esc(r.id)}" aria-label="Answer for ${esc(r.id)}">${esc(r.answer)}</textarea><details><summary class="hint">Where this came from</summary><div class="hint">${esc(where(r))}${r.evidence ? `: “${esc(r.evidence)}”` : ''}</div></details>`
+        : r.status === 'answered' ? `${esc(r.answer)}<div class="sub">Already answered; not changed.</div>`
+        : `<span class="muted">To confirm</span>${r.note || r.suggestion ? `<details><summary class="hint">Why</summary><div class="hint">${esc(r.note)}${r.suggestion ? ` Unsupported suggestion: “${esc(r.suggestion)}”.` : ''}</div></details>` : ''}`}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="hint">${nFilled} of ${res.rows.length} questions have a supported answer. Nothing here is a hiring decision.</p>
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px"><button class="btn" id="aiScrAgain">Run again</button><button class="btn" id="aiScrDiscard">Discard draft</button><button class="btn primary" id="aiScrApply" ${nFilled ? '' : 'disabled'}>Apply to screening</button></div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $('#aiScrAgain', d).onclick = () => { d.close(); ctx.again(); };
+  $('#aiScrDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+  $('#aiScrApply', d).onclick = async e => {
+    const applied = [], skipped = [];
+    $$('textarea[data-ans]', d).forEach(t => {
+      const id = t.dataset.ans, val = t.value.trim(), el = inputOf(id); if (!val) return;
+      if (!el || el.disabled || String(el.value || '').trim() !== opened[id]) { skipped.push(id); return; }
+      if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === val || o.text === val)) { skipped.push(id); return; }
+      el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+      const q1 = root.querySelector(`#scrq_${id} .scr-q1`) || el.closest('label'); if (q1 && !q1.querySelector('.pbadge')) q1.insertAdjacentHTML('beforeend', ' <span class="pbadge check">from AI, confirm</span>');
+      applied.push(id);
+    });
+    if (!applied.length) { toast(skipped.length ? 'Those questions were changed in the screening while this window was open, so nothing was applied.' : 'There is no answer to apply.', true); return; }
+    busy(e.target, true, 'Applying…');
+    try { await api('apiAiDraftMark', res.draftId, 'Accepted', applied); } catch (x) { return failed(x, e.target, 'Apply to screening'); }
+    d.close();
+    toast(`${applied.length} answer${applied.length === 1 ? '' : 's'} put into the screening${skipped.length ? ` (${skipped.length} skipped: changed meanwhile)` : ''}. Check them, rate as usual, then Save draft.`);
+  };
+  const first = $('#aiScrApply', d); if (first && !first.disabled) first.focus();
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -3823,6 +3874,7 @@ function renderScreening(d, S, after) {
     </div>
     <div class="drawer-actions scr-actions"><span class="scr-hint" id="scrHint"></span><button class="btn" data-close>Close</button>
       ${sc && sc.status === 'Complete' ? '<button class="btn" id="scrPdf">Download PDF</button>' : ''}
+      ${can && aiFeatureOn('screening') ? '<button class="btn" id="scrAi">Prepare with AI</button>' : ''}
       ${can && !(sc && sc.status === 'Complete') ? '<button class="btn" id="scrSave">Save draft</button><button class="btn primary" id="scrDone">Complete screening</button>' : ''}
       ${can && sc && sc.status === 'Complete' ? '<button class="btn" id="scrDone">Update screening</button>' : ''}
       ${can && sc && sc.status === 'Complete' ? '<button class="btn primary" id="scrShare">Share with department</button>' : ''}</div>`;
@@ -3860,6 +3912,7 @@ function renderScreening(d, S, after) {
     $('#scrHint', d).textContent = un.length ? `${un.length} question${un.length === 1 ? '' : 's'} still to rate` : (can ? 'Every question is rated' : '');
   };
   $$('[data-a]', d).forEach(el => el.oninput = el.onchange = () => { ans[el.dataset.a].a = el.value; refresh(); });
+  if ($('#scrAi', d)) $('#scrAi', d).onclick = e => startAiScreening(e.target, { appId: S.appId, candId: S.cand.id, hasCv: !!S.cand.hasCv, name: S.cand.name, root: d, answered: () => items.filter(i => String((ans[i.id] || {}).a || '').trim()).map(i => i.id) });
   const setRating = (id, rv) => {
     const i = items.find(x => x.id === id), x = ans[id], auto = sqAutoC(i, x.a);
     if (auto) { x.o = rv !== auto; x.r = rv; } else { x.r = x.r === rv ? '' : rv; x.o = false; }
