@@ -98,7 +98,7 @@ const READ_ONLY = new Set(['apiFetch', 'apiPacked', 'apiGetPosition', 'apiPipeli
   'apiPipelineAlerts', 'apiDashboard', 'apiDaySummary', 'apiKpi', 'apiBgvList', 'apiBgvCase', 'apiGetProfile', 'apiExemptionsForLine', 'apiReconcileList', 'apiPositionFunnel', 'apiAppTimeline', 'apiKpiSetup', 'apiKpiPreview', 'apiBgvPendingList', 'apiMonthMissed',
   'apiPipelineFind', 'apiCandidateScreenings', 'apiListCandidates', 'apiListFunnel', 'apiKpiRecon', 'apiApprovedDatesToCheck', 'apiCvReceivedCompare', 'apiCheckinPlan', 'apiCheckinPreview', 'apiCheckinFor', 'apiPolicyList', 'apiPolicySearch', 'apiPosRecList',
   'apiGetDoc', 'apiGetCv', 'apiSuggestForLine', 'apiBgvReports', 'apiDeptDelays', 'apiReassignReport', 'apiKpiHandoverPreview', 'apiOrganogram', 'apiListPanel', 'apiJdmOverview', 'apiCtcList', 'apiCtcGet', 'apiCtcRules',
-  'apiDocFlow', 'apiTatRules', 'apiCandidateHistory', 'apiListUsers', 'apiListJds', 'apiAuditLog', 'apiAdminInfo', 'apiTaskAdmin']);
+  'apiDocFlow', 'apiTatRules', 'apiCandidateHistory', 'apiListUsers', 'apiListJds', 'apiAuditLog', 'apiAdminInfo', 'apiTaskAdmin', 'apiAiKeyStatus', 'apiAiSettings', 'apiAiUsage']);
 /* Writes that change nothing another page shows: they do not throw the remembered pages away. */
 const QUIET_WRITES = new Set(['apiSaveDaySummary']);
 /* Timings of what users feel: when real data is on screen, not when the heading draws. Kept in memory; shown in Admin -> Tools. */
@@ -4602,12 +4602,13 @@ async function viewAdmin(v) {
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="kpit" aria-selected="${f.tab === 'kpit'}">KPI targets</button>
       <button role="tab" data-t="tex" aria-selected="${f.tab === 'tex'}">TAT exemptions</button>
-      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('lead') ? `<button role="tab" data-t="checkin" aria-selected="${f.tab === 'checkin'}">Check-in plan</button>` : ''}${can('policy_manage') ? `<button role="tab" data-t="policies" aria-selected="${f.tab === 'policies'}">Policies</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}</div>
+      <button role="tab" data-t="dstat" aria-selected="${f.tab === 'dstat'}">Day\u2019s Status</button>${can('tat_view') ? `<button role="tab" data-t="tat" aria-selected="${f.tab === 'tat'}">TAT rules</button>` : ''}${can('users_view') ? `<button role="tab" data-t="users" aria-selected="${f.tab === 'users'}">Users</button>` : ''}<button role="tab" data-t="roles" aria-selected="${f.tab === 'roles'}">Roles &amp; permissions</button>${can('tat_view') ? `<button role="tab" data-t="routes" aria-selected="${f.tab === 'routes'}">Hiring routes</button>` : ''}${can('lead') ? `<button role="tab" data-t="checkin" aria-selected="${f.tab === 'checkin'}">Check-in plan</button>` : ''}${can('policy_manage') ? `<button role="tab" data-t="policies" aria-selected="${f.tab === 'policies'}">Policies</button>` : ''}${can('voice_agent') ? `<button role="tab" data-t="voice" aria-selected="${f.tab === 'voice'}">Voice agent</button>` : ''}${(can('ai_settings') || can('ai_credentials') || can('ai_usage')) ? `<button role="tab" data-t="ai" aria-selected="${f.tab === 'ai'}">AI Recruitment</button>` : ''}</div>
     <div id="adBody" style="margin-top:16px">${skRows(6, 3)}</div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { f.tab = b.dataset.t; viewAdmin(v); });
   const el = $('#adBody');
   if (f.tab === 'users') return renderUsers(el, v);
   if (f.tab === 'voice' && can('voice_agent')) return renderVoiceAdmin(el);
+  if (f.tab === 'ai' && (can('ai_settings') || can('ai_credentials') || can('ai_usage'))) return renderAiAdmin(el);
   if (f.tab === 'routes' && can('tat_view')) return renderRoutesAdmin(el);
   if (f.tab === 'checkin' && can('lead')) return renderCheckinPlan(el);
   if (f.tab === 'policies' && can('policy_manage')) return renderPolicyAdmin(el);
@@ -6827,6 +6828,77 @@ async function bgvGovernTab(el, B, v) {
 
 /* ---- Voice screening call (Admin test; ADR-045) ---- */
 const VOICE_STATUS_CLASS_ = { Completed: 'ok', Started: '', Starting: '', Failed: 'miss', 'Blocked (Do Not Disturb)': 'miss', Cancelled: '' };
+/* ---- v232: Admin > AI Recruitment (ADR-089). The key is typed here, sent once to the server and never read back: the page only ever gets the last four characters. ---- */
+async function renderAiAdmin(el) {
+  const canC = can('ai_credentials'), canS = can('ai_settings'), canU = can('ai_usage');
+  const get = (ok, fn) => ok ? api(fn).catch(e => ({ _err: String(e) })) : Promise.resolve(null);
+  const [K, C, U] = await Promise.all([get(canC, 'apiAiKeyStatus'), get(canS, 'apiAiSettings'), get(canU, 'apiAiUsage')]);
+  const usd = n => '$' + (Number(n) || 0).toFixed(Number(n) >= 10 ? 2 : 4);
+  const when = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const errBox = x => `<div class="empty">${esc(x._err)}</div>`;
+  let html = `<section class="panel"><h2>AI Recruitment</h2>
+    <p class="hint" style="margin-top:0">An optional assistant that prepares <b>drafts</b> for recruiters to review. It never sends a message, rejects, shortlists, hires or moves a stage, and the CRM works the same with it switched off. Selected candidate information is processed by an external AI provider (Anthropic) when an AI action is run. It is off until you switch it on below.</p></section>`;
+  if (K) html += K._err ? errBox(K) : `<section class="panel"><div class="dp-h"><h2>API connection</h2><span class="badge ${K.status === 'Connected' ? 'ok' : K.status === 'Validation failed' ? 'bad' : ''}">${esc(K.status)}</span></div>
+    <p class="hint" style="margin-top:0">Provider: Anthropic Claude. The key is kept on the server only. It is never shown again after saving, and it is never stored in the page, the sheets or the logs.</p>
+    <dl class="kv"><dt>Key</dt><dd>${K.configured ? `ends ${esc(K.hint)}` : 'not set'}</dd><dt>Last updated</dt><dd>${K.updatedOn ? `${esc(when(K.updatedOn))} by ${esc(K.updatedBy)}` : '—'}</dd>
+    <dt>Last connection test</dt><dd>${K.lastTest ? `${esc(when(K.lastTest.on))}: ${K.lastTest.ok ? 'passed' : 'failed'}${K.lastTest.ok ? '' : ' — ' + esc(K.lastTest.message)}` : '—'}</dd></dl>
+    <div class="drawer-actions" style="position:static;justify-content:flex-start;gap:8px"><button class="btn primary" id="aiKeyOpen">${K.configured ? 'Replace key' : 'Add key'}</button>${K.configured ? '<button class="btn" id="aiKeyTest">Test connection</button><button class="btn danger" id="aiKeyRm">Remove key</button>' : ''}</div>
+    <div id="aiKeyForm" hidden style="margin-top:12px;max-width:520px"><div class="field"><label for="aiKeyIn">New API key</label><input id="aiKeyIn" type="password" autocomplete="new-password" spellcheck="false" maxlength="320" placeholder="sk-ant-…"></div>
+      <label class="chk"><input type="checkbox" id="aiKeyShow"> Show what I typed</label>
+      <p class="hint">“Validate and save” makes one tiny test request with made-up text (no candidate data). It may cost a small fraction of a cent. If it fails, the key already in use is kept. Removing or replacing a key here does <b>not</b> revoke it in your Anthropic account.</p>
+      <div class="drawer-actions" style="position:static;justify-content:flex-start;gap:8px"><button class="btn primary" id="aiKeySave">Validate and save</button><button class="btn" id="aiKeyCancel">Cancel</button></div></div></section>`;
+  if (C) html += C._err ? errBox(C) : `<section class="panel"><h2>Settings</h2>
+    <div class="grid"><div class="field wide"><label class="chk"><input type="checkbox" id="aiOn" ${C.enabled ? 'checked' : ''}> Switch AI recruitment on</label></div>
+    <div class="field wide"><label class="chk"><input type="checkbox" id="aiStop" ${C.emergency ? 'checked' : ''}> Emergency stop (blocks every AI request at once; the rest of the CRM is unaffected)</label></div></div>
+    <h3>Features and models</h3><div class="table-wrap"><table><thead><tr><th>Feature</th><th>On</th><th>Model</th></tr></thead><tbody>
+    ${C.features.map(f => `<tr style="cursor:default" data-f="${esc(f.id)}"><td>${esc(f.label)}${f.built ? '' : ' <span class="sub">coming in a later release</span>'}</td><td><input type="checkbox" data-k="on" ${f.on ? 'checked' : ''} ${f.built ? '' : 'disabled'} aria-label="${esc(f.label)} on"></td>
+    <td><select data-k="model" aria-label="Model for ${esc(f.label)}">${C.models.map(m => `<option value="${esc(m.id)}" ${m.id === f.model ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>
+    <h3>Limits</h3><div class="grid">
+    <div class="field"><label for="aiBud">Monthly budget (US dollars)</label><input id="aiBud" type="number" min="0" step="1" value="${esc(C.budgetUsd)}"><span class="hint">New requests pause when the month’s estimated use reaches this. 0 blocks all AI requests.</span></div>
+    <div class="field"><label for="aiWarn">Warn at (% of budget)</label><input id="aiWarn" type="number" min="1" max="100" step="1" value="${esc(C.warnPct)}"></div>
+    <div class="field"><label for="aiOut">Longest answer (tokens)</label><input id="aiOut" type="number" min="256" max="16000" step="1" value="${esc(C.maxOutTokens)}"></div>
+    <div class="field"><label for="aiMb">Largest CV file (MB)</label><input id="aiMb" type="number" min="1" max="10" step="0.5" value="${esc(C.maxFileMb)}"></div>
+    <div class="field"><label for="aiPg">Most pages read per CV</label><input id="aiPg" type="number" min="1" max="60" step="1" value="${esc(C.maxPages)}"></div>
+    <div class="field"><label for="aiConc">Requests running at once</label><input id="aiConc" type="number" min="1" max="5" step="1" value="${esc(C.maxConcurrent)}"></div>
+    <div class="field"><label for="aiBatch">Most candidates in one bulk run</label><input id="aiBatch" type="number" min="1" max="100" step="1" value="${esc(C.batchLimit)}"></div></div>
+    <div class="drawer-actions" style="position:static;justify-content:flex-start"><button class="btn primary" id="aiSave">Save settings</button></div></section>`;
+  if (U) html += U._err ? errBox(U) : `<section class="panel"><div class="dp-h"><h2>Usage this month</h2><span class="badge ${U.budget.level === 'ok' ? 'ok' : 'bad'}">${esc(U.budget.pct)}% of budget</span></div>
+    <p class="hint" style="margin-top:0">${esc(U.note)}</p>
+    <div class="rchips"><span class="rchip"><b>${esc(usd(U.budget.spentUsd))}</b> of ${esc(usd(U.budget.limitUsd))}</span><span class="rchip"><b>${U.total.requests}</b> requests</span><span class="rchip"><b>${U.total.ok}</b> succeeded</span><span class="rchip"><b>${U.total.failed}</b> failed</span><span class="rchip"><b>${U.total.avgMs ? (U.total.avgMs / 1000).toFixed(1) + ' s' : '—'}</b> average</span><span class="rchip"><b>${U.acceptance.rate == null ? '—' : U.acceptance.rate + '%'}</b> drafts accepted</span></div>
+    ${U.budget.level === 'reached' ? '<div class="note warn-note">The monthly budget is reached. New AI requests are paused until it is raised or the month changes.</div>' : U.budget.level === 'warn' ? '<div class="note">Use is above the warning threshold.</div>' : ''}
+    ${[['By feature', U.byFeature], ['By person', U.byUser]].map(([t, rows]) => `<h3>${t}</h3>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>${t === 'By feature' ? 'Feature' : 'Person'}</th><th class="num">Requests</th><th class="num">Failed</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Est. cost</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.key)}</td><td class="num">${r.requests}</td><td class="num">${r.failed}</td><td class="num">${r.tin.toLocaleString('en-IN')}</td><td class="num">${r.tout.toLocaleString('en-IN')}</td><td class="num">${esc(usd(r.cost))}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No AI requests yet this month.</div>'}`).join('')}</section>`;
+  el.innerHTML = html;
+  const form = $('#aiKeyForm', el), inp = $('#aiKeyIn', el);
+  const closeForm = () => { if (inp) { inp.value = ''; inp.type = 'password'; } if ($('#aiKeyShow', el)) $('#aiKeyShow', el).checked = false; if (form) form.hidden = true; };
+  if ($('#aiKeyOpen', el)) $('#aiKeyOpen', el).onclick = () => { form.hidden = false; inp.focus(); };
+  if ($('#aiKeyCancel', el)) $('#aiKeyCancel', el).onclick = closeForm;
+  if ($('#aiKeyShow', el)) $('#aiKeyShow', el).onchange = e => { inp.type = e.target.checked ? 'text' : 'password'; };
+  if ($('#aiKeySave', el)) $('#aiKeySave', el).onclick = async e => {
+    const b = e.target, key = inp.value.trim(); if (!key) { toast('Paste the API key first.', true); return; }
+    busy(b, true, 'Checking…');
+    try { await api('apiAiKeySave', { apiKey: key, expectedVersion: K.version }); closeForm(); toast('Key checked and saved. AI actions now use it.'); renderAiAdmin(el); }
+    catch (x) { failed(x, b, 'Validate and save'); }
+  };
+  if ($('#aiKeyTest', el)) $('#aiKeyTest', el).onclick = async e => {
+    const b = e.target; busy(b, true, 'Testing…');
+    try { const r = await api('apiAiKeyTest'); toast(r.lastTest && r.lastTest.ok ? 'Connection works.' : 'The test failed. ' + ((r.lastTest && r.lastTest.message) || ''), !(r.lastTest && r.lastTest.ok)); renderAiAdmin(el); }
+    catch (x) { failed(x, b, 'Test connection'); }
+  };
+  if ($('#aiKeyRm', el)) $('#aiKeyRm', el).onclick = async e => {
+    if (!await askConfirm('Remove the API key? AI features become unavailable until a key is added again; the rest of the CRM keeps working. A request already sent to the provider may still finish and be charged. This does not revoke the key in your Anthropic account.', { danger: true, ok: 'Remove key' })) return;
+    const b = e.target; busy(b, true, 'Removing…');
+    try { await api('apiAiKeyRemove', { confirm: true }); toast('Key removed.'); renderAiAdmin(el); } catch (x) { failed(x, b, 'Remove key'); }
+  };
+  if ($('#aiSave', el)) $('#aiSave', el).onclick = async e => {
+    const b = e.target, v = id => $('#' + id, el).value, features = {};
+    $$('tr[data-f]', el).forEach(r => { features[r.dataset.f] = { on: $('[data-k=on]', r).checked, model: $('[data-k=model]', r).value }; });
+    busy(b, true, 'Saving…');
+    try {
+      await api('apiAiSettingsSave', { enabled: $('#aiOn', el).checked, emergency: $('#aiStop', el).checked, budgetUsd: v('aiBud'), warnPct: v('aiWarn'), maxOutTokens: v('aiOut'), maxFileMb: v('aiMb'), maxPages: v('aiPg'), maxConcurrent: v('aiConc'), batchLimit: v('aiBatch'), features });
+      toast('AI settings saved. Reload the page to see the buttons change.'); renderAiAdmin(el);
+    } catch (x) { failed(x, b, 'Save settings'); }
+  };
+}
 async function renderVoiceAdmin(el) {
   let C; try { C = await api('apiVoiceConfig'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   el.innerHTML = `<section class="panel"><div class="dp-h"><h2>Voice agent (test, Admin only)</h2><span class="badge ${C.ready ? 'ok' : ''}">${C.ready ? 'Ready' : 'Not set up'}</span></div>
