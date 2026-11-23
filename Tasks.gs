@@ -139,18 +139,19 @@ function forwardedSince_(moves, lineId, sinceDay) {
   return '';
 }
 
-function computeTasks_() {
+function computeTasks_(part) {   // part: undefined = every rule; 'heavy' = all but the day note; 'daynote' = only the day note (v229)
   const now = Date.now(), today = ymd_(new Date());
+  const dayOnly = part === 'daynote';
   const rules = {}; taskRules_().forEach(function (r) { rules[r.id] = r; });
-  const ctx = tatContext_();
-  const lines = {}; readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
-  const allApps = readTable_(T.APP.name).rows;
-  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
+  const ctx = dayOnly ? null : tatContext_();
+  const lines = {}; if (!dayOnly) readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
+  const allApps = dayOnly ? [] : readTable_(T.APP.name).rows;
+  const cands = {}; if (!dayOnly) readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
   // Ignore cards whose candidate record no longer exists, and positions replaced after a backout.
   const apps = allApps.filter(function (a) { return String(a.Status) === 'Active' && cands[a.Candidate_ID] && lines[a.Line_ID] && ['Replaced', 'Not Needed', 'No Vacancy', 'On Hold'].indexOf(positionStatus_(lines[a.Line_ID])) < 0; });
-  const ints = readTable_(T.INT.name).rows;
-  const hods = {}; readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = { name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '').trim() }; });
-  const panel = panelEmailIndex_();
+  const ints = dayOnly ? [] : readTable_(T.INT.name).rows;
+  const hods = {}; if (!dayOnly) readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = { name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '').trim() }; });
+  const panel = dayOnly ? {} : panelEmailIndex_();
   const out = [];
 
   const add = function (rid, t) {
@@ -176,11 +177,28 @@ function computeTasks_() {
   const candName = function (a) { const c = cands[a.Candidate_ID]; return c ? String(c.Name) : a.Candidate_ID; };
   const stageIdx = function (s) { return STAGES.indexOf(String(s)); };
 
+  // 16. Day note after 5 pm: written when the day's note or funnel entry exists (the only rule that reads the Daily log).
+  const dayNote = function () {
+    if (Number(fmt_(new Date(now), TZ, 'HH')) >= 17) {
+      const wrote = {};
+      readTableFrom_(T.DAY.name, 'Summary_Date', today).rows.forEach(function (s) { if (ymd_(s.Summary_Date) === today && String(s.Overview || '').trim()) wrote[String(s.Recruiter).toLowerCase()] = true; });
+      readTableFrom_(T.FUNNEL.name, 'Entry_Date', today).rows.forEach(function (f) { if (ymd_(f.Entry_Date) === today) wrote[String(f.Recruiter).toLowerCase()] = true; });
+      usersCached_().forEach(function (u) {
+        if (String(u.Active || 'Yes') === 'No' || normRole_(u.Role) !== ROLES.RECRUITER) return;
+        const r = String(u.Recruiter_Name || u.Name);
+        if (wrote[r.toLowerCase()]) return;
+        add('day_note', { key: 'day_note|' + r + '|' + today, recruiter: r, line: '', app: '', title: 'Write your day note',
+          context: 'Nothing logged for today yet', startMs: now - HOUR_MS_, open: { type: 'myday' } });
+      });
+    }
+  };
+  if (dayOnly) { dayNote(); return out; }
+
   // 1. Share CVs: positions assigned in the last 30 days with no CV shared yet.
   const since30 = ymd_(new Date(now - 30 * 86400000));
   const sharedLines = {};
   allApps.forEach(function (a) { if (stageIdx(a.Stage) >= stageIdx('Shared')) sharedLines[a.Line_ID] = true; });
-  readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0 && ymd_(f.Entry_Date) < cutover_()) sharedLines[f.Line_ID] = true; });   // after the switch-over the pipeline is the only signal
+  if (since30 < cutover_()) readTableFrom_(T.FUNNEL.name, 'Entry_Date', since30).rows.forEach(function (f) { if (Number(f.CV_Shared_Dept) > 0 && ymd_(f.Entry_Date) < cutover_()) sharedLines[f.Line_ID] = true; });   // v229: after 30 days past the switch-over no row can qualify, so the Daily log is not read   // after the switch-over the pipeline is the only signal
   Object.keys(lines).forEach(function (id) {
     const l = lines[id];
     if (positionStatus_(l) !== 'Open' || sharedLines[id]) return;
@@ -509,19 +527,8 @@ function computeTasks_() {
       open: { type: 'positions' } });
   });
 
-  // 16. Day note after 5 pm.
-  if (Number(fmt_(new Date(now), TZ, 'HH')) >= 17) {
-    const wrote = {};
-    readTableFrom_(T.DAY.name, 'Summary_Date', today).rows.forEach(function (s) { if (ymd_(s.Summary_Date) === today && String(s.Overview || '').trim()) wrote[String(s.Recruiter).toLowerCase()] = true; });
-    readTableFrom_(T.FUNNEL.name, 'Entry_Date', today).rows.forEach(function (f) { if (ymd_(f.Entry_Date) === today) wrote[String(f.Recruiter).toLowerCase()] = true; });
-    usersCached_().forEach(function (u) {
-      if (String(u.Active || 'Yes') === 'No' || normRole_(u.Role) !== ROLES.RECRUITER) return;
-      const r = String(u.Recruiter_Name || u.Name);
-      if (wrote[r.toLowerCase()]) return;
-      add('day_note', { key: 'day_note|' + r + '|' + today, recruiter: r, line: '', app: '', title: 'Write your day note',
-        context: 'Nothing logged for today yet', startMs: now - HOUR_MS_, open: { type: 'myday' } });
-    });
-  }
+  // 16. Day note after 5 pm (v229: kept apart from the heavy list, so a Daily log save does not empty the cache of the rest).
+  if (part !== 'heavy') dayNote();
   return out;
 }
 
@@ -548,10 +555,14 @@ function psychoDone_(c) { return /complet|done|yes|waiv/i.test(String(c.Psychome
 function allTasks_() {
   const bucket = Math.floor(Date.now() / 600000);
   const stateStamps = tableStamps_(['Tasks', 'Task_Actions']).join('|');
-  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Settings', 'M_Departments', 'Daily_Summary', 'Daily_Funnel', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
+  /* v229: the Daily log tables change on every Daily log save and My day autosave but only the day-note rule reads them, so they are left out of the heavy list's stamps
+     and the day note is added on top. A Daily log save now rebuilds only the cheap part (the day note and the done/snooze state), not the whole list. */
+  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Settings', 'M_Departments', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
+  const dayStamps = tableStamps_(['Daily_Summary', 'Daily_Funnel']).join('|');
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   let hs = 0; for (let i = 0; i < stateStamps.length; i++) hs = (hs * 31 + stateStamps.charCodeAt(i)) >>> 0;
-  const baseKey = 'tasksc_' + bucket + '_' + h.toString(36) + '_' + sj.length, key = 'tasks_' + bucket + '_' + h.toString(36) + '_' + hs.toString(36) + '_' + sj.length;
+  let hd = 0; for (let i = 0; i < dayStamps.length; i++) hd = (hd * 31 + dayStamps.charCodeAt(i)) >>> 0;
+  const baseKey = 'tasksc2_' + bucket + '_' + h.toString(36) + '_' + sj.length, key = 'tasks2_' + bucket + '_' + h.toString(36) + '_' + hs.toString(36) + '_' + hd.toString(36) + '_' + sj.length;
   /* Chunked cache: a busy team's list (with its prepared messages) can exceed the 100 KB limit of one cache entry,
      which used to mean it was never cached and was rebuilt from about ten sheets on every call. */
   try { const hit = cacheBigGet_(key); if (hit) return JSON.parse(hit); } catch (e) { }
@@ -560,11 +571,11 @@ function allTasks_() {
   let computed = null;
   try { const c = cacheBigGet_(baseKey); if (c) computed = JSON.parse(c); } catch (e) { computed = null; }
   if (!computed) {
-    computed = computeTasks_();
+    computed = computeTasks_('heavy');
     try { const cs = JSON.stringify(computed); if (cs.length < 900000) cacheBigPut_(baseKey, cs, 900); } catch (e) { }
   }
   const state = taskState_().map, notes = taskNotes_(0);
-  const list = computed.map(function (t) {
+  const list = computed.concat(computeTasks_('daynote')).map(function (t) {
     const s = state[t.key];
     t.notes = notes[t.key] || [];
     const reopened = s && s.Resolved_At;
