@@ -22,15 +22,18 @@ function perfSlow_(fn, ms, extra) {
 
 /** Runs fn(args), logs its duration, and records it when slow. The user's role is logged, not who they are. */
 function timed_(name, fn, args) {
-  const t0 = Date.now();
+  const t0 = Date.now(), outer = _perfSteps_;
+  _perfSteps_ = [];
   let ok = true;
   try { return fn.apply(null, args || []); } catch (e) { ok = false; throw e; }
   finally {
-    const ms = Date.now() - t0;
+    const ms = Date.now() - t0, steps = _perfSteps_ || [];
+    _perfSteps_ = outer;
     if (ms >= PERF_SLOW_MS_) {
       let role = ''; try { role = String((_perfUser_ && _perfUser_.role) || ''); } catch (e) { }
-      perfLog_('api', { fn: name, ms: ms, ok: ok, role: role });
-      perfSlow_(name, ms, { ok: ok });
+      const top = steps.slice().sort(function (a, b) { return b.ms - a.ms; }).slice(0, 3);   // the three biggest steps of this call
+      perfLog_('api', { fn: name, ms: ms, ok: ok, role: role, steps: top });
+      perfSlow_(name, ms, { ok: ok, steps: top });
     }
   }
 }

@@ -86,7 +86,7 @@ function pipelineEvents_(from, to) {
     });
   });
   const live = all.filter(function (ev) { return !ev.void && ev.day >= from && ev.day <= to; });
-  const cands = candNames_(live.map(function (ev) { return ev.cand; }));
+  const cands = candNamesSlim_(live.map(function (ev) { return ev.cand; }));   // v228: only the name is used, so take it from the candidate index when it is cached instead of reading the whole Candidates sheet
   live.forEach(function (ev) { const c = cands[ev.cand] || {}; ev.name = String(c.Name || ev.cand); });
   return live;
 }
@@ -106,33 +106,44 @@ function recruiterByEmail_() {
 function dayInterviews_(date, get, lineById) {
   const ints = readTable_(T.INT.name).rows;
   if (!ints.length) return;
-  const apps = {}; readTable_(T.APP.name).rows.forEach(function (a) { apps[a.App_ID] = a; });
-  const cands = {}; readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
-  const byEmail = recruiterByEmail_(), now = Date.now();
+  const now = Date.now(), pick = [];
+  // v228: first the interviews that belong to the day (the Interviews sheet is small); nothing else is read for a day with none
   ints.forEach(function (i) {
     const st = String(i.Status || '');
     if (['Scheduled', 'Panel unavailable', 'Held'].indexOf(st) < 0) return;
-    const a = apps[i.App_ID], l = lineById[i.Line_ID]; if (!a || !l) return;
     const startDay = ymd_(i.Start), hist = String(i.Historic) === 'Yes', further = String(i.Round) === 'Further';
     const tags = [];
     if (startDay === date) tags.push('On the day');
     if (hist && ymd_(i.Created_At) === date && startDay && startDay < date) tags.push('Entered late');
     if (!hist && further && String(i.Result || '') && ymd_(i.Result_On) === date && startDay && startDay < date) tags.push('Result recorded');
-    if (!tags.length) return;
-    const c = cands[a.Candidate_ID] || {}, pre = String(i.Round) === 'HR' ? 'HR' : 'Tech';
-    const result = further ? String(i.Result || '') : (ymd_(c[pre + '_Interview_Date']) === startDay ? String(c[pre + '_Result'] || '') : '');
+    if (tags.length) pick.push({ i: i, st: st, startDay: startDay, hist: hist, further: further, tags: tags });
+  });
+  if (!pick.length) return;
+  const apps = {}; readTable_(T.APP.name).rows.forEach(function (a) { apps[a.App_ID] = a; });
+  let candAll = null; const memo = {};
+  const candOf = function (id) {   // one row from the candidate index; the whole sheet only if the index is not cached
+    if (memo[id] !== undefined) return memo[id];
+    let c = null; try { c = candRowFast_(String(id)); } catch (e) { c = null; }
+    if (!c) { if (!candAll) { candAll = {}; readTable_(T.CAND.name).rows.forEach(function (x) { candAll[x.Candidate_ID] = x; }); } c = candAll[id] || null; }
+    return (memo[id] = c || {});
+  };
+  const byEmail = recruiterByEmail_();
+  pick.forEach(function (p) {
+    const i = p.i, a = apps[i.App_ID], l = lineById[i.Line_ID]; if (!a || !l) return;
+    const c = candOf(a.Candidate_ID), pre = String(i.Round) === 'HR' ? 'HR' : 'Tech';
+    const result = p.further ? String(i.Result || '') : (ymd_(c[pre + '_Interview_Date']) === p.startDay ? String(c[pre + '_Result'] || '') : '');
     const endMs = ms_(i.Start) + (Number(i.Duration_Min) || 60) * 60000;
-    const state = (st === 'Held' || result) ? 'Held' : endMs < now ? 'Result due' : st === 'Panel unavailable' ? 'Panel unavailable' : 'Booked';
+    const state = (p.st === 'Held' || result) ? 'Held' : endMs < now ? 'Result due' : p.st === 'Panel unavailable' ? 'Panel unavailable' : 'Booked';
     const r = get(cardCredit_(l, a) || i.Recruiter || l.Recruiter); if (!r) return;
-    if (further) {   // v227: the position has a row for the day, and it counts as having activity, so its Technical detail can be opened
+    if (p.further) {   // v227: the position has a row for the day, and it counts as having activity, so its Technical detail can be opened
       const g = r.byPosition[i.Line_ID] = r.byPosition[i.Line_ID] || { line: String(i.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''), grade: String(l.Grade || ''), remarks: [] };
       g.noActivity = false; g.rounds = (g.rounds || 0) + 1;
     }
     r.interviews.push({ id: String(i.Interview_ID), line: String(i.Line_ID), mrf: String(l.MRF_No || ''), position: String(l.Position || ''), dept: String(l.Dept || ''),
-      name: String(c.Name || ''), round: further ? String(i.Round_Label || 'Further round') : String(i.Round) === 'HR' ? 'HR / final' : 'Technical', further: further,
-      start: ms_(i.Start), startText: fmt_(i.Start, TZ, 'd MMM, HH:mm'), startDay: startDay, mode: String(i.Mode || ''), panel: String(i.Panel || ''), state: state, result: result,
-      resultBy: String(i.Result_By || ''), note: String(i.Result_Note || ''), historic: hist, enteredBy: hist ? (byEmail[String(i.Created_By).toLowerCase()] || String(i.Created_By)) : '',
-      enteredOn: hist ? ymd_(i.Created_At) : '', tags: tags });
+      name: String(c.Name || ''), round: p.further ? String(i.Round_Label || 'Further round') : String(i.Round) === 'HR' ? 'HR / final' : 'Technical', further: p.further,
+      start: ms_(i.Start), startText: fmt_(i.Start, TZ, 'd MMM, HH:mm'), startDay: p.startDay, mode: String(i.Mode || ''), panel: String(i.Panel || ''), state: state, result: result,
+      resultBy: String(i.Result_By || ''), note: String(i.Result_Note || ''), historic: p.hist, enteredBy: p.hist ? (byEmail[String(i.Created_By).toLowerCase()] || String(i.Created_By)) : '',
+      enteredOn: p.hist ? ymd_(i.Created_At) : '', tags: p.tags });
   });
 }
 

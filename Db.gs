@@ -130,8 +130,10 @@ function readTable_(name, fresh) {
  * Cloud Logging), so the slowest sheet reads and computations can be found from real use rather than guessed.
  */
 const PERF_LOG_MS_ = 400;
+var _perfSteps_ = null;   // v228: while a server call runs (timed_), its steps of 200 ms or more are kept, so the slow-call table can say what took the time
 function perfNote_(what, t0, extra) {
   const ms = Date.now() - t0;
+  if (_perfSteps_ && ms >= 200 && _perfSteps_.length < 40) _perfSteps_.push({ w: what, ms: ms, x: extra ? String(extra) : '' });
   if (ms >= PERF_LOG_MS_) console.log('[perf] ' + what + ' ' + ms + ' ms' + (extra ? ' (' + extra + ')' : ''));
 }
 
