@@ -78,7 +78,7 @@ T.AUDIT = {
 const FUNNEL_METRICS = ['CV_Sourced', 'CV_Reviewed', 'HR_1st_Round', 'CV_Shared_Dept', 'Shortlisted_Dept', 'Interviews_Done', 'Selected_Final'];
 const ROLES = { ADMIN: 'Admin', HEAD: 'Head of HR', TALEAD: 'TA Lead', RECRUITER: 'Recruiter', ONBOARDING: 'Onboarding' };
 /** The release number, set before each deploy. Shown in the page (rail footer, Admin → Tools) and compared with the page's own copy, so a page served from an older release is noticed. */
-const BUILD_ID = '230';
+const BUILD_ID = '232';
 const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
 /**
  * What each role may do. 'lead' = team-wide powers (edit all positions, assign, move candidates back, team views,
@@ -95,12 +95,13 @@ const ROLE_LIST = ['Admin', 'Head of HR', 'TA Lead', 'Recruiter', 'Onboarding'];
  * 'voice_review' = see a voice call's result and rate, edit and complete the screening from it: the owner recruiter for own positions, leads for all. It does not place calls.
  * 'checkin_plan_edit' = change the check-in plan (the timeline of calls, their questions and what they tell) as new dated versions; Head of HR and Admin. Reading it needs 'lead'.
  * 'policy_ask' = search the policy documents (every role); 'policy_manage' = add, replace and withdraw policy documents (Head of HR, Admin).
+ * 'ai_credentials' = add, replace, test and remove the Anthropic API key (Admin only); 'ai_settings' = switch AI recruitment on or off, choose features, models, limits and budget (Admin only); 'ai_run' = run AI actions on records the person may already work on (every role except Onboarding); 'ai_review' = review, edit and apply AI drafts; 'ai_bulk' = bulk AI actions (TA Lead, Head of HR, Admin); 'ai_usage' = see AI usage and estimated cost (Head of HR, Admin); 'ai_prompts' = manage prompt templates (Admin). AI is off until the Admin switches it on (ADR-089).
  * 'onboard' = the Onboarding team: confirm the hiring, record the joining and complete the onboarding of fast-track (W and T level) positions of any recruiter.
  */
 const PERMS_ = {
-  'Recruiter': ['voice_review', 'policy_ask'],
+  'Recruiter': ['voice_review', 'policy_ask', 'ai_run', 'ai_review'],
   'Onboarding': ['onboard', 'policy_ask'],
-  'TA Lead': ['lead', 'tat_view', 'jd_manage', 'voice_review', 'policy_ask'],
-  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data', 'ctc_rules', 'ctc_access_view', 'voice_review', 'checkin_plan_edit', 'policy_ask', 'policy_manage'],
-  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data', 'ctc_use', 'ctc_rules', 'ctc_access_view', 'ctc_access', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent', 'voice_review', 'checkin_plan_edit', 'policy_ask', 'policy_manage']
+  'TA Lead': ['lead', 'tat_view', 'jd_manage', 'voice_review', 'policy_ask', 'ai_run', 'ai_review', 'ai_bulk'],
+  'Head of HR': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data', 'ctc_rules', 'ctc_access_view', 'voice_review', 'checkin_plan_edit', 'policy_ask', 'policy_manage', 'ai_run', 'ai_review', 'ai_bulk', 'ai_usage'],
+  'Admin': ['lead', 'withdraw_offer', 'tat_view', 'tat_edit', 'kpi_edit', 'tat_exempt', 'users_view', 'users_edit', 'system', 'jd_manage', 'bgv_decide', 'org_manage', 'correct_data', 'ctc_use', 'ctc_rules', 'ctc_access_view', 'ctc_access', 'ctc_view_all', 'ctc_codes', 'ctc_issue', 'ctc_approve', 'voice_agent', 'voice_review', 'checkin_plan_edit', 'policy_ask', 'policy_manage', 'ai_run', 'ai_review', 'ai_bulk', 'ai_usage', 'ai_settings', 'ai_credentials', 'ai_prompts']
 };

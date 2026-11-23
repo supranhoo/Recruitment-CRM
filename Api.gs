@@ -20,6 +20,7 @@ function apiBootstrapRun_() {
     tatRules: (function () { const s = settings_(); return tatRulesMap_(Number(s.NOTICE_GRACE_DAYS) || 30, Number(s.TAT_AT_RISK_PCT) || 0.8); })(),
     panel: panelMembers_(false),
     historicHours: historicHours_(),
+    ai: aiPublic_(u),
     recruiters: readTable_('M_Recruiters').rows.filter(function (r) { return String(r.Active) !== 'No'; }).map(function (r) { return String(r.Recruiter); }),
     lists: lists,
     dbUrl: u.role === ROLES.ADMIN ? ss_().getUrl() : '',
