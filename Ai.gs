@@ -15,7 +15,7 @@ const AI_API_VERSION_ = '2026-10-21';
 /** Features, in the order shown. built = the screen exists in this release; the rest are listed so the Admin sees what is coming but cannot switch them on yet. */
 const AI_FEATURES_ = [
   { id: 'extract', label: 'CV extraction', built: true },
-  { id: 'summary', label: 'Candidate summary', built: false },
+  { id: 'summary', label: 'Candidate summary', built: true },
   { id: 'compare', label: 'Vacancy comparison', built: false },
   { id: 'screening', label: 'Screening sheet preparation', built: false },
   { id: 'questions', label: 'Interview question generation', built: false },
