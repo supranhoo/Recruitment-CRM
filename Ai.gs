@@ -16,7 +16,7 @@ const AI_API_VERSION_ = '2026-10-21';
 const AI_FEATURES_ = [
   { id: 'extract', label: 'CV extraction', built: true },
   { id: 'summary', label: 'Candidate summary', built: true },
-  { id: 'compare', label: 'Vacancy comparison', built: false },
+  { id: 'compare', label: 'Vacancy comparison', built: true },
   { id: 'screening', label: 'Screening sheet preparation', built: true },
   { id: 'questions', label: 'Interview question generation', built: false },
   { id: 'feedback', label: 'Interview feedback summary', built: false },

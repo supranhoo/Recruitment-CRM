@@ -50,10 +50,10 @@ function aiLocate_(nm, src, quote) {
   const at = nm.n.indexOf(q);
   if (at < 0) return { found: false, where: '', page: 0 };
   const raw = nm.map[at];
-  if (raw < src.recLen) return { found: true, where: 'record', page: 0 };
+  if (raw < src.recLen) return { found: true, where: 'record', page: 0, raw: raw };
   let page = 0;
   for (let i = 0; i < src.offsets.length; i++) if (src.offsets[i] <= raw) page = i + 1;
-  return { found: true, where: 'cv', page: page };
+  return { found: true, where: 'cv', page: page, raw: raw };
 }
 /** Shared pre-checks of a request that reads a CV: size, text length, the cap. Throws plain messages (nothing is charged). Returns the redacted text. */
 function aiCvPrecheck_(cfg, p, needText, name) {
