@@ -18,8 +18,8 @@ const AI_FEATURES_ = [
   { id: 'summary', label: 'Candidate summary', built: true },
   { id: 'compare', label: 'Vacancy comparison', built: true },
   { id: 'screening', label: 'Screening sheet preparation', built: true },
-  { id: 'questions', label: 'Interview question generation', built: false },
-  { id: 'feedback', label: 'Interview feedback summary', built: false },
+  { id: 'questions', label: 'Interview question generation', built: true },
+  { id: 'feedback', label: 'Interview feedback summary', built: true },
   { id: 'comms', label: 'Communication drafting', built: false }
 ];
 /** Models the Admin may choose (verified against the Anthropic model list when this release was built). */
