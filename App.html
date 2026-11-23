@@ -2660,6 +2660,65 @@ function aiScreeningDialog(res, ctx) {
   };
   const first = $('#aiScrApply', d); if (first && !first.disabled) first.focus();
 }
+/* ---- v236: AI comparison of a candidate with ONE vacancy, against the position's approved requirements. Evidence, not a score: missing information is never a failure. ---- */
+const AI_TIERS = [['essential', 'Essential requirements'], ['preferred', 'Preferred requirements'], ['verify', 'To verify at interview']];
+const AI_ASSESS_CLS = { 'Evidence found': 'found', 'Partial evidence': 'check', 'Conflicting information': 'check', 'Requires verification': 'check' };
+function aiWhereText(where, page) { return where === 'record' ? 'candidate record' : where === 'screening' ? 'screening answer' : where === 'cv' ? 'CV' + (page ? ' page ' + page : '') : ''; }
+async function aiCompareSection(el, a, canGen) {
+  if (!el) return;
+  let R; try { R = await api('apiAiCompareFor', a.App_ID); } catch (e) { el.innerHTML = ''; return; }
+  if (!el.isConnected) return;
+  const cur = R.current, gen = aiFeatureOn('compare') && canGen;
+  const count = k => cur ? cur.rows.filter(r => r.assessment === k).length : 0;
+  el.innerHTML = `<p class="hint" style="margin-top:0">Compares this candidate with this vacancy’s approved requirements (the department-confirmed questions and the final JD). It shows the evidence for each requirement. It gives no score and no ranking, and missing information is not treated as a failure. Another vacancy of the same candidate has its own result.</p>
+    ${cur ? `<div class="rchips">${Object.keys(AI_ASSESS_CLS).concat(['Not evidenced']).map(k => `<span class="rchip"><b>${count(k)}</b> ${esc(k.toLowerCase())}</span>`).join('')}</div>
+      <p class="hint">AI-generated draft, accepted by ${esc(cur.acceptedBy)} on ${esc(fmtDate(cur.acceptedOn))}${cur.outdated ? ' <span class="pbadge check">Outdated: the CV, screening answers or requirements have changed since</span>' : ''}</p>`
+      : '<p class="hint">No accepted comparison yet.</p>'}
+    <div class="btn-row">${cur ? '<button class="btn sm" id="aiCmpOpen">Open comparison</button>' : ''}${gen ? `<button class="btn sm" id="aiCmpGen">${cur ? 'Compare again' : 'Compare with this vacancy'}</button>` : ''}</div>
+    ${R.history.length ? `<details><summary class="hint">Earlier comparisons (${R.history.length})</summary>${R.history.map((h, i) => `<p class="hint">Accepted by ${esc(h.acceptedBy)} on ${esc(fmtDate(h.acceptedOn))} <button class="linklike" data-old="${i}">Open</button></p>`).join('')}</details>` : ''}`;
+  if ($('#aiCmpOpen', el)) $('#aiCmpOpen', el).onclick = () => aiCompareDialog(cur, { mode: 'view', a });
+  $$('[data-old]', el).forEach(b => b.onclick = () => aiCompareDialog(R.history[Number(b.dataset.old)], { mode: 'view', a }));
+  if ($('#aiCmpGen', el)) $('#aiCmpGen', el).onclick = e => startAiCompare(e.target, a, el, canGen, false);
+}
+async function startAiCompare(btn, a, el, canGen, force) {
+  const label = btn.textContent;
+  busy(btn, true, 'Reading the CV…');
+  try {
+    let src; try { src = await aiCvFromCandidate(a.Candidate_ID); } catch (e) { if (/No CV has been uploaded/.test(String(e && e.message || e))) src = { text: '', file: {} }; else throw e; }
+    const file = src.file, maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5;
+    if (file.size > maxMb * 1024 * 1024) throw new Error('This CV is larger than the ' + maxMb + ' MB limit for AI actions. Compress it, or compare by hand.');
+    busy(btn, true, 'Asking the AI…');
+    const res = await api('apiAiCompare', a.App_ID, { text: src.text, fileName: file.name || '', fileSize: file.size || 0, pageOffsets: file._pageOffsets || [], force: !!force });
+    busy(btn, false, label);
+    aiCompareDialog(res, { mode: 'draft', a, el, again: () => startAiCompare(btn, a, el, canGen, true), refresh: () => aiCompareSection(el, a, canGen) });
+  } catch (e) { failed(e, btn, label); }
+}
+function aiCompareDialog(res, ctx) {
+  const d = cpDlg(''), draft = ctx.mode === 'draft';
+  const tierTable = ([k, title]) => {
+    const rows = res.rows.filter(r => r.tier === k); if (!rows.length) return '';
+    return `<h3>${esc(title)}</h3><div class="table-wrap"><table class="ai-tbl"><thead><tr><th>Requirement</th><th>CV / screening evidence</th><th>Assessment</th><th>Clarification needed</th></tr></thead><tbody>
+      ${rows.map(r => `<tr style="cursor:default"><td>${esc(r.requirement)}${r.ko ? ' <span class="pbadge check">Knock-out</span>' : ''}</td>
+        <td data-label="CV / screening evidence" class="ai-ev">${r.evidence ? `“${esc(r.evidence)}” <span class="sub">${esc(aiWhereText(r.where, r.page))}</span>` : '<span class="sub">—</span>'}${r.evidence2 ? `<br>“${esc(r.evidence2)}” <span class="sub">${esc(aiWhereText(r.where2, r.page2))}</span>` : ''}</td>
+        <td data-label="Assessment"><span class="${AI_ASSESS_CLS[r.assessment] ? 'pbadge ' + AI_ASSESS_CLS[r.assessment] : ''}">${esc(r.assessment)}</span>${r.note ? `<div class="sub">${esc(r.note)}</div>` : ''}</td>
+        <td data-label="Clarification needed">${esc(r.clarification) || '<span class="sub">—</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+  };
+  const list = (title, xs, note) => xs.length ? `<h3>${esc(title)}</h3>${note ? `<p class="hint">${esc(note)}</p>` : ''}<ul class="hint">${xs.map(x => `<li>${typeof x === 'string' ? esc(x) : `${esc(x.text)} <span class="ai-ev">“${esc(x.evidence)}” <span class="sub">${esc(aiWhereText(x.where, x.page))}</span></span>`}</li>`).join('')}</ul>` : '';
+  d.innerHTML = `<h2 id="cpTitle">AI comparison: ${esc(res.position || 'this vacancy')} <span class="badge">AI-generated draft</span>${res.outdated ? ' <span class="pbadge check">Outdated</span>' : ''}</h2>
+    <p class="hint" style="margin-top:0">${draft ? `Generated ${esc(fmtDate(res.generatedOn))} (${esc(res.meta ? res.meta.model : '')}). Nothing is saved to the candidate until you accept it. Selected CV text, without the name or contact details, was processed by an external AI provider.` : `Accepted by ${esc(res.acceptedBy)} on ${esc(fmtDate(res.acceptedOn))}.`}
+      Essential = the knock-out and Must questions and the JD’s qualification and minimum experience; Preferred = the Important and Nice questions and the JD’s preferred text; To verify = practical and conversation-only questions. This is evidence, not a score or a decision.</p>
+    ${draft && res.reused ? '<div class="note">This exact CV, screening and requirements were already compared, so the saved draft is shown and no new AI request was made. Use “Regenerate” to ask the AI again.</div>' : ''}
+    ${AI_TIERS.map(tierTable).join('')}${list('Relevant strengths (from the sources)', res.strengths || [])}${list('Evidence gaps', res.gaps || [], 'Missing evidence is not a failure to meet a requirement.')}${list('Targeted screening questions', res.questions || [])}
+    <div class="drawer-actions" style="position:static;justify-content:flex-end;gap:8px">${draft ? '<button class="btn" id="aiCmpAgain">Regenerate</button><button class="btn" id="aiCmpDiscard">Discard draft</button><button class="btn primary" id="aiCmpAccept">Accept comparison</button>' : '<button class="btn primary" data-close>Close</button>'}</div>`;
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $$('[data-close]', d).forEach(b => b.onclick = () => d.close());
+  if (draft) {
+    $('#aiCmpAgain', d).onclick = () => { d.close(); ctx.again(); };
+    $('#aiCmpDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was changed.'); };
+    $('#aiCmpAccept', d).onclick = async e => { busy(e.target, true, 'Saving…'); try { await api('apiAiCompareAccept', res.draftId); d.close(); toast('Comparison accepted. Earlier comparisons are kept.'); ctx.refresh(); } catch (x) { failed(x, e.target, 'Accept comparison'); } };
+    $('#aiCmpAccept', d).focus();
+  } else { const c = $('[data-close]', d); if (c) c.focus(); }
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -9315,6 +9374,7 @@ async function viewPipeline(v) {
           ${!a.screen && Object.keys(a.Screening_JSON || {}).length ? `<section class="app-sec"><h3>Screening answers</h3><dl class="kv">${Object.entries(a.Screening_JSON).map(([q, ans]) => `<dt>${esc(q)}</dt><dd>${esc(ans) || '\u2014'}</dd>`).join('')}</dl></section>` : ''}
           ${Object.keys(a.Docs_JSON || {}).length ? `<section class="app-sec"><h3>Documents</h3><dl class="kv">${P.docSections.map(([k, n]) => `<dt>${k}. ${esc(n)}</dt><dd>${esc(a.Docs_JSON[k] || 'Pending')}</dd>`).join('')}</dl>${a.Docs_File ? '<button class="btn att-view" data-field="Docs_File">View documents</button>' : ''}</section>` : ''}
           ${(can('voice_agent') || can('voice_review')) && active && (!fastRoute() || P.hasFinalSq) ? appFold('Voice screening', '<div id="apVoice"></div>', foldOpen('voice', a.Stage)) : ''}
+          ${can('ai_review') && (a.Status === 'Active' || aiFeatureOn('compare')) ? appFold('AI comparison', '<div id="apAiCmp"></div>', false) : ''}
           ${active && ['Prejoin', 'Joined', 'Onboarded'].includes(a.Stage) ? appFold('Joining check-in', '<div id="apCheckin"></div>', foldOpen('checkin', a.Stage)) : ''}
           ${appFold('Background verification', '<div id="apBgv"></div>', foldOpen('bgv', a.Stage))}
           ${can('ctc_use') ? appFold('CTC calculator', '<div id="apCtc"></div>', foldOpen('ctc', a.Stage)) : ''}
@@ -9376,6 +9436,7 @@ async function viewPipeline(v) {
     $('#apProfile').onclick = () => { d.close(); openCandidate(a.Candidate_ID); };
     bgvChips($('#apBgv', d), { kind: 'candidate', id: a.Candidate_ID });
     if ($('#apVoice', d)) voiceCardSection($('#apVoice', d), a, P);
+    if ($('#apAiCmp', d)) aiCompareSection($('#apAiCmp', d), a, canWork && a.Status === 'Active');
     if ($('#apCheckin', d)) checkinCardSection($('#apCheckin', d), a);
     if ($('#apCtc', d)) ctcLinkSection($('#apCtc', d), { kind: 'candidate', id: a.Candidate_ID, candId: a.Candidate_ID, lineId: a.Line_ID || P.line.Line_ID });
     const refreshBoard = async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } };
