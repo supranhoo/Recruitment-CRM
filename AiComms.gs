@@ -114,7 +114,7 @@ function aiCommRun_(appId, p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'comms', system: AI_COMM_SYSTEM_, user: userMsg, schema: aiCommSchema_(), maxTokens: 1200, candId: String(cand.Candidate_ID) });
+    const r = aiRun_(u, { feature: 'comms', system: AI_COMM_SYSTEM_, user: userMsg, schema: aiCommSchema_(), maxTokens: 1200, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     const rawS = String((r.data || {}).subject || ''), rawB = String((r.data || {}).body || '');
     const allowed = Object.keys(fx).map(function (k) { return String(fx[k]); }).filter(String);
     const unresolved = [], strip = function (s) { return s.replace(/\{\{\s*[a-z_]+\s*\}\}/gi, ' '); };

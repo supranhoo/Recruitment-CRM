@@ -2946,7 +2946,7 @@ function aiBulkRunView(d, b, ctx) {
       const src = await cvOf(n.row.cand), file = src.file || {};
       if (src.none && n.row.action === 'summary') return await mark(row, { status: 'Skipped', error: 'No CV is on file.' });
       if (file.size > maxMb * 1024 * 1024) return await mark(row, { status: 'Skipped', error: 'The CV is larger than the ' + maxMb + ' MB limit.' });
-      const p = { text: src.text, fileName: file.name || '', fileSize: file.size || 0, pageOffsets: file._pageOffsets || [] };
+      const p = { text: src.text, fileName: file.name || '', fileSize: file.size || 0, pageOffsets: file._pageOffsets || [], batchId: b.id, lineId: row.line || ctx.line };
       const res = n.row.action === 'summary' ? await api('apiAiSummaryGenerate', Object.assign({ candId: n.row.cand }, p))
         : n.row.action === 'compare' ? await api('apiAiCompare', n.row.app, p) : await api('apiAiScreeningSheet', n.row.app, Object.assign({ answered: [] }, p));
       await mark(row, { status: res.reused ? 'Reused' : 'Ready', draftId: res.draftId });
@@ -7363,11 +7363,93 @@ async function bgvGovernTab(el, B, v) {
 /* ---- Voice screening call (Admin test; ADR-045) ---- */
 const VOICE_STATUS_CLASS_ = { Completed: 'ok', Started: '', Starting: '', Failed: 'miss', 'Blocked (Do Not Disturb)': 'miss', Cancelled: '' };
 /* ---- v232: Admin > AI Recruitment (ADR-089). The key is typed here, sent once to the server and never read back: the page only ever gets the last four characters. ---- */
+/* ---- v240: AI usage report (period, filters, trend, breakdowns, failures, forecast, CSV) and the dated price list. Figures are estimates for requests made through this CRM. ---- */
+const AI_USE_PRESETS = [['month', 'This month'], ['last', 'Last month'], ['30', 'Last 30 days'], ['custom', 'Custom']];
+function aiUseRange(f) {
+  const n = new Date(), y = n.getFullYear(), m = n.getMonth(), ymd = d => ymdLocal(d);
+  if (f.preset === 'last') return { from: ymd(new Date(y, m - 1, 1)), to: ymd(new Date(y, m, 0)) };
+  if (f.preset === '30') return { from: ymd(new Date(n.getTime() - 29 * 86400000)), to: ymd(n) };
+  if (f.preset === 'custom') return { from: f.from, to: f.to };
+  return { from: ymd(new Date(y, m, 1)), to: ymd(n) };
+}
+const aiUsd = n => '$' + (Number(n) || 0).toFixed(Number(n) >= 1 ? 2 : 4);
+async function aiUsageRender(host) {
+  if (!host) return;
+  const f = S.aiUse = S.aiUse || { preset: 'month', from: '', to: '', feature: '', user: '', model: '', line: '', batch: '' };
+  const rg = aiUseRange(f);
+  host.innerHTML = '<section class="panel"><div class="dp-h"><h2>Usage</h2></div><p class="hint">Loading…</p></section>';
+  let U;
+  try { U = await api('apiAiUsage', { from: rg.from, to: rg.to, feature: f.feature, user: f.user, model: f.model, line: f.line, batch: f.batch }); }
+  catch (e) { host.innerHTML = `<section class="panel"><h2>Usage</h2><div class="empty">${esc(e)}</div></section>`; return; }
+  if (!host.isConnected) return;
+  const tbl = (head, rows, empty) => rows.length ? `<div class="table-wrap"><table class="ai-tbl"><thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : `<div class="empty">${esc(empty || 'Nothing in this period.')}</div>`;
+  const num = n => Number(n).toLocaleString('en-IN');
+  const row = (label, a, extra) => `<tr style="cursor:default"><td data-label="Name">${esc(label)}</td><td class="num" data-label="Requests">${a.requests}</td><td class="num" data-label="Failed">${a.failed}</td><td class="num" data-label="Tokens in">${num(a.tin)}</td><td class="num" data-label="Tokens out">${num(a.tout)}</td><td class="num" data-label="Est. cost">${esc(aiUsd(a.cost))}</td>${extra || ''}</tr>`;
+  const head = first => [first, 'Requests', 'Failed', 'Tokens in', 'Tokens out', 'Est. cost'];
+  const sel = (id, label, cur, list) => `<div class="field"><label for="${id}">${esc(label)}</label><select id="${id}"><option value="">All</option>${list.map(x => { const v = typeof x === 'string' ? x : x.id, l = typeof x === 'string' ? x : x.label; return `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`; }).join('')}</select></div>`;
+  const maxDay = Math.max(0.0001, ...U.byDay.map(d => d.cost));
+  const B = U.budget, F = U.forecast;
+  host.innerHTML = `<section class="panel"><div class="dp-h"><h2>Usage</h2><span class="badge ${B.level === 'ok' ? 'ok' : 'bad'}">${esc(B.pct)}% of this month’s budget</span></div>
+    <p class="hint" style="margin-top:0">${esc(U.note)}</p>
+    <div class="grid"><div class="field"><label for="auPre">Period</label><select id="auPre">${AI_USE_PRESETS.map(([v, l]) => `<option value="${v}" ${f.preset === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      ${f.preset === 'custom' ? `<div class="field"><label for="auFrom">From</label><input type="date" id="auFrom" value="${esc(f.from || rg.from)}"></div><div class="field"><label for="auTo">To</label><input type="date" id="auTo" value="${esc(f.to || rg.to)}"></div>` : ''}
+      ${sel('auFeat', 'Feature', f.feature, U.options.features)}${sel('auUser', 'Person', f.user, U.options.users)}${sel('auModel', 'Model', f.model, U.options.models)}${sel('auLine', 'Position', f.line, U.options.lines)}${sel('auBatch', 'Bulk run', f.batch, U.options.batches)}</div>
+    <div class="drawer-actions" style="position:static;justify-content:flex-start;gap:8px"><button class="btn" id="auReset">Clear filters</button><button class="btn" id="auCsv">Download CSV</button></div>
+    <p class="hint">${esc(U.from)} to ${esc(U.to)}. The CSV has ids, feature, model, tokens, cost and result for these filters; it has no candidate names and no AI content.</p>
+    <div class="rchips"><span class="rchip"><b>${esc(aiUsd(U.total.cost))}</b> in this period</span><span class="rchip"><b>${U.total.requests}</b> requests</span><span class="rchip"><b>${U.total.ok}</b> succeeded</span><span class="rchip"><b>${U.total.failed}</b> failed</span><span class="rchip"><b>${U.total.avgMs ? (U.total.avgMs / 1000).toFixed(1) + ' s' : '—'}</b> average</span><span class="rchip"><b>${U.acceptance.rate == null ? '—' : U.acceptance.rate + '%'}</b> drafts accepted</span></div>
+    <h3>This month against the budget</h3>
+    <div class="rchips"><span class="rchip"><b>${esc(aiUsd(B.spentUsd))}</b> of ${esc(aiUsd(B.limitUsd))}</span><span class="rchip"><b>${F.projectedUsd == null ? '—' : esc(aiUsd(F.projectedUsd))}</b> expected by month end</span></div>
+    ${B.level === 'reached' ? '<div class="note warn-note">The monthly budget is reached. New AI requests are paused until it is raised or the month changes.</div>' : B.level === 'warn' ? '<div class="note">Use is above the warning threshold.</div>' : ''}
+    ${F.overBudget ? '<div class="note warn-note">At this rate the month will end above the budget.</div>' : F.projectedUsd == null ? '<p class="hint">The month-end estimate needs a few days of use.</p>' : ''}
+    <div class="field" style="max-width:320px"><label for="auInv">Provider’s total for this month (US dollars, optional)</label><input id="auInv" type="number" min="0" step="0.01" inputmode="decimal" placeholder="From the Anthropic console"><span class="hint" id="auGap">Type the amount to see the gap. It is not saved.</span></div>
+    <h3>Per day</h3>${U.byDay.length ? `<div class="ai-bars" role="img" aria-label="Daily estimated cost, highest ${esc(aiUsd(maxDay))}">${U.byDay.map(d => `<span class="ai-bar" style="height:${Math.max(4, Math.round(d.cost / maxDay * 100))}%" title="${esc(d.day)}: ${esc(aiUsd(d.cost))}, ${d.requests} request${d.requests === 1 ? '' : 's'}"></span>`).join('')}</div>
+      <details><summary class="hint">Show the days as a table</summary>${tbl(['Day', 'Requests', 'Est. cost'], U.byDay.map(d => `<tr style="cursor:default"><td data-label="Day">${esc(d.day)}</td><td class="num" data-label="Requests">${d.requests}</td><td class="num" data-label="Est. cost">${esc(aiUsd(d.cost))}</td></tr>`))}</details>` : '<div class="empty">No requests in this period.</div>'}
+    <h3>By feature</h3>${tbl(head('Feature').concat(['Accepted', 'Cost per accepted draft']), U.byFeature.map(a => row(a.key, a, `<td class="num" data-label="Accepted">${a.accepted} of ${a.accepted + a.discarded} reviewed</td><td class="num" data-label="Cost per accepted draft">${a.costPerAccepted == null ? '—' : esc(aiUsd(a.costPerAccepted))}</td>`)))}
+    <h3>By person</h3>${tbl(head('Person'), U.byUser.map(a => row(a.key, a)))}
+    <h3>By model</h3>${tbl(head('Model'), U.byModel.map(a => row(a.key, a)))}
+    <h3>By position</h3>${tbl(head('Position'), U.byLine.map(a => row(a.label, a)))}
+    <h3>By bulk run</h3>${tbl(head('Run'), U.byBatch.map(a => row(a.key, a)), 'No bulk runs in this period.')}
+    <h3>Failures</h3>${tbl(['Kind', 'Count'], U.failures.map(x => `<tr style="cursor:default"><td data-label="Kind">${esc(x.cls)}</td><td class="num" data-label="Count">${x.count}</td></tr>`), 'No failed requests in this period.')}
+    <h3>Costliest requests</h3>${tbl(['Request', 'Feature', 'Model', 'Tokens in', 'Tokens out', 'Est. cost'], U.topCost.map(x => `<tr style="cursor:default"><td data-label="Request">${esc(x.id)} <span class="sub">${esc(x.when)}${x.line ? ' · ' + esc(x.line) : ''}${x.app ? ' · ' + esc(x.app) : ''}</span></td><td data-label="Feature">${esc(x.feature)}</td><td data-label="Model">${esc(x.model)}</td><td class="num" data-label="Tokens in">${num(x.tin)}</td><td class="num" data-label="Tokens out">${num(x.tout)}</td><td class="num" data-label="Est. cost">${esc(aiUsd(x.cost))}</td></tr>`))}
+    </section>`;
+  const redo = () => aiUsageRender(host), set = (k, v) => { f[k] = v; redo(); };
+  $('#auPre', host).onchange = e => { f.preset = e.target.value; if (f.preset === 'custom') { f.from = f.from || rg.from; f.to = f.to || rg.to; } redo(); };
+  if ($('#auFrom', host)) $('#auFrom', host).onchange = e => { if (e.target.value) set('from', e.target.value); };
+  if ($('#auTo', host)) $('#auTo', host).onchange = e => { if (e.target.value) set('to', e.target.value); };
+  [['auFeat', 'feature'], ['auUser', 'user'], ['auModel', 'model'], ['auLine', 'line'], ['auBatch', 'batch']].forEach(([id, k]) => { $('#' + id, host).onchange = e => set(k, e.target.value); });
+  $('#auReset', host).onclick = () => { Object.assign(f, { feature: '', user: '', model: '', line: '', batch: '' }); redo(); };
+  $('#auInv', host).oninput = e => { const v = Number(e.target.value), g = $('#auGap', host); if (e.target.value === '' || !isFinite(v)) { g.textContent = 'Type the amount to see the gap. It is not saved.'; return; } const diff = v - B.spentUsd, pct = B.spentUsd > 0 ? Math.round(diff / B.spentUsd * 1000) / 10 : null; g.textContent = `The provider shows ${aiUsd(Math.abs(diff))} ${diff >= 0 ? 'more' : 'less'} than this CRM’s estimate for the month${pct == null ? '' : ' (' + (diff >= 0 ? '+' : '') + pct + '%)'}. Requests made outside this CRM, price changes and rounding explain differences.`; };
+  $('#auCsv', host).onclick = async e => {
+    busy(e.target, true, 'Preparing…');
+    try { const r = await api('apiAiUsageCsv', { from: rg.from, to: rg.to, feature: f.feature, user: f.user, model: f.model, line: f.line, batch: f.batch }); saveBlob(new Blob([r.text], { type: 'text/csv' }), fileSafe(r.name)); toast(r.count + ' row' + (r.count === 1 ? '' : 's') + ' saved.'); busy(e.target, false, 'Download CSV'); }
+    catch (x) { failed(x, e.target, 'Download CSV'); }
+  };
+}
+async function aiPricesRender(host) {
+  if (!host) return;
+  let R; try { R = await api('apiAiPrices'); } catch (e) { host.innerHTML = `<section class="panel"><h2>Price list</h2><div class="empty">${esc(e)}</div></section>`; return; }
+  if (!host.isConnected) return;
+  const warn = R.status.filter(x => x.problem);
+  host.innerHTML = `<section class="panel"><div class="dp-h"><h2>Price list</h2>${warn.length ? `<span class="badge bad">${warn.length} to check</span>` : '<span class="badge ok">Up to date</span>'}</div>
+    <p class="hint" style="margin-top:0">US dollars per million tokens. Costs are estimated from the price that applied on the day of each request. Old prices are kept as they are; a change is a new dated row. Check the rates against the provider’s pricing page.</p>
+    ${warn.map(x => `<div class="note warn-note"><b>${esc(x.label)}:</b> ${esc(x.problem)}</div>`).join('')}
+    <div class="table-wrap"><table class="ai-tbl"><thead><tr><th>Model</th><th>From</th><th class="num">Input</th><th class="num">Output</th><th>Note</th></tr></thead><tbody>${R.rows.map(r => `<tr style="cursor:default"><td data-label="Model">${esc(r.model)}</td><td data-label="From">${esc(r.from)}</td><td class="num" data-label="Input">${esc(r.inM)}</td><td class="num" data-label="Output">${esc(r.outM)}</td><td data-label="Note"><span class="sub">${esc(r.note)}</span></td></tr>`).join('')}</tbody></table></div>
+    ${R.canAdd ? `<h3>Add a price</h3><div class="grid"><div class="field"><label for="apModel">Model</label><select id="apModel">${R.models.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('')}</select></div>
+      <div class="field"><label for="apFrom">Starts on</label><input type="date" id="apFrom" value="${esc(ymdLocal(new Date()))}"></div>
+      <div class="field"><label for="apIn">Input ($ per million)</label><input id="apIn" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="field"><label for="apOut">Output ($ per million)</label><input id="apOut" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="field wide"><label for="apNote">Note <span class="opt">(optional)</span></label><input id="apNote" maxlength="200" placeholder="e.g. rates on the Anthropic pricing page, 23 Nov"></div></div>
+      <div class="drawer-actions" style="position:static;justify-content:flex-start"><button class="btn primary" id="apAdd">Add price</button></div>` : ''}</section>`;
+  if ($('#apAdd', host)) $('#apAdd', host).onclick = async e => {
+    busy(e.target, true, 'Adding…');
+    try { await api('apiAiPriceAdd', { model: $('#apModel', host).value, from: $('#apFrom', host).value, inM: $('#apIn', host).value, outM: $('#apOut', host).value, note: $('#apNote', host).value }); toast('Price added. Older prices are kept.'); aiPricesRender(host); }
+    catch (x) { failed(x, e.target, 'Add price'); }
+  };
+}
 async function renderAiAdmin(el) {
   const canC = can('ai_credentials'), canS = can('ai_settings'), canU = can('ai_usage');
   const get = (ok, fn) => ok ? api(fn).catch(e => ({ _err: String(e) })) : Promise.resolve(null);
-  const [K, C, U] = await Promise.all([get(canC, 'apiAiKeyStatus'), get(canS, 'apiAiSettings'), get(canU, 'apiAiUsage')]);
-  const usd = n => '$' + (Number(n) || 0).toFixed(Number(n) >= 10 ? 2 : 4);
+  const [K, C] = await Promise.all([get(canC, 'apiAiKeyStatus'), get(canS, 'apiAiSettings')]);
   const when = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   const errBox = x => `<div class="empty">${esc(x._err)}</div>`;
   let html = `<section class="panel"><h2>AI Recruitment</h2>
@@ -7396,12 +7478,11 @@ async function renderAiAdmin(el) {
     <div class="field"><label for="aiConc">Requests running at once</label><input id="aiConc" type="number" min="1" max="5" step="1" value="${esc(C.maxConcurrent)}"></div>
     <div class="field"><label for="aiBatch">Most candidates in one bulk run</label><input id="aiBatch" type="number" min="1" max="100" step="1" value="${esc(C.batchLimit)}"></div></div>
     <div class="drawer-actions" style="position:static;justify-content:flex-start"><button class="btn primary" id="aiSave">Save settings</button></div></section>`;
-  if (U) html += U._err ? errBox(U) : `<section class="panel"><div class="dp-h"><h2>Usage this month</h2><span class="badge ${U.budget.level === 'ok' ? 'ok' : 'bad'}">${esc(U.budget.pct)}% of budget</span></div>
-    <p class="hint" style="margin-top:0">${esc(U.note)}</p>
-    <div class="rchips"><span class="rchip"><b>${esc(usd(U.budget.spentUsd))}</b> of ${esc(usd(U.budget.limitUsd))}</span><span class="rchip"><b>${U.total.requests}</b> requests</span><span class="rchip"><b>${U.total.ok}</b> succeeded</span><span class="rchip"><b>${U.total.failed}</b> failed</span><span class="rchip"><b>${U.total.avgMs ? (U.total.avgMs / 1000).toFixed(1) + ' s' : '—'}</b> average</span><span class="rchip"><b>${U.acceptance.rate == null ? '—' : U.acceptance.rate + '%'}</b> drafts accepted</span></div>
-    ${U.budget.level === 'reached' ? '<div class="note warn-note">The monthly budget is reached. New AI requests are paused until it is raised or the month changes.</div>' : U.budget.level === 'warn' ? '<div class="note">Use is above the warning threshold.</div>' : ''}
-    ${[['By feature', U.byFeature], ['By person', U.byUser]].map(([t, rows]) => `<h3>${t}</h3>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>${t === 'By feature' ? 'Feature' : 'Person'}</th><th class="num">Requests</th><th class="num">Failed</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Est. cost</th></tr></thead><tbody>${rows.map(r => `<tr style="cursor:default"><td>${esc(r.key)}</td><td class="num">${r.requests}</td><td class="num">${r.failed}</td><td class="num">${r.tin.toLocaleString('en-IN')}</td><td class="num">${r.tout.toLocaleString('en-IN')}</td><td class="num">${esc(usd(r.cost))}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No AI requests yet this month.</div>'}`).join('')}</section>`;
+  if (canU) html += '<div id="aiUsageHost"></div>';
+  if (canU || canS) html += '<div id="aiPriceHost"></div>';
   el.innerHTML = html;
+  if (canU) aiUsageRender($('#aiUsageHost', el));
+  if (canU || canS) aiPricesRender($('#aiPriceHost', el));
   const form = $('#aiKeyForm', el), inp = $('#aiKeyIn', el);
   const closeForm = () => { if (inp) { inp.value = ''; inp.type = 'password'; } if ($('#aiKeyShow', el)) $('#aiKeyShow', el).checked = false; if (form) form.hidden = true; };
   if ($('#aiKeyOpen', el)) $('#aiKeyOpen', el).onclick = () => { form.hidden = false; inp.focus(); };

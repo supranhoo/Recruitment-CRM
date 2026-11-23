@@ -117,7 +117,7 @@ function aiSummaryRun_(p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; built = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'summary', system: AI_SUMMARY_SYSTEM_, user: 'Write the summary.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiSummarySchema_(), maxTokens: 3000, candId: candId });
+    const r = aiRun_(u, { feature: 'summary', system: AI_SUMMARY_SYSTEM_, user: 'Write the summary.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiSummarySchema_(), maxTokens: 3000, candId: candId, lineId: aiTag_(p.lineId, 30), batchId: aiTag_(p.batchId, 40) });
     built = aiSummaryBuild_(r.data, src, cand);
     built.meta = { fp: aiSummaryFp_(cand), cvName: String(p.fileName || '').slice(0, 120), cvFile: String(cvFileId_(cand.CV_File_URL) || ''), model: r.model };
     if (JSON.stringify(built).length > 45000) throw new Error('The summary is too large to keep. Try again.');
@@ -256,7 +256,7 @@ function aiScreenRun_(appId, p) {
   if (!draft) {
     if (ask.length) {
       const list = ask.map(function (r) { const it = items.filter(function (x) { return String(x.id) === r.id; })[0]; return { id: r.id, question: r.field, needed: String(it.need || ''), type: it.type || 'text' }; });
-      const res = aiRun_(u, { feature: 'screening', system: AI_SCREEN_SYSTEM_, user: 'Questions:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiScreenSchema_(), maxTokens: 3000, candId: String(cand.Candidate_ID) });
+      const res = aiRun_(u, { feature: 'screening', system: AI_SCREEN_SYSTEM_, user: 'Questions:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiScreenSchema_(), maxTokens: 3000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
       aiScreenApply_(rows, res.data, src);
       draft = { job: aiGenericJob_(u, 'screening', 'Ready', String(cand.Candidate_ID), String(appId), p, hash, model, AI_SCREEN_PROMPT_VERSION_, res) };
     } else draft = { job: '' };

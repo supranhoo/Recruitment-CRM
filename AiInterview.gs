@@ -88,7 +88,7 @@ function aiQuestionsRun_(appId, p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'questions', system: AI_QUESTIONS_SYSTEM_, user: userMsg, schema: aiQuestionsSchema_(), maxTokens: 3500, candId: String(cand.Candidate_ID) });
+    const r = aiRun_(u, { feature: 'questions', system: AI_QUESTIONS_SYSTEM_, user: userMsg, schema: aiQuestionsSchema_(), maxTokens: 3500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiQuestionsBuild_(r.data, rq, src, kind, kind === 'core' ? 8 : 6);
     built.kind = kind; built.round = round; built.roundLabel = label; built.meta = { sqVersion: rq.sqVersion, jdVersion: rq.jdVersion, fp: kind === 'candidate' ? aiSummaryFp_(cand) : '', model: r.model };
     const job = aiGenericJob_(u, 'questions', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, AI_QUESTIONS_PROMPT_VERSION_, r);
@@ -168,7 +168,7 @@ function aiFeedbackRun_(appId, p) {
     if (draft) { try { built = JSON.parse(String(draft.Content_JSON)); reused = true; } catch (e) { draft = null; } }
   }
   if (!draft) {
-    const r = aiRun_(u, { feature: 'feedback', system: AI_FEEDBACK_SYSTEM_, user: 'Summarise the notes.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiFeedbackSchema_(), maxTokens: 2500, candId: String(cand.Candidate_ID) });
+    const r = aiRun_(u, { feature: 'feedback', system: AI_FEEDBACK_SYSTEM_, user: 'Summarise the notes.\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiFeedbackSchema_(), maxTokens: 2500, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiFeedbackBuild_(r.data, src, round);
     built.meta = { round: round.key, nhash: hash.slice(0, 16), model: r.model };
     const job = aiGenericJob_(u, 'feedback', 'Ready', String(cand.Candidate_ID), String(app.App_ID), p, hash, model, AI_FEEDBACK_PROMPT_VERSION_, r);

@@ -36,7 +36,7 @@ const AI_PRICE_SEED_ = [['claude-haiku-5-5', 0.10, 0.50], ['claude-sonnet-5-5', 
 const AI_PRICE_SEED_DATE_ = '2026-11-03';
 
 const AI_USAGE_ = { name: 'AI_Usage', id: 'Usage_ID', prefix: 'AIU-', width: 6, dates: [], editable: [],
-  cols: ['Usage_ID', 'When', 'Feature', 'User', 'Model', 'Candidate_ID', 'Outcome', 'Error_Class', 'Tokens_In', 'Tokens_Out', 'Est_Cost_USD', 'Duration_Ms', 'Reserved'] };
+  cols: ['Usage_ID', 'When', 'Feature', 'User', 'Model', 'Candidate_ID', 'Outcome', 'Error_Class', 'Tokens_In', 'Tokens_Out', 'Est_Cost_USD', 'Duration_Ms', 'Reserved', 'Line_ID', 'App_ID', 'Batch_ID'] };
 const AI_CREDLOG_ = { name: 'AI_Credential_Log', id: 'Log_ID', prefix: 'AIC-', width: 5, dates: [], editable: [],
   cols: ['Log_ID', 'When', 'Admin', 'Action', 'Success', 'Key_Version', 'Note'] };
 const AI_PRICING_ = { name: 'AI_Pricing', id: 'Price_ID', prefix: 'AIP-', width: 4, dates: [], editable: [],
@@ -79,6 +79,8 @@ function aiCfg_() {
 function aiKey_() { return String(PropertiesService.getScriptProperties().getProperty(AI_KEY_PROP_) || ''); }
 function aiMeta_() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(AI_META_PROP_) || '{}') || {}; } catch (e) { return {}; } }
 function aiMonth_(d) { return Utilities.formatDate(d || new Date(), TZ, 'yyyy-MM'); }
+/** A harmless label (an id) from a value the page sent: letters, digits, dash and underscore only. */
+function aiTag_(v, n) { return String(v == null ? '' : v).replace(/[^\w\-]/g, '').slice(0, n || 40); }
 function aiToDate_(v) { return v instanceof Date ? v : new Date(v); }
 
 /** Where an AI action stands right now, for every signed-in user (no key, no figures): { on, reason }. */
@@ -125,7 +127,8 @@ function aiMonthSpend_(rows, now) {
  * Reserves the estimated cost of one call under the script lock, so two calls started together cannot both pass a budget that only fits one.
  * Also enforces the concurrent-call limit. Returns the usage row id; aiSettle_ turns the reservation into the real figure.
  */
-function aiReserve_(u, feature, model, estIn, estOut, candId) {
+function aiReserve_(u, feature, model, estIn, estOut, candId, extra) {
+  extra = extra || {};
   return withLock_(function () {
     const cfg = aiCfg_(), now = new Date(), rows = readTable_(AI_USAGE_.name, true).rows;
     const est = aiCost_(model, estIn, estOut, now), spent = aiMonthSpend_(rows, now);
@@ -133,7 +136,7 @@ function aiReserve_(u, feature, model, estIn, estOut, candId) {
     const cut = new Date(now.getTime() - 15 * 60000);
     const live = rows.filter(function (r) { return String(r.Outcome) === 'Reserved' && aiToDate_(r.When) >= cut; }).length;
     if (live >= cfg.maxConcurrent) throw new Error('Other AI requests are still running. Wait a moment and try again.');
-    const o = insert_(AI_USAGE_, { When: now, Feature: feature, User: u.email, Model: model, Candidate_ID: candId || '', Outcome: 'Reserved', Error_Class: '', Tokens_In: 0, Tokens_Out: 0, Est_Cost_USD: est, Duration_Ms: 0, Reserved: est }, u);
+    const o = insert_(AI_USAGE_, { When: now, Feature: feature, User: u.email, Model: model, Candidate_ID: candId || '', Outcome: 'Reserved', Error_Class: '', Tokens_In: 0, Tokens_Out: 0, Est_Cost_USD: est, Duration_Ms: 0, Reserved: est, Line_ID: extra.lineId || '', App_ID: extra.appId || '', Batch_ID: extra.batchId || '' }, u);
     return o[AI_USAGE_.id];
   });
 }
@@ -238,7 +241,7 @@ function aiRun_(u, o) {
   if (!st.on) throw new Error(st.reason);
   const model = cfg.models[o.feature] || AI_DEFAULT_MODEL_, maxOut = Math.min(o.maxTokens || cfg.maxOutTokens, cfg.maxOutTokens);
   const estIn = Math.ceil((String(o.system || '').length + String(o.user || '').length) / 3) + 200;
-  const id = aiReserve_(u, o.feature, model, estIn, maxOut, o.candId);
+  const id = aiReserve_(u, o.feature, model, estIn, maxOut, o.candId, { lineId: aiTag_(o.lineId, 30), appId: aiTag_(o.appId, 30), batchId: aiTag_(o.batchId, 40) });
   let r;
   try { r = aiCall_({ model: model, system: o.system, user: o.user, schema: o.schema, maxTokens: maxOut, effort: o.effort }); }
   catch (e) { r = { ok: false, cls: 'network', tin: 0, tout: 0, ms: 0 }; }
@@ -339,30 +342,119 @@ function apiAiSettingsSave(d) {
 }
 
 /* ------------------------------------------------------------------ usage view ----------------------------------- */
+/** The usage rows for a period and filters. d = { from, to (yyyy-mm-dd), feature, user, model, line, batch }. */
+function aiUsageFilter_(d, all, skip) {
+  d = d || {}; skip = skip || {};
+  const now = new Date(), from = d.from ? parseYmd_(d.from) : parseYmd_(aiMonth_(now) + '-01'), to = d.to ? parseYmd_(d.to) : now;
+  if (!from || !to || isNaN(from.getTime()) || isNaN(to.getTime())) throw new Error('Choose a valid period.');
+  if (to < from) throw new Error('The end of the period is before its start.');
+  const toEnd = new Date(to.getTime() + 86399000);
+  const f = { feature: String(d.feature || ''), user: String(d.user || '').toLowerCase(), model: String(d.model || ''), line: String(d.line || ''), batch: String(d.batch || '') };
+  const rows = all.filter(function (r) {
+    const w = aiToDate_(r.When); if (!(w >= from && w <= toEnd)) return false;
+    if (!skip.feature && f.feature && String(r.Feature) !== f.feature) return false;
+    if (!skip.user && f.user && String(r.User).toLowerCase() !== f.user) return false;
+    if (!skip.model && f.model && String(r.Model) !== f.model) return false;
+    if (!skip.line && f.line && String(r.Line_ID || '') !== f.line) return false;
+    if (!skip.batch && f.batch && String(r.Batch_ID || '') !== f.batch) return false;
+    return true;
+  });
+  return { from: from, to: to, toEnd: toEnd, rows: rows, f: f, now: now };
+}
+function aiUsageAgg_(rows, keyFn) {
+  const m = {};
+  rows.forEach(function (r) {
+    if (String(r.Outcome) === 'Reserved') return;
+    const k = keyFn(r), a = m[k] = m[k] || { key: k, requests: 0, ok: 0, failed: 0, tin: 0, tout: 0, cost: 0, ms: 0 };
+    a.requests++; if (String(r.Outcome) === 'Done') a.ok++; else a.failed++;
+    a.tin += Number(r.Tokens_In) || 0; a.tout += Number(r.Tokens_Out) || 0; a.cost += Number(r.Est_Cost_USD) || 0; a.ms += Number(r.Duration_Ms) || 0;
+  });
+  return Object.keys(m).map(function (k) { const a = m[k]; a.cost = Math.round(a.cost * 10000) / 10000; a.avgMs = a.requests ? Math.round(a.ms / a.requests) : 0; delete a.ms; return a; }).sort(function (x, y) { return y.cost - x.cost; });
+}
+/** Where each model's price list stands: the newest dated row, whether it is stale (older than 90 days) and whether a model in use has none. */
+function aiPriceStatus_(usageRows, cfg, now) {
+  const rows = readTable_(AI_PRICING_.name, true).rows, used = {};
+  Object.keys(cfg.models).forEach(function (k) { used[cfg.models[k]] = true; });
+  usageRows.forEach(function (r) { if (r.Model && String(r.Feature) !== 'Connection test') used[String(r.Model)] = true; });
+  return AI_MODELS_.map(function (m) {
+    const mine = rows.filter(function (r) { return r.Model === m.id; }).sort(function (a, b) { return ymd_(aiToDate_(b.From_Date)) < ymd_(aiToDate_(a.From_Date)) ? -1 : 1; }), top = mine[0] || null;
+    const age = top ? Math.floor((now.getTime() - aiToDate_(top.From_Date).getTime()) / 86400000) : null;
+    return { model: m.id, label: m.label, inUse: !!used[m.id], newest: top ? ymd_(aiToDate_(top.From_Date)) : '', inM: top ? Number(top.In_per_M_USD) : null, outM: top ? Number(top.Out_per_M_USD) : null, ageDays: age,
+      problem: !top ? (used[m.id] ? 'No price is recorded for this model, so its cost shows as $0.' : '') : (age > 90 && used[m.id] ? 'The newest price is over 90 days old. Check it against the provider’s current rates.' : '') };
+  });
+}
 function apiAiUsage(d) {
   const u = currentUser_(); aiSchema_();
   if (!can_(u, 'ai_usage')) throw new Error('You do not have permission to see AI usage.');
-  d = d || {};
-  const now = new Date(), from = d.from ? parseYmd_(d.from) : parseYmd_(aiMonth_(now) + '-01'), to = d.to ? parseYmd_(d.to) : now;
-  const toEnd = new Date(to.getTime() + 86399000);
-  const all = readTable_(AI_USAGE_.name, true).rows, cfg = aiCfg_();
-  const rows = all.filter(function (r) { const w = aiToDate_(r.When); return w >= from && w <= toEnd; });
-  const agg = function (keyFn) {
-    const m = {};
-    rows.forEach(function (r) {
-      const k = keyFn(r), a = m[k] = m[k] || { key: k, requests: 0, ok: 0, failed: 0, tin: 0, tout: 0, cost: 0, ms: 0 };
-      if (String(r.Outcome) === 'Reserved') return;
-      a.requests++; if (String(r.Outcome) === 'Done') a.ok++; else a.failed++;
-      a.tin += Number(r.Tokens_In) || 0; a.tout += Number(r.Tokens_Out) || 0; a.cost += Number(r.Est_Cost_USD) || 0; a.ms += Number(r.Duration_Ms) || 0;
-    });
-    return Object.keys(m).map(function (k) { const a = m[k]; a.cost = Math.round(a.cost * 10000) / 10000; a.avgMs = a.requests ? Math.round(a.ms / a.requests) : 0; return a; }).sort(function (x, y) { return y.cost - x.cost; });
-  };
+  const all = readTable_(AI_USAGE_.name, true).rows, cfg = aiCfg_(), F = aiUsageFilter_(d, all), now = F.now, rows = F.rows;
   const spent = aiMonthSpend_(all, now), pct = cfg.budgetUsd > 0 ? Math.round(spent / cfg.budgetUsd * 1000) / 10 : 100;
-  const drafts = readTable_(AI_DRAFTS_.name, true).rows.filter(function (r) { const w = aiToDate_(r.Created_At); return w >= from && w <= toEnd; });
+  const drafts = readTable_(AI_DRAFTS_.name, true).rows.filter(function (r) { const w = aiToDate_(r.Created_At); return w >= F.from && w <= F.toEnd; });
   const acc = drafts.filter(function (r) { return r.Status === 'Accepted'; }).length, dis = drafts.filter(function (r) { return r.Status === 'Discarded'; }).length;
-  const tot = agg(function () { return 'all'; })[0] || { requests: 0, ok: 0, failed: 0, tin: 0, tout: 0, cost: 0, avgMs: 0 };
-  return { from: ymd_(from), to: ymd_(to), total: tot, byFeature: agg(function (r) { return String(r.Feature); }), byUser: agg(function (r) { return String(r.User); }),
+  const byFeature = aiUsageAgg_(rows, function (r) { return String(r.Feature); });
+  byFeature.forEach(function (a) {
+    const ds = drafts.filter(function (r) { return r.Feature === a.key; }), ac = ds.filter(function (r) { return r.Status === 'Accepted'; }).length, di = ds.filter(function (r) { return r.Status === 'Discarded'; }).length;
+    a.accepted = ac; a.discarded = di; a.costPerAccepted = ac ? Math.round(a.cost / ac * 10000) / 10000 : null;
+  });
+  const lineName = {}; const nameOf = function (id) { if (!id) return 'Not recorded'; if (!(id in lineName)) { const l = lineOf_(id); lineName[id] = l ? String(l.MRF_No || id) + ' ' + String(l.Position || '') : id; } return lineName[id]; };
+  const byDayMap = {}; rows.forEach(function (r) { if (String(r.Outcome) === 'Reserved') return; const k = ymd_(aiToDate_(r.When)), a = byDayMap[k] = byDayMap[k] || { day: k, requests: 0, cost: 0 }; a.requests++; a.cost += Number(r.Est_Cost_USD) || 0; });
+  const fails = {}; rows.forEach(function (r) { if (String(r.Outcome) === 'Failed') { const k = String(r.Error_Class || 'unknown'); fails[k] = (fails[k] || 0) + 1; } });
+  const opt = function (skip, col) { const s = {}; aiUsageFilter_(d, all, skip).rows.forEach(function (r) { const v = String(r[col] || ''); if (v && String(r.Feature) !== 'Connection test') s[v] = true; }); return Object.keys(s).sort(); };
+  const day = Number(ymd_(now).slice(8, 10)), y = Number(ymd_(now).slice(0, 4)), mo = Number(ymd_(now).slice(5, 7)), dim = new Date(y, mo, 0).getDate();
+  const proj = day >= 3 ? Math.round(spent / day * dim * 10000) / 10000 : null;
+  const tot = aiUsageAgg_(rows, function () { return 'all'; })[0] || { requests: 0, ok: 0, failed: 0, tin: 0, tout: 0, cost: 0, avgMs: 0 };
+  return { from: ymd_(F.from), to: ymd_(F.to), filters: F.f, total: tot, byFeature: byFeature, byUser: aiUsageAgg_(rows, function (r) { return String(r.User); }), byModel: aiUsageAgg_(rows, function (r) { return String(r.Model); }),
+    byLine: aiUsageAgg_(rows, function (r) { return String(r.Line_ID || ''); }).map(function (a) { a.label = nameOf(a.key); return a; }),
+    byBatch: aiUsageAgg_(rows.filter(function (r) { return r.Batch_ID; }), function (r) { return String(r.Batch_ID); }),
+    byDay: Object.keys(byDayMap).sort().map(function (k) { const a = byDayMap[k]; a.cost = Math.round(a.cost * 10000) / 10000; return a; }),
+    failures: Object.keys(fails).map(function (k) { return { cls: k, count: fails[k] }; }).sort(function (a, b) { return b.count - a.count; }),
+    topCost: rows.filter(function (r) { return String(r.Outcome) !== 'Reserved'; }).sort(function (a, b) { return (Number(b.Est_Cost_USD) || 0) - (Number(a.Est_Cost_USD) || 0); }).slice(0, 10)
+      .map(function (r) { return { id: String(r.Usage_ID), when: ymd_(aiToDate_(r.When)), feature: String(r.Feature), model: String(r.Model), cost: Number(r.Est_Cost_USD) || 0, tin: Number(r.Tokens_In) || 0, tout: Number(r.Tokens_Out) || 0, line: String(r.Line_ID || ''), app: String(r.App_ID || ''), outcome: String(r.Outcome) }; }),
     budget: { limitUsd: cfg.budgetUsd, spentUsd: Math.round(spent * 10000) / 10000, pct: pct, level: pct >= 100 ? 'reached' : pct >= cfg.warnPct ? 'warn' : 'ok', month: aiMonth_(now) },
+    forecast: { projectedUsd: proj, day: day, daysInMonth: dim, overBudget: proj != null && cfg.budgetUsd > 0 && proj > cfg.budgetUsd },
     acceptance: { accepted: acc, discarded: dis, rate: acc + dis ? Math.round(acc / (acc + dis) * 100) : null },
-    note: 'These figures cover requests made through this CRM, priced from the dated rates in AI_Pricing. They are estimates and may differ from the provider’s invoice or account balance.' };
+    options: { features: opt({ feature: 1 }, 'Feature'), users: opt({ user: 1 }, 'User'), models: opt({ model: 1 }, 'Model'), lines: opt({ line: 1 }, 'Line_ID').map(function (id) { return { id: id, label: nameOf(id) }; }), batches: opt({ batch: 1 }, 'Batch_ID') },
+    prices: aiPriceStatus_(all, cfg, now),
+    note: 'These figures cover requests made through this CRM, priced from the dated rates in AI_Pricing. They are estimates and may differ from the provider’s invoice or account balance. Requests made before v240 have no position recorded.' };
+}
+/** The filtered usage rows as CSV text: ids, feature, model, tokens and cost. No candidate names and no content. */
+function apiAiUsageCsv(d) {
+  const u = currentUser_(); aiSchema_();
+  if (!can_(u, 'ai_usage')) throw new Error('You do not have permission to see AI usage.');
+  const F = aiUsageFilter_(d, readTable_(AI_USAGE_.name, true).rows), cols = ['Usage_ID', 'When', 'Feature', 'User', 'Model', 'Candidate_ID', 'Line_ID', 'App_ID', 'Batch_ID', 'Outcome', 'Error_Class', 'Tokens_In', 'Tokens_Out', 'Est_Cost_USD', 'Duration_Ms'];
+  const cell = function (v) { let s = v instanceof Date ? v.toISOString() : String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const rows = F.rows.filter(function (r) { return String(r.Outcome) !== 'Reserved'; }).slice(0, 20000);
+  audit_(u, 'AI_Usage', '', 'Usage exported', 'Rows', '', String(rows.length));
+  return { name: 'AI usage ' + ymd_(F.from) + ' to ' + ymd_(F.to) + '.csv', count: rows.length, text: cols.join(',') + '\n' + rows.map(function (r) { return cols.map(function (c) { return cell(r[c]); }).join(','); }).join('\n') };
+}
+
+/* ------------------------------------------------------------------ price list ----------------------------------- */
+function aiPricesOut_(u) {
+  const cfg = aiCfg_(), now = new Date(), rows = readTable_(AI_PRICING_.name, true).rows;
+  return { rows: rows.map(function (r) { return { id: String(r.Price_ID), model: String(r.Model), from: ymd_(aiToDate_(r.From_Date)), inM: Number(r.In_per_M_USD), outM: Number(r.Out_per_M_USD), note: String(r.Note || '') }; })
+      .sort(function (a, b) { return a.model < b.model ? -1 : a.model > b.model ? 1 : (a.from < b.from ? 1 : -1); }),
+    status: aiPriceStatus_(readTable_(AI_USAGE_.name, true).rows, cfg, now), canAdd: can_(u, 'ai_settings'), models: AI_MODELS_ };
+}
+function apiAiPrices() {
+  const u = currentUser_(); aiSchema_();
+  if (!can_(u, 'ai_usage') && !can_(u, 'ai_settings')) throw new Error('You do not have permission to see the AI price list.');
+  return aiPricesOut_(u);
+}
+/** Adds a dated price row. Old rows are never edited or removed, so past costs stay reproducible. */
+function apiAiPriceAdd(d) {
+  const u = currentUser_(); aiSchema_(); requireAiSettings_(u); d = d || {};
+  const model = String(d.model || ''), from = String(d.from || '').trim(), note = String(d.note || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (!AI_MODELS_.some(function (m) { return m.id === model; })) throw new Error('Choose one of the listed models.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || isNaN(parseYmd_(from).getTime())) throw new Error('Enter the date the price starts on.');
+  const num = function (v, lab) { const n = Number(v); if (v === '' || v == null || !isFinite(n) || n <= 0 || n > 1000) throw new Error(lab + ' must be a number above 0 and up to 1000 (US dollars per million tokens).'); return Math.round(n * 10000) / 10000; };
+  const inM = num(d.inM, 'The input price'), outM = num(d.outM, 'The output price');
+  const today = ymd_(new Date()), far = ymd_(new Date(Date.now() + 31 * 86400000));
+  if (from > far) throw new Error('A price can start at most 31 days ahead.');
+  withLock_(function () {
+    const mine = readTable_(AI_PRICING_.name, true).rows.filter(function (r) { return r.Model === model; });
+    const newest = mine.map(function (r) { return ymd_(aiToDate_(r.From_Date)); }).sort().pop() || '';
+    if (newest && from < newest) throw new Error('This model already has a price from ' + newest + '. A new price must start on or after that date; older rows are kept as they are.');
+    insert_(AI_PRICING_, { Model: model, From_Date: from, In_per_M_USD: inM, Out_per_M_USD: outM, Note: note || ('Added by ' + u.email.split('@')[0] + ' on ' + today) }, u);
+    audit_(u, 'AI_Pricing', model, 'Price added', 'From ' + from, '', inM + ' in, ' + outM + ' out per million tokens');
+  });
+  return aiPricesOut_(u);
 }

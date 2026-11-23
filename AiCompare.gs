@@ -91,7 +91,7 @@ function aiCompareRun_(appId, p) {
   }
   if (!draft) {
     const list = rq.reqs.map(function (r) { return { id: r.id, tier: r.tier, requirement: r.text }; });
-    const r = aiRun_(u, { feature: 'compare', system: AI_COMPARE_SYSTEM_, user: 'Requirements:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiCompareSchema_(), maxTokens: 5000, candId: String(cand.Candidate_ID) });
+    const r = aiRun_(u, { feature: 'compare', system: AI_COMPARE_SYSTEM_, user: 'Requirements:\n' + JSON.stringify(list) + '\n<source>\n' + src.text.replace(/<\/source>/gi, '<\\/source>') + '\n</source>', schema: aiCompareSchema_(), maxTokens: 5000, candId: String(cand.Candidate_ID), appId: String(app.App_ID), lineId: String(app.Line_ID), batchId: aiTag_(p.batchId, 40) });
     built = aiCompareBuild_(r.data, rq, src);
     built.meta = { fp: aiCompareFp_(app, cand, rq), sqVersion: rq.sqVersion, jdVersion: rq.jdVersion, cvName: String(p.fileName || '').slice(0, 120), usedCv: hasText, model: r.model };
     if (JSON.stringify(built).length > 45000) throw new Error('The comparison is too large to keep. Try again.');
