@@ -2863,6 +2863,135 @@ function aiCommDialog(res, ctx) {
   $('#aiCmDiscard', d).onclick = async e => { busy(e.target, true); try { await api('apiAiDraftMark', res.draftId, 'Discarded', []); } catch (x) { return failed(x, e.target, 'Discard draft'); } d.close(); toast('Draft discarded. Nothing was sent.'); };
   $('#aiCmBody', d).focus();
 }
+/* ---- v239: AI bulk run. The page reads each CV and calls the same per-candidate actions as the single buttons, one candidate at a time; the server enforces
+   permission, budget and concurrency on every request. Results are only drafts, reviewed one by one in the usual dialogs. No accept-all, no ranking, no score. ---- */
+const AI_BULK_ACTS = [['summary', 'Candidate summary'], ['compare', 'Comparison with this vacancy'], ['screening', 'Screening sheet preparation']];
+const AI_BULK_STATUS = { Queued: 'Waiting', Running: 'Working…', Ready: 'Draft ready', Reused: 'Draft ready (saved one reused)', Failed: 'Failed', Skipped: 'Skipped', Stopped: 'Stopped', Interrupted: 'Interrupted' };
+const aiSleep = ms => new Promise(r => setTimeout(r, ms));
+function aiBulkOn() { return can('ai_bulk') && AI_BULK_ACTS.some(x => aiFeatureOn(x[0])); }
+function aiBulkActLabel(k) { const x = AI_BULK_ACTS.find(a => a[0] === k); return x ? x[1] : k; }
+function aiBulkDialog(P, after) {
+  const cards = P.apps.filter(a => a.Status === 'Active'), acts = AI_BULK_ACTS.filter(x => aiFeatureOn(x[0])), line = P.line.Line_ID;
+  const d = cpDlg(`<h2 id="cpTitle">AI bulk run · ${esc(P.line.MRF_No || '')} ${esc(P.line.Position || '')}</h2>
+    <p class="hint" style="margin-top:0">The AI prepares <b>drafts</b> for the ticked candidates, one after another: nothing is accepted, rated, ranked, sent or moved by it, and you review each result yourself. Each candidate’s CV is read in this browser, so <b>keep this page open while it runs</b>. Selected CV text, without names or contact details, is processed by an external AI provider.</p>
+    <fieldset class="ai-acts"><legend class="hint">What to prepare</legend>${acts.map(x => `<label class="chk"><input type="checkbox" class="ab-a" value="${esc(x[0])}" ${x[0] === 'summary' ? 'checked' : ''}> ${esc(x[1])}</label>`).join('')}</fieldset>
+    ${cards.length ? `<div class="table-wrap"><table class="ai-tbl"><thead><tr><th><input type="checkbox" id="abAll" aria-label="Tick all"></th><th>Candidate</th><th>Stage</th><th>Check</th></tr></thead><tbody>${cards.map(a => `<tr style="cursor:default" data-app="${esc(a.App_ID)}"><td><input type="checkbox" class="ab-t" aria-label="${esc(a.cand.name || a.Candidate_ID)}"></td><td data-label="Candidate"><b>${esc(a.cand.name || a.Candidate_ID)}</b></td><td data-label="Stage">${esc(P_NAMES[a.Stage] || a.Stage)}</td><td data-label="Check" class="ab-v"><span class="sub">not checked yet</span></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No active candidates on this position.</div>'}
+    <div id="abSum" class="note" hidden></div>
+    <div class="drawer-actions" style="position:static;gap:8px;flex-wrap:wrap"><button class="btn" data-close>Close</button><button class="btn" id="abPast">Earlier runs</button><button class="btn" id="abCheck" ${cards.length ? '' : 'disabled'}>Check the ticked candidates</button><button class="btn primary" id="abGo" disabled>Start the run</button></div>`);
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  const ticked = () => $$('.ab-t', d).filter(x => x.checked).map(x => x.closest('tr').dataset.app), chosen = () => $$('.ab-a', d).filter(x => x.checked).map(x => x.value);
+  const stale = () => { $('#abGo', d).disabled = true; };
+  if ($('#abAll', d)) $('#abAll', d).onchange = e => { $$('.ab-t', d).forEach(x => { x.checked = e.target.checked; }); stale(); };
+  d.addEventListener('change', e => { if (e.target.classList.contains('ab-t') || e.target.classList.contains('ab-a')) stale(); });
+  $('#abPast', d).onclick = () => aiBulkListDialog(line);
+  let last = null;
+  $('#abCheck', d).onclick = async e => {
+    const ids = ticked(), as = chosen(); if (!ids.length) return toast('Tick at least one candidate.', true); if (!as.length) return toast('Choose what to prepare.', true);
+    busy(e.target, true, 'Checking…');
+    try {
+      last = await api('apiAiBulkPreview', line, ids, as);
+      last.rows.forEach(r => { const td = $('tr[data-app="' + r.app + '"] .ab-v', d); if (!td) return; const parts = as.map(a => r.actions && a in r.actions ? (r.actions[a] ? `<span class="sub miss">${esc(aiBulkActLabel(a))}: ${esc(r.actions[a])}</span>` : `<span class="sub">${esc(aiBulkActLabel(a))}: ready</span>`) : '').filter(Boolean);
+        td.innerHTML = r.ready ? '<b class="ok">Ready</b> ' + parts.join(' ') : `<b class="miss">Skipped</b> <span class="sub">${esc(r.reason || '')}</span>`; });
+      const usd = n => '$' + Number(n).toFixed(2), sum = $('#abSum', d); sum.hidden = false; sum.className = 'note ' + (last.requests && last.fits ? 'ok-note' : 'warn-note');
+      sum.innerHTML = `<b>${last.ready} candidate${last.ready === 1 ? '' : 's'} ready, ${last.skipped} skipped, ${last.requests} request${last.requests === 1 ? '' : 's'}.</b> Estimated cost about ${usd(last.estUsd)} (up to ${usd(last.maxUsd)}). Budget left this month: ${usd(last.budget.leftUsd)} of ${usd(last.budget.limitUsd)}. ${esc(last.note)}${last.fits ? '' : ' <b class="miss">The estimate is more than the budget left, so the run cannot start.</b>'}`;
+      $('#abGo', d).disabled = !(last.requests && last.fits);
+    } catch (err) { toast(err, true); }
+    busy(e.target, false, 'Check the ticked candidates');
+  };
+  $('#abGo', d).onclick = async e => {
+    if (!await askConfirm('Start preparing ' + last.requests + ' AI draft' + (last.requests === 1 ? '' : 's') + ' now? Each request is charged to the AI account (estimate about $' + Number(last.estUsd).toFixed(2) + '). Keep this page open until it finishes.')) return;
+    busy(e.target, true, 'Starting…');
+    try {
+      const r = await api('apiAiBulkStart', line, ticked(), chosen());
+      const list = await api('apiAiBulkList', line), b = list.find(x => x.id === r.batch);
+      if (after) after();
+      aiBulkRunView(d, b, { line, P });
+    } catch (err) { failed(err, e.target, 'Start the run'); }
+  };
+}
+/** Works the queue of one run. Also used to resume a run after the page was closed. */
+function aiBulkRunView(d, b, ctx) {
+  const st = { pause: false, stop: false, running: false, fails: 0, reason: '', done: false }, maxMb = (S.boot.ai && S.boot.ai.maxFileMb) || 5, cvCache = {};
+  const rows = b.rows;
+  const count = k => rows.filter(r => r.status === k).length, finished = () => rows.filter(r => !['Queued', 'Running', 'Interrupted'].includes(r.status)).length;
+  const draw = () => {
+    const open = rows.some(r => ['Queued', 'Running', 'Interrupted'].includes(r.status));
+    d.innerHTML = `<h2 id="cpTitle">AI bulk run ${esc(b.id)}</h2>
+      <p class="hint" style="margin-top:0">Drafts only: open each one to review, edit and accept it. Nothing is accepted, rated, ranked, sent or moved by the AI. ${open ? '<b>Keep this page open while it runs.</b>' : ''}</p>
+      <div id="abStatus" aria-live="polite" class="rchips"><span class="rchip"><b>${finished()}</b> of ${rows.length} done</span>${['Ready', 'Reused', 'Failed', 'Skipped', 'Stopped'].filter(k => count(k)).map(k => `<span class="rchip"><b>${count(k)}</b> ${esc((AI_BULK_STATUS[k] || k).toLowerCase())}</span>`).join('')}</div>
+      ${st.reason ? `<div class="note warn-note"><b>The run was stopped:</b> ${esc(st.reason)}</div>` : ''}
+      <div class="table-wrap"><table class="ai-tbl"><thead><tr><th>Candidate</th><th>Prepared</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr style="cursor:default" data-row="${esc(r.id)}"><td data-label="Candidate"><b>${esc(r.name)}</b></td><td data-label="Prepared">${esc(aiBulkActLabel(r.action))}</td><td data-label="Status">${esc(AI_BULK_STATUS[r.status] || r.status)}${r.note ? `<div class="sub miss">${esc(r.note)}</div>` : ''}</td>
+        <td class="nw">${r.draftId && ['Ready', 'Reused'].includes(r.status) ? `<button class="btn sm" data-review="${esc(r.id)}">${r.action === 'screening' ? 'Open card' : 'Review'}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+      <p class="hint">${rows.some(r => r.status === 'Failed') ? 'Failed requests are not charged twice: run again later and any identical saved draft is reused. ' : ''}Screening sheets are reviewed on the candidate’s card (Screening → prepare with AI): the saved draft is shown without a new request.</p>
+      <div class="drawer-actions" style="position:static;gap:8px;flex-wrap:wrap"><button class="btn" data-close>Close</button>${open && st.running ? `<button class="btn" id="abPause">${st.pause ? 'Continue' : 'Pause'}</button><button class="btn danger" id="abStop">Stop the waiting ones</button>` : ''}${open && !st.running ? '<button class="btn primary" id="abResume">Continue this run</button>' : ''}</div>`;
+    d.setAttribute('aria-labelledby', 'cpTitle');
+    $$('[data-close]', d).forEach(x => x.onclick = () => d.close());
+    if ($('#abPause', d)) $('#abPause', d).onclick = () => { st.pause = !st.pause; draw(); };
+    if ($('#abStop', d)) $('#abStop', d).onclick = async () => { st.stop = true; try { await api('apiAiBulkStop', b.id); } catch (e) { toast(e, true); } rows.forEach(r => { if (r.status === 'Queued') r.status = 'Stopped'; }); draw(); };
+    if ($('#abResume', d)) $('#abResume', d).onclick = () => { st.stop = false; st.reason = ''; go(); };
+    $$('[data-review]', d).forEach(x => x.onclick = () => aiBulkReview(rows.find(r => r.id === x.dataset.review), d, ctx));
+  };
+  const cvOf = cand => cvCache[cand] || (cvCache[cand] = aiCvFromCandidate(cand).catch(e => { if (/No CV has been uploaded/.test(String(e && e.message || e))) return { text: '', file: {}, none: true }; throw e; }));
+  const mark = async (row, res) => {
+    const m = await api('apiAiBulkMark', b.id, row.id, res);
+    row.status = res.status; row.note = res.status === 'Failed' || res.status === 'Skipped' ? String(res.error || '') : ''; row.draftId = res.draftId || '';
+    if (m && m.stop) { st.reason = m.stop; st.stop = true; rows.forEach(r => { if (r.status === 'Queued') { r.status = 'Stopped'; r.note = m.stop; } }); }
+  };
+  const one = async n => {
+    const row = rows.find(r => r.id === n.row.id) || { id: n.row.id, name: n.row.cand, action: n.row.action, status: 'Running', note: '' };
+    if (!rows.includes(row)) rows.push(row);
+    row.status = 'Running'; draw();
+    try {
+      const src = await cvOf(n.row.cand), file = src.file || {};
+      if (src.none && n.row.action === 'summary') return await mark(row, { status: 'Skipped', error: 'No CV is on file.' });
+      if (file.size > maxMb * 1024 * 1024) return await mark(row, { status: 'Skipped', error: 'The CV is larger than the ' + maxMb + ' MB limit.' });
+      const p = { text: src.text, fileName: file.name || '', fileSize: file.size || 0, pageOffsets: file._pageOffsets || [] };
+      const res = n.row.action === 'summary' ? await api('apiAiSummaryGenerate', Object.assign({ candId: n.row.cand }, p))
+        : n.row.action === 'compare' ? await api('apiAiCompare', n.row.app, p) : await api('apiAiScreeningSheet', n.row.app, Object.assign({ answered: [] }, p));
+      await mark(row, { status: res.reused ? 'Reused' : 'Ready', draftId: res.draftId });
+    } catch (e) {
+      const msg = String(e && e.message || e).slice(0, 200);
+      try { await mark(row, { status: /Not enough text|larger than the|No CV has been uploaded/.test(msg) ? 'Skipped' : 'Failed', error: msg }); } catch (x) { st.reason = String(x && x.message || x); st.stop = true; }
+      if (/rate limit|busy/i.test(msg)) await aiSleep(20000);
+    }
+  };
+  const go = async () => {
+    if (st.running) return; st.running = true; draw();
+    try {
+      while (!st.stop) {
+        while (st.pause && !st.stop) await aiSleep(300);
+        if (st.stop) break;
+        const n = await api('apiAiBulkNext', b.id);
+        if (n.done) { st.done = true; break; }
+        if (n.busy) { await aiSleep(2000); continue; }
+        await one(n); draw();
+        await aiSleep(1000);
+      }
+    } catch (e) { st.reason = String(e && e.message || e); }
+    st.running = false; draw();
+    if (st.done) toast('The run is finished. Open each draft to review it.');
+  };
+  if (b.open) go(); else draw();
+}
+async function aiBulkReview(row, d, ctx) {
+  try {
+    if (row.action === 'screening') { d.close(); openAlertCard({ line: row.line || ctx.line, app: row.app }); return; }
+    const res = await api('apiAiBulkDraft', row.draftId);
+    d.addEventListener('close', () => aiBulkListDialog(ctx.line), { once: true });
+    if (row.action === 'summary') aiSummaryDialog(res, { c: { Candidate_ID: row.cand, Name: row.name }, el: null, again: () => toast('Open the candidate’s card to generate a new summary.') });
+    else aiCompareDialog(res, { mode: 'draft', a: { App_ID: row.app, Candidate_ID: row.cand }, el: null, again: () => toast('Open the candidate’s pipeline card to compare again.'), refresh: () => { } });
+  } catch (e) { toast(e, true); }
+}
+async function aiBulkListDialog(line) {
+  let L; try { L = await api('apiAiBulkList', line); } catch (e) { return toast(e, true); }
+  const d = cpDlg(`<h2 id="cpTitle">AI bulk runs</h2>
+    <p class="hint" style="margin-top:0">Your recent runs on this position${isLead() ? ' (a lead sees everyone’s)' : ''}. A run only continues while this page is open; open one to continue it or to review its drafts.</p>
+    ${L.length ? L.map(b => `<div class="vb-batch"><div class="dp-h"><b>${esc(b.id)}</b><span class="hint">${esc(String(b.by).split('@')[0])} · ${esc(b.at)} · ${Object.keys(b.counts).map(k => b.counts[k] + ' ' + (AI_BULK_STATUS[k] || k).toLowerCase()).join(', ')}</span><button class="btn sm" data-open="${esc(b.id)}">${b.open ? 'Open and continue' : 'Open'}</button></div></div>`).join('') : '<div class="empty">No bulk runs yet.</div>'}
+    <div class="drawer-actions" style="position:static"><button class="btn" data-close>Close</button></div>`);
+  d.setAttribute('aria-labelledby', 'cpTitle');
+  $$('[data-open]', d).forEach(x => x.onclick = () => { const b = L.find(y => y.id === x.dataset.open); const open = b.open; aiBulkRunView(d, b, { line }); if (!open) { /* finished runs show the table only */ } });
+}
 function candidateDrawer(c, preset, parsedIn) {
   if (c && c._archived) return archivedCandidateDrawer(c);
   const isNew = !c;
@@ -9061,7 +9190,7 @@ async function viewPipeline(v) {
       ${!replaced && Number(P.line.Backout_Count) > 0 ? `<div class="note">${esc(P.line.MRF_No || 'This MRF')} was reopened after ${Number(P.line.Backout_Count) === 1 ? 'a backout' : P.line.Backout_Count + ' backouts'}: ${(P.backouts || []).map(b => `${esc(b.name)} (${fmtDate(b.date)}${b.reason ? ', ' + esc(b.reason) : ''})`).join('; ')}. The TAT keeps running. ${can('withdraw_offer') && P.apps.some(a => a.Status === 'Withdrawn' && a.Backout_Date) ? '<button class="btn sm primary" id="pReinstate">Candidate will join after all</button>' : ''}</div>` : ''}
       ${P.line.Parent_Line_ID ? `<div class="note">Replacement for <b>${esc(P.line.parentMrf || P.line.Parent_Line_ID)}</b> after a backout. TAT counts from the original start, ${fmtDate(P.line.TAT_Start_From)}. <button class="btn sm" id="pGoParent">View ${esc(P.line.parentMrf || 'the original')}</button></div>` : ''}
       <section class="panel ready"><div class="ready-steps">${ready.map(([t, ok, d, v], i) => `<div class="rstep ${ok ? 'rs-ok' : 'rs-todo'}"><span class="rnum">${ok ? '\u2713' : i + 1}</span><div><b>${t}</b><span class="sub">${esc(d)}</span>${v ? `<button class="linkbtn rview" data-rview="${v[0]}">${v[1]}</button>` : ''}</div></div>`).join('')}</div>
-        <div class="ready-actions">${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}${canWork ? '<button class="btn" id="pShareMany" title="Send several screened candidates to the department in one message, with one comparison of all their screening answers">Share candidates with department</button>' : ''}
+        <div class="ready-actions">${canWork ? '<button class="btn" id="pFind">Find candidates</button><button class="btn primary" id="pAdd">Add candidate</button>' : ''}${canWork && P.hasFinalSq && (can('voice_agent') || can('voice_call')) ? '<button class="btn" id="pBatch" title="Call several candidates of this position, one after another">Call a batch</button>' : ''}${canWork && aiBulkOn() ? '<button class="btn" id="pAiBulk" title="Prepare AI drafts for several candidates of this position, one after another">AI bulk run</button>' : ''}${canWork ? '<button class="btn" id="pShareMany" title="Send several screened candidates to the department in one message, with one comparison of all their screening answers">Share candidates with department</button>' : ''}
           <div class="pmenu"><button class="btn" id="pMenuBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="pMenuList">Position \u25be</button>
             <div class="pmenu-list" id="pMenuList" role="menu" aria-label="Position set-up and details" hidden>
               <button class="pmenu-item" role="menuitem" id="pFlow"${hidFast}>JD &amp; questions</button>${canEdit ? `<button class="pmenu-item" role="menuitem" id="pJd"${hidFast}>Choose a JD file</button><button class="pmenu-item" role="menuitem" id="pJdMake"${hidFast}>Create JD</button><button class="pmenu-item" role="menuitem" id="pQs"${hidFast}>Screening questions</button><button class="pmenu-item" role="menuitem" id="pPost"${hidFast}>Job posts</button>` : ''}
@@ -9115,6 +9244,7 @@ async function viewPipeline(v) {
     if ($('#pGoParent')) $('#pGoParent').onclick = () => { f.closed = true; $('#pClosed').checked = true; gotoLine(P.line.Parent_Line_ID); };
     if ($('#pAdd')) $('#pAdd').onclick = addToPipelineDialog;
     if ($('#pBatch')) $('#pBatch').onclick = () => voiceBatchDialog(P, () => renderBoard());
+    if ($('#pAiBulk')) $('#pAiBulk').onclick = () => aiBulkDialog(P, () => { });
     if ($('#pShareMany')) $('#pShareMany').onclick = () => openShareBatch(P.line.Line_ID, async () => { try { reload(await api('apiPipeline', f.line)); } catch (e) { } });
     if (!canEdit) return;
     $('#pQs').onclick = questionsDialog;

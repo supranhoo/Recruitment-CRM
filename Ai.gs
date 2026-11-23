@@ -42,7 +42,7 @@ const AI_CREDLOG_ = { name: 'AI_Credential_Log', id: 'Log_ID', prefix: 'AIC-', w
 const AI_PRICING_ = { name: 'AI_Pricing', id: 'Price_ID', prefix: 'AIP-', width: 4, dates: [], editable: [],
   cols: ['Price_ID', 'Model', 'From_Date', 'In_per_M_USD', 'Out_per_M_USD', 'Note'] };
 const AI_JOBS_ = { name: 'AI_Jobs', id: 'Job_ID', prefix: 'AIJ-', width: 6, dates: [], editable: [],
-  cols: ['Job_ID', 'Feature', 'Status', 'Candidate_ID', 'App_ID', 'Line_ID', 'Source_Version', 'Input_Hash', 'Model', 'Prompt_Version', 'Requested_By', 'Requested_At', 'Started_At', 'Finished_At', 'Attempts', 'Error_Class', 'Tokens_In', 'Tokens_Out', 'Est_Cost_USD'] };
+  cols: ['Job_ID', 'Feature', 'Status', 'Candidate_ID', 'App_ID', 'Line_ID', 'Source_Version', 'Input_Hash', 'Model', 'Prompt_Version', 'Requested_By', 'Requested_At', 'Started_At', 'Finished_At', 'Attempts', 'Error_Class', 'Tokens_In', 'Tokens_Out', 'Est_Cost_USD', 'Batch_ID', 'Draft_ID', 'Note'] };
 const AI_DRAFTS_ = { name: 'AI_Drafts', id: 'Draft_ID', prefix: 'AID-', width: 6, dates: [], editable: [],
   cols: ['Draft_ID', 'Job_ID', 'Feature', 'Candidate_ID', 'App_ID', 'Line_ID', 'Source_Version', 'Input_Hash', 'Content_JSON', 'Edited_JSON', 'Status', 'Superseded', 'Created_By', 'Created_At', 'Reviewed_By', 'Reviewed_At'] };
 
