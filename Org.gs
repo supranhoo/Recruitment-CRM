@@ -584,6 +584,7 @@ function apiOrgImport(rows, opts) {
 function apiOrgAdmin() {
   const u = currentUser_(); ensureSchema_();
   if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can change the organisation structure.');
+  withLock_(deptHodCarry_);   // v246: the one-off HOD carry-over (was a schema step in v245): guarded by HOD_CARRIED, so after the first run this is one settings read
   const c = orgContext_();
   const names = {}, isOrg = {};
   c.depts.forEach(function (d) { isOrg[orgKey_(d.dept)] = true; });   // an organogram name needs no matching
