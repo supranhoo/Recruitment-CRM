@@ -9,7 +9,7 @@
  * Names are compared with orgKey_ (case and spacing ignored), so stray spellings are corrected too.
  */
 function renameKinds_() {
-  const one = deptMasterIsOrg_();   // records carry the organogram name only after the switch-over
+  const one = true;   // v245: new records carry the organogram name from now on, so a rename always reaches the records
   const dept = [[ORG_DEPT_, 'Org_Dept', 'Departments'], [ORG_MAP_, 'Org_Dept', 'Manpower report names'], [ORG_MP_, 'Org_Dept', 'Headcount snapshot'],
     [ORG_PLAN_, 'Org_Dept', 'Manpower plan (all revisions)'], [ORG_NOTE_, 'Org_Dept', 'Grade notes']];
   const div = [[ORG_DIV_, 'Division', 'Divisions'], [ORG_DEPT_, 'Division', 'Departments']];
@@ -96,6 +96,10 @@ function renameRun_(kind, oldName, newName, apply) {
     const master = parts[0];
     if (!master || master.name !== def.cols[0][0]) throw new Error('The ' + def.label + ' list was not found.');
     if (!master.t.rows.some(function (r) { return orgKey_(r[master.col]) === ok; })) throw new Error('"' + from + '" is not in the ' + def.label + ' list. Reload and try again.');
+    if (kind === 'org_dept' && !deptMasterIsOrg_()) {   // before the switch-over: an older name with the same text, matched elsewhere, cannot be told apart on the records
+      const clash = readTable_(ORG_MAP_, true).rows.filter(function (r) { return orgKey_(r.CRM_Dept) === ok && String(r.Org_Dept || '').trim() && orgKey_(r.Org_Dept) !== ok; })[0];
+      if (clash) throw new Error('The older name "' + clash.CRM_Dept + '" is matched to ' + clash.Org_Dept + ', so records carrying it cannot be told apart from this department. Run the switch-over first (Department mapping).');
+    }
     if (nk !== ok) parts.forEach(function (p) {   // never merge two names: the corrected name must not be in use anywhere this kind is stored
       if (p.t.rows.some(function (r) { return orgKey_(r[p.col]) === nk; })) throw new Error('"' + to + '" is already in use (' + p.label + '). Choose a different name; two names cannot be merged here.');
     });
@@ -138,7 +142,7 @@ function deptSwitchSources_() {
  * Works out the whole switch-over without writing: for every record, the organogram department its old name is matched to (the mapping first,
  * else a department of the same name). A name in use with no active match blocks the switch-over.
  */
-function deptSwitchPlan_() {
+function deptTarget_() {
   const grp = {}, org = {}, map = {};
   readTable_(ORG_DIV_, true).rows.forEach(function (d) { grp[orgKey_(d.Division)] = String(d.Division_Group || '').trim(); });
   readTable_(ORG_DEPT_, true).rows.forEach(function (r) {
@@ -146,7 +150,10 @@ function deptSwitchPlan_() {
     const dv = String(r.Division || '').trim(); org[orgKey_(n)] = { dept: n, division: dv, bu: grp[orgKey_(dv)] || '' };
   });
   readTable_(ORG_MAP_, true).rows.forEach(function (r) { const o = String(r.Org_Dept || '').trim(); if (o) map[orgKey_(r.CRM_Dept)] = orgKey_(o); });
-  const target = function (name) { const k = orgKey_(name); return k ? (org[map[k]] || org[k] || null) : null; };
+  return { org: org, target: function (name) { const k = orgKey_(name); return k ? (org[k] || org[map[k]] || null) : null; } };   // its own name first, then the mapping
+}
+function deptSwitchPlan_() {
+  const tg0 = deptTarget_(), org = tg0.org, target = tg0.target;
   const unmatched = {}, feeds = {}, parts = [];
   deptSwitchSources_().forEach(function (src) {
     const x = renameTable_(src[0], 'Dept'); if (!x) return;
@@ -212,7 +219,7 @@ function deptSwitchHods_(plan, apply) {
 function deptSwitchRun_(apply) {
   const u = renameAdmin_('switch the app to one department list');
   return withLock_(function () {
-    if (deptMasterIsOrg_()) { if (apply) throw new Error('The app already uses one department list.'); return { switched: true, ready: false, unmatched: [], tables: [], total: 0 }; }
+    if (deptMasterIsOrg_()) { if (apply) throw new Error('Every record already carries its organogram department.'); return { switched: true, ready: false, unmatched: [], tables: [], total: 0 }; }
     const plan = deptSwitchPlan_();
     const tk = renameTasks_(function (d) { const tg = plan.target(d); return tg ? tg.dept : ''; }, false);
     const jd = deptSwitchJd_(plan, false), hods = deptSwitchHods_(plan, false);

@@ -5125,13 +5125,13 @@ function kpiaDrawer(s, cfg, done) {
 async function viewAdmin(v) {
   const admin = can('system');
   const f = S.adminTab = S.adminTab || { tab: 'checks', q: '', sheet: '', from: daysAgo(30), to: today() };
+  if (f.tab === 'hod') f.tab = 'org';   // v245: HOD contacts are edited under Org structure
   v.innerHTML = `
     <div class="page-head"><div><h1>Admin</h1><p>Data checks, change history and database tools.</p></div></div>
     <div class="tabs" role="tablist">
       <button role="tab" data-t="checks" aria-selected="${f.tab === 'checks'}">Data checks</button>
       <button role="tab" data-t="history" aria-selected="${f.tab === 'history'}">Change history</button>
       <button role="tab" data-t="tools" aria-selected="${f.tab === 'tools'}">Tools</button>
-      <button role="tab" data-t="hod" aria-selected="${f.tab === 'hod'}">HOD contacts</button>
       <button role="tab" data-t="rules" aria-selected="${f.tab === 'rules'}">Task rules</button>
       <button role="tab" data-t="grades" aria-selected="${f.tab === 'grades'}">Grades & designations</button>${can('org_manage') ? `<button role="tab" data-t="org" aria-selected="${f.tab === 'org'}">Org structure</button>` : ''}
       <button role="tab" data-t="kpit" aria-selected="${f.tab === 'kpit'}">KPI targets</button>
@@ -5153,22 +5153,9 @@ async function viewAdmin(v) {
   if (f.tab === 'kpit') return renderKpiTargets(el);
   if (f.tab === 'tex') return renderExemptAdmin(el);
   if (f.tab === 'dstat') return renderDayStatusAdmin(el);
-  if (f.tab === 'hod' || f.tab === 'rules') {
+  if (f.tab === 'rules') {
     let cfg; try { cfg = await api('apiTaskAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
-    if (f.tab === 'hod') {
-      const q = (f.hq || '').toLowerCase();
-      el.innerHTML = `<section class="panel"><h2>HOD contacts</h2><p class="hint">Used to open the \u201cChase HOD feedback\u201d message in Teams, already addressed. The app never sends anything itself.</p>
-        <div class="field" style="max-width:360px;margin:10px 0"><label for="hq">Find a department</label><input id="hq" type="search" value="${esc(f.hq || '')}"></div>
-        <div class="table-wrap"><table><thead><tr><th>Department</th><th>HOD name</th><th>HOD email (company)</th></tr></thead><tbody>
-        ${cfg.hods.filter(h => !q || h.dept.toLowerCase().includes(q) || h.name.toLowerCase().includes(q)).map(h => `<tr style="cursor:default" data-dept="${esc(h.dept)}"><td>${esc(h.dept)}</td><td><input data-f="name" value="${esc(h.name)}" aria-label="HOD name for ${esc(h.dept)}"></td><td><input data-f="email" type="email" value="${esc(h.email)}" aria-label="HOD email for ${esc(h.dept)}"></td></tr>`).join('')}
-        </tbody></table></div><div class="drawer-actions" style="position:static"><button class="btn primary" id="hodSave">Save HOD contacts</button></div></section>`;
-      $('#hq').onchange = e => { f.hq = e.target.value; viewAdmin(v); };
-      $('#hodSave').onclick = async () => {
-        const list = $$('tr[data-dept]', el).map(tr => ({ dept: tr.dataset.dept, name: $('[data-f=name]', tr).value, email: $('[data-f=email]', tr).value }));
-        const b = $('#hodSave'); busy(b, true, 'Saving\u2026');
-        try { await api('apiSaveHodContacts', list); toast('HOD contacts saved'); busy(b, false, 'Save HOD contacts'); } catch (e) { failed(e, b, 'Save HOD contacts'); }
-      };
-    } else {
+    {
       el.innerHTML = `<section class="panel"><h2>Task rules</h2><p class="hint">Hours are counted from the event that starts each clock. A task appears on the recruiter\u2019s to-do list at the \u201cdue\u201d hour and turns critical at the \u201ccritical\u201d hour. Critical tasks still open at the end of the day show as missed in the Daily review.</p>
         <div class="table-wrap"><table><thead><tr><th>On</th><th>Task</th><th>Policy basis</th><th class="num">Due after (h)</th><th class="num">Critical after (h)</th></tr></thead><tbody>
         ${cfg.rules.map(r => `<tr style="cursor:default" data-rule="${esc(r.id)}"><td><input type="checkbox" data-f="on" ${r.on ? 'checked' : ''} aria-label="Rule on: ${esc(r.title)}"></td><td><b>${esc(r.title)}</b>${r.missed ? '<span class="sub">Counts as missed if left critical</span>' : ''}</td><td><span class="sub">${esc(r.policy)}</span></td>
@@ -6543,7 +6530,7 @@ async function viewOrg(v) {
 
 /* v243: correct a division or department name. The check shows how many records carry the old name; nothing is written until the admin confirms. */
 const RENAME_KIND = { org_dept: 'department', org_div: 'division' };
-const bootDeptsRefresh = async () => { try { S.boot = Object.assign({}, S.boot, { depts: (await api('apiBootstrap')).depts }); } catch (x) { } };
+const bootDeptsRefresh = async () => { try { const b = await api('apiBootstrap'); S.boot = Object.assign({}, S.boot, { depts: b.depts, deptDiv: b.deptDiv }); } catch (x) { } };
 /* v244: the switch-over to one list. The check lists what would move and any name still to be matched; the switch itself asks once more. */
 async function deptSwitchCheck(btn, box, done) {
   busy(btn, true, 'Checking…');
@@ -6554,14 +6541,14 @@ async function deptSwitchCheck(btn, box, done) {
       <div class="table-wrap" style="margin-top:8px"><table class="org-table"><thead><tr><th>Name on records</th><th class="num">Records</th><th>Where</th></tr></thead><tbody>${r.unmatched.map(m => `<tr style="cursor:default"><td><b>${esc(m.name)}</b></td><td class="num">${orgN(m.n)}</td><td>${esc(m.where)}</td></tr>`).join('')}</tbody></table></div></div>`;
     return;
   }
-  box.innerHTML = `<div class="note"><b>Ready.</b> ${orgN(r.total)} record${r.total === 1 ? '' : 's'} will move onto ${r.departments} organogram departments:<ul style="margin:6px 0 0 18px">${r.tables.filter(x => x.n).map(x => `<li>${esc(x.label)}: ${orgN(x.n)}</li>`).join('')}</ul>
+  box.innerHTML = `<div class="note"><b>Ready.</b> ${orgN(r.total)} record${r.total === 1 ? '' : 's'} will move onto the organogram departments:<ul style="margin:6px 0 0 18px">${r.tables.filter(x => x.n).map(x => `<li>${esc(x.label)}: ${orgN(x.n)}</li>`).join('')}</ul>
     ${r.merged ? `<p style="margin:8px 0 0">${r.merged} department${r.merged === 1 ? '' : 's'} will each take over several old names; those records then show the one department.</p>` : ''}
     <p style="margin:8px 0 0">The old names stay in the audit log only. This cannot be undone from the app, so make a copy of the DB file first (File → Make a copy). People who have the app open see the new names after they reload.</p>
-    <div class="drawer-actions" style="position:static;border:0;justify-content:flex-start;padding:8px 0 0"><button class="btn primary" id="swGo" type="button">Switch to one list</button></div></div>`;
+    <div class="drawer-actions" style="position:static;border:0;justify-content:flex-start;padding:8px 0 0"><button class="btn primary" id="swGo" type="button">Convert the records</button></div></div>`;
   $('#swGo', box).onclick = async e => {
-    if (!(await askConfirm(`Move ${r.total} records onto the organogram departments and make the organogram the only list? This cannot be undone from the app.`))) return;
-    busy(e.target, true, 'Switching…');
-    try { const x = await api('apiDeptSwitchApply'); await bootDeptsRefresh(); toast(`Switched: ${x.total} records moved`); done(); } catch (x) { failed(x, e.target, 'Switch to one list'); }
+    if (!(await askConfirm(`Move ${r.total} records onto their organogram departments? This cannot be undone from the app.`))) return;
+    busy(e.target, true, 'Converting…');
+    try { const x = await api('apiDeptSwitchApply'); await bootDeptsRefresh(); toast(`Converted: ${x.total} records moved`); done(); } catch (x) { failed(x, e.target, 'Convert the records'); }
   };
 }
 function renameDialog(kind, name, done) {
@@ -6840,7 +6827,7 @@ async function renderOrgAdmin(el) {
   const bindRn = () => $$('[data-rn]', el).forEach(b => b.onclick = () => renameDialog(b.dataset.rn, b.dataset.rnName, redo));
   if (f.sec === 'struct') {
     const q = f.q.toLowerCase();
-    el.innerHTML = head + `${a.switched ? '<div class="note" style="margin-bottom:12px">This is the only list of divisions and departments. The MRF and candidate forms, the pipeline filters, HOD contacts and every report use it. A department added here appears on the MRF form at once; an inactive one is hidden from the form and stays on its existing records.</div>' : ''}<section class="panel"><h2>Divisions</h2><p class="hint">The division head shows on the organogram. Group is the earlier division name (DRI, CPP, Ferro, Support Function). To add a division, fill the last row.</p>
+    el.innerHTML = head + `<div class="note" style="margin-bottom:12px">This is the only list of divisions and departments. The MRF and candidate forms, the pipeline filters and every report use it. A department added here appears on the MRF form at once; an inactive one is hidden from the form and stays on its existing records. The HOD name and e-mail are used to address the “Chase HOD feedback” message.${a.switched ? '' : ' Records created earlier keep their older department name until they are converted (Department mapping).'}</div><section class="panel"><h2>Divisions</h2><p class="hint">The division head shows on the organogram. Group is the earlier division name (DRI, CPP, Ferro, Support Function). To add a division, fill the last row.</p>
       <div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th>Group</th><th>Division head</th><th>Active</th></tr></thead><tbody>
       ${a.divisions.map(d => `<tr style="cursor:default" data-div="${esc(d.division)}"><td><b>${esc(d.division)}</b>${rn('org_div', d.division)}</td><td>${esc(d.group)}</td><td><input data-f="head" value="${esc(d.head)}" aria-label="Head of ${esc(d.division)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} aria-label="${esc(d.division)} active"></td></tr>`).join('')}
       <tr style="cursor:default" id="orgNewDiv"><td><input data-f="name" maxlength="80" placeholder="New division name" aria-label="New division name"></td><td><select data-f="group" aria-label="Group of the new division">${opts([...new Set(a.divisions.map(x => x.group).filter(Boolean))].map(g => [g, g]), '', false)}</select></td><td><input data-f="head" placeholder="Division head" aria-label="Head of the new division"></td><td></td></tr></tbody></table></div></section>
@@ -6879,9 +6866,9 @@ async function renderOrgAdmin(el) {
     return;
   }
   const rowsM = a.map.filter(m => !f.unm || !m.org);
-  const sw = a.switched ? '' : `<section class="panel" style="margin-bottom:16px" id="swPanel"><h2>Switch to one list</h2><p class="hint">Today the MRF form uses an older department list and this table matches each old name to an organogram department. The switch-over moves every position, candidate and BGV case onto its organogram department and makes the organogram the only list. It runs only when every old name in use is matched below.</p>
-    ${a.admin ? '<div class="drawer-actions" style="position:static;border:0;justify-content:flex-start;padding:0"><button class="btn" id="swCheck" type="button">Check what would change</button></div><div id="swOut" role="status" style="margin-top:10px"></div>' : '<p class="hint">Only the admin can run the switch-over.</p>'}</section>`;
-  el.innerHTML = head + sw + `<section class="panel"><h2>${a.switched ? 'Manpower report names' : 'Department mapping'}</h2><p class="hint">${a.switched ? 'The manpower report still uses its own department names. This table says which department each report name counts under when the report is imported. Positions and candidates carry the department itself and do not use this table.' : 'This table says which organogram department each existing department name counts under. Match every name, then run the switch-over above. Departments with open positions are listed first.'}</p>
+  const sw = a.switched ? '' : `<section class="panel" style="margin-bottom:16px" id="swPanel"><h2>Convert existing records</h2><p class="hint">The MRF and candidate forms already use the organogram departments. Records created earlier still carry an older name, and this table matches each older name to an organogram department. The conversion moves every such position, candidate and BGV case onto its organogram department, so reports show one name. It runs only when every older name in use is matched below.</p>
+    ${a.admin ? '<div class="drawer-actions" style="position:static;border:0;justify-content:flex-start;padding:0"><button class="btn" id="swCheck" type="button">Check what would change</button></div><div id="swOut" role="status" style="margin-top:10px"></div>' : '<p class="hint">Only the admin can run the conversion.</p>'}</section>`;
+  el.innerHTML = head + sw + `<section class="panel"><h2>${a.switched ? 'Manpower report names' : 'Department mapping'}</h2><p class="hint">${a.switched ? 'The manpower report still uses its own department names. This table says which department each report name counts under when the report is imported. Positions and candidates carry the department itself and do not use this table.' : 'This table says which organogram department each existing department name counts under. Match every name, then run the conversion above. Departments with open positions are listed first.'}</p>
     <div class="chips"><button type="button" class="chip" id="orgUnm" aria-pressed="${f.unm}">Not mapped yet<span class="n">${unmapped}</span></button></div>
     <div class="table-wrap"><table class="org-table"><thead><tr><th>${a.switched ? 'Name in the report' : 'Existing name'}</th><th class="num">Open MRFs</th><th>Counts under</th></tr></thead><tbody>
     ${rowsM.map(m => `<tr style="cursor:default" data-crm="${esc(m.crm)}"><td><b>${esc(m.crm)}</b></td><td class="num">${orgN(m.open)}</td><td><select data-f="org" aria-label="New department for ${esc(m.crm)}">${opts([['', m.suggest ? 'Not mapped (suggested: ' + m.suggest + ')' : 'Not mapped']].concat(active.map(d => [d.dept, d.dept])), m.org, false)}</select>${m.suggest ? `<button type="button" class="btn sm" data-take="${esc(m.suggest)}">Use suggestion</button>` : ''}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="3" class="empty">Every department is mapped.</td></tr>'}</tbody></table></div>
@@ -9263,7 +9250,9 @@ async function viewPipeline(v) {
   if (!f.pfInit) { f.pfInit = true; try { Object.assign(f, JSON.parse(localStorage.getItem(PF_KEY_) || '{}')); } catch (e) { } }
   if (!isLead()) f.rec = '';
   f.status = f.status || 'Active'; f.q = f.q || '';
-  const depts = S.boot.depts, divs = [...new Set(mine.map(p => (depts.find(d => d.dept === p.Dept) || {}).division).filter(Boolean))].sort();
+  const dvK = x => String(x == null ? '' : x).replace(/\s+/g, ' ').trim().toUpperCase(), dvM = S.boot.deptDiv || {};
+  /* v245: division by department, older names included (a position made before the conversion still carries one) */
+  const depts = [...new Set(mine.map(p => p.Dept).filter(Boolean))].map(d => ({ dept: d, division: dvM[dvK(d)] || (S.boot.depts.find(x => x.dept === d) || {}).division || '' })), divs = [...new Set(mine.map(p => (depts.find(d => d.dept === p.Dept) || {}).division).filter(Boolean))].sort();
   const deptList = () => [...new Set(mine.map(p => p.Dept).filter(d => d && (!f.div || ((depts.find(x => x.dept === d) || {}).division || '') === f.div)))].sort();
   const recList = [...new Set(mine.map(p => String(p.Recruiter || '').trim()).filter(Boolean))].sort();
   if (f.div && !divs.includes(f.div)) f.div = '';   // v243: a remembered division or department that was renamed since no longer filters everything out

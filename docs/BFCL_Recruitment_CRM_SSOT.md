@@ -792,7 +792,7 @@ Per position: **CVs received** (the Daily-log CVs sourced typed before the funne
 
 **Where tasks appear:** My day (own), Daily log strip (own), position panel and Pipeline (that position), Daily review (per recruiter, leads), Overview (counts: own, or team for leads). State is kept in **Tasks** / **Task_Actions**; reconciled every 30 minutes.
 
-**HOD contacts** (Admin → HOD contacts; `M_Departments.HOD_Name/HOD_Email`, lead-editable, email validated) address the pre-written messages.
+**HOD contacts** address the pre-written messages. From v245 they are the HOD name and e-mail of the organogram department (Admin → Org structure → Divisions and departments; `Org_Departments.HOD_Name/HOD_Email`; Head of HR and Admin; e-mail validated). The separate Admin → HOD contacts tab was removed.
 
 **The (i) on a to-do (v115).** Each to-do, and each item in the Missed list of the Daily review / My day summary, has a small (i). Hover, keyboard focus or a tap shows the latest 5 actions on it, newest first: chased, snoozed or done, with who, when and the note (`taskNotes_`, from `Task_Actions`, last 60 days; on a Missed item only what had been entered before the end of the reviewed day). With none it says "No comments entered yet." "I've chased" and "Done" now open an optional one-line note (200 characters) before they are recorded; the snooze reason is still required.
 
@@ -963,7 +963,7 @@ Approved against existing manpower by division, department and grade, with the d
 | Data checks | lead | §11.5 |
 | Change history | lead | §11.6 |
 | Tools | lead (system actions Admin) | Back up now; Recalculate TAT (Admin); weekly email test/on/off; archive status and **Archive now**; CV parser accuracy; database/folder links |
-| HOD contacts | lead | Department → HOD name/email |
+| HOD contacts | removed in v245 | Edited under Org structure → Divisions and departments (Head of HR, Admin) |
 | Hiring routes | lead | Which grades/levels use the fast-track route (default W1–W5 and T; §8.8) |
 | Voice agent | `voice_agent` (Admin) | Allow calls, agent id and version, connection id, calling number, organisation and workspace id, questions variable, API key (write-only), call log (§8.7) |
 | Task rules | lead | Due/critical hours and on/off per rule |
@@ -1446,7 +1446,7 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 **v168 — Share with department: "Open in Outlook app" draft, and the experience text** (no schema change; `Pipeline.gs`, `App.html`)
 - "Open in Outlook" opened Outlook on the web (outlook.office.com) in a new tab and never the desktop application; a web link cannot carry the CV and screening PDF. It is now labelled **Open in Outlook (web)** and a new **Open in Outlook app** button downloads one `.eml` draft (`X-Unsent: 1`) with the recipient, subject and message from the dialog and the screening PDF and the CV attached; opened with Outlook (the first time: right-click, Open with, Outlook) it is an editable draft. Sharing is recorded as before.
 - The message wording "(Tue Jan 02 1900 00:00:00 GMT+0521 … yrs)": a date-formatted experience cell reached the message as a date. `expYears_` gives the number of years (a date becomes its day number; "6 years" loses its unit, so "6 years yrs" is gone).
-- An empty "To" is data, not code: add the HOD's e-mail in Admin → HOD contacts.
+- An empty "To" is data, not code: add the HOD's e-mail in Admin → Org structure → Divisions and departments.
 - Tested: Node `keml` (experience cases; the .eml read back with Python's `email` library: headers, accents and Hindi in subject and text, byte-identical attachments, short CRLF lines, no header injection), browser `p19eml`. Opening the file in the real desktop Outlook is not testable here. The older suites that already failed on `main` before this change fail identically after it.
 
 ### 2026-11-08
@@ -1548,10 +1548,23 @@ All times IST. Every version was published to the same fixed deployment URL. *(i
 
 ### 2026-09-30
 
+**Organogram names on the forms at once; HOD contacts tab removed** (v245; 26 Nov 2026; owner's decision after v244)
+- **Why.** After v244 the MRF form and Admin → HOD contacts still showed the older names, because v244 changed nothing until the admin ran the switch-over and that had not been run (it is blocked while older names in use are unmatched). The owner expected the organogram names straight away and found the HOD contacts tab redundant.
+- **The organogram is the list from this release.** `deptMaster_()` always reads `Org_Departments`; the `M_Departments` branch is gone. The Department dropdown on the MRF and candidate forms shows the active organogram departments with no further step. `M_Departments` is no longer read by any screen.
+- **Records made earlier** keep their older name until the admin converts them (the v244 switch-over, now titled "Convert existing records"; same check, same block on unmatched names, same one locked step). Meanwhile an older name is matched through `Org_Dept_Map`:
+  - HOD lookups (`deptHods_`) answer with the HOD of the matched organogram department, also where a position spells the name with other case or spacing. An unmatched older name has no HOD.
+  - The organogram counts a position under its own name when that is an organogram department, else through the mapping.
+  - The pipeline division filter reads `deptDiv` from the boot payload (division by department, older names included), so a position with an older name is not hidden.
+  - Department reports show a mix of older and organogram names until the conversion is run.
+- **Matching order.** A name that is itself an organogram department counts as that department; only otherwise is the mapping used (v244 had the mapping first). In the workbook copy no older name equals an organogram name while being mapped elsewhere. The mapping table no longer lists organogram names.
+- **Rename** always reaches the records (new records carry organogram names). Before the conversion a department rename is refused when an older name with the same text is matched to a different department, because the records could not be told apart.
+- **HOD contacts.** The Admin → HOD contacts tab and `apiSaveHodContacts` are removed. HOD name and e-mail are edited only under Org structure → Divisions and departments (Head of HR and Admin; TA Leads can no longer edit them). A one-time schema step (schema 52, `deptHodCarry_`, setting `HOD_CARRIED`) carries any HOD name or e-mail saved on the older list to the organogram department where that field is blank there and the older names that merge into it agree.
+- Tested on the workbook copy (20 new server checks, the 41 switch-over checks re-run on top, v232 to v242 suites) and in Chromium at 1280 and 390 px (53 checks).
+
 **One list of divisions and departments: the organogram** (v244; 26 Nov 2026; owner's decision after v243; supersedes ADR-045 in part)
 - **Why.** The app kept two department lists (the older MRF-form list `M_Departments`, 85 names, and the organogram, 16 divisions and 59 departments) joined by a mapping. v243 gave each its own rename screen, which made the duplication visible. The owner wants one list, the organogram, used by the MRF form, candidates and every report, with existing records moved onto it.
 - **Owner's decisions.** The switch-over is blocked until every old name in use is matched. Records carry only the organogram department afterwards (the old name stays in the audit log). One HOD list, on the organogram department.
-- **One reader.** `deptMaster_()` (Org.gs) is the department list of the app. A setting `DEPT_MASTER` decides what it returns: empty (as released) it reads `M_Departments` exactly as before; `org` (set by the switch-over) it reads active `Org_Departments` with the division and its group. The boot list for the MRF and candidate forms, every HOD lookup (pipeline, document flow, tasks, Dept delays), the HOD contacts screen and the JD department sync read through it. Releasing v244 therefore changes nothing until the admin runs the switch-over.
+- **One reader.** `deptMaster_()` (Org.gs) is the department list of the app. A setting `DEPT_MASTER` decides what it returns: empty (as released) it reads `M_Departments` exactly as before; `org` (set by the switch-over) it reads active `Org_Departments` with the division and its group. The boot list for the MRF and candidate forms, every HOD lookup (pipeline, document flow, tasks, Dept delays), the HOD contacts screen and the JD department sync read through it. Releasing v244 therefore changes nothing until the admin runs the switch-over. **Changed by v245:** the forms and lookups use the organogram at once; the switch-over only converts existing records.
 - **Switch-over (Admin, Org structure, Department mapping, "Switch to one list"; Rename.gs `apiDeptSwitchPreview` / `apiDeptSwitchApply`).**
   - Check first, writing nothing: every department name on positions, candidates, archived candidates and BGV cases must be matched to an active organogram department (the mapping first, else a department of the same name). Unmatched names are listed with record counts and the switch is refused. The mapping table now also lists names that only candidates or BGV cases carry.
   - Apply, in one locked step: `MRF.Dept`, `Candidates.Dept`, `Candidates_Archive.Dept`, `BGV_Cases.Dept` become the organogram department; `Candidates.Division` becomes the organogram division and `Candidates.Business_Unit` its group; HOD-feedback task keys and context follow (two old names landing on one key: the first keeps it); `JDM_Dept_Map` is rewritten to one row per organogram department (a confirmed or manual row wins where names merge, unused old names are dropped); an HOD name or e-mail saved on the old list is carried to the organogram department when that field is blank there and the merged old names agree; `DEPT_MASTER = org`; one audit row per table and old name; caches and the dashboard, KPI and Day review snapshots are dropped.
