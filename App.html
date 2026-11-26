@@ -6541,6 +6541,39 @@ async function viewOrg(v) {
   draw();
 }
 
+/* v243: correct a division or department name. The check shows how many records carry the old name; nothing is written until the admin confirms. */
+const RENAME_KIND = { crm_dept: 'department (MRF form)', crm_div: 'division (MRF form)', crm_bu: 'business unit (MRF form)', org_dept: 'organogram department', org_div: 'organogram division' };
+function renameDialog(kind, name, done) {
+  const b = openDrawer('Rename ' + RENAME_KIND[kind], `<p>Correct the name of <b>${esc(name)}</b>. Every record that carries the old name is changed to the new one in one step, so reports, filters and lookups keep treating it as the same ${kind.endsWith('div') ? 'division' : kind === 'crm_bu' ? 'business unit' : 'department'}. The audit log keeps the old name.</p>
+    <div class="field"><label for="rnNew">Corrected name</label><input id="rnNew" maxlength="80" value="${esc(name)}" autocomplete="off"></div>
+    <div id="rnCheck" role="status"></div>
+    <div class="drawer-actions"><button class="btn" id="rnCancel" type="button">Cancel</button><button class="btn" id="rnPrev" type="button">Check</button><button class="btn primary" id="rnGo" type="button" disabled>Rename</button></div>`);
+  let checked = '';
+  const inp = $('#rnNew', b), go = $('#rnGo', b), box = $('#rnCheck', b);
+  inp.oninput = () => { go.disabled = true; checked = ''; box.innerHTML = ''; };
+  $('#rnCancel', b).onclick = closeDrawer;
+  $('#rnPrev', b).onclick = async e => {
+    const to = inp.value.replace(/\s+/g, ' ').trim();
+    if (!to) { box.innerHTML = '<div class="note warn-note">Enter the corrected name.</div>'; return; }
+    if (to === name) { box.innerHTML = '<div class="note warn-note">The name is the same as before.</div>'; return; }
+    busy(e.target, true, 'Checking…');
+    try {
+      const r = await api('apiRenamePreview', kind, name, to);
+      box.innerHTML = r.total ? `<div class="note"><b>${esc(r.from)}</b> will become <b>${esc(r.to)}</b> on ${r.total} record${r.total === 1 ? '' : 's'}:<ul style="margin:6px 0 0 18px">${r.tables.filter(x => x.n).map(x => `<li>${esc(x.label)}: ${x.n}</li>`).join('')}</ul>${r.fn ? `<p style="margin:8px 0 0">The talent-pool function guessed from this name changes from <b>${esc(r.fn.before || 'none')}</b> to <b>${esc(r.fn.after || 'none')}</b>.</p>` : ''}<p style="margin:8px 0 0">People who have the app open see the new name after they reload.</p></div>` : '<div class="note warn-note">No record carries the old name, so there is nothing to change.</div>';
+      checked = r.total ? to : ''; go.disabled = !checked;
+    } catch (x) { box.innerHTML = `<div class="note warn-note" role="alert">${esc(x)}</div>`; }
+    busy(e.target, false, 'Check');
+  };
+  go.onclick = async () => {
+    if (!checked) return;
+    busy(go, true, 'Renaming…');
+    try {
+      const r = await api('apiRenameApply', kind, name, checked);
+      if (kind.startsWith('crm')) { try { S.boot = Object.assign({}, S.boot, { depts: (await api('apiBootstrap')).depts }); } catch (x) { } }
+      closeDrawer(); toast(`Renamed on ${r.total} record${r.total === 1 ? '' : 's'}`); done();
+    } catch (x) { failed(x, go, 'Rename'); }
+  };
+}
 function orgImportDialog(done) {
   const b = openDrawer('Import the manpower report', `<p>Choose the <b>Approved vs Existing Manpower</b> report (.xlsx). It is read in your browser and checked first. Nothing changes until you confirm. The import replaces the snapshot of who is in post; the approved plan is kept.</p>
     <div class="field"><label for="orgFile">Report</label><input type="file" id="orgFile" accept=".xlsx"></div>
@@ -6766,6 +6799,8 @@ async function renderOrgAdmin(el) {
   const f = S.orgAdm = S.orgAdm || { sec: 'plan', q: '', unm: true };
   let a; try { a = await api('apiOrgAdmin'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e)}</div>`; return; }
   const secs = [['plan', 'Manpower plan'], ['import', 'Import'], ['struct', 'Divisions and departments'], ['map', 'Department mapping'], ['notes', 'Grade notes']];
+  if (a.admin) secs.splice(3, 0, ['crm', 'MRF form names']);
+  if (f.sec === 'crm' && !a.admin) f.sec = 'plan';
   const unmapped = a.map.filter(m => !m.org).length;
   const active = a.depts.filter(d => d.active !== 'No');
   const head = `<div class="chips">${secs.map(([k, l]) => `<button type="button" class="chip" data-sec="${k}" aria-pressed="${f.sec === k}">${l}${k === 'map' && unmapped ? `<span class="n">${unmapped}</span>` : ''}</button>`).join('')}</div>`;
@@ -6780,19 +6815,34 @@ async function renderOrgAdmin(el) {
     bind(); $('#orgImp2', el).onclick = () => orgImportDialog(redo);
     return;
   }
+  const rn = (kind, name) => a.admin ? ` <button type="button" class="btn rn-btn" data-rn="${kind}" data-rn-name="${esc(name)}" aria-label="Rename ${esc(name)}">Rename</button>` : '';
+  const bindRn = () => $$('[data-rn]', el).forEach(b => b.onclick = () => renameDialog(b.dataset.rn, b.dataset.rnName, redo));
+  if (f.sec === 'crm') {
+    const q = (f.cq || '').toLowerCase();
+    const grp = (title, kind, list, what) => `<section class="panel" style="margin-bottom:16px"><h2>${title}</h2><p class="hint">Each department on the MRF form belongs to a ${what}, and a candidate keeps a copy of it. Renaming one changes it on every department and candidate that carries it.</p>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>${what.charAt(0).toUpperCase() + what.slice(1)}</th><th class="num">Departments</th><th class="num">Candidates</th></tr></thead><tbody>
+      ${list.map(v => `<tr style="cursor:default"><td><b>${esc(v.name)}</b>${rn(kind, v.name)}</td><td class="num">${orgN(v.depts)}</td><td class="num">${orgN(v.cands)}</td></tr>`).join('') || `<tr style="cursor:default"><td colspan="3" class="empty">No ${what} is recorded.</td></tr>`}</tbody></table></div></section>`;
+    el.innerHTML = head + grp('Divisions on the MRF form', 'crm_div', a.crm.divisions, 'division') + grp('Business units on the MRF form', 'crm_bu', a.crm.bus, 'business unit') + `
+      <section class="panel"><h2>Departments on the MRF form</h2><p class="hint">The Department dropdown when a position or a candidate is created. Renaming one changes it on every position, candidate, BGV case, mapping and open HOD task that carries it.</p>
+      <div class="field" style="max-width:360px;margin:6px 0 10px"><label for="crmSq">Find a department</label><input id="crmSq" type="search" value="${esc(f.cq || '')}"></div>
+      <div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Division</th><th>Business unit</th><th class="num">Positions</th></tr></thead><tbody>
+      ${a.crm.depts.filter(d => !q || (d.dept + ' ' + d.division + ' ' + d.bu).toLowerCase().includes(q)).map(d => `<tr style="cursor:default"><td><b>${esc(d.dept)}</b>${rn('crm_dept', d.dept)}</td><td>${esc(d.division)}</td><td>${esc(d.bu)}</td><td class="num">${orgN(d.lines)}</td></tr>`).join('') || '<tr style="cursor:default"><td colspan="4" class="empty">No department matches.</td></tr>'}</tbody></table></div></section>`;
+    bind(); bindRn(); $('#crmSq', el).onchange = e => { f.cq = e.target.value; redo(); };
+    return;
+  }
   if (f.sec === 'struct') {
     const q = f.q.toLowerCase();
     el.innerHTML = head + `<section class="panel"><h2>Divisions</h2><p class="hint">The division head shows on the organogram. Group is the earlier division name (DRI, CPP, Ferro, Support Function).</p>
       <div class="table-wrap"><table class="org-table"><thead><tr><th>Division</th><th>Group</th><th>Division head</th><th>Active</th></tr></thead><tbody>
-      ${a.divisions.map(d => `<tr style="cursor:default" data-div="${esc(d.division)}"><td><b>${esc(d.division)}</b></td><td>${esc(d.group)}</td><td><input data-f="head" value="${esc(d.head)}" aria-label="Head of ${esc(d.division)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} aria-label="${esc(d.division)} active"></td></tr>`).join('')}</tbody></table></div></section>
+      ${a.divisions.map(d => `<tr style="cursor:default" data-div="${esc(d.division)}"><td><b>${esc(d.division)}</b>${rn('org_div', d.division)}</td><td>${esc(d.group)}</td><td><input data-f="head" value="${esc(d.head)}" aria-label="Head of ${esc(d.division)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} aria-label="${esc(d.division)} active"></td></tr>`).join('')}</tbody></table></div></section>
       <section class="panel" style="margin-top:16px"><h2>Departments</h2><p class="hint">A department with headcount or mapped CRM departments stays active. To add a department, fill the last row.</p>
       <div class="field" style="max-width:360px;margin:6px 0 10px"><label for="orgSq">Find a department</label><input id="orgSq" type="search" value="${esc(f.q)}"></div>
       <div class="table-wrap"><table class="org-table"><thead><tr><th>Department</th><th>Division</th><th>HOD name</th><th>HOD email</th><th>Active</th></tr></thead><tbody>
-      ${a.depts.filter(d => !q || (d.dept + ' ' + d.hod + ' ' + d.division).toLowerCase().includes(q)).map(d => `<tr style="cursor:default" data-dept="${esc(d.dept)}"><td><b>${esc(d.dept)}</b></td><td><select data-f="div" aria-label="Division of ${esc(d.dept)}">${opts(a.divisions.map(x => [x.division, x.division]), d.division, false)}</select></td><td><input data-f="hod" value="${esc(d.hod)}" aria-label="HOD of ${esc(d.dept)}"></td><td><input data-f="email" value="${esc(d.email)}" aria-label="HOD email of ${esc(d.dept)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} ${d.hasHC ? 'disabled' : ''} aria-label="${esc(d.dept)} active"></td></tr>`).join('')}
+      ${a.depts.filter(d => !q || (d.dept + ' ' + d.hod + ' ' + d.division).toLowerCase().includes(q)).map(d => `<tr style="cursor:default" data-dept="${esc(d.dept)}"><td><b>${esc(d.dept)}</b>${rn('org_dept', d.dept)}</td><td><select data-f="div" aria-label="Division of ${esc(d.dept)}">${opts(a.divisions.map(x => [x.division, x.division]), d.division, false)}</select></td><td><input data-f="hod" value="${esc(d.hod)}" aria-label="HOD of ${esc(d.dept)}"></td><td><input data-f="email" value="${esc(d.email)}" aria-label="HOD email of ${esc(d.dept)}"></td><td><input type="checkbox" data-f="act" ${d.active !== 'No' ? 'checked' : ''} ${d.hasHC ? 'disabled' : ''} aria-label="${esc(d.dept)} active"></td></tr>`).join('')}
       <tr style="cursor:default" id="orgNew"><td><input data-f="name" placeholder="New department name" aria-label="New department name"></td><td><select data-f="div" aria-label="Division of the new department">${opts(a.divisions.map(x => [x.division, x.division]), '', false)}</select></td><td><input data-f="hod" placeholder="HOD name" aria-label="HOD of the new department"></td><td><input data-f="email" placeholder="HOD email" aria-label="HOD email of the new department"></td><td></td></tr>
       </tbody></table></div>
       <div class="drawer-actions" style="position:static"><button class="btn primary" id="orgSave">Save changes</button></div></section>`;
-    bind();
+    bind(); bindRn();
     $('#orgSq', el).onchange = e => { f.q = e.target.value; redo(); };
     $('#orgSave', el).onclick = async () => {
       const divisions = $$('tr[data-div]', el).map(tr => ({ division: tr.dataset.div, head: $('[data-f=head]', tr).value, active: $('[data-f=act]', tr).checked }));
@@ -9202,6 +9252,8 @@ async function viewPipeline(v) {
   const depts = S.boot.depts, divs = [...new Set(mine.map(p => (depts.find(d => d.dept === p.Dept) || {}).division).filter(Boolean))].sort();
   const deptList = () => [...new Set(mine.map(p => p.Dept).filter(d => d && (!f.div || ((depts.find(x => x.dept === d) || {}).division || '') === f.div)))].sort();
   const recList = [...new Set(mine.map(p => String(p.Recruiter || '').trim()).filter(Boolean))].sort();
+  if (f.div && !divs.includes(f.div)) f.div = '';   // v243: a remembered division or department that was renamed since no longer filters everything out
+  if (f.dept && !deptList().includes(f.dept)) f.dept = '';
   const shown = () => pipeFilterLines(mine, f, depts);
   const active = shown();
   if (f.line && !mine.some(p => p.Line_ID === f.line)) f.line = '';   // a remembered position this user cannot see
