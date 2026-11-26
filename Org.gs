@@ -408,27 +408,61 @@ function orgSchema_() {
 /* ---------------- The department list of the app (v244) ---------------- */
 
 /**
- * v244: one list. Until the admin runs the switch-over (Rename.gs, apiDeptSwitchApply) the app reads the older M_Departments list exactly as
- * before; afterwards (Settings DEPT_MASTER = 'org') the organogram's departments are the only list: the MRF and candidate forms, the HOD
- * contacts and every lookup read Org_Departments, and a position carries the organogram department itself.
+ * v244, v245: one list. The organogram's departments are the department list of the app: the MRF and candidate forms, the HOD lookups and
+ * every screen read Org_Departments. Records made before v245 may still carry an older MRF-form name until the admin runs the switch-over
+ * (Rename.gs, apiDeptSwitchApply); such a name is matched to its organogram department through Org_Dept_Map meanwhile.
+ * Settings DEPT_MASTER = 'org' means the existing records have been converted.
  */
 function deptMasterIsOrg_() { return String(settings_().DEPT_MASTER || '') === 'org'; }
-function deptMasterSheet_() { return deptMasterIsOrg_() ? { name: ORG_DEPT_, col: 'Org_Dept' } : { name: 'M_Departments', col: 'Dept' }; }
-/** [{dept, division, bu, hod, email, active}]. bu is the division group (DRI, CPP, Ferro, Support Function) once the organogram is the list. */
+/** [{dept, division, bu, hod, email, active}]. bu is the division group (DRI, CPP, Ferro, Support Function). */
 function deptMaster_() {
-  if (!deptMasterIsOrg_()) return readTable_('M_Departments').rows.map(function (r) {
-    return { dept: String(r.Dept), division: String(r.Division || ''), bu: String(r.Business_Unit || ''), hod: String(r.HOD_Name || ''), email: String(r.HOD_Email || ''), active: true };
-  });
   const grp = {}; readTable_(ORG_DIV_).rows.forEach(function (d) { grp[orgKey_(d.Division)] = String(d.Division_Group || '').trim(); });
   return readTable_(ORG_DEPT_).rows.filter(function (r) { return String(r.Org_Dept || '').trim(); }).map(function (r) {
     const div = String(r.Division || '').trim();
     return { dept: String(r.Org_Dept).trim(), division: div, bu: grp[orgKey_(div)] || '', hod: String(r.HOD_Name || ''), email: String(r.HOD_Email || ''), active: String(r.Active || 'Yes') !== 'No' };
   });
 }
-/** HOD contact by department name (trimmed), for task messages and the document flow. An inactive department still answers for its old records. */
+/** Old MRF-form names still matched to an organogram department: { old name (trimmed): organogram department row of deptMaster_ }. */
+function deptOldNames_(master) {
+  const by = {}; (master || deptMaster_()).forEach(function (d) { by[orgKey_(d.dept)] = d; });
+  const out = {};
+  readTable_(ORG_MAP_).rows.forEach(function (r) {
+    const old = String(r.CRM_Dept || '').trim(), d = by[orgKey_(r.Org_Dept)];
+    if (old && d && !by[orgKey_(old)]) out[old] = d;
+  });
+  return out;
+}
+/**
+ * HOD contact by department name (trimmed), for task messages and the document flow. An inactive department still answers for its records, and
+ * an older name answers with the HOD of the organogram department it is matched to.
+ */
 function deptHods_() {
-  const m = {}; deptMaster_().forEach(function (d) { m[String(d.dept).trim()] = { name: d.hod, email: String(d.email || '').trim() }; });
+  const master = deptMaster_(), m = {}, hod = function (d) { return { name: d.hod, email: String(d.email || '').trim() }; };
+  const old = deptOldNames_(master), byKey = {};
+  Object.keys(old).forEach(function (n) { m[n] = hod(old[n]); byKey[orgKey_(n)] = old[n]; });
+  master.forEach(function (d) { m[String(d.dept).trim()] = hod(d); byKey[orgKey_(d.dept)] = d; });
+  readTable_(T.MRF.name).rows.forEach(function (l) {   // a position may spell the name with other case or spacing
+    const n = String(l.Dept || '').trim(); if (n && !m[n] && byKey[orgKey_(n)]) m[n] = hod(byKey[orgKey_(n)]);
+  });
   return m;
+}
+/** Division by department for the pipeline filters, keyed by orgKey_ (upper case, single spaces): organogram departments, and older names through the mapping. */
+function deptDivisions_() {
+  const master = deptMaster_(), m = {}, old = deptOldNames_(master);
+  Object.keys(old).forEach(function (n) { m[orgKey_(n)] = old[n].division; });
+  master.forEach(function (d) { m[orgKey_(d.dept)] = d.division; });
+  return m;
+}
+/**
+ * v245, once: HOD names and e-mails saved on the older list (the removed HOD contacts tab) move to the organogram department, where that field
+ * is blank there and the old names that merge into it agree.
+ */
+function deptHodCarry_() {
+  if (String(settings_().HOD_CARRIED || '') === 'yes') return 0;
+  const n = deptSwitchHods_(deptTarget_(), true);
+  if (n) dropStale_(ORG_DEPT_);
+  setSetting_('HOD_CARRIED', 'yes', 'v245: HOD contacts of the older department list were carried to the organogram once (' + n + ' departments)');
+  return n;
 }
 
 /* ---------------- Reading ---------------- */
@@ -441,7 +475,7 @@ function orgContext_() {
   /* v244: once the organogram is the only list a position carries the organogram department itself, so its own name decides; the mapping is
      only a fallback for a stray old name, and stays the way the manpower report's department names are read (map). */
   const switched = deptMasterIsOrg_(), lineMap = Object.assign({}, map);
-  if (switched) depts.forEach(function (d) { lineMap[orgKey_(d.dept)] = d.dept; if (!map[orgKey_(d.dept)]) map[orgKey_(d.dept)] = d.dept; });
+  depts.forEach(function (d) { lineMap[orgKey_(d.dept)] = d.dept; if (!map[orgKey_(d.dept)]) map[orgKey_(d.dept)] = d.dept; });   // v245: always, new positions carry the organogram name
   const mp = readTable_(ORG_MP_).rows;
   const snapshot = mp.map(function (r) { return { dept: String(r.Org_Dept), grade: String(r.Grade), existing: Number(r.Existing_HC) || 0, report: Number(r.Approved_HC) || 0 }; });
   const act = orgPlanActive_();
@@ -552,10 +586,10 @@ function apiOrgAdmin() {
   if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can change the organisation structure.');
   const c = orgContext_();
   const names = {}, isOrg = {};
-  if (c.switched) c.depts.forEach(function (d) { isOrg[orgKey_(d.dept)] = true; });
+  c.depts.forEach(function (d) { isOrg[orgKey_(d.dept)] = true; });   // an organogram name needs no matching
   /* Before the switch-over: every old name (the old list and every record that carries a department), so each can be matched. Afterwards: only
      the names the manpower report still uses (the mapping rows, added below) and any stray record name that is not an organogram department. */
-  if (!c.switched) readTable_('M_Departments').rows.forEach(function (d) { const n = String(d.Dept || '').trim(); if (n) names[n] = 0; });
+  if (!c.switched) readTable_('M_Departments').rows.forEach(function (d) { const n = String(d.Dept || '').trim(); if (n && !isOrg[orgKey_(n)]) names[n] = 0; });
   readTable_(T.MRF.name).rows.forEach(function (l) {
     const n = String(l.Dept || '').trim(); if (!n || isOrg[orgKey_(n)]) return;
     if (!(n in names)) names[n] = 0;
@@ -563,12 +597,15 @@ function apiOrgAdmin() {
   });
   if (!c.switched) deptSwitchSources_().slice(1).forEach(function (src) {
     const x = renameTable_(src[0], 'Dept'); if (!x) return;
-    x.t.rows.forEach(function (r) { const n = String(r.Dept || '').trim(); if (n && !(n in names)) names[n] = 0; });
+    x.t.rows.forEach(function (r) { const n = String(r.Dept || '').trim(); if (n && !isOrg[orgKey_(n)] && !(n in names)) names[n] = 0; });
   });
   const active = c.depts.filter(function (d) { return d.active !== 'No'; }).map(function (d) { return d.dept; });
   const mapRows = {}; readTable_(ORG_MAP_).rows.forEach(function (r) { mapRows[orgKey_(r.CRM_Dept)] = r; });
   const keys = {}; Object.keys(names).forEach(function (n) { keys[orgKey_(n)] = n; });
-  Object.keys(mapRows).forEach(function (k) { if (!keys[k]) keys[k] = String(mapRows[k].CRM_Dept); });
+  Object.keys(mapRows).forEach(function (k) {
+    if (isOrg[k] && (!String(mapRows[k].Org_Dept || '').trim() || orgKey_(mapRows[k].Org_Dept) === k)) return;   // an organogram name counts under itself
+    if (!keys[k]) keys[k] = String(mapRows[k].CRM_Dept);
+  });
   const map = Object.keys(keys).map(function (k) {
     const crm = keys[k], r = mapRows[k], org = r ? String(r.Org_Dept || '').trim() : '';
     const o = { crm: crm, org: org, open: names[crm] || 0, by: r ? String(r.Mapped_By || '') : '' };

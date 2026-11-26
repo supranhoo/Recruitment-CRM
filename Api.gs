@@ -16,6 +16,7 @@ function apiBootstrapRun_() {
     build: BUILD_ID,
     user: u,
     depts: deptMaster_().filter(function (d) { return d.active; }).map(function (d) { return { dept: d.dept, bu: d.bu, division: d.division }; }),   // v244: one list (Org.gs deptMaster_)
+    deptDiv: deptDivisions_(),   // v245: division by department name, older names included, for the pipeline filters
     grades: gradesForClient_(),
     tatRules: (function () { const s = settings_(); return tatRulesMap_(Number(s.NOTICE_GRACE_DAYS) || 30, Number(s.TAT_AT_RISK_PCT) || 0.8); })(),
     panel: panelMembers_(false),

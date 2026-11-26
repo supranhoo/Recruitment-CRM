@@ -1035,29 +1035,8 @@ function apiTaskAdmin() {
   const u = currentUser_(); ensureSchema_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change these.');
   return {
-    rules: taskRules_(),
-    hods: deptMaster_().filter(function (d) { return d.active; }).map(function (d) { return { dept: d.dept, name: d.hod, email: d.email }; })
+    rules: taskRules_()   // v245: HOD contacts are edited under Org structure (Divisions and departments)
   };
-}
-function apiSaveHodContacts(list) {
-  const u = currentUser_(); ensureSchema_();
-  if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change HOD contacts.');
-  withLock_(function () {
-    const ms = deptMasterSheet_();   // v244: the HOD contact lives on the one department list
-    const t = readTable_(ms.name, true), h = t.headers, ni = h.indexOf('HOD_Name') + 1, ei = h.indexOf('HOD_Email') + 1;
-    const byDept = {}; (list || []).forEach(function (x) { byDept[String(x.dept).trim()] = x; });
-    t.rows.forEach(function (r) {
-      const dn = String(r[ms.col] || '').trim(), x = byDept[dn]; if (!x) return;
-      const name = String(x.name || '').trim(), email = String(x.email || '').trim().toLowerCase();
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Check the email for ' + dn + '.');
-      if (name !== String(r.HOD_Name || '') || email !== String(r.HOD_Email || '')) {
-        t.sheet.getRange(r._row, ni).setValue(jdmSafeText_(clean_(name))); t.sheet.getRange(r._row, ei).setValue(email);
-        audit_(u, ms.name, dn, 'Update', 'HOD', String(r.HOD_Name || '') + ' ' + String(r.HOD_Email || ''), name + ' ' + email);
-      }
-    });
-    dropStale_(ms.name);
-  });
-  return apiTaskAdmin();
 }
 function apiSaveTaskRules(list) {
   const u = currentUser_(); ensureSchema_();
