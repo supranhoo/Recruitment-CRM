@@ -26,7 +26,7 @@ function apiDeptDelays(opts) {
   const lines = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { if (mine(l)) lines[l.Line_ID] = l; });
   const hods = {};
-  readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = String(d.HOD_Name || ''); });
+  deptMaster_().forEach(function (d) { hods[String(d.dept).trim()] = d.hod; });
   const cands = {};
   readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = String(c.Name || c.Candidate_ID); });
   const apps = {};

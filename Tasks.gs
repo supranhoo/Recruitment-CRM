@@ -150,7 +150,7 @@ function computeTasks_(part) {   // part: undefined = every rule; 'heavy' = all 
   // Ignore cards whose candidate record no longer exists, and positions replaced after a backout.
   const apps = allApps.filter(function (a) { return String(a.Status) === 'Active' && cands[a.Candidate_ID] && lines[a.Line_ID] && ['Replaced', 'Not Needed', 'No Vacancy', 'On Hold'].indexOf(positionStatus_(lines[a.Line_ID])) < 0; });
   const ints = dayOnly ? [] : readTable_(T.INT.name).rows;
-  const hods = {}; if (!dayOnly) readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = { name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '').trim() }; });
+  const hods = dayOnly ? {} : deptHods_();
   const panel = dayOnly ? {} : panelEmailIndex_();
   const out = [];
 
@@ -557,7 +557,7 @@ function allTasks_() {
   const stateStamps = tableStamps_(['Tasks', 'Task_Actions']).join('|');
   /* v229: the Daily log tables change on every Daily log save and My day autosave but only the day-note rule reads them, so they are left out of the heavy list's stamps
      and the day note is added on top. A Daily log save now rebuilds only the cheap part (the day note and the done/snooze state), not the whole list. */
-  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Settings', 'M_Departments', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
+  const stamps = tableStamps_(['MRF', 'Applications', 'Position_Recruiters', 'Candidates', 'Interviews', 'Settings', 'M_Departments', 'Org_Departments', 'M_Panel_Members', 'Position_Docs', 'BGV_Cases', 'TAT_Exemptions', 'Users', 'Task_Actions']);
   const dayStamps = tableStamps_(['Daily_Summary', 'Daily_Funnel']).join('|');
   let h = 0; const sj = stamps.join('|'); for (let i = 0; i < sj.length; i++) h = (h * 31 + sj.charCodeAt(i)) >>> 0;
   let hs = 0; for (let i = 0; i < stateStamps.length; i++) hs = (hs * 31 + stateStamps.charCodeAt(i)) >>> 0;
@@ -1036,25 +1036,26 @@ function apiTaskAdmin() {
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change these.');
   return {
     rules: taskRules_(),
-    hods: readTable_('M_Departments').rows.map(function (d) { return { dept: String(d.Dept), name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '') }; })
+    hods: deptMaster_().filter(function (d) { return d.active; }).map(function (d) { return { dept: d.dept, name: d.hod, email: d.email }; })
   };
 }
 function apiSaveHodContacts(list) {
   const u = currentUser_(); ensureSchema_();
   if (!isLead_(u)) throw new Error('Only a TA Lead, the Head of HR or the admin can change HOD contacts.');
   withLock_(function () {
-    const t = readTable_('M_Departments', true), h = t.headers, ni = h.indexOf('HOD_Name') + 1, ei = h.indexOf('HOD_Email') + 1;
-    const byDept = {}; (list || []).forEach(function (x) { byDept[String(x.dept)] = x; });
+    const ms = deptMasterSheet_();   // v244: the HOD contact lives on the one department list
+    const t = readTable_(ms.name, true), h = t.headers, ni = h.indexOf('HOD_Name') + 1, ei = h.indexOf('HOD_Email') + 1;
+    const byDept = {}; (list || []).forEach(function (x) { byDept[String(x.dept).trim()] = x; });
     t.rows.forEach(function (r) {
-      const x = byDept[String(r.Dept)]; if (!x) return;
+      const dn = String(r[ms.col] || '').trim(), x = byDept[dn]; if (!x) return;
       const name = String(x.name || '').trim(), email = String(x.email || '').trim().toLowerCase();
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Check the email for ' + r.Dept + '.');
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Check the email for ' + dn + '.');
       if (name !== String(r.HOD_Name || '') || email !== String(r.HOD_Email || '')) {
-        t.sheet.getRange(r._row, ni).setValue(clean_(name)); t.sheet.getRange(r._row, ei).setValue(email);
-        audit_(u, 'M_Departments', r.Dept, 'Update', 'HOD', String(r.HOD_Name || '') + ' ' + String(r.HOD_Email || ''), name + ' ' + email);
+        t.sheet.getRange(r._row, ni).setValue(jdmSafeText_(clean_(name))); t.sheet.getRange(r._row, ei).setValue(email);
+        audit_(u, ms.name, dn, 'Update', 'HOD', String(r.HOD_Name || '') + ' ' + String(r.HOD_Email || ''), name + ' ' + email);
       }
     });
-    dropStale_('M_Departments');
+    dropStale_(ms.name);
   });
   return apiTaskAdmin();
 }

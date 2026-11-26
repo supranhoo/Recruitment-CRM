@@ -405,6 +405,32 @@ function orgSchema_() {
   orgPlanMigrate_();
 }
 
+/* ---------------- The department list of the app (v244) ---------------- */
+
+/**
+ * v244: one list. Until the admin runs the switch-over (Rename.gs, apiDeptSwitchApply) the app reads the older M_Departments list exactly as
+ * before; afterwards (Settings DEPT_MASTER = 'org') the organogram's departments are the only list: the MRF and candidate forms, the HOD
+ * contacts and every lookup read Org_Departments, and a position carries the organogram department itself.
+ */
+function deptMasterIsOrg_() { return String(settings_().DEPT_MASTER || '') === 'org'; }
+function deptMasterSheet_() { return deptMasterIsOrg_() ? { name: ORG_DEPT_, col: 'Org_Dept' } : { name: 'M_Departments', col: 'Dept' }; }
+/** [{dept, division, bu, hod, email, active}]. bu is the division group (DRI, CPP, Ferro, Support Function) once the organogram is the list. */
+function deptMaster_() {
+  if (!deptMasterIsOrg_()) return readTable_('M_Departments').rows.map(function (r) {
+    return { dept: String(r.Dept), division: String(r.Division || ''), bu: String(r.Business_Unit || ''), hod: String(r.HOD_Name || ''), email: String(r.HOD_Email || ''), active: true };
+  });
+  const grp = {}; readTable_(ORG_DIV_).rows.forEach(function (d) { grp[orgKey_(d.Division)] = String(d.Division_Group || '').trim(); });
+  return readTable_(ORG_DEPT_).rows.filter(function (r) { return String(r.Org_Dept || '').trim(); }).map(function (r) {
+    const div = String(r.Division || '').trim();
+    return { dept: String(r.Org_Dept).trim(), division: div, bu: grp[orgKey_(div)] || '', hod: String(r.HOD_Name || ''), email: String(r.HOD_Email || ''), active: String(r.Active || 'Yes') !== 'No' };
+  });
+}
+/** HOD contact by department name (trimmed), for task messages and the document flow. An inactive department still answers for its old records. */
+function deptHods_() {
+  const m = {}; deptMaster_().forEach(function (d) { m[String(d.dept).trim()] = { name: d.hod, email: String(d.email || '').trim() }; });
+  return m;
+}
+
 /* ---------------- Reading ---------------- */
 
 function orgContext_() {
@@ -412,12 +438,16 @@ function orgContext_() {
   const depts = readTable_(ORG_DEPT_).rows.map(function (r) { return { dept: String(r.Org_Dept).trim(), division: String(r.Division).trim(), hod: String(r.HOD_Name || ''), email: String(r.HOD_Email || ''), active: String(r.Active || 'Yes'), sort: Number(r.Sort) || 0 }; });
   const map = {};
   readTable_(ORG_MAP_).rows.forEach(function (r) { if (String(r.Org_Dept || '').trim()) map[orgKey_(r.CRM_Dept)] = String(r.Org_Dept).trim(); });
+  /* v244: once the organogram is the only list a position carries the organogram department itself, so its own name decides; the mapping is
+     only a fallback for a stray old name, and stays the way the manpower report's department names are read (map). */
+  const switched = deptMasterIsOrg_(), lineMap = Object.assign({}, map);
+  if (switched) depts.forEach(function (d) { lineMap[orgKey_(d.dept)] = d.dept; if (!map[orgKey_(d.dept)]) map[orgKey_(d.dept)] = d.dept; });
   const mp = readTable_(ORG_MP_).rows;
   const snapshot = mp.map(function (r) { return { dept: String(r.Org_Dept), grade: String(r.Grade), existing: Number(r.Existing_HC) || 0, report: Number(r.Approved_HC) || 0 }; });
   const act = orgPlanActive_();
   const manpower = orgMergePlan_(act ? act.rows : null, snapshot);
   const asOn = mp.length ? ymd_(mp[0].As_On) : '', batch = mp.length ? String(mp[0].Batch_ID || '') : '';
-  return { divs: divs, depts: depts, map: map, manpower: manpower, asOn: asOn, batch: batch, plan: act ? act.rev : null, snapshot: snapshot };
+  return { divs: divs, depts: depts, map: map, lineMap: lineMap, switched: switched, manpower: manpower, asOn: asOn, batch: batch, plan: act ? act.rev : null, snapshot: snapshot };
 }
 
 function orgNotes_() {
@@ -437,8 +467,8 @@ function orgOpenLines_() {
 function apiOrganogram() {
   const u = currentUser_(); ensureSchema_();
   const c = orgContext_();
-  const crmNames = readTable_(ORG_MAP_).rows.filter(function (m) { return String(m.Org_Dept || '').trim(); }).map(function (m) { return { crm: String(m.CRM_Dept), org: String(m.Org_Dept).trim() }; });
-  const r = orgRollup_({ divs: c.divs, depts: c.depts, manpower: c.manpower, map: c.map, openLines: orgOpenLines_(), crmNames: crmNames, notes: orgNotes_(), today: ymd_(new Date()) });
+  const crmNames = c.switched ? [] : readTable_(ORG_MAP_).rows.filter(function (m) { return String(m.Org_Dept || '').trim(); }).map(function (m) { return { crm: String(m.CRM_Dept), org: String(m.Org_Dept).trim() }; });
+  const r = orgRollup_({ divs: c.divs, depts: c.depts, manpower: c.manpower, map: c.lineMap, openLines: orgOpenLines_(), crmNames: crmNames, notes: orgNotes_(), today: ymd_(new Date()) });
   const log = readTable_(ORG_LOG_).rows;
   const last = log.length ? log[log.length - 1] : null;
   r.asOn = c.asOn; r.batch = c.batch;
@@ -521,12 +551,19 @@ function apiOrgAdmin() {
   const u = currentUser_(); ensureSchema_();
   if (!can_(u, 'org_manage')) throw new Error('Only the Head of HR or the admin can change the organisation structure.');
   const c = orgContext_();
-  const names = {};
-  readTable_('M_Departments').rows.forEach(function (d) { const n = String(d.Dept || '').trim(); if (n) names[n] = 0; });
+  const names = {}, isOrg = {};
+  if (c.switched) c.depts.forEach(function (d) { isOrg[orgKey_(d.dept)] = true; });
+  /* Before the switch-over: every old name (the old list and every record that carries a department), so each can be matched. Afterwards: only
+     the names the manpower report still uses (the mapping rows, added below) and any stray record name that is not an organogram department. */
+  if (!c.switched) readTable_('M_Departments').rows.forEach(function (d) { const n = String(d.Dept || '').trim(); if (n) names[n] = 0; });
   readTable_(T.MRF.name).rows.forEach(function (l) {
-    const n = String(l.Dept || '').trim(); if (!n) return;
+    const n = String(l.Dept || '').trim(); if (!n || isOrg[orgKey_(n)]) return;
     if (!(n in names)) names[n] = 0;
     if (ORG_OPEN_.indexOf(positionStatus_(l)) >= 0) names[n]++;
+  });
+  if (!c.switched) deptSwitchSources_().slice(1).forEach(function (src) {
+    const x = renameTable_(src[0], 'Dept'); if (!x) return;
+    x.t.rows.forEach(function (r) { const n = String(r.Dept || '').trim(); if (n && !(n in names)) names[n] = 0; });
   });
   const active = c.depts.filter(function (d) { return d.active !== 'No'; }).map(function (d) { return d.dept; });
   const mapRows = {}; readTable_(ORG_MAP_).rows.forEach(function (r) { mapRows[orgKey_(r.CRM_Dept)] = r; });
@@ -542,8 +579,8 @@ function apiOrgAdmin() {
     return { batch: String(r.Batch_ID), asOn: ymd_(r.As_On), file: String(r.File || ''), rows: Number(r.Rows) || 0, approved: Number(r.Approved) || 0, existing: Number(r.Existing) || 0, by: String(r.Imported_By || ''), at: ymd_(r.Imported_At) };
   });
   const mp = {}; c.manpower.forEach(function (m) { mp[orgKey_(m.dept)] = (mp[orgKey_(m.dept)] || 0) + m.approved + m.existing; });
-  const admin = u.role === ROLES.ADMIN;   // v243: only the admin corrects names (Rename.gs)
-  return { divisions: c.divs, depts: c.depts.map(function (d) { d.hasHC = !!mp[orgKey_(d.dept)]; return d; }), map: map, log: log, admin: admin, crm: admin ? renameCrmList_() : null };
+  const admin = u.role === ROLES.ADMIN;   // v243: only the admin corrects names and runs the switch-over (Rename.gs)
+  return { divisions: c.divs, depts: c.depts.map(function (d) { d.hasHC = !!mp[orgKey_(d.dept)]; return d; }), map: map, log: log, admin: admin, switched: c.switched };
 }
 
 function orgEmailOk_(e) { return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
