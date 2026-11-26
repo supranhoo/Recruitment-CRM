@@ -241,6 +241,7 @@ function deptSwitchRun_(apply) {
     audit.push([now, u.email, 'Settings', 'DEPT_MASTER', 'Update', 'Value', '', 'org']);
     const a = sheet_('Audit_Log'); a.getRange(a.getLastRow() + 1, 1, audit.length, 8).setValues(audit);
     setSetting_('DEPT_MASTER', 'org', 'v244: the organogram is the only list of divisions and departments (set by the switch-over; do not clear)');
+    deptHodCarry_();   // v246: HODs of the older list are carried once (a no-op when the lines above already filled them)
     touched[T.MRF.name] = true; touched[ORG_DEPT_] = true;
     renameDrop_(touched);
     out.applied = true; out.switched = true;

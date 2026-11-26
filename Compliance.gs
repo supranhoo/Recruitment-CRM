@@ -5,7 +5,7 @@
  * - Observations log (MRF & assessment process adherence)
  * - Monthly 20% audit sample (tracker accuracy)
  */
-const SCHEMA_VERSION = '52';
+const SCHEMA_VERSION = '51';
 const OBS_TYPES = ['Hiring started before MRF approval', 'MRF incomplete (JD / KRA / budget / grade)', 'Candidate evaluation form missing',
   'Interview panel not as per policy matrix', 'Offer issued without required approval', 'Other'];
 
@@ -16,15 +16,34 @@ function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (Number(props.getProperty('SCHEMA_V')) >= Number(SCHEMA_VERSION)) { _schemaOk_ = true; return; }
   if (Date.now() < Number(props.getProperty('SCHEMA_RETRY_AT') || 0)) return;   // a step failed a while ago: wait before trying again
+  // v246: one runner at a time. A request that finds the upgrade already claimed (or the lock busy) runs nothing and does not wait, so a version
+  // raise can no longer make every request repeat the slow steps while ordinary saves queue behind them for 20 seconds.
+  if (!schemaClaim_(props)) return;
+  try { schemaRun_(props); } finally { try { props.deleteProperty('SCHEMA_RUN_UNTIL'); } catch (e) { } }
+}
+
+/** Claims the upgrade for this request for up to 6 minutes (a crashed run's claim expires). Returns false when someone else has it or the lock is busy. */
+function schemaClaim_(props) {
+  const take = function () {
+    if (Number(props.getProperty('SCHEMA_RUN_UNTIL') || 0) > Date.now()) return false;
+    props.setProperty('SCHEMA_RUN_UNTIL', String(Date.now() + 6 * 60000)); return true;
+  };
+  if (_lockDepth_ > 0) return take();   // already inside the lock in this run
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return false;
+  try { return take(); } finally { lock.releaseLock(); }
+}
+
+function schemaRun_(props) {
   const t0 = Date.now(), doneKey = 'SCHEMA_DONE_' + SCHEMA_VERSION;
-  let done = []; try { done = JSON.parse(props.getProperty(doneKey) || '[]'); } catch (e) { done = []; }
+  const readDone = function () { try { return JSON.parse(props.getProperty(doneKey) || '[]'); } catch (e) { return []; } };
   const failed = {}; let n = 0, locked = false;
   // Each step runs on its own and under the lock for that step only. A step that has succeeded is remembered and never run again for this
   // version, so a retry repeats only the steps that failed (the whole upgrade is not re-run, and the lock is not held for it).
   const step_ = function (name, fn) {
     name += '#' + (++n);
-    if (locked || done.indexOf(name) >= 0) return;
-    try { withLock_(fn); done.push(name); props.setProperty(doneKey, JSON.stringify(done)); }
+    if (locked || readDone().indexOf(name) >= 0) return;   // v246: the list is read again for every step, so a step finished elsewhere is never repeated
+    try { withLock_(fn); const done = readDone(); if (done.indexOf(name) < 0) done.push(name); props.setProperty(doneKey, JSON.stringify(done)); }
     catch (e) {
       const msg = String(e && e.message || e);
       if (/Someone else is saving/.test(msg)) { locked = true; return; }   // somebody else is saving: not a failure of the step, try again on the next call
@@ -125,7 +144,6 @@ function ensureSchema_() {
     step_('orgSchema_', function () {
       orgSchema_();
     });
-    step_('deptHodCarry_', function () { deptHodCarry_(); });   // v245
     step_('bgvEnsureCases_', function () { try { bgvEnsureCases_(); } catch (e) { console.error('BGV cases: ' + e); } });
     step_('dayStatusSchema_', function () {
       dayStatusSchema_();
