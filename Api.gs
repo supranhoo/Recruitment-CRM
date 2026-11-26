@@ -15,7 +15,7 @@ function apiBootstrapRun_() {
   return {
     build: BUILD_ID,
     user: u,
-    depts: readTable_('M_Departments').rows.map(function (r) { return { dept: String(r.Dept), bu: String(r.Business_Unit), division: String(r.Division || '') }; }),
+    depts: deptMaster_().filter(function (d) { return d.active; }).map(function (d) { return { dept: d.dept, bu: d.bu, division: d.division }; }),   // v244: one list (Org.gs deptMaster_)
     grades: gradesForClient_(),
     tatRules: (function () { const s = settings_(); return tatRulesMap_(Number(s.NOTICE_GRACE_DAYS) || 30, Number(s.TAT_AT_RISK_PCT) || 0.8); })(),
     panel: panelMembers_(false),
@@ -72,7 +72,7 @@ const FETCHABLE_ = {
   apiListPositions: { tables: ['MRF', 'M_Grades', 'Settings', 'Users', 'TAT_Exemptions', 'TAT_Rules', 'Position_Recruiters'], per: 'day', packed: true },
   apiListCandidates: { tables: ['Candidates', 'Users'], per: '', packed: true },
   apiListFunnel: { tables: ['Daily_Funnel', 'Position_Recruiters', 'Users', 'Stage_History', 'Applications', 'MRF', 'Candidates', 'Settings'], per: 'day', packed: true },
-  apiPipeline: { tables: ['Voice_DND', 'Position_Recruiters', 'Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Settings', 'Users'], per: 'hour', packed: false }
+  apiPipeline: { tables: ['Voice_DND', 'Position_Recruiters', 'Applications', 'Stage_History', 'Followups', 'Candidates', 'MRF', 'Job_Posts', 'Interviews', 'M_Panel_Members', 'Position_Docs', 'Screenings', 'M_Departments', 'Org_Departments', 'Org_Divisions', 'Settings', 'Users'], per: 'hour', packed: false }
 };
 function apiFetch(fn, args, known) { return timed_('apiFetch', apiFetchRun_, arguments); }
 function apiFetchRun_(fn, args, known) {

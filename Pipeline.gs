@@ -946,8 +946,7 @@ function pipelineAlerts_(onlyRecruiter) {
   readTable_(T.CAND.name).rows.forEach(function (c) { cands[c.Candidate_ID] = c; });
   const lines = {};
   readTable_(T.MRF.name).rows.forEach(function (l) { lines[l.Line_ID] = l; });
-  const hods = {};
-  readTable_('M_Departments').rows.forEach(function (d) { hods[String(d.Dept).trim()] = { name: String(d.HOD_Name || ''), email: String(d.HOD_Email || '') }; });
+  const hods = deptHods_();
   const fus = {};
   readTable_(T.FU.name).rows.forEach(function (f) {
     const o = fus[f.App_ID] = fus[f.App_ID] || { n: 0, last: null };
@@ -1133,7 +1132,7 @@ function apiDocFlow(lineId) {
   const u = currentUser_(); ensureSchema_();
   const line = lineOf_(lineId);
   if (!line) throw new Error('Position ' + lineId + ' was not found.');
-  const hod = readTable_('M_Departments').rows.filter(function (d) { return String(d.Dept).trim() === String(line.Dept).trim(); })[0] || {};
+  const hod0 = hodOf_(line.Dept), hod = { HOD_Name: hod0.name, HOD_Email: hod0.email };
   const st = pdocState_(lineId);
   const posts = readTable_(T.POST.name).rows.filter(function (p) { return p.Line_ID === lineId; }).map(function (p) {
     return { id: String(p.Post_ID), channel: String(p.Channel), postedOn: ymd_(p.Posted_On), status: String(p.Status), jdVersion: String(p.JD_Version || ''), sqVersion: String(p.SQ_Version || ''), override: String(p.Override_Reason || '') };
@@ -1383,8 +1382,8 @@ function sqFinalFor_(lineId) {
   return f && f === l ? f : null;
 }
 function hodOf_(dept) {
-  const h = readTable_('M_Departments').rows.filter(function (d) { return String(d.Dept).trim() === String(dept || '').trim(); })[0] || {};
-  return { name: String(h.HOD_Name || ''), email: String(h.HOD_Email || '') };
+  const h = deptHods_()[String(dept || '').trim()] || {};
+  return { name: String(h.name || ''), email: String(h.email || '') };
 }
 /**
  * v177: when and by whom a screening was completed. Updated_At / Updated_By move on every later write (sharing it with the department, a re-save),

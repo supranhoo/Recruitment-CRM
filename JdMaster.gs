@@ -289,7 +289,7 @@ function jdmCompDepts_() {
 function jdmSyncDeptMap_(u) {
   const depts = jdmCompDepts_(); if (!depts.length) return { added: 0 };
   const names = {};
-  readTable_('M_Departments').rows.forEach(function (d) { if (String(d.Dept).trim()) names[String(d.Dept).trim()] = true; });
+  deptMaster_().forEach(function (d) { if (String(d.dept).trim()) names[String(d.dept).trim()] = true; });
   readTable_(T.MRF.name).rows.forEach(function (l) { if (String(l.Dept || '').trim()) names[String(l.Dept).trim()] = true; });
   const t = readTable_('JDM_Dept_Map', true), have = {};
   t.rows.forEach(function (r) { have[String(r.CRM_Dept)] = r; });
