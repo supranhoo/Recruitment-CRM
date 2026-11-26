@@ -211,7 +211,7 @@ function kpiRecon_(month, recruiter, kpi, noVia) {
     else bucket = kpiMonthStatus_(clk, d, month, clk.today).why;
     const it = { id: l.Line_ID, mrf: String(l.MRF_No), position: String(l.Position), grade: String(l.Grade), recruiter: rec, status: 'Handed over', receipt: vs.from, doj: '' };
     Object.assign(it, kpiReconRow_(l, 'Handed over', clk, d, bucket, kpi, targets, rec, end, null), { stretchFrom: vs.from, stretchTo: vs.to, handTo: vs.next, handOn: '', heldDays: '', prevRec: '' });
-    srows.push({ bucket: bucket, it: it, chain: vs.chain, rec: rec });
+    srows.push({ bucket: bucket, it: it, chain: vs.chain, rec: rec, idx: vs.idx });
     if (vs.idx === 0) skipReplaced[vs.chain + '|' + rec.toLowerCase()] = true;
   });
   const reconLine = function (l, cr) {
@@ -244,15 +244,29 @@ function kpiRecon_(month, recruiter, kpi, noVia) {
     Object.assign(it, kpiReconRow_(l, status, clk, d, bucket, kpi, targets, rec, end, cr));
     out[bucket].push(it);
     const ck = !cr && plan.chainOf[String(l.Line_ID)];
-    if (ck && COUNTED.indexOf(bucket) >= 0) (cand[ck + '|' + rec.toLowerCase()] = cand[ck + '|' + rec.toLowerCase()] || []).push({ bucket: bucket, it: it, live: true });
+    if (ck && COUNTED.indexOf(bucket) >= 0) (cand[ck + '|' + rec.toLowerCase()] = cand[ck + '|' + rec.toLowerCase()] || []).push({ bucket: bucket, it: it, live: true, idx: 1e9 });
   };
   allLines.forEach(function (l) { reconLine(l, null); if (want) posTaggedCredits_(l).forEach(function (cr) { reconLine(l, cr); }); });   // the team total is the lead credit only (v164)
-  srows.forEach(function (s) { out[s.bucket].push(s.it); if (COUNTED.indexOf(s.bucket) >= 0) (cand[s.chain + '|' + s.rec.toLowerCase()] = cand[s.chain + '|' + s.rec.toLowerCase()] || []).push({ bucket: s.bucket, it: s.it, live: false }); });
+  srows.forEach(function (s) { out[s.bucket].push(s.it); if (COUNTED.indexOf(s.bucket) >= 0) (cand[s.chain + '|' + s.rec.toLowerCase()] = cand[s.chain + '|' + s.rec.toLowerCase()] || []).push({ bucket: s.bucket, it: s.it, live: false, idx: s.idx }); });
+  const surv = {};
   Object.keys(cand).forEach(function (key) {   // one row per holder and vacancy: the worst result wins, else the live line, else the latest
-    const a = cand[key]; if (a.length < 2) return;
-    const pick = a.filter(function (e) { return e.it.result === 'Missed'; })[0] || a.filter(function (e) { return e.live; })[0] || a[a.length - 1];
-    a.forEach(function (e) { if (e !== pick) out[e.bucket] = out[e.bucket].filter(function (x) { return x !== e.it; }); });
+    const a = cand[key], idx = Math.max.apply(null, a.map(function (e) { return e.idx; }));
+    let pick = a[0];
+    if (a.length >= 2) {
+      pick = a.filter(function (e) { return e.it.result === 'Missed'; })[0] || a.filter(function (e) { return e.live; })[0] || a[a.length - 1];
+      a.forEach(function (e) { if (e !== pick) out[e.bucket] = out[e.bucket].filter(function (x) { return x !== e.it; }); });
+    }
+    surv[key] = { pick: pick, idx: idx };
   });
+  if (!want) {   // v242: the whole team lists a vacancy once: the final holder's row (else the latest stretch); each recruiter's own list keeps their stretch
+    const tg = {};
+    Object.keys(surv).forEach(function (k) { const ch = k.split('|')[0]; (tg[ch] = tg[ch] || []).push(surv[k]); });
+    Object.keys(tg).forEach(function (ch) {
+      const a = tg[ch]; if (a.length < 2) return;
+      const keep = a.reduce(function (best, e) { return e.idx > best.idx ? e : best; }, a[0]);
+      a.forEach(function (e) { if (e !== keep) out[e.pick.bucket] = out[e.pick.bucket].filter(function (x) { return x !== e.pick.it; }); });
+    });
+  }
   if (!noVia) kpiReconVia_(month, kpi, out, want);
   const total = KPI_RECON_BUCKETS_.reduce(function (s, b) { return s + out[b[0]].length; }, 0);
   return { month: month, buckets: KPI_RECON_BUCKETS_.map(function (b) { return { key: b[0], title: b[1], note: b[2], items: out[b[0]] }; }), total: total };
@@ -520,7 +534,8 @@ function computeKpis_(fy) {
         if (m > nowMonth || !kpiWorkedIn_(clk, m)) return;
         const c = bucket(rec, kpi, m), st = kpiMonthStatus_(clk, d, m, clocks.exToday);
         const apply = function () {
-          if (dFlat && kpiMonthStatus_(clk, dFlat, m, clocks.exToday).ok) c.oNum = (c.oNum || 0) + 1;
+          const u = { kpi: kpi, m: m, ok: st.ok, ontime: st.why === 'ontime', oflat: !!(dFlat && kpiMonthStatus_(clk, dFlat, m, clocks.exToday).ok), item: null, lk: '' };   // v242: what this entry added, so the team can take it back
+          if (u.oflat) c.oNum = (c.oNum || 0) + 1;
           c.worked++; c.den++;
           if (st.ok) c.num++;
           if (st.why === 'ontime') c.workedOk++;
@@ -530,15 +545,16 @@ function computeKpis_(fy) {
             if (st.why === 'closedok' || st.why === 'closedlate') { it.doj = ''; it.closedOn = clk.end; it.closedAs = status; }   // v174: closed without a hire
             if (d.byOffer) { it.offer = d.offer; it.ndays = clk.noticeDays; }   // the notice runs from an in-time offer (v152); left out otherwise to keep the result small
             else if (clk.notice) it.notice = clk.notice;
-            c.items.push(it);
+            c.items.push(it); u.item = it;
           }
           if (kpi === 'TIMELY_CLOSURE') {
             bucket(rec, 'OFFER_BACKOUT', m).den++;   // positions worked on in the month
             const lk = kpiLevelKey_(l.Grade), lv = c.lv = c.lv || kpiLvNew_();   // v213: how many of the cell's positions are M-level, W-level, Trainee or other
-            lv[lk].w++; if (st.ok) lv[lk].n++;
+            lv[lk].w++; if (st.ok) lv[lk].n++; u.lk = lk;
           }
+          return u;
         };
-        if (ck) { const key = rec + '|' + ck + '|' + kpi + '|' + m; (pend[key] = pend[key] || []).push({ ok: st.ok, live: !vs, apply: apply }); }   // v183: one entry per holder, vacancy and month
+        if (ck) { const key = rec + '|' + ck + '|' + kpi + '|' + m; (pend[key] = pend[key] || []).push({ ok: st.ok, live: !vs, apply: apply, ck: ck, kpi: kpi, m: m, idx: vs ? vs.idx : 1e9 }); }   // v183: one entry per holder, vacancy and month
         else apply();
       });
     });
@@ -551,9 +567,19 @@ function computeKpis_(fy) {
   };
   lines.forEach(function (l) { doLine(l, null); posTaggedCredits_(l).forEach(function (cr) { doLine(l, cr); }); });
   plan.stretches.forEach(function (vs) { doLine(vs.vline, null, vs); });   // v183: the earlier holders\u2019 stretches
+  const picks = [];
   Object.keys(pend).forEach(function (key) {   // a holder counts once per vacancy and month: the worst result wins, else the live line, else the latest
     const a = pend[key], pick = a.filter(function (e) { return !e.ok; })[0] || a.filter(function (e) { return e.live; })[0] || a[a.length - 1];
-    pick.apply();
+    picks.push({ ck: pick.ck, kpi: pick.kpi, m: pick.m, idx: Math.max.apply(null, a.map(function (e) { return e.idx; })), u: pick.apply() });
+  });
+  /* v242: each recruiter keeps their own stretch of a handed-over position, but the whole team counts the vacancy once per KPI and month: the final holder's
+     entry (the live line), else the latest earlier stretch. The other holders' entries are taken back off the team cell below. */
+  const teamLose = [], loseItems = new Set(), tg = {};
+  picks.forEach(function (p) { const k = p.ck + '|' + p.kpi + '|' + p.m; (tg[k] = tg[k] || []).push(p); });
+  Object.keys(tg).forEach(function (k) {
+    const a = tg[k]; if (a.length < 2) return;
+    const keep = a.reduce(function (best, e) { return e.idx > best.idx ? e : best; }, a[0]);
+    a.forEach(function (e) { if (e !== keep) { teamLose.push(e.u); if (e.u.item) loseItems.add(e.u.item); } });
   });
 
   // ---- Compliance KPIs (scored from KPI_CAPTURE_FROM onward) ----
@@ -661,10 +687,16 @@ function computeKpis_(fy) {
         t.num += src.num; t.den += src.den; t.pending = (t.pending || 0) + (src.pending || 0); t.notDue += src.notDue || 0;
         t.oNum = (t.oNum || 0) + (src.oNum || 0);
         if (src.lv) t.lv = kpiLvAdd_(t.lv, src.lv);
-        src.items.forEach(function (it) { t.items.push(Object.assign({ recruiter: rec }, it)); });
+        src.items.forEach(function (it) { if (!loseItems.has(it)) t.items.push(Object.assign({ recruiter: rec }, it)); });
         (src.notDueItems || []).forEach(function (it) { t.notDueItems.push(Object.assign({ recruiter: rec }, it)); });
       });
     });
+  });
+  teamLose.forEach(function (u) {
+    const t = team[u.kpi] && team[u.kpi][u.m]; if (!t) return;
+    t.worked--; t.den--; if (u.ok) t.num--; if (u.ontime) t.workedOk--; if (u.oflat) t.oNum--;
+    if (u.lk && t.lv) { t.lv[u.lk].w--; if (u.ok) t.lv[u.lk].n--; }
+    if (u.kpi === 'TIMELY_CLOSURE') { const b = team.OFFER_BACKOUT && team.OFFER_BACKOUT[u.m]; if (b) b.den--; }
   });
   recruiters['TEAM_TOTAL'] = team;
   Object.keys(extra).forEach(function (rec) {   // v164: the tagged recruiters' own cells, added after the team row so a position counts once in the team
