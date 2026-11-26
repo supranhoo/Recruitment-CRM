@@ -542,7 +542,8 @@ function apiOrgAdmin() {
     return { batch: String(r.Batch_ID), asOn: ymd_(r.As_On), file: String(r.File || ''), rows: Number(r.Rows) || 0, approved: Number(r.Approved) || 0, existing: Number(r.Existing) || 0, by: String(r.Imported_By || ''), at: ymd_(r.Imported_At) };
   });
   const mp = {}; c.manpower.forEach(function (m) { mp[orgKey_(m.dept)] = (mp[orgKey_(m.dept)] || 0) + m.approved + m.existing; });
-  return { divisions: c.divs, depts: c.depts.map(function (d) { d.hasHC = !!mp[orgKey_(d.dept)]; return d; }), map: map, log: log };
+  const admin = u.role === ROLES.ADMIN;   // v243: only the admin corrects names (Rename.gs)
+  return { divisions: c.divs, depts: c.depts.map(function (d) { d.hasHC = !!mp[orgKey_(d.dept)]; return d; }), map: map, log: log, admin: admin, crm: admin ? renameCrmList_() : null };
 }
 
 function orgEmailOk_(e) { return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
@@ -550,7 +551,8 @@ function orgEmailOk_(e) { return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 /**
  * d: { divisions:[{division, head, active, group?, isNew?}], depts:[{dept, division, hod, email, active, isNew?}] }.
  * Heads, HODs, e-mails, the division of a department and active flags change. A department with headcount stays active;
- * names are not renamed here (headcount and the mapping are keyed by name), a new name is added instead.
+ * names are not renamed here (headcount and the mapping are keyed by name): the admin corrects a name with apiRenameApply (Rename.gs, v243),
+ * which changes every stored copy in one step.
  */
 function apiOrgSaveStructure(d) {
   const u = currentUser_(); ensureSchema_();
